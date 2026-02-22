@@ -1,4 +1,5 @@
-﻿from __future__ import annotations
+﻿#bot/strategy/schema.py
+from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
@@ -34,34 +35,44 @@ class BehaviorsCfg:
     combat: CombatBehaviorCfg = CombatBehaviorCfg()
 
 
-
 @dataclass(frozen=True)
 class DropCfg:
     enabled: bool = False
     name: str = "drop"
 
-    # schedule
     start_loop: Optional[int] = None
     start_time: Optional[float] = None
 
-    # composition / micro
     min_marines: int = 8
     load_count: int = 8
     move_eps: float = 3.0
     ground_radius: float = 12.0
 
-    # points
     pickup: str = "MY_MAIN"
     staging: str = "ENEMY_NATURAL"
     target: str = "ENEMY_MAIN"
     staging_dist: float = 18.0
 
-    # load tuning
     pickup_eps: float = 6.0
     load_range: float = 7.0
 
-    # gates
     require_stim: bool = False
+
+
+@dataclass(frozen=True)
+class OpenerCfg:
+    """
+    Opener obrigatório (se enabled):
+      - depots na MAIN wall
+      - barracks na MAIN wall
+    'force_wall' tenta usar os spots do WallPlanner; se falhar repetidamente, o PlanExecutor faz fallback.
+    """
+    enabled: bool = True
+    force_wall: bool = True
+    depots: int = 2
+    barracks: int = 1
+
+
 @dataclass(frozen=True)
 class StrategyConfig:
     name: str = "default"
@@ -69,6 +80,12 @@ class StrategyConfig:
     economy: EconomyCfg = EconomyCfg()
     production: ProductionCfg = ProductionCfg()
     behaviors: BehaviorsCfg = BehaviorsCfg()
+
+    # NATURAL wall como parâmetro da build (mantido)
+    wall_natural: bool = False
+
+    # NOVO: opener obrigatório (main wall)
+    opener: OpenerCfg = OpenerCfg()
 
     drops: List[DropCfg] = field(default_factory=list)
 

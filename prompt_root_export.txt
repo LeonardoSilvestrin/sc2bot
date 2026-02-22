@@ -7,9 +7,11 @@
 │   │   ├── combat.py
 │   │   ├── drop.py
 │   │   ├── macro.py
+│   │   ├── main_wall.py
 │   │   ├── orchestrator.py
 │   │   ├── plan.py
-│   │   └── supply.py
+│   │   ├── supply.py
+│   │   └── wall.py
 │   ├── core
 │   │   ├── logger.py
 │   │   ├── state.py
@@ -17,7 +19,9 @@
 │   ├── engine
 │   │   ├── builder.py
 │   │   ├── economy.py
-│   │   └── placement.py
+│   │   ├── expansion_finder.py
+│   │   ├── placement.py
+│   │   └── wall.py
 │   ├── strategy
 │   │   ├── loader.py
 │   │   ├── plan_executor.py
@@ -109,12 +113,12 @@ class CombatBehavior:
 
 # ---------- bot/behaviors/drop.py ----------
 #bot/behaviors/drop.py
-# bot/behaviors/drop.py
+#bot/behaviors/drop.py
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Optional, List
+from typing import Any, Optional, List, Dict
 
 import inspect
 
@@ -144,24 +148,41 @@ class DropRuntime:
     next_loop: int = 0
 
     medivac_tag: Optional[int] = None
-    marine_tags: List[int] = None
+    marine_tags: List[int] = field(default_factory=list)
 
     fight_until_time: float = 0.0
 
-    def __post_init__(self):
-        if self.marine_tags is None:
-            self.marine_tags = []
+    # anti-stuck: tag -> (last_dist, stuck_count)
+    stuck: Dict[int, tuple[float, int]] = field(default_factory=dict)
+
+    # robust loading tracking (fork fallback)
+    loaded_count: int = 0
+    pending_load_until_loop: Dict[int, int] = field(default_factory=dict)  # marine_tag -> loop deadline
 
 
 class DropBehavior:
     name = "drop"
 
-    def __init__(self, bot: Any, ctx: Any, unit_manager: Any, logger: Any | None = None, debug: bool = True):
+    def __init__(
+        self,
+        bot: Any,
+        ctx: Any,
+        unit_manager: Any,
+        *,
+        drop_id: str,
+        logger: Any | None = None,
+        debug: bool = True,
+    ):
         self.bot = bot
         self.ctx = ctx
         self.um = unit_manager
         self.log = logger
         self.debug = debug
+
+        self.drop_id = (str(drop_id).strip() or "drop").replace(" ", "_")
+        self.owner = f"drop:{self.drop_id}"
+        self.key = self.drop_id
+
         self.rt = DropRuntime()
 
     def _loop(self) -> int:
@@ -181,7 +202,8 @@ class DropBehavior:
 
     def _emit(self, event: str, payload: dict):
         if self.log:
-            self.log.emit(event, payload, meta={"iter": int(getattr(self.ctx, "iteration", 0))})
+            meta = {"iter": int(getattr(self.ctx, "iteration", 0)), "drop": self.owner}
+            self.log.emit(event, payload, meta=meta)
 
     async def _do(self, cmd) -> bool:
         fn = getattr(self.bot, "do", None)
@@ -195,17 +217,15 @@ class DropBehavior:
             return res
         return True
 
-    def _owner(self, drop_cfg) -> str:
-        name = str(getattr(drop_cfg, "name", "drop")).strip() or "drop"
-        return f"drop:{name}"
-
     # -------- points --------
     def _enemy_main(self) -> Optional[Point2]:
         locs = getattr(self.bot, "enemy_start_locations", None)
         return locs[0] if locs else None
 
     def _my_start(self) -> Optional[Point2]:
-        return getattr(self.bot, "start_location", None)
+        return getattr(self.bot, "start_location", None
+
+        )
 
     def _expansions(self) -> list[Point2]:
         exps = getattr(self.bot, "expansion_locations_list", None)
@@ -289,14 +309,57 @@ class DropBehavior:
             return None
         return ms.find_by_tag(int(tag))
 
+    def _mark_stuck(self, tag: int, dist: float, *, eps: float = 0.25) -> int:
+        tag = int(tag)
+        d = float(dist)
+        last = self.rt.stuck.get(tag)
+        if last is None:
+            self.rt.stuck[tag] = (d, 0)
+            return 0
+        last_d, cnt = last
+        if d >= float(last_d) - float(eps):
+            cnt += 1
+        else:
+            cnt = 0
+        self.rt.stuck[tag] = (d, cnt)
+        return cnt
+
+    def _forget_stuck(self, tag: int) -> None:
+        self.rt.stuck.pop(int(tag), None)
+
+    def _cargo_used(self, med: Any) -> int:
+        """
+        Fork-safe cargo:
+        - tenta cargo_used/cargo_space_used
+        - tenta passengers (list)
+        - fallback: usa contador interno (loaded_count)
+        """
+        for attr in ("cargo_used", "cargo_space_used", "cargo_space_taken", "cargo_space"):
+            v = getattr(med, attr, None)
+            if v is None:
+                continue
+            try:
+                iv = int(v)
+                if iv >= 0:
+                    return iv
+            except Exception:
+                pass
+
+        p = getattr(med, "passengers", None)
+        if p is not None:
+            try:
+                return int(len(p))
+            except Exception:
+                pass
+
+        return int(self.rt.loaded_count)
+
     async def step(self, budget: TickBudget, cfg: dict) -> bool:
         drop_cfg = cfg["drop"]
         if not drop_cfg.enabled:
             return False
 
-        owner = self._owner(drop_cfg)
         loop = self._loop()
-
         if loop < self.rt.next_loop or budget.remaining <= 0:
             return False
 
@@ -305,11 +368,11 @@ class DropBehavior:
 
         if self.rt.phase == DropPhase.WAIT:
             if start_loop is not None and loop < int(start_loop):
-                self._emit("drop_wait", {"drop": owner, "reason": "waiting_start_loop"})
+                self._emit("drop_wait", {"reason": "waiting_start_loop", "start_loop": int(start_loop)})
                 self.rt.next_loop = loop + 12
                 return False
             if start_time is not None and self._time() < float(start_time):
-                self._emit("drop_wait", {"drop": owner, "reason": "waiting_start_time"})
+                self._emit("drop_wait", {"reason": "waiting_start_time", "start_time": float(start_time)})
                 self.rt.next_loop = loop + 12
                 return False
 
@@ -317,87 +380,78 @@ class DropBehavior:
             pickup, staging, target = self._resolve_points(drop_cfg)
             self.rt.pickup, self.rt.staging, self.rt.target = pickup, staging, target
             if pickup is None or staging is None or target is None:
-                self._emit("drop_wait", {"drop": owner, "reason": "no_points"})
+                self._emit("drop_wait", {"reason": "no_points"})
                 self.rt.next_loop = loop + 12
                 return False
 
-        min_marines = int(getattr(drop_cfg, "min_marines", 8))
-        load_count = int(getattr(drop_cfg, "load_count", min_marines))
+        load_count = int(getattr(drop_cfg, "load_count", int(getattr(drop_cfg, "min_marines", 8))))
         move_eps = float(getattr(drop_cfg, "move_eps", 3.0))
         pickup_eps = float(getattr(drop_cfg, "pickup_eps", 6.0))
         load_range = float(getattr(drop_cfg, "load_range", 7.0))
 
-        # hard gather mais cedo conforme aproxima do start_time
+        recruit_radius = float(getattr(drop_cfg, "recruit_radius", max(load_range + 2.0, 9.0)))
+        stuck_limit = int(getattr(drop_cfg, "stuck_limit", 6))
+
         hard_gather = False
         if start_time is not None:
             hard_gather = (self._time() >= float(start_time) - 25.0)
 
-        # ---- tuning pragmático ----
-        # 1) seleção: não corta marines "na base"
         marine_select_maxd = float(getattr(drop_cfg, "marine_select_maxd", 120.0))
-        # 2) consideramos "pronto" se estiverem em uma área razoável perto do pickup
         gather_radius = float(getattr(drop_cfg, "gather_radius", max(14.0, pickup_eps + 8.0)))
 
         if self.rt.phase == DropPhase.WAIT:
-            self._emit("drop_armed", {"drop": owner, "load_count": int(load_count)})
+            self._emit("drop_armed", {"load_count": int(load_count)})
             self.rt.phase = DropPhase.PREP
             self.rt.next_loop = loop + 1
             return False
 
         if self.rt.phase == DropPhase.PREP:
             group = await self.um.request_group(
-                owner=owner,
+                owner=self.owner,
                 pickup=self.rt.pickup,
                 requirements={U.MEDIVAC: 1, U.MARINE: int(load_count)},
                 soft_gather=True,
                 hard_gather=hard_gather,
                 gather_radius=gather_radius,
-                # AQUI: distância máxima configurável
                 max_distance_by_type={U.MARINE: marine_select_maxd},
             )
 
             if not group.ready:
-                self._emit("drop_prep", {"drop": owner, "ready": False})
+                self._emit("drop_prep", {"ready": False})
                 self.rt.next_loop = loop + 10
                 return False
 
             med_tags = group.assigned.get(U.MEDIVAC, [])
             mar_tags = group.assigned.get(U.MARINE, [])
             if not med_tags or len(mar_tags) < load_count:
-                self._emit("drop_prep", {"drop": owner, "ready": False, "reason": "incomplete"})
+                self._emit("drop_prep", {"ready": False, "reason": "incomplete"})
                 self.rt.next_loop = loop + 10
                 return False
 
             med = self._alive_medivac(int(med_tags[0]))
             if med is None:
-                self._emit("drop_prep", {"drop": owner, "ready": False, "reason": "medivac_missing"})
-                self.um.release_owner(owner)
+                self._emit("drop_prep", {"ready": False, "reason": "medivac_missing"})
+                self.um.release_owner(self.owner)
                 self.rt.next_loop = loop + 10
                 return False
 
             self.rt.medivac_tag = int(med.tag)
             self.rt.marine_tags = [int(x) for x in mar_tags]
+            self.rt.stuck.clear()
+            self.rt.loaded_count = 0
+            self.rt.pending_load_until_loop.clear()
 
             if float(med.distance_to(self.rt.pickup)) > float(pickup_eps):
                 ok = await self._do(med.move(self.rt.pickup))
                 if ok:
                     budget.remaining -= 1
-                    self._emit("drop_pickup_move", {"drop": owner})
+                    self._emit("drop_pickup_move", {"medivac_tag": int(med.tag)})
                     self.rt.next_loop = loop + 8
                     return True
                 self.rt.next_loop = loop + 8
                 return False
 
-            self._emit(
-                "drop_ready_to_load",
-                {
-                    "drop": owner,
-                    "medivac_tag": int(med.tag),
-                    "marines": len(self.rt.marine_tags),
-                    "gather_radius": float(gather_radius),
-                    "marine_select_maxd": float(marine_select_maxd),
-                },
-            )
+            self._emit("drop_ready_to_load", {"medivac_tag": int(med.tag), "marines": int(len(self.rt.marine_tags))})
             self.rt.phase = DropPhase.LOAD
             self.rt.next_loop = loop + 1
             return False
@@ -405,8 +459,8 @@ class DropBehavior:
         if self.rt.phase == DropPhase.LOAD:
             med = self._alive_medivac(int(self.rt.medivac_tag or -1))
             if med is None:
-                self._emit("drop_abort", {"drop": owner, "reason": "medivac_dead"})
-                self.um.release_owner(owner)
+                self._emit("drop_abort", {"reason": "medivac_dead"})
+                self.um.release_owner(self.owner)
                 self.rt.phase = DropPhase.DONE
                 return False
 
@@ -414,28 +468,99 @@ class DropBehavior:
                 ok = await self._do(med.move(self.rt.pickup))
                 if ok:
                     budget.remaining -= 1
-                    self._emit("drop_loading_reposition", {"drop": owner})
+                    self._emit("drop_loading_reposition", {})
                     self.rt.next_loop = loop + 8
                     return True
                 self.rt.next_loop = loop + 8
                 return False
 
-            cargo_used = int(getattr(med, "cargo_used", 0))
+            # (A) se o fork não expõe cargo, atualiza loaded_count pelo "sumiço" pós-load
+            # marina some logo após LOAD -> considera carregado, não como morto
+            for t in list(self.rt.marine_tags):
+                if self._alive_marine(int(t)) is None:
+                    deadline = int(self.rt.pending_load_until_loop.get(int(t), -1))
+                    if deadline >= loop:
+                        self.rt.loaded_count += 1
+                        self.rt.marine_tags = [x for x in self.rt.marine_tags if int(x) != int(t)]
+                        self.rt.pending_load_until_loop.pop(int(t), None)
+                        try:
+                            self.um.release_tags(self.owner, [int(t)])
+                        except Exception:
+                            pass
+
+            cargo_used = self._cargo_used(med)
             if cargo_used >= load_count:
-                self._emit("drop_loaded", {"drop": owner, "cargo_used": int(cargo_used)})
+                self._emit("drop_loaded", {"cargo_used": int(cargo_used)})
                 self.rt.phase = DropPhase.MOVE
                 self.rt.next_loop = loop + 1
                 return False
 
-            best = None
-            best_d = 1e18
+            needed = int(load_count - cargo_used)
+            if needed > 0:
+                newly = self.um.claim_nearby(
+                    owner=self.owner,
+                    unit_type=U.MARINE,
+                    near=med.position,
+                    radius=float(recruit_radius),
+                    limit=int(needed),
+                )
+                if newly:
+                    for t in newly:
+                        if int(t) not in self.rt.marine_tags:
+                            self.rt.marine_tags.append(int(t))
+                    self._emit("drop_recruit", {"claimed": [int(x) for x in newly], "needed": int(needed)})
+
+            # limpa mortos de verdade (sem pending load)
+            alive_tags: List[int] = []
             for t in list(self.rt.marine_tags):
                 m = self._alive_marine(int(t))
                 if not m:
+                    if int(self.rt.pending_load_until_loop.get(int(t), -1)) >= loop:
+                        alive_tags.append(int(t))
+                        continue
                     try:
-                        self.rt.marine_tags.remove(int(t))
+                        self.um.release_tags(self.owner, [int(t)])
                     except Exception:
                         pass
+                    self._forget_stuck(int(t))
+                    continue
+                alive_tags.append(int(t))
+            self.rt.marine_tags = alive_tags
+
+            if not self.rt.marine_tags:
+                self._emit("drop_loading", {"reason": "no_reserved_alive"})
+                self.um.release_owner(self.owner)
+                self.rt.phase = DropPhase.DONE
+                return False
+
+            # tenta carregar alguém já no range
+            in_range: List[tuple[float, Any]] = []
+            for t in self.rt.marine_tags:
+                m = self._alive_marine(int(t))
+                if not m:
+                    continue
+                d = float(m.distance_to(med))
+                if d <= float(load_range):
+                    in_range.append((d, m))
+            in_range.sort(key=lambda x: x[0])
+
+            if in_range:
+                _, m = in_range[0]
+                ok = await self._do(med(A.LOAD, m))
+                if ok:
+                    budget.remaining -= 1
+                    # marca janela onde "sumir" = loaded
+                    self.rt.pending_load_until_loop[int(m.tag)] = loop + 20
+                self._emit("drop_loading", {"marine": int(m.tag), "ok": bool(ok), "mode": "in_range"})
+                self.rt.next_loop = loop + 4
+                return bool(ok)
+
+            # ninguém no range -> chama o mais próximo (anti-stuck)
+            best = None
+            best_d = 1e18
+            for t in self.rt.marine_tags:
+                m = self._alive_marine(int(t))
+                if not m:
                     continue
                 d = float(m.distance_to(med))
                 if d < best_d:
@@ -443,39 +568,43 @@ class DropBehavior:
                     best_d = d
 
             if best is None:
-                self._emit("drop_loading", {"drop": owner, "reason": "no_reserved_alive"})
-                self.um.release_owner(owner)
+                self._emit("drop_loading", {"reason": "no_alive_after_scan"})
+                self.um.release_owner(self.owner)
                 self.rt.phase = DropPhase.DONE
                 return False
 
-            # marine vem pro pickup; medivac não caça
-            if best_d > float(load_range):
-                ok = await self._do(best.move(self.rt.pickup))
-                if ok:
-                    budget.remaining -= 1
-                    self._emit("drop_call_marine", {"drop": owner, "marine": int(best.tag), "dist": float(best_d)})
-                    self.rt.next_loop = loop + 6
-                    return True
-                self.rt.next_loop = loop + 6
+            stuck_cnt = self._mark_stuck(int(best.tag), float(best_d))
+            if stuck_cnt >= stuck_limit:
+                self._emit("drop_marine_stuck", {"marine": int(best.tag), "dist": float(best_d), "stuck_cnt": int(stuck_cnt)})
+                try:
+                    self.um.release_tags(self.owner, [int(best.tag)])
+                except Exception:
+                    pass
+                self.rt.marine_tags = [t for t in self.rt.marine_tags if int(t) != int(best.tag)]
+                self._forget_stuck(int(best.tag))
+                self.rt.next_loop = loop + 2
                 return False
 
-            ok = await self._do(med(A.LOAD, best))
+            ok = await self._do(best.move(med.position))
             if ok:
                 budget.remaining -= 1
-            self._emit("drop_loading", {"drop": owner, "marine": int(best.tag), "ok": bool(ok)})
-            self.rt.next_loop = loop + 4
-            return bool(ok)
+                self._emit("drop_call_marine", {"marine": int(best.tag), "dist": float(best_d), "to": "medivac_pos"})
+                self.rt.next_loop = loop + 6
+                return True
+
+            self.rt.next_loop = loop + 6
+            return False
 
         if self.rt.phase == DropPhase.MOVE:
             med = self._alive_medivac(int(self.rt.medivac_tag or -1))
             if med is None:
-                self._emit("drop_abort", {"drop": owner, "reason": "medivac_dead_move"})
-                self.um.release_owner(owner)
+                self._emit("drop_abort", {"reason": "medivac_dead_move"})
+                self.um.release_owner(self.owner)
                 self.rt.phase = DropPhase.DONE
                 return False
 
             if float(med.distance_to(self.rt.staging)) <= float(move_eps):
-                self._emit("drop_at_staging", {"drop": owner})
+                self._emit("drop_at_staging", {})
                 self.rt.phase = DropPhase.DROP
                 self.rt.next_loop = loop + 1
                 return False
@@ -483,7 +612,7 @@ class DropBehavior:
             ok = await self._do(med.move(self.rt.staging))
             if ok:
                 budget.remaining -= 1
-                self._emit("drop_move", {"drop": owner})
+                self._emit("drop_move", {})
                 self.rt.next_loop = loop + 8
                 return True
             self.rt.next_loop = loop + 8
@@ -492,8 +621,8 @@ class DropBehavior:
         if self.rt.phase == DropPhase.DROP:
             med = self._alive_medivac(int(self.rt.medivac_tag or -1))
             if med is None:
-                self._emit("drop_abort", {"drop": owner, "reason": "medivac_dead_drop"})
-                self.um.release_owner(owner)
+                self._emit("drop_abort", {"reason": "medivac_dead_drop"})
+                self.um.release_owner(self.owner)
                 self.rt.phase = DropPhase.DONE
                 return False
 
@@ -501,7 +630,7 @@ class DropBehavior:
                 ok = await self._do(med.move(self.rt.target))
                 if ok:
                     budget.remaining -= 1
-                    self._emit("drop_approach", {"drop": owner})
+                    self._emit("drop_approach", {})
                     self.rt.next_loop = loop + 8
                     return True
                 self.rt.next_loop = loop + 8
@@ -510,11 +639,10 @@ class DropBehavior:
             ok = await self._do(med(A.UNLOADALLAT, self.rt.target))
             if ok:
                 budget.remaining -= 1
-                self._emit("drop_unload", {"drop": owner})
+                self._emit("drop_unload", {"target": [float(self.rt.target.x), float(self.rt.target.y)]})
 
-                # libera APENAS o medivac
                 if self.rt.medivac_tag is not None:
-                    self.um.release_tags(owner, [int(self.rt.medivac_tag)])
+                    self.um.release_tags(self.owner, [int(self.rt.medivac_tag)])
 
                 self.rt.fight_until_time = float(self._time()) + 18.0
                 self.rt.phase = DropPhase.FIGHT
@@ -539,13 +667,13 @@ class DropBehavior:
                         issued += 1
 
             if issued > 0:
-                self._emit("drop_attack", {"drop": owner, "issued": int(issued)})
+                self._emit("drop_attack", {"issued": int(issued)})
                 self.rt.next_loop = loop + 8
                 return True
 
             if float(self._time()) >= float(self.rt.fight_until_time):
-                self._emit("drop_fight_done", {"drop": owner})
-                self.um.release_owner(owner)
+                self._emit("drop_fight_done", {})
+                self.um.release_owner(self.owner)
                 self.rt.phase = DropPhase.DONE
                 return False
 
@@ -638,7 +766,123 @@ class MacroBehavior:
         self._supply_cooldown_until_iter = it + 22
         return bool(did)
 
+# ---------- bot/behaviors/main_wall.py ----------
+#bot/behaviors/main_wall.py
+#bot/behaviors/main_wall.py
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any
+
+from sc2.ids.unit_typeid import UnitTypeId as U
+
+from .base import TickBudget
+
+
+@dataclass
+class MainWallRuntime:
+    complete: bool = False
+    next_loop: int = 0
+
+
+class MainWallOpenerBehavior:
+    """
+    Só serve quando você quer OVERRIDE (rush/force):
+      - force 2 depots + 1 barracks ASAP, nos spots da MAIN wall.
+    Se force=False, esse Behavior nem deve rodar (ver TerranBot._active_pairs).
+    """
+
+    name = "main_wall"
+
+    def __init__(
+        self,
+        bot: Any,
+        ctx: Any,
+        builder: Any,
+        placement: Any,
+        *,
+        logger: Any | None = None,
+        debug: bool = True,
+    ):
+        self.bot = bot
+        self.ctx = ctx
+        self.builder = builder
+        self.place = placement
+        self.log = logger
+        self.debug = debug
+        self.rt = MainWallRuntime()
+
+        # fase interna para não repetir build enquanto está pending/invisível
+        self.ctx.owner_meta.setdefault("main_wall_force", {"phase": 0})
+
+    def _iter(self) -> int:
+        return int(getattr(self.ctx, "iteration", 0))
+
+    def _loop(self) -> int:
+        st = getattr(self.bot, "state", None)
+        gl = getattr(st, "game_loop", None)
+        if gl is not None:
+            return int(gl)
+        return self._iter()
+
+    def _emit(self, event: str, payload: dict):
+        if self.log:
+            self.log.emit(event, payload, meta={"iter": self._iter()})
+
+    def _phase(self) -> int:
+        return int(self.ctx.owner_meta.get("main_wall_force", {}).get("phase", 0))
+
+    def _set_phase(self, p: int) -> None:
+        self.ctx.owner_meta.setdefault("main_wall_force", {})
+        self.ctx.owner_meta["main_wall_force"]["phase"] = int(p)
+
+    async def step(self, budget: TickBudget, cfg: dict) -> bool:
+        loop = self._loop()
+        if loop < int(self.rt.next_loop):
+            return False
+        if budget.remaining <= 0:
+            self.rt.next_loop = loop + 8
+            return False
+        if self.rt.complete:
+            return False
+
+        phase = self._phase()
+
+        # 0 -> build depot 1
+        # 1 -> build depot 2
+        # 2 -> build barracks 1
+        # 3 -> done
+        did = False
+        if phase == 0:
+            did = await self.builder.try_build(U.SUPPLYDEPOT, wall_pref="MAIN")
+            self._emit("main_wall_force", {"phase": 0, "want": "DEPOT#1", "did": bool(did)})
+            if did:
+                self._set_phase(1)
+        elif phase == 1:
+            did = await self.builder.try_build(U.SUPPLYDEPOT, wall_pref="MAIN")
+            self._emit("main_wall_force", {"phase": 1, "want": "DEPOT#2", "did": bool(did)})
+            if did:
+                self._set_phase(2)
+        elif phase == 2:
+            did = await self.builder.try_build(U.BARRACKS, wall_pref="MAIN")
+            self._emit("main_wall_force", {"phase": 2, "want": "BARRACKS#1", "did": bool(did)})
+            if did:
+                self._set_phase(3)
+        else:
+            self.rt.complete = True
+            self._emit("main_wall_force_complete", {"complete": True})
+            return False
+
+        if did:
+            budget.spend(1)
+            self.rt.next_loop = loop + 6
+            return True
+
+        self.rt.next_loop = loop + 10
+        return False
+
 # ---------- bot/behaviors/orchestrator.py ----------
+#bot/behaviors/orchestrator.py
 #bot/behaviors/orchestrator.py
 from __future__ import annotations
 
@@ -657,10 +901,8 @@ class ActiveBehavior:
 
 class BehaviorOrchestrator:
     """
-    Agenda behaviors com Round-Robin real.
-    - Mantém ponteiro (_rr_index) ESTÁVEL entre ticks usando `key`.
-    - Se a lista de behaviors muda (ativou/desativou), tenta preservar justiça.
-    - Contrato: behavior.step(budget, cfg) -> bool (True se consumiu 1 action do budget)
+    Round-robin estável entre ticks.
+    Agora usa uma chave estável se o behavior expõe .key (ex.: drops).
     """
 
     def __init__(self):
@@ -669,8 +911,10 @@ class BehaviorOrchestrator:
         self._last_keys: List[str] = []
 
     def _mk_key(self, behavior: Any) -> str:
-        # nome + id garante unicidade de instâncias (você tem múltiplos drops)
         name = getattr(behavior, "name", behavior.__class__.__name__)
+        stable = getattr(behavior, "key", None)
+        if stable is not None:
+            return f"{name}:{stable}"
         return f"{name}:{id(behavior)}"
 
     def set_active(self, pairs: Iterable[Tuple[Any, dict]]) -> None:
@@ -682,25 +926,18 @@ class BehaviorOrchestrator:
             new_active.append(ActiveBehavior(behavior=b, cfg=cfg, key=k))
             new_keys.append(k)
 
-        # Se keys mudaram, tenta manter o ponteiro "apontando" para o mesmo próximo behavior
-        if self._last_keys and new_keys:
-            if new_keys != self._last_keys:
-                # behavior que seria o próximo no ciclo antigo
-                old_next_key: Optional[str] = None
-                if 0 <= self._rr_index < len(self._last_keys):
-                    old_next_key = self._last_keys[self._rr_index]
+        if self._last_keys and new_keys and new_keys != self._last_keys:
+            old_next_key: Optional[str] = None
+            if 0 <= self._rr_index < len(self._last_keys):
+                old_next_key = self._last_keys[self._rr_index]
+            if old_next_key in new_keys:
+                self._rr_index = new_keys.index(old_next_key)
+            else:
+                self._rr_index = 0
 
-                if old_next_key in new_keys:
-                    self._rr_index = new_keys.index(old_next_key)
-                else:
-                    # fallback seguro
-                    self._rr_index = 0
-
-        # atualiza
         self.active = new_active
         self._last_keys = new_keys
 
-        # clamp final
         if self._rr_index >= len(self.active):
             self._rr_index = 0
 
@@ -712,7 +949,6 @@ class BehaviorOrchestrator:
         n = len(self.active)
         start = self._rr_index % n
 
-        # percorre todos a partir do start (RR)
         for i in range(n):
             if budget.remaining <= 0:
                 break
@@ -722,11 +958,8 @@ class BehaviorOrchestrator:
 
             did = await ab.behavior.step(budget, ab.cfg)
 
-            # se consumiu 1 action, o próximo tick começa depois dele
             if did:
                 self._rr_index = (idx + 1) % n
-                # NÃO quebra: ainda pode sobrar budget pra mais 1 action
-                # e é exatamente isso que você quer com 2 drops (budget=2).
 
 # ---------- bot/behaviors/plan.py ----------
 #bot/behaviors/plan.py
@@ -811,6 +1044,274 @@ class SupplyBehavior(Behavior):
                 meta={"iter": int(self.ctx.iteration)},
             )
         return bool(did)
+
+# ---------- bot/behaviors/wall.py ----------
+#bot/behaviors/wall.py
+#bot/behaviors/wall.py
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Optional, List, Tuple
+
+import inspect
+
+from sc2.ids.unit_typeid import UnitTypeId as U
+from sc2.ids.ability_id import AbilityId as A
+from sc2.position import Point2
+
+from .base import TickBudget
+
+
+@dataclass
+class WallRuntime:
+    complete: bool = False
+    last_open: Optional[bool] = None
+    next_loop: int = 0
+
+
+class WallBehavior:
+    """
+    Controla o "portão" (SupplyDepots) da wall:
+    - OPEN por padrão (SCV desce).
+    - CLOSE se inimigo terrestre perto da rampa.
+    - Marca wall como 'complete' quando as peças principais estiverem prontas.
+    """
+
+    name = "wall"
+
+    def __init__(self, bot: Any, ctx: Any, placement: Any, *, logger: Any | None = None, debug: bool = True):
+        self.bot = bot
+        self.ctx = ctx
+        self.place = placement
+        self.log = logger
+        self.debug = debug
+        self.rt = WallRuntime()
+
+        # chave de meta
+        self.meta_key = "wall:natural"
+
+    def _loop(self) -> int:
+        st = getattr(self.bot, "state", None)
+        gl = getattr(st, "game_loop", None)
+        if gl is not None:
+            return int(gl)
+        it = getattr(self.ctx, "iteration", None)
+        return int(it) if it is not None else 0
+
+    def _iter(self) -> int:
+        return int(getattr(self.ctx, "iteration", 0))
+
+    def _emit(self, event: str, payload: dict):
+        if self.log:
+            self.log.emit(event, payload, meta={"iter": self._iter()})
+
+    async def _do(self, cmd) -> bool:
+        fn = getattr(self.bot, "do", None)
+        if fn is None:
+            return False
+        res = fn(cmd)
+        if inspect.isawaitable(res):
+            await res
+            return True
+        if isinstance(res, bool):
+            return res
+        return True
+
+    # -------------------
+    # helpers de matching
+    # -------------------
+    def _wall_planner(self):
+        # Placement.wall = WallPlanner(...)
+        return getattr(self.place, "wall", None)
+
+    def _get_wall_spots(self) -> tuple[Optional[Point2], List[Point2]]:
+        wp = self._wall_planner()
+        if wp is None:
+            return None, []
+
+        anchor = wp.wall_anchor()
+        depots = wp.wall_spots_for(U.SUPPLYDEPOT)
+        depots = [p for p in depots if p is not None]
+        return anchor, depots[:2]
+
+    def _find_my_depot_near(self, pos: Point2, *, max_d: float = 1.0):
+        if not hasattr(self.bot, "units"):
+            return None
+        depots = self.bot.units(U.SUPPLYDEPOT)
+        if not depots:
+            return None
+        best = None
+        best_d = 1e18
+        for d in depots.ready:
+            dist = float(d.distance_to(pos))
+            if dist < best_d:
+                best = d
+                best_d = dist
+        if best is not None and best_d <= float(max_d):
+            return best
+        return None
+
+    def _depot_is_lowered(self, depot: Any) -> bool:
+        # python-sc2 costuma expor is_lowered; se não tiver, assume False (conservador)
+        v = getattr(depot, "is_lowered", None)
+        if v is None:
+            return False
+        try:
+            return bool(v)
+        except Exception:
+            return False
+
+    def _friendly_blocking_door(self, depot_positions: List[Point2], *, radius: float = 2.25) -> bool:
+        # se tiver unidade amiga (terra) muito em cima do choke, não levanta
+        if not hasattr(self.bot, "units"):
+            return False
+        all_my = getattr(self.bot, "units", None)
+        if all_my is None:
+            return False
+
+        # pega tudo que é meu e terrestre (inclui worker/marine etc.)
+        # (sem estruturas)
+        try:
+            mine = [u for u in self.bot.units if getattr(u, "is_mine", True)]
+        except Exception:
+            mine = []
+
+        if not mine:
+            # fallback: tenta bot.units.filter?
+            mine = []
+
+        r = float(radius)
+        for p in depot_positions:
+            for u in mine:
+                if getattr(u, "is_structure", False):
+                    continue
+                if getattr(u, "is_flying", False):
+                    continue
+                try:
+                    if float(u.distance_to(p)) <= r:
+                        return True
+                except Exception:
+                    continue
+        return False
+
+    def _enemy_ground_threat_near(self, anchor: Point2, *, radius: float = 18.0) -> bool:
+        enemies = getattr(self.bot, "enemy_units", None)
+        if enemies is None:
+            return False
+        r = float(radius)
+
+        # ameaça = unidades inimigas terrestres (structures não contam)
+        try:
+            for e in enemies:
+                if getattr(e, "is_structure", False):
+                    continue
+                if getattr(e, "is_flying", False):
+                    continue
+                if float(e.distance_to(anchor)) <= r:
+                    return True
+        except Exception:
+            return False
+        return False
+
+    def _set_wall_meta(self, *, complete: bool | None = None, open_now: bool | None = None) -> None:
+        self.ctx.owner_meta.setdefault(self.meta_key, {})
+        if complete is not None:
+            self.ctx.owner_meta[self.meta_key]["complete"] = bool(complete)
+        if open_now is not None:
+            self.ctx.owner_meta[self.meta_key]["open"] = bool(open_now)
+
+    # -------------------
+    # main
+    # -------------------
+    async def step(self, budget: TickBudget, cfg: dict) -> bool:
+        # throttling simples pra não gastar tick
+        loop = self._loop()
+        if loop < int(self.rt.next_loop):
+            return False
+
+        anchor, depot_spots = self._get_wall_spots()
+        if anchor is None or len(depot_spots) < 2:
+            self.rt.next_loop = loop + 22
+            return False
+
+        d1 = self._find_my_depot_near(depot_spots[0])
+        d2 = self._find_my_depot_near(depot_spots[1])
+        have_two = bool(d1 is not None and d2 is not None)
+
+        # completa quando os 2 depots existem e estão prontos (barracks pode variar por mapa/fork)
+        complete_now = have_two and getattr(d1, "is_ready", True) and getattr(d2, "is_ready", True)
+        if complete_now and not self.rt.complete:
+            self.rt.complete = True
+            self._set_wall_meta(complete=True)
+            self._emit(
+                "wall_complete",
+                {
+                    "depots": [
+                        int(getattr(d1, "tag", 0)),
+                        int(getattr(d2, "tag", 0)),
+                    ],
+                    "spots": [
+                        [float(depot_spots[0].x), float(depot_spots[0].y)],
+                        [float(depot_spots[1].x), float(depot_spots[1].y)],
+                    ],
+                },
+            )
+
+        # Decide OPEN/CLOSE
+        threat = self._enemy_ground_threat_near(anchor, radius=float(getattr(cfg, "threat_radius", 18.0)))
+        want_open = not threat  # padrão: aberto
+        want_close = not want_open
+
+        # não fecha se tem aliado na porta
+        if want_close and self._friendly_blocking_door(depot_spots, radius=float(getattr(cfg, "door_clear_radius", 2.25))):
+            want_close = False
+            want_open = True
+
+        # Sem budget, sem ação
+        if budget.remaining <= 0:
+            self.rt.next_loop = loop + 8
+            return False
+
+        issued = False
+        for dep in [d1, d2]:
+            if dep is None:
+                continue
+
+            lowered = self._depot_is_lowered(dep)
+
+            # se quer OPEN -> depot tem que estar lowered
+            if want_open and not lowered:
+                ok = await self._do(dep(A.MORPH_SUPPLYDEPOT_LOWER))
+                if ok:
+                    budget.spend(1)
+                    issued = True
+
+            # se quer CLOSE -> depot tem que estar raised (not lowered)
+            if want_close and lowered:
+                ok = await self._do(dep(A.MORPH_SUPPLYDEPOT_RAISE))
+                if ok:
+                    budget.spend(1)
+                    issued = True
+
+            if budget.remaining <= 0:
+                break
+
+        if issued:
+            self.rt.last_open = bool(want_open)
+            self._set_wall_meta(open_now=bool(want_open))
+            self._emit(
+                "wall_gate",
+                {
+                    "open": bool(want_open),
+                    "threat": bool(threat),
+                    "anchor": [float(anchor.x), float(anchor.y)],
+                },
+            )
+            self.rt.next_loop = loop + 6
+            return True
+
+        self.rt.next_loop = loop + 12
+        return False
 
 # ---------- bot/core/logger.py ----------
 #bot/core/logger.py
@@ -922,7 +1423,7 @@ class BotState:
 
 # ---------- bot/core/unit_manager.py ----------
 #bot/core/unit_manager.py
-# bot/core/unit_manager.py
+#bot/core/unit_manager.py
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -1014,6 +1515,58 @@ class UnitManager:
         self.ctx.owner_units.setdefault(owner, set())
         self.ctx.owner_meta.setdefault(owner, {})
 
+    def claim_nearby(
+        self,
+        *,
+        owner: str,
+        unit_type: U,
+        near: Point2,
+        radius: float,
+        limit: int,
+    ) -> List[int]:
+        """
+        Claim pragmático: pega unidades LIVRES (sem owner) próximas de um ponto.
+        Útil quando o drop está com marines reservados longe, mas tem marines “sobrando”
+        ao redor do medivac e você quer completar a carga sem travar.
+        """
+        self._ensure_owner_set(owner)
+        limit = int(limit)
+        if limit <= 0:
+            return []
+
+        free = self._free_units(unit_type)
+        if not free:
+            return []
+
+        r = float(radius)
+        cand = [u for u in free if float(u.distance_to(near)) <= r]
+        cand.sort(key=lambda u: u.distance_to(near))
+
+        claimed: List[int] = []
+        for u in cand:
+            if len(claimed) >= limit:
+                break
+            tag = int(u.tag)
+            # ainda livre?
+            if self.ctx.owner_of(tag) is not None:
+                continue
+            self.ctx.claim(owner, tag)
+            claimed.append(tag)
+
+        if claimed:
+            self._emit(
+                "unitmgr_claim_nearby",
+                {
+                    "owner": owner,
+                    "type": unit_type.name,
+                    "near": [float(near.x), float(near.y)],
+                    "radius": float(radius),
+                    "claimed": [int(x) for x in claimed],
+                },
+            )
+
+        return claimed
+
     async def request_group(
         self,
         *,
@@ -1055,7 +1608,6 @@ class UnitManager:
             if have < need:
                 free = self._free_units(ut)
 
-                # filtro de distância (anti-roubo de marines do outro lado do mapa)
                 maxd = float(max_distance_by_type.get(ut, 0.0) or 0.0)
                 if maxd > 0.0:
                     free = [u for u in free if float(u.distance_to(pickup)) <= maxd]
@@ -1108,7 +1660,6 @@ class UnitManager:
                 if d <= float(radius):
                     continue
 
-                # heurística de combate (best effort)
                 in_combat = False
                 if hasattr(u, "weapon_cooldown"):
                     try:
@@ -1150,11 +1701,11 @@ class UnitManager:
 
 # ---------- bot/engine/builder.py ----------
 #bot/engine/builder.py
-# bot/engine/builder.py
+#bot/engine/builder.py
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Iterable, Optional
+from typing import Any, Iterable
 import inspect
 
 from sc2.ids.unit_typeid import UnitTypeId as U
@@ -1181,33 +1732,69 @@ class Builder:
         self.last: LastAction | None = None
 
     # ----------------------------
-    # robust unit access
+    # robust "mine only" access
     # ----------------------------
-    def _iter_owned(self) -> Iterable[Any]:
-        st = getattr(self.bot, "state", None)
-        if st is not None and hasattr(st, "units"):
-            return st.units
-        if hasattr(self.bot, "all_units"):
-            return self.bot.all_units
-        return self.bot.units
-
-    def _iter_all_units(self) -> Iterable[Any]:
-        st = getattr(self.bot, "state", None)
-        if st is not None and hasattr(st, "units"):
-            return st.units
-        if hasattr(self.bot, "all_units"):
-            return self.bot.all_units
-        return self.bot.units
-
     def _owned_of_type(self, unit_type: U) -> list[Any]:
-        out = []
-        for u in self._iter_owned():
-            is_mine = getattr(u, "is_mine", None)
-            if is_mine is not None and not is_mine:
-                continue
-            if getattr(u, "type_id", None) == unit_type:
-                out.append(u)
-        return out
+        """
+        No teu fork, estruturas também entram via bot.units(UnitTypeId).
+        Isso tende a ser a fonte mais confiável do "owned only".
+        """
+        bot = self.bot
+
+        fn = getattr(bot, "units", None)
+        if callable(fn):
+            try:
+                units = fn(unit_type)
+                return list(units) if units else []
+            except Exception:
+                pass
+
+        # fallback legado (pior caso)
+        st = getattr(bot, "state", None)
+        if st is not None and hasattr(st, "units"):
+            out = []
+            try:
+                for u in st.units:
+                    if getattr(u, "type_id", None) == unit_type and bool(getattr(u, "is_mine", True)):
+                        out.append(u)
+            except Exception:
+                pass
+            return out
+
+        return []
+
+    # ----------------------------
+    # counts
+    # ----------------------------
+    def have(self, unit_type: U) -> int:
+        return len(self._owned_of_type(unit_type))
+
+    def ready(self, unit_type: U) -> int:
+        units = self._owned_of_type(unit_type)
+        return sum(1 for u in units if bool(getattr(u, "is_ready", False)))
+
+    def pending(self, unit_type: U) -> int:
+        return int(self.bot.already_pending(unit_type))
+
+    def total(self, unit_type: U) -> int:
+        return self.have(unit_type) + self.pending(unit_type)
+
+    # ----------------------------
+    # low-level do() compatible
+    # ----------------------------
+    async def _do(self, cmd) -> bool:
+        fn = getattr(self.bot, "do", None)
+        if fn is None:
+            return False
+
+        res = fn(cmd)
+        if inspect.isawaitable(res):
+            await res
+            return True
+
+        if isinstance(res, bool):
+            return res
+        return True
 
     # ----------------------------
     # geyser access (neutral units)
@@ -1240,40 +1827,15 @@ class Builder:
             except Exception:
                 pass
 
-        return [u for u in self._iter_all_units() if getattr(u, "type_id", None) == U.VESPENEGEYSER]
+        # fallback bruto
+        try:
+            all_units = getattr(bot, "all_units", None)
+            if all_units is not None:
+                return [u for u in all_units if getattr(u, "type_id", None) == U.VESPENEGEYSER]
+        except Exception:
+            pass
 
-    # ----------------------------
-    # counts
-    # ----------------------------
-    def have(self, unit_type: U) -> int:
-        return len(self._owned_of_type(unit_type))
-
-    def ready(self, unit_type: U) -> int:
-        units = self._owned_of_type(unit_type)
-        return sum(1 for u in units if getattr(u, "is_ready", False))
-
-    def pending(self, unit_type: U) -> int:
-        return int(self.bot.already_pending(unit_type))
-
-    def total(self, unit_type: U) -> int:
-        return self.have(unit_type) + self.pending(unit_type)
-
-    # ----------------------------
-    # low-level do() compatible
-    # ----------------------------
-    async def _do(self, cmd) -> bool:
-        fn = getattr(self.bot, "do", None)
-        if fn is None:
-            return False
-
-        res = fn(cmd)
-        if inspect.isawaitable(res):
-            await res
-            return True
-
-        if isinstance(res, bool):
-            return res
-        return True
+        return []
 
     # ----------------------------
     # upgrades (robust)
@@ -1284,10 +1846,8 @@ class Builder:
         if ups is None:
             return False
         try:
-            # python-sc2 geralmente usa set[UpgradeId]
             return up in ups
         except Exception:
-            # forks podem usar ints
             try:
                 return int(up.value) in set(int(x) for x in ups)
             except Exception:
@@ -1306,19 +1866,42 @@ class Builder:
                 return 0
 
     # ----------------------------
-    # actions
+    # build at EXACT position
     # ----------------------------
-    async def try_build(self, unit_type: U, *, near=None) -> bool:
+    def _select_worker(self, pos) -> Any | None:
+        bot = self.bot
+        fn = getattr(bot, "select_build_worker", None)
+        if callable(fn):
+            try:
+                w = fn(pos)
+                if w is not None:
+                    return w
+            except Exception:
+                pass
+
+        workers = getattr(bot, "workers", None)
+        if workers is None or workers.amount <= 0:
+            return None
+        try:
+            return workers.closest_to(pos)
+        except Exception:
+            try:
+                return workers.first
+            except Exception:
+                return None
+
+    async def try_build(self, unit_type: U, *, near=None, wall_pref: str | None = None) -> bool:
         bot = self.bot
 
         if not bot.can_afford(unit_type):
             self._fail("build", unit_type, "cant_afford", {"minerals": int(bot.minerals), "gas": int(bot.vespene)})
             return False
 
-        if bot.workers.amount == 0:
+        if getattr(bot, "workers", None) is None or bot.workers.amount == 0:
             self._fail("build", unit_type, "no_workers", None)
             return False
 
+        # Refinery: ainda usa "near geyser"
         if unit_type == U.REFINERY:
             ths = getattr(bot, "townhalls", None)
             th = ths.ready.first if ths and ths.ready else None
@@ -1337,26 +1920,48 @@ class Builder:
                 if occupied:
                     continue
 
-                await bot.build(U.REFINERY, near=g)
+                try:
+                    await bot.build(U.REFINERY, near=g)
+                except Exception:
+                    # fallback: tenta worker.build
+                    w = self._select_worker(g.position)
+                    if w is None:
+                        self._fail("build", unit_type, "no_workers", None)
+                        return False
+                    ok = await self._do(w.build(U.REFINERY, g.position))
+                    if not ok:
+                        self._fail("build", unit_type, "do_failed", {"unit": unit_type.name})
+                        return False
+
                 self._ok("build", unit_type, {"geyser_pos": [float(g.position.x), float(g.position.y)]})
                 return True
 
             self._fail("build", unit_type, "all_geysers_occupied", None)
             return False
 
-        pos = await self.placement.find_placement(unit_type, near=near)
+        # Outras estruturas: pega um POS exato do Placement e executa worker.build(pos)
+        pos = await self.placement.find_placement(unit_type, near=near, wall_pref=wall_pref)
         if pos is None:
             self._fail("build", unit_type, "no_placement", None)
             return False
 
-        await bot.build(unit_type, near=pos)
-        self._ok("build", unit_type, {"pos": [float(pos.x), float(pos.y)]})
-        return True
+        w = self._select_worker(pos)
+        if w is None:
+            self._fail("build", unit_type, "no_workers", None)
+            return False
+
+        ok = await self._do(w.build(unit_type, pos))
+        if ok:
+            self._ok("build", unit_type, {"pos": [float(pos.x), float(pos.y)], "wall_pref": wall_pref})
+            return True
+
+        self._fail("build", unit_type, "do_failed", {"pos": [float(pos.x), float(pos.y)]})
+        return False
 
     async def try_train(self, unit_type: U, *, from_type: U) -> bool:
         bot = self.bot
 
-        producers = [u for u in self._owned_of_type(from_type) if getattr(u, "is_ready", False)]
+        producers = [u for u in self._owned_of_type(from_type) if bool(getattr(u, "is_ready", False))]
         if not producers:
             self._fail("train", unit_type, "no_producer", {"from": str(from_type)})
             return False
@@ -1370,41 +1975,36 @@ class Builder:
             return False
 
         for b in producers:
-            if not getattr(b, "is_idle", False):
+            if not bool(getattr(b, "is_idle", False)):
                 continue
-            b.train(unit_type)
-            self._ok("train", unit_type, {"from": str(from_type)})
-            return True
+            try:
+                b.train(unit_type)
+                self._ok("train", unit_type, {"from": str(from_type)})
+                return True
+            except Exception:
+                continue
 
         self._fail("train", unit_type, "all_busy", {"from": str(from_type)})
         return False
 
-    # ----------------------------
-    # addons
-    # ----------------------------
     async def try_addon(self, *, on: U, addon: str) -> bool:
-        """
-        addon: "TECHLAB" | "REACTOR"
-        """
         bot = self.bot
         addon = addon.strip().upper()
 
-        parents = [b for b in self._owned_of_type(on) if getattr(b, "is_ready", False)]
+        parents = [b for b in self._owned_of_type(on) if bool(getattr(b, "is_ready", False))]
         if not parents:
             self._fail("addon", on, "no_parent", {"on": str(on)})
             return False
 
-        # precisa estar idle pra construir addon
         parent = None
         for b in parents:
-            if getattr(b, "is_idle", False):
+            if bool(getattr(b, "is_idle", False)):
                 parent = b
                 break
         if parent is None:
             self._fail("addon", on, "no_idle_parent", {"on": str(on)})
             return False
 
-        # mapeia ability + custo via can_afford(ability)
         if on == U.BARRACKS and addon == "TECHLAB":
             ability = A.BUILD_TECHLAB_BARRACKS
             unit_name = "BARRACKSTECHLAB"
@@ -1427,16 +2027,12 @@ class Builder:
             self._fail("addon", on, "unsupported_addon", {"on": str(on), "addon": addon})
             return False
 
-        # custo
-        can_afford_ability = getattr(bot, "can_afford", None)
-        if callable(can_afford_ability):
-            try:
-                if not bot.can_afford(ability):
-                    self._fail("addon", on, "cant_afford", {"ability": str(ability)})
-                    return False
-            except Exception:
-                # alguns forks não suportam can_afford(AbilityId); deixa passar e falha no action result se houver
-                pass
+        try:
+            if hasattr(bot, "can_afford") and not bot.can_afford(ability):
+                self._fail("addon", on, "cant_afford", {"ability": str(ability)})
+                return False
+        except Exception:
+            pass
 
         ok = await self._do(parent(ability))
         if ok:
@@ -1446,9 +2042,6 @@ class Builder:
         self._fail("addon", on, "do_failed", {"on": on.name, "addon": addon})
         return False
 
-    # ----------------------------
-    # research
-    # ----------------------------
     async def try_research(self, upgrade: Up) -> bool:
         bot = self.bot
 
@@ -1460,23 +2053,21 @@ class Builder:
             self._fail("research", U.BARRACKS, "already_pending", {"upgrade": str(upgrade)})
             return False
 
-        # STIMPACK precisa de Barracks Tech Lab
         if upgrade == Up.STIMPACK:
-            labs = [x for x in self._owned_of_type(U.BARRACKSTECHLAB) if getattr(x, "is_ready", False)]
+            labs = [x for x in self._owned_of_type(U.BARRACKSTECHLAB) if bool(getattr(x, "is_ready", False))]
             if not labs:
                 self._fail("research", U.BARRACKSTECHLAB, "no_techlab", {"upgrade": "STIMPACK"})
                 return False
 
             lab = None
             for x in labs:
-                if getattr(x, "is_idle", False):
+                if bool(getattr(x, "is_idle", False)):
                     lab = x
                     break
             if lab is None:
                 self._fail("research", U.BARRACKSTECHLAB, "all_busy", {"upgrade": "STIMPACK"})
                 return False
 
-            # custo (python-sc2 geralmente aceita can_afford(AbilityId.RESEARCH_STIMPACK))
             try:
                 if not bot.can_afford(A.RESEARCH_STIMPACK):
                     self._fail("research", U.BARRACKSTECHLAB, "cant_afford", {"upgrade": "STIMPACK"})
@@ -1558,40 +2149,596 @@ class Economy:
 
         return False
 
-# ---------- bot/engine/placement.py ----------
-#bot/engine/placement.py
-# placement.py
+# ---------- bot/engine/expansion_finder.py ----------
+#bot/engine/expansion_finder.py
+#bot/engine/expansion_finder.py
 from __future__ import annotations
 
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple
 
 from sc2.position import Point2
 
 
+@dataclass(frozen=True)
+class ExpansionRank:
+    pos: Point2
+    path_dist: float
+
+
+def _k(p: Point2) -> Tuple[int, int]:
+    # chave estável: coords *2 (grid de 0.5)
+    return (int(round(float(p.x) * 2)), int(round(float(p.y) * 2)))
+
+
+async def _query_path(bot: Any, a: Point2, b: Point2) -> Optional[float]:
+    """
+    Retorna distância de pathing (aprox) entre a e b.
+    Em python-sc2, normalmente: await bot.client.query_pathing(a, b)
+    """
+    client = getattr(bot, "client", None)
+    if client is None:
+        return None
+
+    fn = getattr(client, "query_pathing", None)
+    if not callable(fn):
+        return None
+
+    try:
+        d = await fn(a, b)
+        if d is None:
+            return None
+        return float(d)
+    except Exception:
+        return None
+
+
+async def rank_expansions_by_pathing(
+    bot: Any,
+    expansions: List[Point2],
+    *,
+    start: Point2,
+    cache: Dict[Tuple[int, int], float] | None = None,
+) -> List[ExpansionRank]:
+    """
+    Ordena expansões por distância de pathing a partir de start.
+    Cache por ponto (não por par) é suficiente aqui porque start é fixo (main).
+    """
+    cache = cache if cache is not None else {}
+
+    ranks: List[ExpansionRank] = []
+    for p in expansions:
+        key = _k(p)
+        if key in cache:
+            ranks.append(ExpansionRank(pos=p, path_dist=float(cache[key])))
+            continue
+
+        d = await _query_path(bot, start, p)
+        if d is None:
+            # sem path: joga pra longe
+            d = 1e18
+        cache[key] = float(d)
+        ranks.append(ExpansionRank(pos=p, path_dist=float(d)))
+
+    ranks.sort(key=lambda r: r.path_dist)
+    return ranks
+
+
+async def compute_main_and_natural(
+    bot: Any,
+    *,
+    expansions: List[Point2],
+    start: Point2,
+    cache: Dict[Tuple[int, int], float] | None = None,
+) -> tuple[Optional[Point2], Optional[Point2]]:
+    """
+    Main = expansão mais próxima (pathing) do start.
+    Natural = segunda mais próxima (pathing) que seja > um pequeno epsilon do main.
+    """
+    if not expansions:
+        return None, None
+
+    ranks = await rank_expansions_by_pathing(bot, expansions, start=start, cache=cache)
+
+    main = ranks[0].pos if ranks else None
+    nat = None
+    if main is not None:
+        for r in ranks[1:]:
+            # evita pegar o mesmo ponto “colado”
+            if float(r.pos.distance_to(main)) > 3.0:
+                nat = r.pos
+                break
+    return main, nat
+
+# ---------- bot/engine/placement.py ----------
+#bot/engine/placement.py
+#bot/engine/placement.py
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Optional, Dict, List
+
+from sc2.ids.unit_typeid import UnitTypeId as U
+from sc2.position import Point2
+
+from bot.engine.wall import WallPlanner
+
+
+def _snap_half(p: Point2) -> Point2:
+    x = round(float(p.x) * 2.0) / 2.0
+    y = round(float(p.y) * 2.0) / 2.0
+    return Point2((x, y))
+
+
+@dataclass
+class _Reservation:
+    unit_type: U
+    pos: Point2
+    expires_iter: int
+
+
 class Placement:
-    def __init__(self, bot: Any, *, ctx: Any | None = None, logger: Any | None = None):
+    """
+    - wall_pref="MAIN"/"NATURAL": pega slot da wall.
+    - main_wall_enabled=True: tenta colocar os PRIMEIROS depots/rax na MAIN wall, mas sem “queimar slot”.
+      Em vez de contador 'used', decide olhando se já existe building perto do slot.
+    """
+
+    def __init__(
+        self,
+        bot: Any,
+        *,
+        ctx: Any | None = None,
+        logger: Any | None = None,
+        wall_main: bool = True,
+        wall_natural: bool = False,
+        main_wall_enabled: bool = True,
+        reserve_ttl_iters: int = 60,
+        debug: bool = True,
+    ):
         self.bot = bot
         self.ctx = ctx
         self.log = logger
+        self.debug = debug
 
-    async def find_placement(self, unit_type, *, near: Point2 | None = None) -> Point2 | None:
+        self.wall_main = bool(wall_main)
+        self.wall_natural = bool(wall_natural)
+        self.main_wall_enabled = bool(main_wall_enabled)
+        self.reserve_ttl_iters = int(reserve_ttl_iters)
+
+        self.wall = WallPlanner(bot, ctx=ctx, logger=logger, debug=debug) if ctx is not None else None
+
+        self._cache: Dict[str, Point2] = {}
+        self._reservations: List[_Reservation] = []
+
+        self._wall_slots: Dict[str, Dict[str, List[Point2]]] = {
+            "MAIN": {"SUPPLYDEPOT": [], "BARRACKS": []},
+            "NATURAL": {"SUPPLYDEPOT": [], "BARRACKS": []},
+        }
+
+    def _emit(self, event: str, payload: dict) -> None:
+        if self.log:
+            self.log.emit(event, payload, meta={"iter": int(getattr(self.ctx, "iteration", 0) if self.ctx else 0)})
+
+    def _iter(self) -> int:
+        return int(getattr(self.ctx, "iteration", 0) if self.ctx else 0)
+
+    def _cleanup_reservations(self) -> None:
+        it = self._iter()
+        self._reservations = [r for r in self._reservations if int(r.expires_iter) > it]
+
+    def _is_reserved(self, unit_type: U, pos: Point2) -> bool:
+        for r in self._reservations:
+            if r.unit_type == unit_type and float(r.pos.distance_to(pos)) < 0.25:
+                return True
+        return False
+
+    def _reserve(self, unit_type: U, pos: Point2) -> None:
+        it = self._iter()
+        self._reservations.append(_Reservation(unit_type=unit_type, pos=pos, expires_iter=it + self.reserve_ttl_iters))
+
+    async def _can_place(self, unit_type: U, pos: Point2) -> bool:
+        bot = self.bot
+
+        fn = getattr(bot, "can_place_single", None)
+        if callable(fn):
+            try:
+                return bool(await fn(unit_type, pos))
+            except Exception:
+                pass
+
+        fn = getattr(bot, "can_place", None)
+        if callable(fn):
+            try:
+                res = fn(unit_type, [pos])
+                if isinstance(res, list) and res:
+                    return bool(res[0])
+                return bool(res)
+            except Exception:
+                pass
+
+        return True
+
+    def _anchor_default(self) -> Point2:
+        bot = self.bot
+        if getattr(bot, "townhalls", None) and bot.townhalls.ready:
+            return bot.townhalls.ready.first.position
+        return bot.start_location
+
+    async def _fallback_find(self, unit_type: U, *, near: Point2 | None) -> Point2 | None:
         bot = self.bot
         if near is None:
-            if bot.townhalls.ready:
-                near = bot.townhalls.ready.first.position
-            else:
-                near = bot.start_location
+            near = self._anchor_default()
+        try:
+            return await bot.find_placement(unit_type, near=near, placement_step=2)
+        except Exception:
+            return None
 
-        pos = await bot.find_placement(unit_type, near=near, placement_step=2)
+    def _ensure_wall_slots_loaded(self, where: str) -> None:
+        if self.wall is None:
+            return
+        w = str(where).strip().upper()
+        if w not in self._wall_slots:
+            return
+        if self._wall_slots[w]["SUPPLYDEPOT"] or self._wall_slots[w]["BARRACKS"]:
+            return
+
+        try:
+            depots = [p for p in self.wall.wall_spots_for(U.SUPPLYDEPOT, where=w) if p is not None]
+            rax = [p for p in self.wall.wall_spots_for(U.BARRACKS, where=w) if p is not None]
+            self._wall_slots[w]["SUPPLYDEPOT"] = [_snap_half(p) for p in depots[:2]]
+            self._wall_slots[w]["BARRACKS"] = [_snap_half(p) for p in rax[:1]]
+            self._emit(
+                "placement_wall_slots_loaded",
+                {
+                    "where": w,
+                    "depots": [[float(p.x), float(p.y)] for p in self._wall_slots[w]["SUPPLYDEPOT"]],
+                    "barracks": [[float(p.x), float(p.y)] for p in self._wall_slots[w]["BARRACKS"]],
+                },
+            )
+        except Exception:
+            self._wall_slots[w]["SUPPLYDEPOT"] = []
+            self._wall_slots[w]["BARRACKS"] = []
+
+    def _owned_near(self, unit_type: U, pos: Point2, *, max_d: float = 1.25) -> bool:
+        """
+        Decide se "já existe" building no slot (sem depender de contador usado_...).
+        """
+        bot = self.bot
+        fn = getattr(bot, "units", None)
+        if not callable(fn):
+            return False
+        try:
+            units = fn(unit_type)
+            if not units:
+                return False
+            for u in units:
+                try:
+                    if float(u.distance_to(pos)) <= float(max_d):
+                        return True
+                except Exception:
+                    continue
+        except Exception:
+            return False
+        return False
+
+    async def _try_main_wall_firsts(self, unit_type: U) -> Optional[Point2]:
+        """
+        Se main_wall_enabled:
+          - 1º/2º depot: pega slots MAIN se ainda não existe depot nos slots
+          - 1ª barracks: pega slot MAIN se ainda não existe barracks no slot
+        """
+        if not self.main_wall_enabled:
+            return None
+        if self.wall is None or not self.wall_main:
+            return None
+        if unit_type not in (U.SUPPLYDEPOT, U.BARRACKS):
+            return None
+
+        self._cleanup_reservations()
+        self._ensure_wall_slots_loaded("MAIN")
+
+        slots = self._wall_slots["MAIN"][unit_type.name]
+        for p in list(slots):
+            p = _snap_half(p)
+            if self._is_reserved(unit_type, p):
+                continue
+            if self._owned_near(unit_type, p, max_d=1.25):
+                continue
+            if not await self._can_place(unit_type, p):
+                continue
+
+            self._reserve(unit_type, p)
+            self._emit("placement_main_wall_forced", {"unit": unit_type.name, "pos": [float(p.x), float(p.y)]})
+            return p
+
+        return None
+
+    async def find_placement(self, unit_type, *, near: Point2 | None = None, wall_pref: str | None = None) -> Point2 | None:
+        ut = unit_type
+        if isinstance(unit_type, str):
+            ut = getattr(U, unit_type)
+
+        # (A) wall_pref explícita (opener/force)
+        if wall_pref is not None:
+            w = str(wall_pref).strip().upper()
+            self._cleanup_reservations()
+            self._ensure_wall_slots_loaded(w)
+            slots = self._wall_slots.get(w, {}).get(ut.name, [])
+            for p in list(slots):
+                p = _snap_half(p)
+                if self._is_reserved(ut, p):
+                    continue
+                if not await self._can_place(ut, p):
+                    continue
+                self._reserve(ut, p)
+                self._cache[f"{w}:{ut.name}"] = p
+                self._emit("placement_wall_pick", {"where": w, "unit": ut.name, "pos": [float(p.x), float(p.y)]})
+                return p
+
+        # (B) primeiros buildings na MAIN wall sem queimar slot
+        forced = await self._try_main_wall_firsts(ut)
+        if forced is not None:
+            return forced
+
+        # (C) fallback normal
+        self._cleanup_reservations()
+
+        cached = self._cache.get(ut.name)
+        if cached is not None and not self._is_reserved(ut, cached):
+            if await self._can_place(ut, cached):
+                self._reserve(ut, cached)
+                self._emit("placement_cache_hit", {"unit": ut.name, "pos": [float(cached.x), float(cached.y)]})
+                return cached
+
+        pos = await self._fallback_find(ut, near=near)
+        if pos is None:
+            self._emit("placement_fail", {"unit": ut.name, "near": [float(near.x), float(near.y)] if near else None})
+            return None
+
+        pos = _snap_half(pos)
+        self._reserve(ut, pos)
+        self._cache[ut.name] = pos
+        self._emit("placement_ok", {"unit": ut.name, "pos": [float(pos.x), float(pos.y)]})
         return pos
 
+# ---------- bot/engine/wall.py ----------
+#bot/engine/wall.py
+#bot/engine/wall.py
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Optional, List
+
+from sc2.ids.unit_typeid import UnitTypeId as U
+from sc2.position import Point2
+
+
+def _snap_half(p: Point2) -> Point2:
+    x = round(float(p.x) * 2.0) / 2.0
+    y = round(float(p.y) * 2.0) / 2.0
+    return Point2((x, y))
+
+
+@dataclass
+class WallLayout:
+    ramp: Any
+    ramp_center: Optional[Point2]
+    depot_positions: List[Point2]
+    barracks_position: Optional[Point2]
+
+
+class WallPlanner:
+    """
+    Suporta 2 walls:
+      - MAIN: usa main_base_ramp quando possível
+      - NATURAL: rampa mais provável da natural
+
+    Retorna spots (2 depots + 1 barracks quando disponíveis).
+    """
+
+    def __init__(self, bot: Any, *, ctx: Any, logger: Any | None = None, debug: bool = True):
+        self.bot = bot
+        self.ctx = ctx
+        self.log = logger
+        self.debug = debug
+
+        self._cached_main: WallLayout | None = None
+        self._cached_nat: WallLayout | None = None
+        self._cached_main_iter: int = -999999
+        self._cached_nat_iter: int = -999999
+
+    def _emit(self, event: str, payload: dict) -> None:
+        if self.log:
+            self.log.emit(event, payload, meta={"iter": int(getattr(self.ctx, "iteration", 0))})
+
+    def _my_start(self) -> Optional[Point2]:
+        return getattr(self.bot, "start_location", None)
+
+    def _enemy_main(self) -> Optional[Point2]:
+        locs = getattr(self.bot, "enemy_start_locations", None)
+        return locs[0] if locs else None
+
+    def _expansions(self) -> list[Point2]:
+        exps = getattr(self.bot, "expansion_locations_list", None)
+        return list(exps) if exps else []
+
+    def _my_main_expansion(self) -> Optional[Point2]:
+        my_main = self._my_start()
+        exps = self._expansions()
+        if my_main is None or not exps:
+            return None
+        return min(exps, key=lambda p: p.distance_to(my_main))
+
+    def _my_natural(self) -> Optional[Point2]:
+        nat = getattr(self.bot, "cached_natural_expansion", None)
+        if nat is not None:
+            return nat
+        main_exp = self._my_main_expansion()
+        exps = self._expansions()
+        if main_exp is None or not exps:
+            return None
+        candidates = [p for p in exps if p.distance_to(main_exp) > 3.0]
+        if not candidates:
+            return None
+        return min(candidates, key=lambda p: p.distance_to(main_exp))
+
+    def _iter_ramps(self) -> list[Any]:
+        gi = getattr(self.bot, "game_info", None)
+        ramps = getattr(gi, "map_ramps", None) if gi is not None else None
+        if ramps is None:
+            ramps = getattr(self.bot, "ramps", None)
+        try:
+            return list(ramps) if ramps else []
+        except Exception:
+            return []
+
+    def _is_reasonable_ramp(self, r: Any) -> bool:
+        if r is None:
+            return False
+        if getattr(r, "top_center", None) is None and getattr(r, "upper", None) is None:
+            return False
+        return True
+
+    def _ramp_center(self, r: Any) -> Optional[Point2]:
+        tc = getattr(r, "top_center", None)
+        bc = getattr(r, "bottom_center", None)
+        if tc is not None and bc is not None:
+            try:
+                return Point2(((tc.x + bc.x) / 2, (tc.y + bc.y) / 2))
+            except Exception:
+                pass
+        for k in ("top_center", "bottom_center", "upper", "lower"):
+            p = getattr(r, k, None)
+            if p is not None:
+                return p
+        return None
+
+    def _layout_from_ramp(self, ramp: Any, *, label: str) -> WallLayout | None:
+        if ramp is None:
+            return None
+
+        center = self._ramp_center(ramp)
+        if center is not None:
+            center = _snap_half(center)
+
+        depot_positions: List[Point2] = []
+        barracks_pos: Optional[Point2] = None
+
+        # Ramp helpers (quando existem) — sempre snap.
+        try:
+            cds = getattr(ramp, "corner_depots", None)
+            if cds:
+                depot_positions = [_snap_half(p) for p in list(cds)[:2] if p is not None]
+        except Exception:
+            depot_positions = []
+
+        try:
+            bcp = getattr(ramp, "barracks_correct_placement", None)
+            if bcp is not None:
+                barracks_pos = _snap_half(bcp)
+        except Exception:
+            barracks_pos = None
+
+        self._emit(
+            "wall_layout",
+            {
+                "where": label,
+                "ramp_center": [float(center.x), float(center.y)] if center else None,
+                "depot_positions": [[float(p.x), float(p.y)] for p in depot_positions],
+                "barracks_position": [float(barracks_pos.x), float(barracks_pos.y)] if barracks_pos else None,
+            },
+        )
+
+        return WallLayout(
+            ramp=ramp,
+            ramp_center=center,
+            depot_positions=depot_positions,
+            barracks_position=barracks_pos,
+        )
+
+    def _main_ramp(self) -> Any | None:
+        return getattr(self.bot, "main_base_ramp", None)
+
+    def _find_natural_ramp(self) -> Any | None:
+        nat = self._my_natural()
+        if nat is None:
+            return None
+
+        enemy = self._enemy_main()
+        ramps = [r for r in self._iter_ramps() if self._is_reasonable_ramp(r)]
+        if not ramps:
+            return None
+
+        main_ramp = self._main_ramp()
+        if main_ramp is not None:
+            ramps = [r for r in ramps if r is not main_ramp]
+
+        if not ramps:
+            return None
+
+        def score(r: Any) -> float:
+            c = self._ramp_center(r)
+            if c is None:
+                return 1e18
+            d_nat = float(c.distance_to(nat))
+            if enemy is None:
+                return d_nat
+            d_enemy = float(c.distance_to(enemy))
+            return d_nat + 0.03 * d_enemy
+
+        return min(ramps, key=score)
+
+    def compute(self, where: str, *, cache_window_iters: int = 400) -> WallLayout | None:
+        it = int(getattr(self.ctx, "iteration", 0))
+        w = str(where).strip().upper()
+
+        if w == "MAIN":
+            if self._cached_main is not None and (it - self._cached_main_iter) <= int(cache_window_iters):
+                return self._cached_main
+
+            ramp = self._main_ramp()
+            layout = self._layout_from_ramp(ramp, label="MAIN")
+            self._cached_main = layout
+            self._cached_main_iter = it
+            return layout
+
+        if w == "NATURAL":
+            if self._cached_nat is not None and (it - self._cached_nat_iter) <= int(cache_window_iters):
+                return self._cached_nat
+
+            ramp = self._find_natural_ramp()
+            layout = self._layout_from_ramp(ramp, label="NATURAL")
+            self._cached_nat = layout
+            self._cached_nat_iter = it
+            return layout
+
+        return None
+
+    def wall_spots_for(self, unit_type: U, *, where: str) -> List[Point2]:
+        layout = self.compute(where)
+        if layout is None:
+            return []
+        if unit_type == U.SUPPLYDEPOT:
+            return list(layout.depot_positions)[:2]
+        if unit_type == U.BARRACKS:
+            return [layout.barracks_position] if layout.barracks_position is not None else []
+        return []
+
+    def wall_anchor(self, *, where: str) -> Optional[Point2]:
+        layout = self.compute(where)
+        if layout is None:
+            return None
+        return layout.ramp_center
+
 # ---------- bot/strategy/loader.py ----------
+#bot/strategy/loader.py
 #bot/strategy/loader.py
 from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from .schema import (
     StrategyConfig,
@@ -1601,6 +2748,7 @@ from .schema import (
     BehaviorsCfg,
     MacroBehaviorCfg,
     CombatBehaviorCfg,
+    OpenerCfg,
 )
 
 _ALLOWED_POINTS = {"ENEMY_MAIN", "ENEMY_NATURAL", "MY_MAIN", "MY_NATURAL"}
@@ -1651,7 +2799,6 @@ def _require_list(d: Dict[str, Any], key: str, *, path: str) -> list:
 def _parse_drop_obj(raw: Dict[str, Any], *, path: str, default_name: str) -> DropCfg:
     enabled = _as_bool(raw.get("enabled", False), path=f"{path}.enabled")
     if not enabled:
-        print("DropCfg fields:", DropCfg.__dataclass_fields__.keys())
         return DropCfg(enabled=False, name=default_name)
 
     for k in ("min_marines", "load_count", "move_eps", "ground_radius", "staging", "target"):
@@ -1679,6 +2826,7 @@ def _parse_drop_obj(raw: Dict[str, Any], *, path: str, default_name: str) -> Dro
     start_loop = raw.get("start_loop", None)
     if start_loop is not None:
         start_loop = _as_int(start_loop, path=f"{path}.start_loop")
+
     pickup = _as_str(raw.get("pickup", "MY_MAIN"), path=f"{path}.pickup")
     if pickup not in _ALLOWED_POINTS:
         raise ValueError(f"{path}.pickup inválido: {pickup} (allowed={sorted(_ALLOWED_POINTS)})")
@@ -1695,17 +2843,36 @@ def _parse_drop_obj(raw: Dict[str, Any], *, path: str, default_name: str) -> Dro
         load_count=_as_int(raw["load_count"], path=f"{path}.load_count"),
         move_eps=_as_float(raw["move_eps"], path=f"{path}.move_eps"),
         ground_radius=_as_float(raw["ground_radius"], path=f"{path}.ground_radius"),
-
         pickup=pickup,
         staging=staging,
         target=target,
         staging_dist=staging_dist,
-
         pickup_eps=pickup_eps,
         load_range=load_range,
-
         require_stim=_as_bool(raw.get("require_stim", False), path=f"{path}.require_stim"),
     )
+
+
+def _parse_opener(data: Dict[str, Any], *, path: str) -> OpenerCfg:
+    # default: opener ligado e forçando wall
+    if "opener" not in data or data["opener"] is None:
+        return OpenerCfg()
+
+    raw = data["opener"]
+    if not isinstance(raw, dict):
+        raise TypeError(f"{path}.opener must be object")
+
+    enabled = _as_bool(raw.get("enabled", True), path=f"{path}.opener.enabled")
+    force_wall = _as_bool(raw.get("force_wall", True), path=f"{path}.opener.force_wall")
+    depots = _as_int(raw.get("depots", 2), path=f"{path}.opener.depots")
+    barracks = _as_int(raw.get("barracks", 1), path=f"{path}.opener.barracks")
+
+    # sane defaults
+    depots = max(0, depots)
+    barracks = max(0, barracks)
+
+    return OpenerCfg(enabled=enabled, force_wall=force_wall, depots=depots, barracks=barracks)
+
 
 def load_strategy(name: str) -> StrategyConfig:
     base = Path(__file__).resolve().parents[1] / "strats"
@@ -1748,6 +2915,15 @@ def load_strategy(name: str) -> StrategyConfig:
     if "enabled" not in combat:
         raise KeyError("behaviors.combat: missing required key 'enabled'")
 
+    # wall_natural pode vir como root bool, ou wall: { natural: bool }
+    wall_natural = False
+    if "wall_natural" in data:
+        wall_natural = _as_bool(data.get("wall_natural", False), path="wall_natural")
+    elif "wall" in data and isinstance(data["wall"], dict):
+        wall_natural = _as_bool(data["wall"].get("natural", False), path="wall.natural")
+
+    opener = _parse_opener(data, path=str(path))
+
     drops: List[DropCfg] = []
     if "drops" in data and data["drops"] is not None:
         raw_drops = data["drops"]
@@ -1760,7 +2936,6 @@ def load_strategy(name: str) -> StrategyConfig:
             if dc.enabled:
                 drops.append(dc)
     else:
-        # compat opcional: "drop" antigo vira drops[0]
         raw_drop = data.get("drop", None)
         if raw_drop is not None:
             if not isinstance(raw_drop, dict):
@@ -1784,6 +2959,8 @@ def load_strategy(name: str) -> StrategyConfig:
                 enabled=_as_bool(combat["enabled"], path="behaviors.combat.enabled"),
             ),
         ),
+        wall_natural=bool(wall_natural),
+        opener=opener,
         drops=drops,
         build=build,
         production_rules=prod_rules,
@@ -1791,13 +2968,14 @@ def load_strategy(name: str) -> StrategyConfig:
 
 # ---------- bot/strategy/plan_executor.py ----------
 #bot/strategy/plan_executor.py
-# bot/strategy/plan_executor.py
+#bot/strategy/plan_executor.py
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from sc2.ids.unit_typeid import UnitTypeId as U
 from sc2.ids.upgrade_id import UpgradeId as Up
+from sc2.position import Point2
 
 from .schema import StrategyConfig
 
@@ -1830,17 +3008,16 @@ def parse_up(name: str) -> Up:
         raise ValueError(f"UpgradeId inválido no JSON: {name}") from e
 
 
-# Falhas "temporárias" típicas: não devem travar o resto do plano.
-# A ideia é: o step continua "pendente" e será tentado de novo depois,
-# mas não impede outros steps independentes de acontecerem.
 _TEMPORARY_FAIL_REASONS: set[str] = {
     "cant_afford",
     "no_supply",
     "no_placement",
     "all_busy",
     "no_idle_parent",
-    "do_failed",  # action result / API às vezes falha de forma transiente
+    "do_failed",
 }
+
+_ALLOWED_NEAR_POINTS = {"MY_MAIN", "MY_NATURAL"}
 
 
 class PlanExecutor:
@@ -1852,6 +3029,11 @@ class PlanExecutor:
         self.log = logger
         self._done_steps: set[str] = set()
 
+        # opener runtime
+        self._opener_done: bool = False
+        self._opener_force_wall_active: bool = bool(getattr(self.strategy.opener, "force_wall", True))
+        self._opener_no_place_streak: int = 0
+
         if self.log:
             self.log.emit(
                 "strategy_loaded",
@@ -1859,21 +3041,146 @@ class PlanExecutor:
                     "name": self.strategy.name,
                     "build_steps": int(len(self.strategy.build)),
                     "production_rules": int(len(self.strategy.production_rules)),
+                    "opener": {
+                        "enabled": bool(getattr(self.strategy.opener, "enabled", True)),
+                        "force_wall": bool(getattr(self.strategy.opener, "force_wall", True)),
+                        "depots": int(getattr(self.strategy.opener, "depots", 2)),
+                        "barracks": int(getattr(self.strategy.opener, "barracks", 1)),
+                    },
                 },
                 meta={"iter": int(getattr(self.ctx, "iteration", 0))},
             )
 
     async def step(self) -> None:
+        # (0) opener obrigatório antes do plano
+        if await self._run_opener_one_action():
+            return
+
+        # (1) build plan
         if await self._run_build_plan_one_step():
             return
+
+        # (2) production rules
         await self._run_production_rules_one_action()
 
+    # -----------------------
+    # opener (MAIN wall)
+    # -----------------------
+    async def _run_opener_one_action(self) -> bool:
+        opener = getattr(self.strategy, "opener", None)
+        if opener is None or not bool(getattr(opener, "enabled", True)):
+            self._opener_done = True
+            return False
+
+        if self._opener_done:
+            return False
+
+        depots_need = int(getattr(opener, "depots", 2))
+        rax_need = int(getattr(opener, "barracks", 1))
+
+        if depots_need <= 0 and rax_need <= 0:
+            self._opener_done = True
+            return False
+
+        depots_total = int(self.builder.total(U.SUPPLYDEPOT))
+        rax_total = int(self.builder.total(U.BARRACKS))
+
+        if depots_total >= depots_need and rax_total >= rax_need:
+            self._opener_done = True
+            if self.log:
+                self.log.emit(
+                    "opener_complete",
+                    {"depots_total": depots_total, "barracks_total": rax_total},
+                    meta={"iter": int(self.ctx.iteration)},
+                )
+            return False
+
+        # ordem fixa: depots -> barracks
+        want = None
+        if depots_total < depots_need:
+            want = U.SUPPLYDEPOT
+        elif rax_total < rax_need:
+            want = U.BARRACKS
+
+        if want is None:
+            self._opener_done = True
+            return False
+
+        wall_pref = "MAIN" if self._opener_force_wall_active else None
+
+        did = await self.builder.try_build(want, near=None, wall_pref=wall_pref)
+        last = getattr(self.builder, "last", None)
+        last_reason = str(getattr(last, "reason", "") or "")
+
+        # se não conseguiu placement na wall repetidas vezes, faz fallback automático
+        if not did and wall_pref is not None and last_reason == "no_placement":
+            self._opener_no_place_streak += 1
+            if self._opener_no_place_streak >= 8:
+                self._opener_force_wall_active = False
+                if self.log:
+                    self.log.emit(
+                        "opener_force_wall_disabled",
+                        {"reason": "no_placement_streak", "streak": int(self._opener_no_place_streak)},
+                        meta={"iter": int(self.ctx.iteration)},
+                    )
+        elif did:
+            self._opener_no_place_streak = 0
+
+        if self.log:
+            self.log.emit(
+                "opener_step",
+                {
+                    "want": want.name,
+                    "did": bool(did),
+                    "depots_total": depots_total,
+                    "barracks_total": rax_total,
+                    "force_wall_active": bool(self._opener_force_wall_active),
+                    "last_reason": last_reason,
+                },
+                meta={"iter": int(self.ctx.iteration)},
+            )
+
+        return bool(did)
+
+    # -----------------------
+    # map-point helpers (near)
+    # -----------------------
+    def _my_start(self) -> Optional[Point2]:
+        return getattr(self.bot, "start_location", None)
+
+    def _my_natural(self) -> Optional[Point2]:
+        nat = getattr(self.bot, "cached_natural_expansion", None)
+        if nat is not None:
+            return nat
+
+        exps = getattr(self.bot, "expansion_locations_list", None)
+        my_main = self._my_start()
+        if my_main is None or not exps:
+            return None
+
+        exps = list(exps)
+        main_exp = min(exps, key=lambda p: p.distance_to(my_main))
+        candidates = [p for p in exps if p.distance_to(main_exp) > 3.0]
+        if not candidates:
+            return None
+        return min(candidates, key=lambda p: p.distance_to(main_exp))
+
+    def _resolve_near(self, near_key: str | None) -> Optional[Point2]:
+        if near_key is None:
+            return None
+        key = str(near_key).strip().upper()
+        if key not in _ALLOWED_NEAR_POINTS:
+            raise ValueError(f"near inválido: {key} (allowed={sorted(_ALLOWED_NEAR_POINTS)})")
+        if key == "MY_MAIN":
+            return self._my_start()
+        if key == "MY_NATURAL":
+            return self._my_natural()
+        return None
+
+    # -----------------------
+    # main loop (build/production)
+    # -----------------------
     async def _run_build_plan_one_step(self) -> bool:
-        """
-        Executa NO MÁXIMO 1 step "bem-sucedido" por tick.
-        Se step falhar por motivo TEMPORÁRIO, não trava o plano:
-        continua varrendo os próximos steps no mesmo tick (até algum executar com sucesso).
-        """
         for step in self.strategy.build:
             name = str(step.get("name") or step.get("id") or "").strip() or f"_unnamed_{id(step)}"
             if name in self._done_steps:
@@ -1896,7 +3203,6 @@ class PlanExecutor:
                 self._emit("plan_step_done", {"name": name, "do": action})
                 return True
 
-            # falhou
             last = getattr(self.builder, "last", None)
             last_reason = str(getattr(last, "reason", "") or "")
             last_details = getattr(last, "details", None)
@@ -1906,12 +3212,9 @@ class PlanExecutor:
                 {"name": name, "do": action, "last_reason": last_reason, "last_details": last_details},
             )
 
-            # Se falha for temporária, NÃO bloqueia o resto do plano:
-            # continua tentando outros steps que também estejam prontos.
             if last_reason in _TEMPORARY_FAIL_REASONS:
                 continue
 
-            # Falha estrutural: aí sim para (ex: no_workers, no_townhall, no_geyser_candidates, etc.)
             return False
 
         return False
@@ -1942,14 +3245,11 @@ class PlanExecutor:
 
         bot = self.bot
 
-        # ---- economy gates ----
         if "minerals_gte" in cond and bot.minerals < _as_int(cond["minerals_gte"], 0):
             return False
         if "gas_gte" in cond and bot.vespene < _as_int(cond["gas_gte"], 0):
             return False
 
-        # ---- supply gates ----
-        # supply_left_* já existia; agora adicionamos supply_used_* (usado no depot_12 do seu JSON)
         if "supply_left_lte" in cond and bot.supply_left > _as_int(cond["supply_left_lte"], 0):
             return False
         if "supply_left_gte" in cond and bot.supply_left < _as_int(cond["supply_left_gte"], 0):
@@ -1965,7 +3265,6 @@ class PlanExecutor:
         if "supply_cap_lte" in cond and bot.supply_cap > _as_int(cond["supply_cap_lte"], 0):
             return False
 
-        # ---- unit thresholds ----
         if "have_gte" in cond and not self._check_unit_thresholds(cond["have_gte"], op="gte", mode="total"):
             return False
         if "have_lte" in cond and not self._check_unit_thresholds(cond["have_lte"], op="lte", mode="total"):
@@ -1977,7 +3276,6 @@ class PlanExecutor:
         if "unit_lte" in cond and not self._check_unit_thresholds(cond["unit_lte"], op="lte", mode="total"):
             return False
 
-        # ---- upgrades ----
         if "upgrade_done" in cond:
             ups = cond["upgrade_done"]
             if isinstance(ups, str):
@@ -2022,7 +3320,6 @@ class PlanExecutor:
         if not action:
             return False
 
-        # ---- normal build (structures/refinery/etc) ----
         if "build" in action:
             ut = parse_u(str(action["build"]))
 
@@ -2032,9 +3329,10 @@ class PlanExecutor:
             if self.builder.pending(ut) > 0:
                 return False
 
-            return await self.builder.try_build(ut)
+            near_key = action.get("near", None)
+            near_pt = self._resolve_near(near_key) if near_key is not None else None
+            return await self.builder.try_build(ut, near=near_pt)
 
-        # ---- addons ----
         if "build_addon" in action:
             addon = str(action["build_addon"])
             on_name = str(action.get("on") or "").strip()
@@ -2064,12 +3362,10 @@ class PlanExecutor:
 
             return await self.builder.try_addon(on=on_ut, addon=addon)
 
-        # ---- research ----
         if "research" in action:
             up = parse_up(str(action["research"]))
             return await self.builder.try_research(up)
 
-        # ---- train ----
         if "train" in action:
             ut = parse_u(str(action["train"]))
             from_name = str(action.get("from") or "").strip()
@@ -2091,6 +3387,7 @@ class PlanExecutor:
         self.log.emit(event, payload, meta={"strategy": self.strategy.name, "iter": int(self.ctx.iteration)})
 
 # ---------- bot/strategy/schema.py ----------
+#bot/strategy/schema.py
 #bot/strategy/schema.py
 from __future__ import annotations
 
@@ -2128,34 +3425,44 @@ class BehaviorsCfg:
     combat: CombatBehaviorCfg = CombatBehaviorCfg()
 
 
-
 @dataclass(frozen=True)
 class DropCfg:
     enabled: bool = False
     name: str = "drop"
 
-    # schedule
     start_loop: Optional[int] = None
     start_time: Optional[float] = None
 
-    # composition / micro
     min_marines: int = 8
     load_count: int = 8
     move_eps: float = 3.0
     ground_radius: float = 12.0
 
-    # points
     pickup: str = "MY_MAIN"
     staging: str = "ENEMY_NATURAL"
     target: str = "ENEMY_MAIN"
     staging_dist: float = 18.0
 
-    # load tuning
     pickup_eps: float = 6.0
     load_range: float = 7.0
 
-    # gates
     require_stim: bool = False
+
+
+@dataclass(frozen=True)
+class OpenerCfg:
+    """
+    Opener obrigatório (se enabled):
+      - depots na MAIN wall
+      - barracks na MAIN wall
+    'force_wall' tenta usar os spots do WallPlanner; se falhar repetidamente, o PlanExecutor faz fallback.
+    """
+    enabled: bool = True
+    force_wall: bool = True
+    depots: int = 2
+    barracks: int = 1
+
+
 @dataclass(frozen=True)
 class StrategyConfig:
     name: str = "default"
@@ -2163,6 +3470,12 @@ class StrategyConfig:
     economy: EconomyCfg = EconomyCfg()
     production: ProductionCfg = ProductionCfg()
     behaviors: BehaviorsCfg = BehaviorsCfg()
+
+    # NATURAL wall como parâmetro da build (mantido)
+    wall_natural: bool = False
+
+    # NOVO: opener obrigatório (main wall)
+    opener: OpenerCfg = OpenerCfg()
 
     drops: List[DropCfg] = field(default_factory=list)
 
@@ -2173,12 +3486,18 @@ class StrategyConfig:
 #bot/strats/default.json
 {
     "name": "default",
+    "opener": {
+        "enabled": true,
+        "force_wall": true,
+        "depots": 2,
+        "barracks": 1
+    },
     "economy": {
-        "scv_target": 20,
-        "depot_trigger_supply_left": 2
+        "scv_target": 40,
+        "depot_trigger_supply_left": 3
     },
     "production": {
-        "marine_cap": 32
+        "marine_cap": 40
     },
     "behaviors": {
         "macro": {
@@ -2225,29 +3544,21 @@ class StrategyConfig:
     ],
     "build": [
         {
-            "name": "depot_12",
-            "when": {
-                "supply_used_gte": 12
-            },
-            "do": {
-                "build": "SUPPLYDEPOT"
-            }
-        },
-        {
-            "name": "barracks_1",
+            "name": "cc_natural_2",
             "requires": {
                 "ready_gte": {
-                    "SUPPLYDEPOT": 1
+                    "BARRACKS": 1
                 }
             },
             "when": {
                 "have_lte": {
-                    "BARRACKS": 0
+                    "COMMANDCENTER": 1
                 },
-                "minerals_gte": 150
+                "minerals_gte": 400
             },
             "do": {
-                "build": "BARRACKS"
+                "build": "COMMANDCENTER",
+                "near": "MY_NATURAL"
             }
         },
         {
@@ -2453,7 +3764,7 @@ class StrategyConfig:
 
 # ---------- bot/terran_bot.py ----------
 #bot/terran_bot.py
-# bot/terran_bot.py
+#bot/terran_bot.py
 from __future__ import annotations
 
 from sc2.bot_ai import BotAI
@@ -2465,6 +3776,7 @@ from bot.core.unit_manager import UnitManager
 from bot.engine.economy import Economy
 from bot.engine.placement import Placement
 from bot.engine.builder import Builder
+from bot.engine.expansion_finder import compute_main_and_natural
 
 from bot.strategy.loader import load_strategy
 from bot.strategy.plan_executor import PlanExecutor
@@ -2486,53 +3798,91 @@ class TerranBot(BotAI):
         self.strategy = load_strategy(strat_name)
         self.log.emit("bot_init", {"strategy": self.strategy.name, "strat_name": str(strat_name)})
 
-        self.econ = Economy(self, ctx=self.ctx, logger=self.log)
-        self.place = Placement(self, ctx=self.ctx, logger=self.log)
-        self.builder = Builder(self, self.econ, self.place, self.ctx, logger=self.log)
+        # cache de expansões por pathing
+        self.cached_main_expansion = None
+        self.cached_natural_expansion = None
+        self._exp_cache = {}
+        self._next_exp_recalc_iter = 0
 
-        # NEW: UnitManager
+        self.econ = Economy(self, ctx=self.ctx, logger=self.log)
+
+        # wall_main continua ON (para placement usar spots quando pedirmos wall_pref="MAIN")
+        # wall_natural depende strategy.wall_natural
+        self.place = Placement(
+            self,
+            ctx=self.ctx,
+            logger=self.log,
+            wall_main=True,
+            wall_natural=bool(getattr(self.strategy, "wall_natural", False)),
+            debug=debug,
+        )
+
+        self.builder = Builder(self, self.econ, self.place, self.ctx, logger=self.log)
         self.unitmgr = UnitManager(self, self.ctx, logger=self.log, debug=debug)
 
-        # behaviors base
         self.macro = MacroBehavior(self, self.econ, self.builder, ctx=self.ctx, logger=self.log, debug=debug)
+
+        # PlanExecutor agora contém o opener obrigatório (2 depots + 1 rax) com opção de override via JSON
         self.plan_exec = PlanExecutor(self, self.builder, self.strategy, ctx=self.ctx, logger=self.log)
         self.plan = PlanBehavior(self.plan_exec)
+
         self.combat = CombatBehavior(self, self.ctx, logger=self.log, debug=debug)
 
-        # drops: 1 instância por cfg (estável)
-        self.drop_behaviors: list[DropBehavior] = [
-            DropBehavior(self, self.ctx, self.unitmgr, logger=self.log, debug=debug)
-            for _ in getattr(self.strategy, "drops", [])
-        ]
+        self.drop_pairs: list[tuple[DropBehavior, dict]] = []
+        for dc in getattr(self.strategy, "drops", []):
+            drop_id = str(getattr(dc, "name", "") or "drop").strip() or "drop"
+            beh = DropBehavior(self, self.ctx, self.unitmgr, drop_id=drop_id, logger=self.log, debug=debug)
+            self.drop_pairs.append((beh, {"drop": dc}))
 
         self.orch = BehaviorOrchestrator()
         self._last_snapshot_iter = -999999
 
     def _active_pairs(self):
+        # Ordem importa: macro antes/ depois do plan é discutível, mas aqui plan vem cedo.
+        # O opener do plan é “build action” e vai competir com macro_supply — normal.
         pairs = [
-            (self.macro, {"econ": self.strategy.economy, "macro": self.strategy.behaviors.macro}),
             (self.plan, {"strategy": self.strategy}),
+            (self.macro, {"econ": self.strategy.economy, "macro": self.strategy.behaviors.macro}),
         ]
-
-        drops = getattr(self.strategy, "drops", [])
-        for beh, dc in zip(self.drop_behaviors, drops):
-            pairs.append((beh, {"drop": dc}))
-
+        for beh, cfg in self.drop_pairs:
+            pairs.append((beh, cfg))
         pairs.append((self.combat, {"combat": self.strategy.behaviors.combat}))
         return pairs
 
     def _compute_budget(self) -> int:
         drops = getattr(self.strategy, "drops", [])
         enabled_drops = sum(1 for d in drops if getattr(d, "enabled", False))
-        if enabled_drops >= 2:
-            return 2
-        return 1
+        # mantém a ideia original: 2 ações por tick se tiver 2 drops
+        return 2 if enabled_drops >= 2 else 1
+
+    async def _recalc_expansions_if_needed(self, iteration: int) -> None:
+        if iteration < int(self._next_exp_recalc_iter):
+            return
+
+        exps = getattr(self, "expansion_locations_list", None)
+        start = getattr(self, "start_location", None)
+        if not exps or start is None:
+            return
+
+        main, nat = await compute_main_and_natural(self, expansions=list(exps), start=start, cache=self._exp_cache)
+        self.cached_main_expansion = main
+        self.cached_natural_expansion = nat
+
+        self.log.emit(
+            "expansion_pathing",
+            {
+                "main": [float(main.x), float(main.y)] if main else None,
+                "natural": [float(nat.x), float(nat.y)] if nat else None,
+            },
+            meta={"iter": int(iteration)},
+        )
+        self._next_exp_recalc_iter = iteration + 110
 
     async def on_step(self, iteration: int):
         self.ctx.iteration = int(iteration)
-
-        # NEW: begin tick for unit manager
         self.unitmgr.begin_tick(int(iteration))
+
+        await self._recalc_expansions_if_needed(int(iteration))
 
         if iteration - self._last_snapshot_iter >= 22:
             self._last_snapshot_iter = iteration

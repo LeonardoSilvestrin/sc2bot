@@ -1,4 +1,4 @@
-# bot/core/unit_manager.py
+#bot/core/unit_manager.py
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -90,6 +90,58 @@ class UnitManager:
         self.ctx.owner_units.setdefault(owner, set())
         self.ctx.owner_meta.setdefault(owner, {})
 
+    def claim_nearby(
+        self,
+        *,
+        owner: str,
+        unit_type: U,
+        near: Point2,
+        radius: float,
+        limit: int,
+    ) -> List[int]:
+        """
+        Claim pragmático: pega unidades LIVRES (sem owner) próximas de um ponto.
+        Útil quando o drop está com marines reservados longe, mas tem marines “sobrando”
+        ao redor do medivac e você quer completar a carga sem travar.
+        """
+        self._ensure_owner_set(owner)
+        limit = int(limit)
+        if limit <= 0:
+            return []
+
+        free = self._free_units(unit_type)
+        if not free:
+            return []
+
+        r = float(radius)
+        cand = [u for u in free if float(u.distance_to(near)) <= r]
+        cand.sort(key=lambda u: u.distance_to(near))
+
+        claimed: List[int] = []
+        for u in cand:
+            if len(claimed) >= limit:
+                break
+            tag = int(u.tag)
+            # ainda livre?
+            if self.ctx.owner_of(tag) is not None:
+                continue
+            self.ctx.claim(owner, tag)
+            claimed.append(tag)
+
+        if claimed:
+            self._emit(
+                "unitmgr_claim_nearby",
+                {
+                    "owner": owner,
+                    "type": unit_type.name,
+                    "near": [float(near.x), float(near.y)],
+                    "radius": float(radius),
+                    "claimed": [int(x) for x in claimed],
+                },
+            )
+
+        return claimed
+
     async def request_group(
         self,
         *,
@@ -131,7 +183,6 @@ class UnitManager:
             if have < need:
                 free = self._free_units(ut)
 
-                # filtro de distância (anti-roubo de marines do outro lado do mapa)
                 maxd = float(max_distance_by_type.get(ut, 0.0) or 0.0)
                 if maxd > 0.0:
                     free = [u for u in free if float(u.distance_to(pickup)) <= maxd]
@@ -184,7 +235,6 @@ class UnitManager:
                 if d <= float(radius):
                     continue
 
-                # heurística de combate (best effort)
                 in_combat = False
                 if hasattr(u, "weapon_cooldown"):
                     try:

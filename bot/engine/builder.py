@@ -1,8 +1,8 @@
-﻿# bot/engine/builder.py
+﻿#bot/engine/builder.py
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Iterable, Optional
+from typing import Any, Iterable
 import inspect
 
 from sc2.ids.unit_typeid import UnitTypeId as U
@@ -58,6 +58,42 @@ class Builder:
         return out
 
     # ----------------------------
+    # counts
+    # ----------------------------
+    def have(self, unit_type: U) -> int:
+        return len(self._owned_of_type(unit_type))
+
+    def ready(self, unit_type: U) -> int:
+        units = self._owned_of_type(unit_type)
+        return sum(1 for u in units if getattr(u, "is_ready", False))
+
+    def pending(self, unit_type: U) -> int:
+        return int(self.bot.already_pending(unit_type))
+
+    def total(self, unit_type: U) -> int:
+        return self.have(unit_type) + self.pending(unit_type)
+
+    # ----------------------------
+    # low-level do() compatible
+    # ----------------------------
+    async def _do(self, cmd) -> bool:
+        fn = getattr(self.bot, "do", None)
+        if fn is None:
+            return False
+
+        res = fn(cmd)
+        if inspect.isawaitable(res):
+            res = await res
+
+        # python-sc2 costuma retornar bool / ActionResult / None dependendo do fork
+        if isinstance(res, bool):
+            return res
+        if res is None:
+            # não dá pra afirmar sucesso: trate como "falhou" para não poluir o estado
+            return False
+        return True
+
+    # ----------------------------
     # geyser access (neutral units)
     # ----------------------------
     def _iter_geyser_candidates(self) -> list[Any]:
@@ -91,39 +127,6 @@ class Builder:
         return [u for u in self._iter_all_units() if getattr(u, "type_id", None) == U.VESPENEGEYSER]
 
     # ----------------------------
-    # counts
-    # ----------------------------
-    def have(self, unit_type: U) -> int:
-        return len(self._owned_of_type(unit_type))
-
-    def ready(self, unit_type: U) -> int:
-        units = self._owned_of_type(unit_type)
-        return sum(1 for u in units if getattr(u, "is_ready", False))
-
-    def pending(self, unit_type: U) -> int:
-        return int(self.bot.already_pending(unit_type))
-
-    def total(self, unit_type: U) -> int:
-        return self.have(unit_type) + self.pending(unit_type)
-
-    # ----------------------------
-    # low-level do() compatible
-    # ----------------------------
-    async def _do(self, cmd) -> bool:
-        fn = getattr(self.bot, "do", None)
-        if fn is None:
-            return False
-
-        res = fn(cmd)
-        if inspect.isawaitable(res):
-            await res
-            return True
-
-        if isinstance(res, bool):
-            return res
-        return True
-
-    # ----------------------------
     # upgrades (robust)
     # ----------------------------
     def has_upgrade(self, up: Up) -> bool:
@@ -132,10 +135,8 @@ class Builder:
         if ups is None:
             return False
         try:
-            # python-sc2 geralmente usa set[UpgradeId]
             return up in ups
         except Exception:
-            # forks podem usar ints
             try:
                 return int(up.value) in set(int(x) for x in ups)
             except Exception:
@@ -156,7 +157,7 @@ class Builder:
     # ----------------------------
     # actions
     # ----------------------------
-    async def try_build(self, unit_type: U, *, near=None) -> bool:
+    async def try_build(self, unit_type: U, *, near=None, wall_pref: str | None = None) -> bool:
         bot = self.bot
 
         if not bot.can_afford(unit_type):
@@ -167,6 +168,7 @@ class Builder:
             self._fail("build", unit_type, "no_workers", None)
             return False
 
+        # ---- REFINERY (near = geyser) ----
         if unit_type == U.REFINERY:
             ths = getattr(bot, "townhalls", None)
             th = ths.ready.first if ths and ths.ready else None
@@ -185,20 +187,50 @@ class Builder:
                 if occupied:
                     continue
 
-                await bot.build(U.REFINERY, near=g)
+                try:
+                    res = await bot.build(U.REFINERY, near=g)
+                except Exception as e:
+                    self._fail("build", unit_type, "build_exception", {"error": str(e)})
+                    return False
+
+                if not res:
+                    # aqui está o bug que te trava: build rejeitado, mas antes você logava ok
+                    self._fail(
+                        "build",
+                        unit_type,
+                        "build_rejected",
+                        {"near_geyser": [float(g.position.x), float(g.position.y)]},
+                    )
+                    return False
+
                 self._ok("build", unit_type, {"geyser_pos": [float(g.position.x), float(g.position.y)]})
                 return True
 
             self._fail("build", unit_type, "all_geysers_occupied", None)
             return False
 
-        pos = await self.placement.find_placement(unit_type, near=near)
+        # ---- NORMAL BUILD (Placement + bot.build) ----
+        pos = await self.placement.find_placement(unit_type, near=near, wall_pref=wall_pref)
         if pos is None:
-            self._fail("build", unit_type, "no_placement", None)
+            self._fail("build", unit_type, "no_placement", {"wall_pref": wall_pref})
             return False
 
-        await bot.build(unit_type, near=pos)
-        self._ok("build", unit_type, {"pos": [float(pos.x), float(pos.y)]})
+        try:
+            res = await bot.build(unit_type, near=pos)
+        except Exception as e:
+            self._fail("build", unit_type, "build_exception", {"error": str(e), "pos": [float(pos.x), float(pos.y)]})
+            return False
+
+        if not res:
+            self._fail(
+                "build",
+                unit_type,
+                "build_rejected",
+                {"pos": [float(pos.x), float(pos.y)], "wall_pref": wall_pref},
+            )
+            return False
+
+        self._ok("build", unit_type, {"pos": [float(pos.x), float(pos.y)], "wall_pref": wall_pref})
         return True
 
     async def try_train(self, unit_type: U, *, from_type: U) -> bool:
@@ -220,20 +252,28 @@ class Builder:
         for b in producers:
             if not getattr(b, "is_idle", False):
                 continue
-            b.train(unit_type)
-            self._ok("train", unit_type, {"from": str(from_type)})
-            return True
+
+            try:
+                cmd = b.train(unit_type)
+            except Exception as e:
+                self._fail("train", unit_type, "train_exception", {"error": str(e), "from": str(from_type)})
+                return False
+
+            ok = await self._do(cmd)
+            if ok:
+                self._ok("train", unit_type, {"from": str(from_type), "producer_tag": int(getattr(b, "tag", 0))})
+                return True
+
+            self._fail("train", unit_type, "do_failed", {"from": str(from_type), "producer_tag": int(getattr(b, "tag", 0))})
+            return False
 
         self._fail("train", unit_type, "all_busy", {"from": str(from_type)})
         return False
 
     # ----------------------------
-    # addons
+    # addons + research (inalterado)
     # ----------------------------
     async def try_addon(self, *, on: U, addon: str) -> bool:
-        """
-        addon: "TECHLAB" | "REACTOR"
-        """
         bot = self.bot
         addon = addon.strip().upper()
 
@@ -242,7 +282,6 @@ class Builder:
             self._fail("addon", on, "no_parent", {"on": str(on)})
             return False
 
-        # precisa estar idle pra construir addon
         parent = None
         for b in parents:
             if getattr(b, "is_idle", False):
@@ -252,7 +291,6 @@ class Builder:
             self._fail("addon", on, "no_idle_parent", {"on": str(on)})
             return False
 
-        # mapeia ability + custo via can_afford(ability)
         if on == U.BARRACKS and addon == "TECHLAB":
             ability = A.BUILD_TECHLAB_BARRACKS
             unit_name = "BARRACKSTECHLAB"
@@ -275,7 +313,6 @@ class Builder:
             self._fail("addon", on, "unsupported_addon", {"on": str(on), "addon": addon})
             return False
 
-        # custo
         can_afford_ability = getattr(bot, "can_afford", None)
         if callable(can_afford_ability):
             try:
@@ -283,7 +320,6 @@ class Builder:
                     self._fail("addon", on, "cant_afford", {"ability": str(ability)})
                     return False
             except Exception:
-                # alguns forks não suportam can_afford(AbilityId); deixa passar e falha no action result se houver
                 pass
 
         ok = await self._do(parent(ability))
@@ -294,9 +330,6 @@ class Builder:
         self._fail("addon", on, "do_failed", {"on": on.name, "addon": addon})
         return False
 
-    # ----------------------------
-    # research
-    # ----------------------------
     async def try_research(self, upgrade: Up) -> bool:
         bot = self.bot
 
@@ -308,7 +341,6 @@ class Builder:
             self._fail("research", U.BARRACKS, "already_pending", {"upgrade": str(upgrade)})
             return False
 
-        # STIMPACK precisa de Barracks Tech Lab
         if upgrade == Up.STIMPACK:
             labs = [x for x in self._owned_of_type(U.BARRACKSTECHLAB) if getattr(x, "is_ready", False)]
             if not labs:
@@ -324,7 +356,6 @@ class Builder:
                 self._fail("research", U.BARRACKSTECHLAB, "all_busy", {"upgrade": "STIMPACK"})
                 return False
 
-            # custo (python-sc2 geralmente aceita can_afford(AbilityId.RESEARCH_STIMPACK))
             try:
                 if not bot.can_afford(A.RESEARCH_STIMPACK):
                     self._fail("research", U.BARRACKSTECHLAB, "cant_afford", {"upgrade": "STIMPACK"})

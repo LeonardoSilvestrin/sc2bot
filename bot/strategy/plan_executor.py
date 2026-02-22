@@ -1,7 +1,7 @@
 ﻿#bot/strategy/plan_executor.py
 from __future__ import annotations
 
-from typing import Any, Dict, Optional, List
+from typing import Any, Dict, Optional
 
 from sc2.ids.unit_typeid import UnitTypeId as U
 from sc2.ids.upgrade_id import UpgradeId as Up
@@ -45,9 +45,13 @@ _TEMPORARY_FAIL_REASONS: set[str] = {
     "all_busy",
     "no_idle_parent",
     "do_failed",
+
+    # NOVO: não mate o plan por isso
+    "no_geyser_candidates",
+    "all_geysers_occupied",
+    "no_townhall",
+    "no_workers",
 }
-
-
 _ALLOWED_NEAR_POINTS = {"MY_MAIN", "MY_NATURAL"}
 
 
@@ -60,6 +64,11 @@ class PlanExecutor:
         self.log = logger
         self._done_steps: set[str] = set()
 
+        # opener runtime
+        self._opener_done: bool = False
+        self._opener_force_wall_active: bool = bool(getattr(self.strategy.opener, "force_wall", True))
+        self._opener_no_place_streak: int = 0
+
         if self.log:
             self.log.emit(
                 "strategy_loaded",
@@ -67,14 +76,106 @@ class PlanExecutor:
                     "name": self.strategy.name,
                     "build_steps": int(len(self.strategy.build)),
                     "production_rules": int(len(self.strategy.production_rules)),
+                    "opener": {
+                        "enabled": bool(getattr(self.strategy.opener, "enabled", True)),
+                        "force_wall": bool(getattr(self.strategy.opener, "force_wall", True)),
+                        "depots": int(getattr(self.strategy.opener, "depots", 2)),
+                        "barracks": int(getattr(self.strategy.opener, "barracks", 1)),
+                    },
                 },
                 meta={"iter": int(getattr(self.ctx, "iteration", 0))},
             )
 
     async def step(self) -> None:
+        # (0) opener obrigatório antes do plano
+        if await self._run_opener_one_action():
+            return
+
+        # (1) build plan
         if await self._run_build_plan_one_step():
             return
+
+        # (2) production rules
         await self._run_production_rules_one_action()
+
+    # -----------------------
+    # opener (MAIN wall)
+    # -----------------------
+    async def _run_opener_one_action(self) -> bool:
+        opener = getattr(self.strategy, "opener", None)
+        if opener is None or not bool(getattr(opener, "enabled", True)):
+            self._opener_done = True
+            return False
+
+        if self._opener_done:
+            return False
+
+        depots_need = int(getattr(opener, "depots", 2))
+        rax_need = int(getattr(opener, "barracks", 1))
+
+        if depots_need <= 0 and rax_need <= 0:
+            self._opener_done = True
+            return False
+
+        depots_total = int(self.builder.total(U.SUPPLYDEPOT))
+        rax_total = int(self.builder.total(U.BARRACKS))
+
+        if depots_total >= depots_need and rax_total >= rax_need:
+            self._opener_done = True
+            if self.log:
+                self.log.emit(
+                    "opener_complete",
+                    {"depots_total": depots_total, "barracks_total": rax_total},
+                    meta={"iter": int(self.ctx.iteration)},
+                )
+            return False
+
+        # ordem fixa: depots -> barracks
+        want = None
+        if depots_total < depots_need:
+            want = U.SUPPLYDEPOT
+        elif rax_total < rax_need:
+            want = U.BARRACKS
+
+        if want is None:
+            self._opener_done = True
+            return False
+
+        wall_pref = "MAIN" if self._opener_force_wall_active else None
+
+        did = await self.builder.try_build(want, near=None, wall_pref=wall_pref)
+        last = getattr(self.builder, "last", None)
+        last_reason = str(getattr(last, "reason", "") or "")
+
+        # se não conseguiu placement na wall repetidas vezes, faz fallback automático
+        if not did and wall_pref is not None and last_reason == "no_placement":
+            self._opener_no_place_streak += 1
+            if self._opener_no_place_streak >= 8:
+                self._opener_force_wall_active = False
+                if self.log:
+                    self.log.emit(
+                        "opener_force_wall_disabled",
+                        {"reason": "no_placement_streak", "streak": int(self._opener_no_place_streak)},
+                        meta={"iter": int(self.ctx.iteration)},
+                    )
+        elif did:
+            self._opener_no_place_streak = 0
+
+        if self.log:
+            self.log.emit(
+                "opener_step",
+                {
+                    "want": want.name,
+                    "did": bool(did),
+                    "depots_total": depots_total,
+                    "barracks_total": rax_total,
+                    "force_wall_active": bool(self._opener_force_wall_active),
+                    "last_reason": last_reason,
+                },
+                meta={"iter": int(self.ctx.iteration)},
+            )
+
+        return bool(did)
 
     # -----------------------
     # map-point helpers (near)
@@ -82,22 +183,18 @@ class PlanExecutor:
     def _my_start(self) -> Optional[Point2]:
         return getattr(self.bot, "start_location", None)
 
-    def _expansions(self) -> List[Point2]:
-        exps = getattr(self.bot, "expansion_locations_list", None)
-        return list(exps) if exps else []
+    def _my_natural(self) -> Optional[Point2]:
+        nat = getattr(self.bot, "cached_natural_expansion", None)
+        if nat is not None:
+            return nat
 
-    def _my_main_expansion(self) -> Optional[Point2]:
+        exps = getattr(self.bot, "expansion_locations_list", None)
         my_main = self._my_start()
-        exps = self._expansions()
         if my_main is None or not exps:
             return None
-        return min(exps, key=lambda p: p.distance_to(my_main))
 
-    def _my_natural(self) -> Optional[Point2]:
-        main_exp = self._my_main_expansion()
-        exps = self._expansions()
-        if main_exp is None or not exps:
-            return None
+        exps = list(exps)
+        main_exp = min(exps, key=lambda p: p.distance_to(my_main))
         candidates = [p for p in exps if p.distance_to(main_exp) > 3.0]
         if not candidates:
             return None
@@ -116,7 +213,7 @@ class PlanExecutor:
         return None
 
     # -----------------------
-    # main loop
+    # main loop (build/production)
     # -----------------------
     async def _run_build_plan_one_step(self) -> bool:
         for step in self.strategy.build:
@@ -258,7 +355,6 @@ class PlanExecutor:
         if not action:
             return False
 
-        # ---- normal build (structures/refinery/etc) ----
         if "build" in action:
             ut = parse_u(str(action["build"]))
 
@@ -272,7 +368,6 @@ class PlanExecutor:
             near_pt = self._resolve_near(near_key) if near_key is not None else None
             return await self.builder.try_build(ut, near=near_pt)
 
-        # ---- addons ----
         if "build_addon" in action:
             addon = str(action["build_addon"])
             on_name = str(action.get("on") or "").strip()
@@ -302,12 +397,10 @@ class PlanExecutor:
 
             return await self.builder.try_addon(on=on_ut, addon=addon)
 
-        # ---- research ----
         if "research" in action:
             up = parse_up(str(action["research"]))
             return await self.builder.try_research(up)
 
-        # ---- train ----
         if "train" in action:
             ut = parse_u(str(action["train"]))
             from_name = str(action.get("from") or "").strip()

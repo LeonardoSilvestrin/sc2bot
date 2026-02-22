@@ -1,9 +1,9 @@
 ﻿#bot/behaviors/drop.py
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Optional, List
+from typing import Any, Optional, List, Dict
 
 import inspect
 
@@ -33,21 +33,19 @@ class DropRuntime:
     next_loop: int = 0
 
     medivac_tag: Optional[int] = None
-    marine_tags: List[int] = None
+    marine_tags: List[int] = field(default_factory=list)
 
     fight_until_time: float = 0.0
 
-    def __post_init__(self):
-        if self.marine_tags is None:
-            self.marine_tags = []
+    # anti-stuck: tag -> (last_dist, stuck_count)
+    stuck: Dict[int, tuple[float, int]] = field(default_factory=dict)
+
+    # robust loading tracking (fork fallback)
+    loaded_count: int = 0
+    pending_load_until_loop: Dict[int, int] = field(default_factory=dict)  # marine_tag -> loop deadline
 
 
 class DropBehavior:
-    """
-    Identidade estável:
-      - cada instância recebe drop_id (tipicamente DropCfg.name)
-      - owner = f"drop:{drop_id}" NÃO depende do cfg recebido no step()
-    """
     name = "drop"
 
     def __init__(
@@ -68,8 +66,6 @@ class DropBehavior:
 
         self.drop_id = (str(drop_id).strip() or "drop").replace(" ", "_")
         self.owner = f"drop:{self.drop_id}"
-
-        # chave estável pro orchestrator
         self.key = self.drop_id
 
         self.rt = DropRuntime()
@@ -112,7 +108,9 @@ class DropBehavior:
         return locs[0] if locs else None
 
     def _my_start(self) -> Optional[Point2]:
-        return getattr(self.bot, "start_location", None)
+        return getattr(self.bot, "start_location", None
+
+        )
 
     def _expansions(self) -> list[Point2]:
         exps = getattr(self.bot, "expansion_locations_list", None)
@@ -196,6 +194,51 @@ class DropBehavior:
             return None
         return ms.find_by_tag(int(tag))
 
+    def _mark_stuck(self, tag: int, dist: float, *, eps: float = 0.25) -> int:
+        tag = int(tag)
+        d = float(dist)
+        last = self.rt.stuck.get(tag)
+        if last is None:
+            self.rt.stuck[tag] = (d, 0)
+            return 0
+        last_d, cnt = last
+        if d >= float(last_d) - float(eps):
+            cnt += 1
+        else:
+            cnt = 0
+        self.rt.stuck[tag] = (d, cnt)
+        return cnt
+
+    def _forget_stuck(self, tag: int) -> None:
+        self.rt.stuck.pop(int(tag), None)
+
+    def _cargo_used(self, med: Any) -> int:
+        """
+        Fork-safe cargo:
+        - tenta cargo_used/cargo_space_used
+        - tenta passengers (list)
+        - fallback: usa contador interno (loaded_count)
+        """
+        for attr in ("cargo_used", "cargo_space_used", "cargo_space_taken", "cargo_space"):
+            v = getattr(med, attr, None)
+            if v is None:
+                continue
+            try:
+                iv = int(v)
+                if iv >= 0:
+                    return iv
+            except Exception:
+                pass
+
+        p = getattr(med, "passengers", None)
+        if p is not None:
+            try:
+                return int(len(p))
+            except Exception:
+                pass
+
+        return int(self.rt.loaded_count)
+
     async def step(self, budget: TickBudget, cfg: dict) -> bool:
         drop_cfg = cfg["drop"]
         if not drop_cfg.enabled:
@@ -226,11 +269,13 @@ class DropBehavior:
                 self.rt.next_loop = loop + 12
                 return False
 
-        min_marines = int(getattr(drop_cfg, "min_marines", 8))
-        load_count = int(getattr(drop_cfg, "load_count", min_marines))
+        load_count = int(getattr(drop_cfg, "load_count", int(getattr(drop_cfg, "min_marines", 8))))
         move_eps = float(getattr(drop_cfg, "move_eps", 3.0))
         pickup_eps = float(getattr(drop_cfg, "pickup_eps", 6.0))
         load_range = float(getattr(drop_cfg, "load_range", 7.0))
+
+        recruit_radius = float(getattr(drop_cfg, "recruit_radius", max(load_range + 2.0, 9.0)))
+        stuck_limit = int(getattr(drop_cfg, "stuck_limit", 6))
 
         hard_gather = False
         if start_time is not None:
@@ -240,7 +285,7 @@ class DropBehavior:
         gather_radius = float(getattr(drop_cfg, "gather_radius", max(14.0, pickup_eps + 8.0)))
 
         if self.rt.phase == DropPhase.WAIT:
-            self._emit("drop_armed", {"load_count": int(load_count), "gather_radius": float(gather_radius)})
+            self._emit("drop_armed", {"load_count": int(load_count)})
             self.rt.phase = DropPhase.PREP
             self.rt.next_loop = loop + 1
             return False
@@ -277,6 +322,9 @@ class DropBehavior:
 
             self.rt.medivac_tag = int(med.tag)
             self.rt.marine_tags = [int(x) for x in mar_tags]
+            self.rt.stuck.clear()
+            self.rt.loaded_count = 0
+            self.rt.pending_load_until_loop.clear()
 
             if float(med.distance_to(self.rt.pickup)) > float(pickup_eps):
                 ok = await self._do(med.move(self.rt.pickup))
@@ -288,15 +336,7 @@ class DropBehavior:
                 self.rt.next_loop = loop + 8
                 return False
 
-            self._emit(
-                "drop_ready_to_load",
-                {
-                    "medivac_tag": int(med.tag),
-                    "marines": int(len(self.rt.marine_tags)),
-                    "marine_select_maxd": float(marine_select_maxd),
-                    "gather_radius": float(gather_radius),
-                },
-            )
+            self._emit("drop_ready_to_load", {"medivac_tag": int(med.tag), "marines": int(len(self.rt.marine_tags))})
             self.rt.phase = DropPhase.LOAD
             self.rt.next_loop = loop + 1
             return False
@@ -319,22 +359,93 @@ class DropBehavior:
                 self.rt.next_loop = loop + 8
                 return False
 
-            cargo_used = int(getattr(med, "cargo_used", 0))
+            # (A) se o fork não expõe cargo, atualiza loaded_count pelo "sumiço" pós-load
+            # marina some logo após LOAD -> considera carregado, não como morto
+            for t in list(self.rt.marine_tags):
+                if self._alive_marine(int(t)) is None:
+                    deadline = int(self.rt.pending_load_until_loop.get(int(t), -1))
+                    if deadline >= loop:
+                        self.rt.loaded_count += 1
+                        self.rt.marine_tags = [x for x in self.rt.marine_tags if int(x) != int(t)]
+                        self.rt.pending_load_until_loop.pop(int(t), None)
+                        try:
+                            self.um.release_tags(self.owner, [int(t)])
+                        except Exception:
+                            pass
+
+            cargo_used = self._cargo_used(med)
             if cargo_used >= load_count:
                 self._emit("drop_loaded", {"cargo_used": int(cargo_used)})
                 self.rt.phase = DropPhase.MOVE
                 self.rt.next_loop = loop + 1
                 return False
 
-            best = None
-            best_d = 1e18
+            needed = int(load_count - cargo_used)
+            if needed > 0:
+                newly = self.um.claim_nearby(
+                    owner=self.owner,
+                    unit_type=U.MARINE,
+                    near=med.position,
+                    radius=float(recruit_radius),
+                    limit=int(needed),
+                )
+                if newly:
+                    for t in newly:
+                        if int(t) not in self.rt.marine_tags:
+                            self.rt.marine_tags.append(int(t))
+                    self._emit("drop_recruit", {"claimed": [int(x) for x in newly], "needed": int(needed)})
+
+            # limpa mortos de verdade (sem pending load)
+            alive_tags: List[int] = []
             for t in list(self.rt.marine_tags):
                 m = self._alive_marine(int(t))
                 if not m:
+                    if int(self.rt.pending_load_until_loop.get(int(t), -1)) >= loop:
+                        alive_tags.append(int(t))
+                        continue
                     try:
-                        self.rt.marine_tags.remove(int(t))
+                        self.um.release_tags(self.owner, [int(t)])
                     except Exception:
                         pass
+                    self._forget_stuck(int(t))
+                    continue
+                alive_tags.append(int(t))
+            self.rt.marine_tags = alive_tags
+
+            if not self.rt.marine_tags:
+                self._emit("drop_loading", {"reason": "no_reserved_alive"})
+                self.um.release_owner(self.owner)
+                self.rt.phase = DropPhase.DONE
+                return False
+
+            # tenta carregar alguém já no range
+            in_range: List[tuple[float, Any]] = []
+            for t in self.rt.marine_tags:
+                m = self._alive_marine(int(t))
+                if not m:
+                    continue
+                d = float(m.distance_to(med))
+                if d <= float(load_range):
+                    in_range.append((d, m))
+            in_range.sort(key=lambda x: x[0])
+
+            if in_range:
+                _, m = in_range[0]
+                ok = await self._do(med(A.LOAD, m))
+                if ok:
+                    budget.remaining -= 1
+                    # marca janela onde "sumir" = loaded
+                    self.rt.pending_load_until_loop[int(m.tag)] = loop + 20
+                self._emit("drop_loading", {"marine": int(m.tag), "ok": bool(ok), "mode": "in_range"})
+                self.rt.next_loop = loop + 4
+                return bool(ok)
+
+            # ninguém no range -> chama o mais próximo (anti-stuck)
+            best = None
+            best_d = 1e18
+            for t in self.rt.marine_tags:
+                m = self._alive_marine(int(t))
+                if not m:
                     continue
                 d = float(m.distance_to(med))
                 if d < best_d:
@@ -342,27 +453,32 @@ class DropBehavior:
                     best_d = d
 
             if best is None:
-                self._emit("drop_loading", {"reason": "no_reserved_alive"})
+                self._emit("drop_loading", {"reason": "no_alive_after_scan"})
                 self.um.release_owner(self.owner)
                 self.rt.phase = DropPhase.DONE
                 return False
 
-            if best_d > float(load_range):
-                ok = await self._do(best.move(self.rt.pickup))
-                if ok:
-                    budget.remaining -= 1
-                    self._emit("drop_call_marine", {"marine": int(best.tag), "dist": float(best_d)})
-                    self.rt.next_loop = loop + 6
-                    return True
-                self.rt.next_loop = loop + 6
+            stuck_cnt = self._mark_stuck(int(best.tag), float(best_d))
+            if stuck_cnt >= stuck_limit:
+                self._emit("drop_marine_stuck", {"marine": int(best.tag), "dist": float(best_d), "stuck_cnt": int(stuck_cnt)})
+                try:
+                    self.um.release_tags(self.owner, [int(best.tag)])
+                except Exception:
+                    pass
+                self.rt.marine_tags = [t for t in self.rt.marine_tags if int(t) != int(best.tag)]
+                self._forget_stuck(int(best.tag))
+                self.rt.next_loop = loop + 2
                 return False
 
-            ok = await self._do(med(A.LOAD, best))
+            ok = await self._do(best.move(med.position))
             if ok:
                 budget.remaining -= 1
-            self._emit("drop_loading", {"marine": int(best.tag), "ok": bool(ok)})
-            self.rt.next_loop = loop + 4
-            return bool(ok)
+                self._emit("drop_call_marine", {"marine": int(best.tag), "dist": float(best_d), "to": "medivac_pos"})
+                self.rt.next_loop = loop + 6
+                return True
+
+            self.rt.next_loop = loop + 6
+            return False
 
         if self.rt.phase == DropPhase.MOVE:
             med = self._alive_medivac(int(self.rt.medivac_tag or -1))
@@ -410,7 +526,6 @@ class DropBehavior:
                 budget.remaining -= 1
                 self._emit("drop_unload", {"target": [float(self.rt.target.x), float(self.rt.target.y)]})
 
-                # libera APENAS o medivac
                 if self.rt.medivac_tag is not None:
                     self.um.release_tags(self.owner, [int(self.rt.medivac_tag)])
 

@@ -1,8 +1,9 @@
-﻿from __future__ import annotations
+﻿#bot/strategy/loader.py
+from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from .schema import (
     StrategyConfig,
@@ -12,6 +13,7 @@ from .schema import (
     BehaviorsCfg,
     MacroBehaviorCfg,
     CombatBehaviorCfg,
+    OpenerCfg,
 )
 
 _ALLOWED_POINTS = {"ENEMY_MAIN", "ENEMY_NATURAL", "MY_MAIN", "MY_NATURAL"}
@@ -62,7 +64,6 @@ def _require_list(d: Dict[str, Any], key: str, *, path: str) -> list:
 def _parse_drop_obj(raw: Dict[str, Any], *, path: str, default_name: str) -> DropCfg:
     enabled = _as_bool(raw.get("enabled", False), path=f"{path}.enabled")
     if not enabled:
-        print("DropCfg fields:", DropCfg.__dataclass_fields__.keys())
         return DropCfg(enabled=False, name=default_name)
 
     for k in ("min_marines", "load_count", "move_eps", "ground_radius", "staging", "target"):
@@ -90,6 +91,7 @@ def _parse_drop_obj(raw: Dict[str, Any], *, path: str, default_name: str) -> Dro
     start_loop = raw.get("start_loop", None)
     if start_loop is not None:
         start_loop = _as_int(start_loop, path=f"{path}.start_loop")
+
     pickup = _as_str(raw.get("pickup", "MY_MAIN"), path=f"{path}.pickup")
     if pickup not in _ALLOWED_POINTS:
         raise ValueError(f"{path}.pickup inválido: {pickup} (allowed={sorted(_ALLOWED_POINTS)})")
@@ -106,17 +108,36 @@ def _parse_drop_obj(raw: Dict[str, Any], *, path: str, default_name: str) -> Dro
         load_count=_as_int(raw["load_count"], path=f"{path}.load_count"),
         move_eps=_as_float(raw["move_eps"], path=f"{path}.move_eps"),
         ground_radius=_as_float(raw["ground_radius"], path=f"{path}.ground_radius"),
-
         pickup=pickup,
         staging=staging,
         target=target,
         staging_dist=staging_dist,
-
         pickup_eps=pickup_eps,
         load_range=load_range,
-
         require_stim=_as_bool(raw.get("require_stim", False), path=f"{path}.require_stim"),
     )
+
+
+def _parse_opener(data: Dict[str, Any], *, path: str) -> OpenerCfg:
+    # default: opener ligado e forçando wall
+    if "opener" not in data or data["opener"] is None:
+        return OpenerCfg()
+
+    raw = data["opener"]
+    if not isinstance(raw, dict):
+        raise TypeError(f"{path}.opener must be object")
+
+    enabled = _as_bool(raw.get("enabled", True), path=f"{path}.opener.enabled")
+    force_wall = _as_bool(raw.get("force_wall", True), path=f"{path}.opener.force_wall")
+    depots = _as_int(raw.get("depots", 2), path=f"{path}.opener.depots")
+    barracks = _as_int(raw.get("barracks", 1), path=f"{path}.opener.barracks")
+
+    # sane defaults
+    depots = max(0, depots)
+    barracks = max(0, barracks)
+
+    return OpenerCfg(enabled=enabled, force_wall=force_wall, depots=depots, barracks=barracks)
+
 
 def load_strategy(name: str) -> StrategyConfig:
     base = Path(__file__).resolve().parents[1] / "strats"
@@ -159,6 +180,15 @@ def load_strategy(name: str) -> StrategyConfig:
     if "enabled" not in combat:
         raise KeyError("behaviors.combat: missing required key 'enabled'")
 
+    # wall_natural pode vir como root bool, ou wall: { natural: bool }
+    wall_natural = False
+    if "wall_natural" in data:
+        wall_natural = _as_bool(data.get("wall_natural", False), path="wall_natural")
+    elif "wall" in data and isinstance(data["wall"], dict):
+        wall_natural = _as_bool(data["wall"].get("natural", False), path="wall.natural")
+
+    opener = _parse_opener(data, path=str(path))
+
     drops: List[DropCfg] = []
     if "drops" in data and data["drops"] is not None:
         raw_drops = data["drops"]
@@ -171,7 +201,6 @@ def load_strategy(name: str) -> StrategyConfig:
             if dc.enabled:
                 drops.append(dc)
     else:
-        # compat opcional: "drop" antigo vira drops[0]
         raw_drop = data.get("drop", None)
         if raw_drop is not None:
             if not isinstance(raw_drop, dict):
@@ -195,6 +224,8 @@ def load_strategy(name: str) -> StrategyConfig:
                 enabled=_as_bool(combat["enabled"], path="behaviors.combat.enabled"),
             ),
         ),
+        wall_natural=bool(wall_natural),
+        opener=opener,
         drops=drops,
         build=build,
         production_rules=prod_rules,
