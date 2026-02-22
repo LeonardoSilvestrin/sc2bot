@@ -243,7 +243,7 @@ class Orchestrator:
             every_n_it=10,
         )
 
-        ok = await self.builder.try_build("depot", U.SUPPLYDEPOT, desired, cooldown=6)
+        ok = await self.builder.try_build("depot", U.SUPPLYDEPOT, desired, cooldown=6, max_existing=None)
         
         self._log(
             "building",

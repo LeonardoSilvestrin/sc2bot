@@ -40,7 +40,7 @@ class Builder:
         except Exception:
             return
 
-    async def try_build(self, key: str, unit_type: U, desired: Point2, cooldown: int = 16) -> bool:
+    async def try_build(self, key: str, unit_type: U, desired: Point2, cooldown: int = 16, max_existing: int | None = 0) -> bool:
         it = self.api.snapshot().it
 
         # cooldown anti-spam
@@ -48,9 +48,13 @@ class Builder:
             return False
         self.state.last_try[key] = it
 
-        # anti-spam: if exists or pending, skip
-        if self.api.amount(self.api.units(unit_type)) > 0:
-            return False
+        # anti-spam: control maximum existing instances allowed
+        # Default: max_existing=0 (previous behavior) -> if any exist, skip
+        existing_count = self.api.amount(self.api.units(unit_type))
+        if max_existing is not None:
+            if existing_count > max_existing:
+                return False
+        # pending still blocks to avoid duplicate orders in-flight
         if self.api.already_pending(unit_type) > 0:
             return False
 
