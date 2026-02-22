@@ -17,7 +17,8 @@ MAP_PATH = "C:/Program Files (x86)/StarCraft II/Maps"  # Default Windows path - 
 MAP_POOL = [
     "Simple128",
     "Simple96",
-    "Simple64"
+    "Simple64",
+    "PersephoneAIE_v4"
 ]
 
 # ===== OPPONENT SETTINGS =====
