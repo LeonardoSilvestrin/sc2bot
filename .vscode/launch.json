@@ -21,8 +21,6 @@
         "default",
         "--difficulty",
         "VeryEasy",
-        "--realtime",
-        "False"
       ]
     }
   ]

@@ -159,7 +159,7 @@ def main():
     print(f"Available maps: {', '.join(MAP_POOL)}")
     print(f"Opponent: {args.opponent_race} {args.difficulty}")
     print(f"Realtime: {'Yes' if args.realtime else 'No'}")
-    
+
     try:
         # Load and run the bot
         bot = load_bot(args)
