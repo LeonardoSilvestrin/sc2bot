@@ -13,7 +13,7 @@ from bot.terran_bot import TerranBot
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--strat", default="default", help="Nome do JSON em bot/strats/<name>.json")
-    p.add_argument("--map", dest="map_name", default="AbyssalReefLE")
+    p.add_argument("--map", dest="map_name", default="PersephoneAIE_v4")
     p.add_argument("--realtime", action="store_true")
     return p.parse_args()
 

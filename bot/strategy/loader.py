@@ -47,7 +47,7 @@ def load_strategy(name: str) -> StrategyConfig:
         else:
             return StrategyConfig(name=name)
 
-    data: Dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
+    data: Dict[str, Any] = json.loads(path.read_text(encoding="utf-8-sig"))
 
     econ = data.get("economy", {}) or {}
     prod = data.get("production", {}) or {}
