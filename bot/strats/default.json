@@ -19,7 +19,13 @@
         }
     },
     "drop": {
-        "enabled": false
+        "enabled": true,
+        "min_marines": 8,
+        "load_count": 8,
+        "move_eps": 3.0,
+        "ground_radius": 12.0,
+        "staging": "ENEMY_NATURAL",
+        "target": "ENEMY_MAIN"
     },
     "build": [
         {
@@ -58,7 +64,8 @@
             "when": {
                 "have_lte": {
                     "REFINERY": 0
-                }
+                },
+                "minerals_gte": 75
             },
             "do": {
                 "build": "REFINERY"
@@ -80,13 +87,49 @@
             "do": {
                 "build": "FACTORY"
             }
+        },
+        {
+            "name": "starport_after_factory",
+            "requires": {
+                "ready_gte": {
+                    "FACTORY": 1
+                }
+            },
+            "when": {
+                "have_lte": {
+                    "STARPORT": 0
+                },
+                "minerals_gte": 150,
+                "gas_gte": 100
+            },
+            "do": {
+                "build": "STARPORT"
+            }
         }
     ],
     "production_rules": [
         {
+            "name": "medivac",
+            "requires": {
+                "ready_gte": {
+                    "STARPORT": 1
+                }
+            },
+            "when": {
+                "unit_lte": {
+                    "MEDIVAC": 1
+                }
+            },
+            "do": {
+                "train": "MEDIVAC",
+                "from": "STARPORT",
+                "cap": 1
+            }
+        },
+        {
             "name": "marines",
             "requires": {
-                "have_gte": {
+                "ready_gte": {
                     "BARRACKS": 1
                 }
             },

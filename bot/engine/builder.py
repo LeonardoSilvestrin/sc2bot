@@ -1,5 +1,4 @@
-﻿# builder.py
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Iterable
@@ -42,7 +41,20 @@ class Builder:
         if hasattr(self.bot, "all_units"):
             return self.bot.all_units
         return self.bot.units
-
+    def _iter_all_units(self) -> Iterable[Any]:
+        """
+        Retorna todas as unidades conhecidas pelo bot (inclui neutras).
+        Preferência:
+        1) bot.state.units
+        2) bot.all_units
+        3) bot.units (fallback)
+        """
+        st = getattr(self.bot, "state", None)
+        if st is not None and hasattr(st, "units"):
+            return st.units
+        if hasattr(self.bot, "all_units"):
+            return self.bot.all_units
+        return self.bot.units
     def _owned_of_type(self, unit_type: U) -> list[Any]:
         out = []
         for u in self._iter_owned():
@@ -53,6 +65,47 @@ class Builder:
                 out.append(u)
         return out
 
+    # ----------------------------
+    # geyser access (neutral units)
+    # ----------------------------
+    def _iter_geyser_candidates(self) -> list[Any]:
+        """
+        Retorna geysers (Units neutros) de forma robusta.
+        Não assume que 'neutral_units' exista, nem que 'vespene_geyser' esteja populado.
+        """
+        bot = self.bot
+        st = getattr(bot, "state", None)
+
+        # 1) Algumas versões expõem isso no state
+        if st is not None and hasattr(st, "vespene_geyser"):
+            try:
+                gs = list(st.vespene_geyser)
+                if gs:
+                    return gs
+            except Exception:
+                pass
+
+        # 2) Outras expõem no próprio bot (property)
+        if hasattr(bot, "vespene_geyser"):
+            try:
+                gs = list(bot.vespene_geyser)
+                if gs:
+                    return gs
+            except Exception:
+                pass
+
+        # 3) neutral_units (quando existe)
+        if st is not None and hasattr(st, "neutral_units"):
+            try:
+                gs = [u for u in st.neutral_units if getattr(u, "type_id", None) == U.VESPENEGEYSER]
+                if gs:
+                    return gs
+            except Exception:
+                pass
+
+        # 4) fallback mais confiável: varrer TODAS as units conhecidas
+        gs = [u for u in self._iter_all_units() if getattr(u, "type_id", None) == U.VESPENEGEYSER]
+        return gs
     # ----------------------------
     # counts
     # ----------------------------
@@ -83,6 +136,49 @@ class Builder:
             self._fail("build", unit_type, "no_workers", None)
             return False
 
+        # ----------------------------
+        # SPECIAL CASE: REFINERY
+        # - no teu fork, bot.build(REFINERY, near=...) exige Unit (geyser), não Point2
+        # ----------------------------
+        if unit_type == U.REFINERY:
+            ths = getattr(bot, "townhalls", None)
+            th = ths.ready.first if ths and ths.ready else None
+            if th is None:
+                self._fail("build", unit_type, "no_townhall", None)
+                return False
+
+            geysers = self._iter_geyser_candidates()
+            # pegue geysers perto do CC (distância típica do main)
+            geysers = sorted(geysers, key=lambda g: g.distance_to(th))
+
+            if not geysers:
+                self._fail("build", unit_type, "no_geyser_candidates", None)
+                return False
+
+            existing_refineries = self._owned_of_type(U.REFINERY)
+
+            for g in geysers:
+                # considera ocupado se já existe refinery em cima
+                occupied = any(r.distance_to(g) < 1.0 for r in existing_refineries)
+                if occupied:
+                    continue
+
+                # AQUI é o ponto: passar o geyser Unit
+                await bot.build(U.REFINERY, near=g)
+
+                self._ok(
+                    "build",
+                    unit_type,
+                    {"geyser_pos": [float(g.position.x), float(g.position.y)]},
+                )
+                return True
+
+            self._fail("build", unit_type, "all_geysers_occupied", None)
+            return False
+
+        # ----------------------------
+        # NORMAL BUILDINGS (Point2 placement)
+        # ----------------------------
         pos = await self.placement.find_placement(unit_type, near=near)
         if pos is None:
             self._fail("build", unit_type, "no_placement", None)

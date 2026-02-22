@@ -14,7 +14,10 @@ from .schema import (
     MacroBehaviorCfg,
     CombatBehaviorCfg,
 )
-
+def _as_str(x: Any, *, path: str) -> str:
+    if not isinstance(x, str):
+        raise TypeError(f"{path}: expected str, got {type(x).__name__}")
+    return x
 
 def _as_int(x: Any, *, path: str) -> int:
     if not isinstance(x, (int, float)):
@@ -116,15 +119,33 @@ def load_strategy(name: str) -> StrategyConfig:
 
     if drop_enabled:
         # exigidos se enabled=true
-        for k in ("min_marines", "load_count", "move_eps", "ground_radius"):
+        for k in ("min_marines", "load_count", "move_eps", "ground_radius", "staging", "target"):
             if k not in raw_drop:
                 raise KeyError(f"drop.enabled=true exige '{k}'")
+
+        staging = _as_str(raw_drop["staging"], path="drop.staging")
+        target = _as_str(raw_drop["target"], path="drop.target")
+
+        # valida enums "baratos" (evita typo silencioso)
+        allowed_points = {"ENEMY_MAIN", "ENEMY_NATURAL", "MY_MAIN", "MY_NATURAL"}
+        if staging not in allowed_points:
+            raise ValueError(f"drop.staging inválido: {staging} (allowed={sorted(allowed_points)})")
+        if target not in allowed_points:
+            raise ValueError(f"drop.target inválido: {target} (allowed={sorted(allowed_points)})")
+
+        staging_dist = raw_drop.get("staging_dist", None)
+        if staging_dist is not None:
+            staging_dist = _as_float(staging_dist, path="drop.staging_dist")
+
         drop_cfg = DropCfg(
             enabled=True,
             min_marines=_as_int(raw_drop["min_marines"], path="drop.min_marines"),
             load_count=_as_int(raw_drop["load_count"], path="drop.load_count"),
             move_eps=_as_float(raw_drop["move_eps"], path="drop.move_eps"),
             ground_radius=_as_float(raw_drop["ground_radius"], path="drop.ground_radius"),
+            staging=staging,
+            target=target,
+            staging_dist=staging_dist,
         )
     else:
         drop_cfg = DropCfg(enabled=False)

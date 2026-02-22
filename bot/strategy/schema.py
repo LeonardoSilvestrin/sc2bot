@@ -15,7 +15,6 @@ class ProductionCfg:
     marine_cap: int = 24
 
 
-
 @dataclass(frozen=True)
 class DropCfg:
     enabled: bool = False
@@ -23,6 +22,11 @@ class DropCfg:
     load_count: Optional[int] = None
     move_eps: Optional[float] = None
     ground_radius: Optional[float] = None
+
+    # novos campos (do seu JSON)
+    staging: Optional[str] = None   # ex: "ENEMY_NATURAL"
+    target: Optional[str] = None    # ex: "ENEMY_MAIN"
+    staging_dist: Optional[float] = None  # opcional (fallback)
 # ----------------------------
 # Behaviors configs
 # ----------------------------
