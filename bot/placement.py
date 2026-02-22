@@ -129,17 +129,18 @@ class Placement:
     def find_refinery_spot(self, near: Point2, max_dist: float = 15.0) -> Optional[Point2]:
         near = snap(near)
 
-        # 1) se o wrapper expõe isso, beleza
+        # 1) Try built-in bot.vespene_geyser property
         geysers = getattr(self.bot, "vespene_geyser", None) or getattr(self.bot, "vespene_geysers", None)
         if geysers is not None and getattr(geysers, "exists", False):
             try:
                 g = geysers.closest_to(near)
                 if g.distance_to(near) <= max_dist:
+                    self._dbg(f"[REFINERY] Found via bot.vespene_geyser: {snap(g.position)}")
                     return snap(g.position)
             except Exception:
                 pass
 
-        # 2) fallback robusto: buscar por type_id via units() (inclui shakuras/protoss)
+        # 2) Fallback: search by unit type ID (VespeneGeyser, ProtossVespeneGeyser, ShakurasVespeneGeyser)
         candidates = []
         for tid in (U.VESPENEGEYSER, U.PROTOSSVESPENEGEYSER, U.SHAKURASVESPENEGEYSER):
             try:
@@ -149,17 +150,19 @@ class Placement:
             except Exception:
                 pass
 
-        # 3) último recurso: usar bot.all_units (você claramente tem isso no dump)
+        # 3) Fallback: search all units by name (case-insensitive, matches any geyser variant)
         if not candidates:
             au = getattr(self.bot, "all_units", None)
             if au is not None:
                 for u in au:
-                    tid = getattr(u, "type_id", None)
                     name = str(getattr(u, "name", "")).lower()
-                    if tid in (U.VESPENEGEYSER, U.PROTOSSVESPENEGEYSER, U.SHAKURASVESPENEGEYSER) or "vespenegeyser" in name:
+                    # Match any variant: "vespenegeyser", "protossvespenegeyser", "shakurasvespenegeyser"
+                    if "vespenegeyser" in name:
                         candidates.append(u)
+                        self._dbg(f"[REFINERY] Found geyser by name: {getattr(u, 'name', 'Unknown')}")
 
         if not candidates:
+            self._dbg(f"[REFINERY] No geysers found near {near}")
             return None
 
         # escolher o mais perto dentro do range
@@ -177,4 +180,31 @@ class Placement:
                 best_d = d
                 best = gp
 
+        if best is not None:
+            self._dbg(f"[REFINERY] Selected geyser at {snap(best)} (distance: {best_d:.1f})")
         return snap(best) if best is not None else None
+
+    async def find_position(self, unit_type: U, desired: Point2, max_dist: int = 25) -> Optional[PlacementResult]:
+        """
+        Try to find a valid building position.
+        1. First try the exact desired position
+        2. If that fails, use ring search around the desired position
+        """
+        desired = snap(desired)
+        
+        # Try the desired position first
+        ok, strict = await self.can_place_strict(unit_type, desired)
+        if ok:
+            self._dbg(f"[PLACEMENT] desired position {desired} is valid")
+            return PlacementResult(desired, strict)
+        
+        self._dbg(f"[PLACEMENT] desired position {desired} is blocked, searching nearby")
+        
+        # Ring search around the desired position
+        result = await self.find_near(unit_type, desired, max_dist=max_dist)
+        if result is not None:
+            self._dbg(f"[PLACEMENT] found valid position {result.pos} via ring search")
+            return result
+        
+        self._dbg(f"[PLACEMENT] no valid position found within {max_dist} tiles of {desired}")
+        return None

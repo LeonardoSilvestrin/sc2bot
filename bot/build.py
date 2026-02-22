@@ -92,7 +92,7 @@ class Builder:
         if worker is None:
             return False
 
-        # placement - just try the desired position first
+        # placement - try the desired position first, fall back to ring search if needed
         if unit_type == U.REFINERY:
             pos = self.place.find_refinery_spot(desired)
             if pos is None:
@@ -106,9 +106,20 @@ class Builder:
                 return False
             strict_flag = True
         else:
-            # Try desired position first - it's already where we want to build
-            pos = desired
-            strict_flag = False
+            # For non-refinery buildings: try desired position, then ring search
+            snap_desired = snap(desired)
+            result = await self.place.find_position(unit_type, snap_desired, max_dist=20)
+            if result is None:
+                self._log("building", {
+                    "event": "build_skip",
+                    "name": key,
+                    "unit": str(unit_type),
+                    "reason": "no_valid_position",
+                    "desired": [int(snap_desired.x), int(snap_desired.y)],
+                })
+                return False
+            pos = result.pos
+            strict_flag = result.strict
 
         snap0 = self.api.snapshot()
         self._log("building", {

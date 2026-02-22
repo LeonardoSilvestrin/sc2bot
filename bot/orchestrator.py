@@ -199,7 +199,18 @@ class Orchestrator:
         if not self._need_depot():
             return
 
-        desired = snap(cc.position.towards(self.bot.game_info.map_center, 6))
+        # Calculate a position towards the map center, but clamp to map bounds
+        towards = snap(cc.position.towards(self.bot.game_info.map_center, 6))
+        map_h = self.bot.game_info.map_size.height
+        map_w = self.bot.game_info.map_size.width
+        desired = Point2((
+            max(3, min(map_w - 3, towards.x)),
+            max(3, min(map_h - 3, towards.y))
+        ))
+        
+        if self.debug:
+            print(f"[DEPOT] cc={cc.position}, map_center={self.bot.game_info.map_center}, towards={towards}, map_size={map_w}x{map_h}, desired={desired}")
+
         self._emit_intent(
             "intent_depot",
             {
@@ -228,7 +239,15 @@ class Orchestrator:
         if not self._need_rax():
             return
 
-        near = snap(cc.position.towards(self.bot.game_info.map_center, 10))
+        # Calculate position towards map center, but clamp to map bounds
+        towards = snap(cc.position.towards(self.bot.game_info.map_center, 10))
+        map_h = self.bot.game_info.map_size.height
+        map_w = self.bot.game_info.map_size.width
+        near = Point2((
+            max(3, min(map_w - 3, towards.x)),
+            max(3, min(map_h - 3, towards.y))
+        ))
+        
         self._emit_intent(
             "intent_rax",
             {
@@ -314,33 +333,64 @@ class Orchestrator:
     # MACRO: REFINERY (geyser-based)
     # =============================================================================
     def _iter_geyser_candidates(self):
-        out = []
+        """Yield all vespene geyser units from any available source"""
+        # 1) Try by unit type ID first (most reliable)
         for tid in (U.VESPENEGEYSER, U.PROTOSSVESPENEGEYSER, U.SHAKURASVESPENEGEYSER):
             try:
                 us = self.api.units(tid)
                 if us:
-                    out.extend(list(us))
+                    for u in us:
+                        yield u
+                    return  # If we found any, don't try other methods
             except Exception:
                 pass
-        if out:
-            return out
 
-        vg = getattr(self.bot, "vespene_geyser", None)
-        if vg is not None:
-            return vg
-        vgs = getattr(self.bot, "vespene_geysers", None)
-        if vgs is not None:
-            return vgs
-        gi = getattr(self.bot, "game_info", None)
-        neutrals = getattr(gi, "map_neutral_units", None) if gi is not None else None
-        if neutrals is not None:
-            return neutrals
-        nu = getattr(self.bot, "neutral_units", None)
-        if nu is not None:
-            return nu
+        # 2) Try built-in properties
+        for attr in ("vespene_geyser", "vespene_geysers"):
+            vg = getattr(self.bot, attr, None)
+            if vg is not None and getattr(vg, "exists", False):
+                try:
+                    for u in vg:
+                        yield u
+                    return
+                except Exception:
+                    pass
 
-        au = getattr(self.bot, "all_units", None)
-        return au if au is not None else []
+        # 3) Try game_info.map_neutral_units
+        try:
+            gi = getattr(self.bot, "game_info", None)
+            neutrals = getattr(gi, "map_neutral_units", None) if gi is not None else None
+            if neutrals is not None:
+                for u in neutrals:
+                    name = str(getattr(u, "name", "")).lower()
+                    if "vespenegeyser" in name:
+                        yield u
+                return
+        except Exception:
+            pass
+
+        # 4) Try neutral_units
+        try:
+            nu = getattr(self.bot, "neutral_units", None)
+            if nu is not None:
+                for u in nu:
+                    name = str(getattr(u, "name", "")).lower()
+                    if "vespenegeyser" in name:
+                        yield u
+                return
+        except Exception:
+            pass
+
+        # 5) Last resort: scan all_units
+        try:
+            au = getattr(self.bot, "all_units", None)
+            if au is not None:
+                for u in au:
+                    name = str(getattr(u, "name", "")).lower()
+                    if "vespenegeyser" in name:
+                        yield u
+        except Exception:
+            pass
 
     def _is_geyser_unit(self, u) -> bool:
         tid = getattr(u, "type_id", None)
@@ -392,9 +442,20 @@ class Orchestrator:
                     "event": "ref_no_candidates",
                     "note": "missing neutrals/vespene list",
                     "cc": [int(cc.position.x), int(cc.position.y)],
+                    "debug": {
+                        "all_units_count": len(list(self.bot.all_units)) if hasattr(self.bot, "all_units") else 0,
+                    }
                 },
                 every_n_it=30,
             )
+            if self.debug:
+                print(f"[REFINERY] No geyser candidates found near {cc.position}")
+                # Debug: list all units
+                au = getattr(self.bot, "all_units", None)
+                if au:
+                    for u in list(au)[:10]:
+                        print(f"  - {getattr(u, 'name', '?')}: {getattr(u, 'position', '?')}")
+            return
             return
 
         candidates.sort(key=lambda t: t[0])
