@@ -62,7 +62,11 @@ class Builder:
 
         # pick worker (prefer idle -> gathering -> closest)
         workers = getattr(self.bot, "workers", None)
-        if workers is None or not getattr(workers, "exists", False):
+        if workers is None:
+            return False
+        
+        # Check if workers collection has any units (use api helper)
+        if not self.api.exists(workers):
             return False
 
         try:
