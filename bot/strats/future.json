@@ -1,0 +1,71 @@
+﻿{
+  "name": "default",
+  "initial_state": "NORMAL",
+  "states": {
+    "NORMAL": {
+      "priority": [
+        "macro",
+        "plan",
+        "drop",
+        "combat"
+      ],
+      "macro": {
+        "enabled": true,
+        "auto_workers": true,
+        "auto_scv": true,
+        "auto_supply": true,
+        "scv_target": 20,
+        "depot_trigger_supply_left": 2
+      },
+      "drop": {
+        "enabled": false
+      },
+      "combat": {
+        "enabled": false
+      },
+      "plan": {
+        "opener": [
+          {
+            "when": {
+              "supply_used_gte": 12
+            },
+            "do": {
+              "build": "SUPPLYDEPOT"
+            }
+          },
+          {
+            "when": {
+              "ready_gte": {
+                "SUPPLYDEPOT": 1
+              }
+            },
+            "do": {
+              "build": "BARRACKS"
+            }
+          },
+          {
+            "when": {
+              "ready_gte": {
+                "BARRACKS": 1
+              }
+            },
+            "do": {
+              "build": "REFINERY"
+            }
+          },
+          {
+            "when": {
+              "ready_gte": {
+                "BARRACKS": 1
+              }
+            },
+            "do": {
+              "build": "FACTORY"
+            }
+          }
+        ]
+      }
+    }
+  },
+  "transitions": []
+}

@@ -24,16 +24,16 @@ def parse_u(name: str) -> U:
 
 class PlanExecutor:
     """
-    Executor declarativo (puro DSL):
-      - build: one-shot steps em ordem
-      - production_rules: regras repetíveis
+    Executa:
+      - StrategyConfig.build: one-shot, em ordem
+      - StrategyConfig.production_rules: regras repetíveis
 
-    NÃO roda economy.
-    NÃO faz auto_supply.
-    Isso fica nos Behaviors.
+    Política:
+      - build: no máximo 1 step por tick
+      - production_rules: no máximo 1 ação por tick
     """
 
-    def __init__(self, bot: Any, builder: Any, strategy: StrategyConfig, ctx: Any, logger: Any | None = None):
+    def __init__(self, bot: Any, builder: Any, strategy: StrategyConfig, *, ctx: Any, logger: Any | None = None):
         self.bot = bot
         self.builder = builder
         self.strategy = strategy
@@ -41,9 +41,24 @@ class PlanExecutor:
         self.log = logger
         self._done_steps: set[str] = set()
 
+        # loga o que veio do loader: isso denuncia build vazio na hora
+        if self.log:
+            self.log.emit(
+                "strategy_loaded",
+                {
+                    "name": self.strategy.name,
+                    "build_steps": int(len(self.strategy.build)),
+                    "production_rules": int(len(self.strategy.production_rules)),
+                },
+                meta={"iter": int(getattr(self.ctx, "iteration", 0))},
+            )
+
     async def step(self) -> None:
+        # 1) build plan (one-shot)
         if await self._run_build_plan_one_step():
             return
+
+        # 2) produção contínua
         await self._run_production_rules_one_action()
 
     async def _run_build_plan_one_step(self) -> bool:
@@ -54,17 +69,16 @@ class PlanExecutor:
 
             requires = step.get("requires") or {}
             when = step.get("when") or {}
+            action = step.get("do") or {}
 
             if not self._check_conditions(requires):
                 continue
             if not self._check_conditions(when):
                 continue
 
-            action = step.get("do") or {}
             self._emit("plan_step_ready", {"name": name, "requires": requires, "when": when, "do": action})
 
             did = await self._execute_action(action)
-
             if did:
                 self._done_steps.add(name)
                 self._emit("plan_step_done", {"name": name, "do": action})
@@ -75,8 +89,8 @@ class PlanExecutor:
                 {
                     "name": name,
                     "do": action,
-                    "last_reason": getattr(self.builder, "last", None).reason if getattr(self.builder, "last", None) else "",
-                    "last_details": getattr(self.builder, "last", None).details if getattr(self.builder, "last", None) else None,
+                    "last_reason": getattr(getattr(self.builder, "last", None), "reason", ""),
+                    "last_details": getattr(getattr(self.builder, "last", None), "details", None),
                 },
             )
             return False
@@ -87,17 +101,16 @@ class PlanExecutor:
         for rule in self.strategy.production_rules:
             requires = rule.get("requires") or {}
             when = rule.get("when") or {}
+            action = rule.get("do") or {}
 
             if not self._check_conditions(requires):
                 continue
             if not self._check_conditions(when):
                 continue
 
-            action = rule.get("do") or {}
             self._emit("prod_rule_ready", {"name": rule.get("name", ""), "do": action})
 
             did = await self._execute_action(action)
-
             if did:
                 self._emit("prod_rule_done", {"name": rule.get("name", ""), "do": action})
                 return True
@@ -145,6 +158,7 @@ class PlanExecutor:
             else:
                 if val > thr:
                     return False
+
         return True
 
     async def _execute_action(self, action: Dict[str, Any]) -> bool:

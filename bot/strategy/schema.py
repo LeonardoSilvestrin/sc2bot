@@ -2,8 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List
-
+from typing import Any, Dict, List, Optional
 
 @dataclass(frozen=True)
 class EconomyCfg:
@@ -16,15 +15,14 @@ class ProductionCfg:
     marine_cap: int = 24
 
 
+
 @dataclass(frozen=True)
 class DropCfg:
     enabled: bool = False
-    min_marines: int = 8
-    load_count: int = 8
-    move_eps: float = 3.0
-    ground_radius: float = 12.0
-
-
+    min_marines: Optional[int] = None
+    load_count: Optional[int] = None
+    move_eps: Optional[float] = None
+    ground_radius: Optional[float] = None
 # ----------------------------
 # Behaviors configs
 # ----------------------------
@@ -49,12 +47,14 @@ class BehaviorsCfg:
 
 @dataclass(frozen=True)
 class StrategyConfig:
+    # OBS: "estratégia selecionada" NÃO é responsabilidade do schema.
+    # O schema só descreve o conteúdo do JSON carregado.
     name: str = "default"
+
     economy: EconomyCfg = EconomyCfg()
     production: ProductionCfg = ProductionCfg()
-    drop: DropCfg = DropCfg()
     behaviors: BehaviorsCfg = BehaviorsCfg()
+    drop: DropCfg = DropCfg()
 
-    # Plan DSL
     build: List[Dict[str, Any]] = field(default_factory=list)
     production_rules: List[Dict[str, Any]] = field(default_factory=list)

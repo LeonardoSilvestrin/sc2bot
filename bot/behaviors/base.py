@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol
 
 
 @dataclass
@@ -16,17 +16,12 @@ class TickBudget:
         return True
 
 
-class Behavior:
-    name: str = "behavior"
+class Behavior(Protocol):
+    """Contrato único. Config NÃO fica no __init__."""
+    name: str
 
-    def __init__(self, bot: Any, ctx: Any, logger: Any | None = None, debug: bool = True):
-        self.bot = bot
-        self.ctx = ctx
-        self.log = logger
-        self.debug = debug
-
-    async def step(self, budget: TickBudget) -> bool:
+    async def step(self, budget: TickBudget, cfg: Any) -> bool:
         """
-        Retorna True se emitiu alguma ação relevante (gastou budget).
+        Retorna True se emitiu ação relevante (normalmente gasta budget).
         """
-        return False
+        ...

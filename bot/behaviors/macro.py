@@ -6,53 +6,63 @@ from typing import Any
 from sc2.ids.unit_typeid import UnitTypeId as U
 
 from bot.strategy.schema import EconomyCfg, MacroBehaviorCfg
+from .base import TickBudget
 
 
 class MacroBehavior:
-    """
-    Macro contínuo (homeostase):
-    - distribute workers
-    - train scv até target
-    - auto_supply: depots quando supply baixo
-    """
+    name = "macro"
 
     def __init__(
         self,
         bot: Any,
-        economy: Any,
+        econ: Any,
         builder: Any,
-        econ_cfg: EconomyCfg,
-        cfg: MacroBehaviorCfg,
         ctx: Any,
         logger: Any | None = None,
         debug: bool = True,
     ):
         self.bot = bot
-        self.econ = economy
+        self.econ = econ
         self.builder = builder
-        self.econ_cfg = econ_cfg
-        self.cfg = cfg
         self.ctx = ctx
         self.log = logger
         self.debug = debug
+        self._supply_cooldown_until_iter = 0
 
-    async def step(self) -> None:
-        if not self.cfg.enabled:
-            return
+    async def step(self, budget: TickBudget, cfg: dict) -> bool:
+        """
+        cfg esperado:
+          { "econ": EconomyCfg, "macro": MacroBehaviorCfg }
+        """
+        econ_cfg: EconomyCfg = cfg["econ"]
+        macro_cfg: MacroBehaviorCfg = cfg["macro"]
 
-        if self.cfg.auto_workers:
+        if not macro_cfg.enabled:
+            return False
+
+        did_any = False
+
+        if macro_cfg.auto_workers:
             await self.econ.step()
 
-        if self.cfg.auto_scv:
-            await self.econ.train_scv(int(self.econ_cfg.scv_target))
+        if macro_cfg.auto_scv:
+            await self.econ.train_scv(int(econ_cfg.scv_target))
 
-        if self.cfg.auto_supply:
-            await self._auto_supply()
+        if macro_cfg.auto_supply and budget.remaining > 0:
+            if await self._auto_supply(int(econ_cfg.depot_trigger_supply_left)):
+                # supply é “ação” -> consome budget
+                budget.spend(1)
+                did_any = True
 
-    async def _auto_supply(self) -> bool:
-        trigger = int(self.econ_cfg.depot_trigger_supply_left)
+        return did_any
 
-        if self.bot.supply_left > trigger:
+    async def _auto_supply(self, trigger: int) -> bool:
+        bot = self.bot
+        it = int(getattr(self.ctx, "iteration", 0))
+        if it < self._supply_cooldown_until_iter:
+            return False
+
+        if bot.supply_left > trigger:
             return False
 
         if self.builder.pending(U.SUPPLYDEPOT) > 0:
@@ -63,8 +73,9 @@ class MacroBehavior:
         if self.log:
             self.log.emit(
                 "macro_supply",
-                {"did": bool(did), "supply_left": int(self.bot.supply_left), "trigger": int(trigger)},
-                meta={"iter": int(self.ctx.iteration)},
+                {"did": bool(did), "supply_left": int(bot.supply_left), "trigger": int(trigger)},
+                meta={"iter": it},
             )
 
+        self._supply_cooldown_until_iter = it + 22
         return bool(did)

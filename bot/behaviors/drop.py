@@ -1,21 +1,25 @@
-﻿# behaviors/drop.py
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from typing import Any
 
-from bot.strategy.schema import DropCfg
+from .base import TickBudget
 
 
 class DropBehavior:
-    def __init__(self, bot: Any, cfg: DropCfg, ctx: Any, logger: Any | None = None, debug: bool = True):
+    name = "drop"
+
+    def __init__(self, bot: Any, ctx: Any, logger: Any | None = None, debug: bool = True):
         self.bot = bot
-        self.cfg = cfg
         self.ctx = ctx
         self.log = logger
         self.debug = debug
 
-    async def step(self) -> None:
-        if not self.cfg.enabled:
-            return
-        # TODO: implementar drop real depois
-        return
+    async def step(self, budget: TickBudget, cfg: dict) -> bool:
+        # cfg esperado: {"drop": DropCfg}
+        drop_cfg = cfg["drop"]
+        if not drop_cfg.enabled:
+            return False
+
+        # por enquanto sem ações -> não gasta budget
+        # quando você implementar unload/move/load etc, aí consome budget
+        return False
