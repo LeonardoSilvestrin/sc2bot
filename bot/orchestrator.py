@@ -243,7 +243,7 @@ class Orchestrator:
             every_n_it=10,
         )
 
-        ok = await self.builder.try_build("depot", U.SUPPLYDEPOT, desired, cooldown=10)
+        ok = await self.builder.try_build("depot", U.SUPPLYDEPOT, desired, cooldown=6)
         
         self._log(
             "building",
@@ -259,7 +259,7 @@ class Orchestrator:
         )
         
         if not ok and self.debug:
-            print(f"[DEPOT] Build failed, will retry (cooldown=10)")
+            print(f"[DEPOT] Build failed, will retry (cooldown=6)")
 
 
     async def _macro_rax(self, cc) -> None:
