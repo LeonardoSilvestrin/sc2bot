@@ -31,6 +31,7 @@ class Orchestrator:
 
         # tech goals for drop
         self.marines_for_drop = 8
+        self.marine_cap = 32
         self.need_factory = True
         self.need_starport = True
 
@@ -149,18 +150,20 @@ class Orchestrator:
         return (existing_refinery + pending_refinery) == 0
 
     def _need_factory(self) -> bool:
-        return (
-            self.state.build.ref_started
-            and not self.state.build.factory_started
-            and self.need_factory
-        )
+        if not self.need_factory:
+            return False
+        if self.state.build.factory_started:
+            return False
+        # Require a READY refinery (tech prerequisite) rather than just 'started'
+        return self.api.exists(self.api.ready(U.REFINERY))
 
     def _need_starport(self) -> bool:
-        return (
-            self.state.build.factory_started
-            and not self.state.build.starport_started
-            and self.need_starport
-        )
+        if not self.need_starport:
+            return False
+        if self.state.build.starport_started:
+            return False
+        # Starport requires a READY Factory
+        return self.api.exists(self.api.ready(U.FACTORY))
 
     def _reserve_critical(self) -> None:
         if self._need_depot():
@@ -620,7 +623,8 @@ class Orchestrator:
         if not self.api.exists(rax):
             return
 
-        if self.api.amount(self.api.units(U.MARINE)) >= self.marines_for_drop:
+        # Keep minimum for drop (`marines_for_drop`) but cap overall production
+        if self.api.amount(self.api.units(U.MARINE)) >= self.marine_cap:
             return
 
         for b in self.api.idle(rax):

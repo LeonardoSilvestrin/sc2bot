@@ -140,23 +140,9 @@ class Builder:
         # reserve after we commit to attempt
         self.econ.reserve(unit_type)
 
-        # execute
+        # execute: prefer worker.build + api.do for a reliable ok result
         try:
-            if hasattr(self.bot, "build"):
-                try:
-                    await self.bot.build(unit_type, near=pos)
-                except TypeError:
-                    await self.bot.build(unit_type, pos)
-
-                self._log("building", {
-                    "event": "build_issued",
-                    "name": key,
-                    "unit": str(unit_type),
-                    "pos": [int(pos.x), int(pos.y)],
-                    "ok": True,
-                })
-                return True
-
+            # try worker.build via api.do
             cmd = worker.build(unit_type, pos)
             ok = await self.api.do(cmd)
             self._log("building", {
@@ -167,7 +153,39 @@ class Builder:
                 "ok": bool(ok),
                 "via": "worker.build",
             })
-            return bool(ok)
+            if bool(ok):
+                return True
+        except Exception:
+            # fallthrough to try bot.build if worker.build path fails
+            ok = False
+
+        # As a fallback, try high-level bot.build() if available, but verify
+        # acceptance by checking pending/existing counts rather than assuming success.
+        try:
+            if hasattr(self.bot, "build"):
+                try:
+                    try:
+                        await self.bot.build(unit_type, near=pos)
+                    except TypeError:
+                        await self.bot.build(unit_type, pos)
+                except Exception:
+                    # bot.build invocation failed
+                    pass
+
+                # verify that the engine accepted the build: check pending or existing
+                post_pending = self.api.already_pending(unit_type)
+                post_existing = self.api.amount(self.api.units(unit_type))
+                accepted = (post_pending > 0) or (post_existing > existing_count)
+                self._log("building", {
+                    "event": "build_issued",
+                    "name": key,
+                    "unit": str(unit_type),
+                    "pos": [int(pos.x), int(pos.y)],
+                    "ok": bool(accepted),
+                    "via": "bot.build",
+                })
+                if accepted:
+                    return True
 
         except Exception as e:
             self._log("building", {
@@ -179,3 +197,13 @@ class Builder:
                 "exc": str(e),
             })
             return False
+
+        # If we reach here, no method succeeded
+        self._log("building", {
+            "event": "build_issued",
+            "name": key,
+            "unit": str(unit_type),
+            "pos": [int(pos.x), int(pos.y)],
+            "ok": False,
+        })
+        return False
