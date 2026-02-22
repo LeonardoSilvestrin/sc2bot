@@ -159,20 +159,23 @@ class Orchestrator:
         if self.api.amount(workers) >= self.scv_target:
             return
 
-        if self._need_depot() and not self.api.exists(self.api.ready(U.SUPPLYDEPOT)):
+        # Only block SCV if supply is actually capped (0 left), not just "low"
+        # This prevents deadlock where bot can't train SCV to build depot to get supply
+        supply_left = int(getattr(self.bot, "supply_left", 0) or 0)
+        if supply_left <= 0:
             self._emit_intent(
                 "intent_scv_blocked",
                 {
                     "event": "intent",
                     "what": "train",
                     "unit": "SCV",
-                    "reason": "need_depot_urgent",
+                    "reason": "supply_capped",
                 },
                 every_n_it=25,
             )
             return
 
-        if getattr(cc, "is_idle", False) and self.api.can_afford(U.SCV) and int(getattr(self.bot, "supply_left", 0) or 0) > 0:
+        if getattr(cc, "is_idle", False) and self.api.can_afford(U.SCV) and supply_left > 0:
             self._log("action", {"event": "do", "what": "train", "unit": "SCV"})
             await self.bot.do(cc.train(U.SCV))
 

@@ -92,7 +92,7 @@ class Builder:
         if worker is None:
             return False
 
-        # placement
+        # placement - just try the desired position first
         if unit_type == U.REFINERY:
             pos = self.place.find_refinery_spot(desired)
             if pos is None:
@@ -106,17 +106,9 @@ class Builder:
                 return False
             strict_flag = True
         else:
-            res = await self.place.find_near(unit_type, desired)
-            if res is None:
-                self._log("placement", {
-                    "event": "placement_fail",
-                    "name": key,
-                    "unit": str(unit_type),
-                    "near": [int(desired.x), int(desired.y)],
-                })
-                return False
-            pos = res.pos
-            strict_flag = bool(res.strict)
+            # Try desired position first - it's already where we want to build
+            pos = desired
+            strict_flag = False
 
         snap0 = self.api.snapshot()
         self._log("building", {

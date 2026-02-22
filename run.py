@@ -25,10 +25,9 @@ class TerranBotV1(BotAI):
         self.dbg.start_run(map_name=map_name, opponent="Computer")
 
     async def on_step(self, iteration: int):
+        self.iteration = iteration  # Essential: cooldown logic depends on this
         if self.orch is None:
-            # Import já está no topo; evitar import relativo que quebra quando roda como script
             self.orch = Orchestrator(self, debug=self.debug)
-
         await self.orch.step()
 
     # IMPORTANT: this fork calls on_end() without await -> must be sync
