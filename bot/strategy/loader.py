@@ -1,9 +1,8 @@
-﻿# bot/strategy/loader.py
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
 from .schema import (
     StrategyConfig,
@@ -14,10 +13,15 @@ from .schema import (
     MacroBehaviorCfg,
     CombatBehaviorCfg,
 )
+
+_ALLOWED_POINTS = {"ENEMY_MAIN", "ENEMY_NATURAL", "MY_MAIN", "MY_NATURAL"}
+
+
 def _as_str(x: Any, *, path: str) -> str:
     if not isinstance(x, str):
         raise TypeError(f"{path}: expected str, got {type(x).__name__}")
     return x
+
 
 def _as_int(x: Any, *, path: str) -> int:
     if not isinstance(x, (int, float)):
@@ -55,13 +59,54 @@ def _require_list(d: Dict[str, Any], key: str, *, path: str) -> list:
     return v
 
 
+def _parse_drop_obj(raw: Dict[str, Any], *, path: str, default_name: str) -> DropCfg:
+    enabled = _as_bool(raw.get("enabled", False), path=f"{path}.enabled")
+    if not enabled:
+        return DropCfg(enabled=False, name=default_name)
+
+    for k in ("min_marines", "load_count", "move_eps", "ground_radius", "staging", "target"):
+        if k not in raw:
+            raise KeyError(f"{path}.enabled=true exige '{k}'")
+
+    name = raw.get("name", default_name)
+    if not isinstance(name, str):
+        raise TypeError(f"{path}.name: expected str")
+
+    staging = _as_str(raw["staging"], path=f"{path}.staging")
+    target = _as_str(raw["target"], path=f"{path}.target")
+
+    if staging not in _ALLOWED_POINTS:
+        raise ValueError(f"{path}.staging inválido: {staging} (allowed={sorted(_ALLOWED_POINTS)})")
+    if target not in _ALLOWED_POINTS:
+        raise ValueError(f"{path}.target inválido: {target} (allowed={sorted(_ALLOWED_POINTS)})")
+
+    staging_dist = _as_float(raw.get("staging_dist", 18.0), path=f"{path}.staging_dist")
+
+    start_time = raw.get("start_time", None)
+    if start_time is not None:
+        start_time = _as_float(start_time, path=f"{path}.start_time")
+
+    start_loop = raw.get("start_loop", None)
+    if start_loop is not None:
+        start_loop = _as_int(start_loop, path=f"{path}.start_loop")
+
+    return DropCfg(
+        enabled=True,
+        name=name,
+        start_time=start_time,
+        start_loop=start_loop,
+        min_marines=_as_int(raw["min_marines"], path=f"{path}.min_marines"),
+        load_count=_as_int(raw["load_count"], path=f"{path}.load_count"),
+        move_eps=_as_float(raw["move_eps"], path=f"{path}.move_eps"),
+        ground_radius=_as_float(raw["ground_radius"], path=f"{path}.ground_radius"),
+        staging=staging,
+        target=target,
+        staging_dist=staging_dist,
+        require_stim=_as_bool(raw.get("require_stim", False), path=f"{path}.require_stim"),
+    )
+
+
 def load_strategy(name: str) -> StrategyConfig:
-    """
-    Carrega bot/strats/<name>.json.
-    NÃO faz fallback.
-    NÃO usa defaults silenciosos em behaviors habilitados.
-    Explode se algo estiver errado.
-    """
     base = Path(__file__).resolve().parents[1] / "strats"
     path = base / f"{name}.json"
 
@@ -76,24 +121,19 @@ def load_strategy(name: str) -> StrategyConfig:
     if not isinstance(data, dict):
         raise ValueError(f"Strategy root must be JSON object: {path}")
 
-    # Required top-level
     econ = _require_obj(data, "economy", path=str(path))
     beh = _require_obj(data, "behaviors", path=str(path))
     build = _require_list(data, "build", path=str(path))
     prod_rules = _require_list(data, "production_rules", path=str(path))
 
-    # economy required keys
     scv_target = _as_int(econ.get("scv_target"), path="economy.scv_target")
     depot_trigger = _as_int(econ.get("depot_trigger_supply_left"), path="economy.depot_trigger_supply_left")
 
-    # production (opcional por enquanto)
     prod_cfg = data.get("production", {})
     if not isinstance(prod_cfg, dict):
         raise TypeError("production must be object")
-    marine_cap = prod_cfg.get("marine_cap", 24)
-    marine_cap = _as_int(marine_cap, path="production.marine_cap")
+    marine_cap = _as_int(prod_cfg.get("marine_cap", 24), path="production.marine_cap")
 
-    # behaviors.macro required keys
     macro = beh.get("macro")
     if not isinstance(macro, dict):
         raise TypeError("behaviors.macro must be object")
@@ -101,64 +141,37 @@ def load_strategy(name: str) -> StrategyConfig:
         if k not in macro:
             raise KeyError(f"behaviors.macro: missing required key '{k}'")
 
-    # behaviors.combat required keys
     combat = beh.get("combat")
     if not isinstance(combat, dict):
         raise TypeError("behaviors.combat must be object")
     if "enabled" not in combat:
         raise KeyError("behaviors.combat: missing required key 'enabled'")
 
-    # drop (opcional)
-    raw_drop = data.get("drop", {})
-    if raw_drop is None:
-        raw_drop = {}
-    if not isinstance(raw_drop, dict):
-        raise TypeError("drop must be object")
-
-    drop_enabled = _as_bool(raw_drop.get("enabled", False), path="drop.enabled")
-
-    if drop_enabled:
-        # exigidos se enabled=true
-        for k in ("min_marines", "load_count", "move_eps", "ground_radius", "staging", "target"):
-            if k not in raw_drop:
-                raise KeyError(f"drop.enabled=true exige '{k}'")
-
-        staging = _as_str(raw_drop["staging"], path="drop.staging")
-        target = _as_str(raw_drop["target"], path="drop.target")
-
-        # valida enums "baratos" (evita typo silencioso)
-        allowed_points = {"ENEMY_MAIN", "ENEMY_NATURAL", "MY_MAIN", "MY_NATURAL"}
-        if staging not in allowed_points:
-            raise ValueError(f"drop.staging inválido: {staging} (allowed={sorted(allowed_points)})")
-        if target not in allowed_points:
-            raise ValueError(f"drop.target inválido: {target} (allowed={sorted(allowed_points)})")
-
-        staging_dist = raw_drop.get("staging_dist", None)
-        if staging_dist is not None:
-            staging_dist = _as_float(staging_dist, path="drop.staging_dist")
-
-        drop_cfg = DropCfg(
-            enabled=True,
-            min_marines=_as_int(raw_drop["min_marines"], path="drop.min_marines"),
-            load_count=_as_int(raw_drop["load_count"], path="drop.load_count"),
-            move_eps=_as_float(raw_drop["move_eps"], path="drop.move_eps"),
-            ground_radius=_as_float(raw_drop["ground_radius"], path="drop.ground_radius"),
-            staging=staging,
-            target=target,
-            staging_dist=staging_dist,
-        )
+    drops: List[DropCfg] = []
+    if "drops" in data and data["drops"] is not None:
+        raw_drops = data["drops"]
+        if not isinstance(raw_drops, list):
+            raise TypeError("drops must be array")
+        for i, rd in enumerate(raw_drops):
+            if not isinstance(rd, dict):
+                raise TypeError(f"drops[{i}] must be object")
+            dc = _parse_drop_obj(rd, path=f"drops[{i}]", default_name=f"drop_{i}")
+            if dc.enabled:
+                drops.append(dc)
     else:
-        drop_cfg = DropCfg(enabled=False)
+        # compat opcional: "drop" antigo vira drops[0]
+        raw_drop = data.get("drop", None)
+        if raw_drop is not None:
+            if not isinstance(raw_drop, dict):
+                raise TypeError("drop must be object")
+            dc = _parse_drop_obj(raw_drop, path="drop", default_name="drop_0")
+            if dc.enabled:
+                drops.append(dc)
 
     return StrategyConfig(
         name=str(data.get("name", name)),
-        economy=EconomyCfg(
-            scv_target=scv_target,
-            depot_trigger_supply_left=depot_trigger,
-        ),
-        production=ProductionCfg(
-            marine_cap=marine_cap,
-        ),
+        economy=EconomyCfg(scv_target=scv_target, depot_trigger_supply_left=depot_trigger),
+        production=ProductionCfg(marine_cap=marine_cap),
         behaviors=BehaviorsCfg(
             macro=MacroBehaviorCfg(
                 enabled=_as_bool(macro["enabled"], path="behaviors.macro.enabled"),
@@ -170,7 +183,7 @@ def load_strategy(name: str) -> StrategyConfig:
                 enabled=_as_bool(combat["enabled"], path="behaviors.combat.enabled"),
             ),
         ),
-        drop=drop_cfg,
+        drops=drops,
         build=build,
         production_rules=prod_rules,
     )

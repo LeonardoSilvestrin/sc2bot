@@ -5,7 +5,7 @@
         "depot_trigger_supply_left": 2
     },
     "production": {
-        "marine_cap": 24
+        "marine_cap": 32
     },
     "behaviors": {
         "macro": {
@@ -18,15 +18,34 @@
             "enabled": false
         }
     },
-    "drop": {
-        "enabled": true,
-        "min_marines": 8,
-        "load_count": 8,
-        "move_eps": 3.0,
-        "ground_radius": 12.0,
-        "staging": "ENEMY_NATURAL",
-        "target": "ENEMY_MAIN"
-    },
+    "drops": [
+        {
+            "enabled": true,
+            "name": "drop_main",
+            "start_time": 240.0,
+            "min_marines": 8,
+            "load_count": 8,
+            "move_eps": 3.0,
+            "ground_radius": 12.0,
+            "staging": "ENEMY_NATURAL",
+            "target": "ENEMY_MAIN",
+            "staging_dist": 18.0,
+            "require_stim": false
+        },
+        {
+            "enabled": true,
+            "name": "drop_natural",
+            "start_time": 240.0,
+            "min_marines": 8,
+            "load_count": 8,
+            "move_eps": 3.0,
+            "ground_radius": 12.0,
+            "staging": "ENEMY_NATURAL",
+            "target": "ENEMY_NATURAL",
+            "staging_dist": 18.0,
+            "require_stim": false
+        }
+    ],
     "build": [
         {
             "name": "depot_12",
@@ -38,7 +57,7 @@
             }
         },
         {
-            "name": "barracks_after_depot",
+            "name": "barracks_1",
             "requires": {
                 "ready_gte": {
                     "SUPPLYDEPOT": 1
@@ -55,7 +74,7 @@
             }
         },
         {
-            "name": "refinery_after_rax",
+            "name": "refinery_1_after_rax",
             "requires": {
                 "ready_gte": {
                     "BARRACKS": 1
@@ -72,7 +91,41 @@
             }
         },
         {
-            "name": "factory_after_rax",
+            "name": "refinery_2_after_ref1",
+            "requires": {
+                "ready_gte": {
+                    "REFINERY": 1
+                }
+            },
+            "when": {
+                "have_lte": {
+                    "REFINERY": 1
+                },
+                "minerals_gte": 75
+            },
+            "do": {
+                "build": "REFINERY"
+            }
+        },
+        {
+            "name": "barracks_2",
+            "requires": {
+                "ready_gte": {
+                    "BARRACKS": 1
+                }
+            },
+            "when": {
+                "have_lte": {
+                    "BARRACKS": 1
+                },
+                "minerals_gte": 150
+            },
+            "do": {
+                "build": "BARRACKS"
+            }
+        },
+        {
+            "name": "factory_1",
             "requires": {
                 "ready_gte": {
                     "BARRACKS": 1
@@ -89,7 +142,7 @@
             }
         },
         {
-            "name": "starport_after_factory",
+            "name": "starport_1",
             "requires": {
                 "ready_gte": {
                     "FACTORY": 1
@@ -109,7 +162,7 @@
     ],
     "production_rules": [
         {
-            "name": "medivac",
+            "name": "medivacs_2",
             "requires": {
                 "ready_gte": {
                     "STARPORT": 1
@@ -117,17 +170,17 @@
             },
             "when": {
                 "unit_lte": {
-                    "MEDIVAC": 1
+                    "MEDIVAC": 2
                 }
             },
             "do": {
                 "train": "MEDIVAC",
                 "from": "STARPORT",
-                "cap": 1
+                "cap": 2
             }
         },
         {
-            "name": "marines",
+            "name": "marines_cap_32",
             "requires": {
                 "ready_gte": {
                     "BARRACKS": 1
@@ -135,13 +188,13 @@
             },
             "when": {
                 "unit_lte": {
-                    "MARINE": 24
+                    "MARINE": 32
                 }
             },
             "do": {
                 "train": "MARINE",
                 "from": "BARRACKS",
-                "cap": 24
+                "cap": 32
             }
         }
     ]

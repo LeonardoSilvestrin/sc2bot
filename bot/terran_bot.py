@@ -1,5 +1,4 @@
-﻿# terran_bot.py
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from sc2.bot_ai import BotAI
 
@@ -32,25 +31,48 @@ class TerranBot(BotAI):
         self.place = Placement(self, ctx=self.ctx, logger=self.log)
         self.builder = Builder(self, self.econ, self.place, self.ctx, logger=self.log)
 
-        # executores (não-configurados)
+        # behaviors base
         self.macro = MacroBehavior(self, self.econ, self.builder, ctx=self.ctx, logger=self.log, debug=debug)
         self.plan_exec = PlanExecutor(self, self.builder, self.strategy, ctx=self.ctx, logger=self.log)
         self.plan = PlanBehavior(self.plan_exec)
         self.combat = CombatBehavior(self, self.ctx, logger=self.log, debug=debug)
-        self.drop = DropBehavior(self, self.ctx, logger=self.log, debug=debug)
+
+        # drops: 1 instância por cfg (estável)
+        self.drop_behaviors: list[DropBehavior] = [
+            DropBehavior(self, self.ctx, logger=self.log, debug=debug) for _ in getattr(self.strategy, "drops", [])
+        ]
 
         self.orch = BehaviorOrchestrator()
-
         self._last_snapshot_iter = -999999
 
     def _active_pairs(self):
-        # prioridade fixa por enquanto (depois vem do strategy/states)
-        return [
+        pairs = [
             (self.macro, {"econ": self.strategy.economy, "macro": self.strategy.behaviors.macro}),
             (self.plan, {"strategy": self.strategy}),
-            (self.drop, {"drop": self.strategy.drop}),
-            (self.combat, {"combat": self.strategy.behaviors.combat}),
         ]
+
+        # cada drop tem seu cfg próprio
+        drops = getattr(self.strategy, "drops", [])
+        for beh, dc in zip(self.drop_behaviors, drops):
+            # deixa drop desabilitado ficar ativo? pode, ele retorna False rápido.
+            # se preferir, filtra: if dc.enabled: ...
+            pairs.append((beh, {"drop": dc}))
+
+        pairs.append((self.combat, {"combat": self.strategy.behaviors.combat}))
+        return pairs
+
+    def _compute_budget(self) -> int:
+        """
+        Regra pragmática:
+        - 1 action/tick no early game
+        - Se houver >=2 drops enabled, sobe pra 2 actions/tick para “sincronizar” melhor.
+        (Você pode sofisticar depois: considerar fase do drop, etc.)
+        """
+        drops = getattr(self.strategy, "drops", [])
+        enabled_drops = sum(1 for d in drops if getattr(d, "enabled", False))
+        if enabled_drops >= 2:
+            return 2
+        return 1
 
     async def on_step(self, iteration: int):
         self.ctx.iteration = int(iteration)
@@ -73,7 +95,7 @@ class TerranBot(BotAI):
             )
 
         self.orch.set_active(self._active_pairs())
-        await self.orch.step(budget_actions=1)
+        await self.orch.step(budget_actions=self._compute_budget())
 
     async def on_end(self, game_result):
         self.log.emit("game_end", {"result": str(game_result), "time": float(self.time)})

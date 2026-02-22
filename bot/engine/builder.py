@@ -1,9 +1,13 @@
-﻿from __future__ import annotations
+﻿# bot/engine/builder.py
+from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Iterable
+from typing import Any, Iterable, Optional
+import inspect
 
 from sc2.ids.unit_typeid import UnitTypeId as U
+from sc2.ids.ability_id import AbilityId as A
+from sc2.ids.upgrade_id import UpgradeId as Up
 
 
 @dataclass
@@ -28,33 +32,21 @@ class Builder:
     # robust unit access
     # ----------------------------
     def _iter_owned(self) -> Iterable[Any]:
-        """
-        Retorna TODAS as unidades do player (inclui buildings), independente do fork.
-        Ordem de preferência:
-          1) bot.state.units (geralmente inclui tudo)
-          2) bot.all_units
-          3) bot.units (pior caso)
-        """
         st = getattr(self.bot, "state", None)
         if st is not None and hasattr(st, "units"):
             return st.units
         if hasattr(self.bot, "all_units"):
             return self.bot.all_units
         return self.bot.units
+
     def _iter_all_units(self) -> Iterable[Any]:
-        """
-        Retorna todas as unidades conhecidas pelo bot (inclui neutras).
-        Preferência:
-        1) bot.state.units
-        2) bot.all_units
-        3) bot.units (fallback)
-        """
         st = getattr(self.bot, "state", None)
         if st is not None and hasattr(st, "units"):
             return st.units
         if hasattr(self.bot, "all_units"):
             return self.bot.all_units
         return self.bot.units
+
     def _owned_of_type(self, unit_type: U) -> list[Any]:
         out = []
         for u in self._iter_owned():
@@ -69,14 +61,9 @@ class Builder:
     # geyser access (neutral units)
     # ----------------------------
     def _iter_geyser_candidates(self) -> list[Any]:
-        """
-        Retorna geysers (Units neutros) de forma robusta.
-        Não assume que 'neutral_units' exista, nem que 'vespene_geyser' esteja populado.
-        """
         bot = self.bot
         st = getattr(bot, "state", None)
 
-        # 1) Algumas versões expõem isso no state
         if st is not None and hasattr(st, "vespene_geyser"):
             try:
                 gs = list(st.vespene_geyser)
@@ -85,7 +72,6 @@ class Builder:
             except Exception:
                 pass
 
-        # 2) Outras expõem no próprio bot (property)
         if hasattr(bot, "vespene_geyser"):
             try:
                 gs = list(bot.vespene_geyser)
@@ -94,7 +80,6 @@ class Builder:
             except Exception:
                 pass
 
-        # 3) neutral_units (quando existe)
         if st is not None and hasattr(st, "neutral_units"):
             try:
                 gs = [u for u in st.neutral_units if getattr(u, "type_id", None) == U.VESPENEGEYSER]
@@ -103,9 +88,8 @@ class Builder:
             except Exception:
                 pass
 
-        # 4) fallback mais confiável: varrer TODAS as units conhecidas
-        gs = [u for u in self._iter_all_units() if getattr(u, "type_id", None) == U.VESPENEGEYSER]
-        return gs
+        return [u for u in self._iter_all_units() if getattr(u, "type_id", None) == U.VESPENEGEYSER]
+
     # ----------------------------
     # counts
     # ----------------------------
@@ -123,6 +107,53 @@ class Builder:
         return self.have(unit_type) + self.pending(unit_type)
 
     # ----------------------------
+    # low-level do() compatible
+    # ----------------------------
+    async def _do(self, cmd) -> bool:
+        fn = getattr(self.bot, "do", None)
+        if fn is None:
+            return False
+
+        res = fn(cmd)
+        if inspect.isawaitable(res):
+            await res
+            return True
+
+        if isinstance(res, bool):
+            return res
+        return True
+
+    # ----------------------------
+    # upgrades (robust)
+    # ----------------------------
+    def has_upgrade(self, up: Up) -> bool:
+        st = getattr(self.bot, "state", None)
+        ups = getattr(st, "upgrades", None)
+        if ups is None:
+            return False
+        try:
+            # python-sc2 geralmente usa set[UpgradeId]
+            return up in ups
+        except Exception:
+            # forks podem usar ints
+            try:
+                return int(up.value) in set(int(x) for x in ups)
+            except Exception:
+                return False
+
+    def pending_upgrade(self, up: Up) -> int:
+        fn = getattr(self.bot, "already_pending_upgrade", None)
+        if fn is None:
+            return 0
+        try:
+            return int(fn(up))
+        except Exception:
+            try:
+                return int(fn(int(up.value)))
+            except Exception:
+                return 0
+
+    # ----------------------------
     # actions
     # ----------------------------
     async def try_build(self, unit_type: U, *, near=None) -> bool:
@@ -136,10 +167,6 @@ class Builder:
             self._fail("build", unit_type, "no_workers", None)
             return False
 
-        # ----------------------------
-        # SPECIAL CASE: REFINERY
-        # - no teu fork, bot.build(REFINERY, near=...) exige Unit (geyser), não Point2
-        # ----------------------------
         if unit_type == U.REFINERY:
             ths = getattr(bot, "townhalls", None)
             th = ths.ready.first if ths and ths.ready else None
@@ -147,38 +174,24 @@ class Builder:
                 self._fail("build", unit_type, "no_townhall", None)
                 return False
 
-            geysers = self._iter_geyser_candidates()
-            # pegue geysers perto do CC (distância típica do main)
-            geysers = sorted(geysers, key=lambda g: g.distance_to(th))
-
+            geysers = sorted(self._iter_geyser_candidates(), key=lambda g: g.distance_to(th))
             if not geysers:
                 self._fail("build", unit_type, "no_geyser_candidates", None)
                 return False
 
             existing_refineries = self._owned_of_type(U.REFINERY)
-
             for g in geysers:
-                # considera ocupado se já existe refinery em cima
                 occupied = any(r.distance_to(g) < 1.0 for r in existing_refineries)
                 if occupied:
                     continue
 
-                # AQUI é o ponto: passar o geyser Unit
                 await bot.build(U.REFINERY, near=g)
-
-                self._ok(
-                    "build",
-                    unit_type,
-                    {"geyser_pos": [float(g.position.x), float(g.position.y)]},
-                )
+                self._ok("build", unit_type, {"geyser_pos": [float(g.position.x), float(g.position.y)]})
                 return True
 
             self._fail("build", unit_type, "all_geysers_occupied", None)
             return False
 
-        # ----------------------------
-        # NORMAL BUILDINGS (Point2 placement)
-        # ----------------------------
         pos = await self.placement.find_placement(unit_type, near=near)
         if pos is None:
             self._fail("build", unit_type, "no_placement", None)
@@ -191,7 +204,6 @@ class Builder:
     async def try_train(self, unit_type: U, *, from_type: U) -> bool:
         bot = self.bot
 
-        # NÃO confie em bot.units(from_type) no seu fork.
         producers = [u for u in self._owned_of_type(from_type) if getattr(u, "is_ready", False)]
         if not producers:
             self._fail("train", unit_type, "no_producer", {"from": str(from_type)})
@@ -213,6 +225,122 @@ class Builder:
             return True
 
         self._fail("train", unit_type, "all_busy", {"from": str(from_type)})
+        return False
+
+    # ----------------------------
+    # addons
+    # ----------------------------
+    async def try_addon(self, *, on: U, addon: str) -> bool:
+        """
+        addon: "TECHLAB" | "REACTOR"
+        """
+        bot = self.bot
+        addon = addon.strip().upper()
+
+        parents = [b for b in self._owned_of_type(on) if getattr(b, "is_ready", False)]
+        if not parents:
+            self._fail("addon", on, "no_parent", {"on": str(on)})
+            return False
+
+        # precisa estar idle pra construir addon
+        parent = None
+        for b in parents:
+            if getattr(b, "is_idle", False):
+                parent = b
+                break
+        if parent is None:
+            self._fail("addon", on, "no_idle_parent", {"on": str(on)})
+            return False
+
+        # mapeia ability + custo via can_afford(ability)
+        if on == U.BARRACKS and addon == "TECHLAB":
+            ability = A.BUILD_TECHLAB_BARRACKS
+            unit_name = "BARRACKSTECHLAB"
+        elif on == U.BARRACKS and addon == "REACTOR":
+            ability = A.BUILD_REACTOR_BARRACKS
+            unit_name = "BARRACKSREACTOR"
+        elif on == U.FACTORY and addon == "TECHLAB":
+            ability = A.BUILD_TECHLAB_FACTORY
+            unit_name = "FACTORYTECHLAB"
+        elif on == U.FACTORY and addon == "REACTOR":
+            ability = A.BUILD_REACTOR_FACTORY
+            unit_name = "FACTORYREACTOR"
+        elif on == U.STARPORT and addon == "TECHLAB":
+            ability = A.BUILD_TECHLAB_STARPORT
+            unit_name = "STARPORTTECHLAB"
+        elif on == U.STARPORT and addon == "REACTOR":
+            ability = A.BUILD_REACTOR_STARPORT
+            unit_name = "STARPORTREACTOR"
+        else:
+            self._fail("addon", on, "unsupported_addon", {"on": str(on), "addon": addon})
+            return False
+
+        # custo
+        can_afford_ability = getattr(bot, "can_afford", None)
+        if callable(can_afford_ability):
+            try:
+                if not bot.can_afford(ability):
+                    self._fail("addon", on, "cant_afford", {"ability": str(ability)})
+                    return False
+            except Exception:
+                # alguns forks não suportam can_afford(AbilityId); deixa passar e falha no action result se houver
+                pass
+
+        ok = await self._do(parent(ability))
+        if ok:
+            self._ok("addon", on, {"on": on.name, "addon": addon, "unit": unit_name, "parent_tag": int(parent.tag)})
+            return True
+
+        self._fail("addon", on, "do_failed", {"on": on.name, "addon": addon})
+        return False
+
+    # ----------------------------
+    # research
+    # ----------------------------
+    async def try_research(self, upgrade: Up) -> bool:
+        bot = self.bot
+
+        if self.has_upgrade(upgrade):
+            self._fail("research", U.BARRACKS, "already_done", {"upgrade": str(upgrade)})
+            return False
+
+        if self.pending_upgrade(upgrade) > 0:
+            self._fail("research", U.BARRACKS, "already_pending", {"upgrade": str(upgrade)})
+            return False
+
+        # STIMPACK precisa de Barracks Tech Lab
+        if upgrade == Up.STIMPACK:
+            labs = [x for x in self._owned_of_type(U.BARRACKSTECHLAB) if getattr(x, "is_ready", False)]
+            if not labs:
+                self._fail("research", U.BARRACKSTECHLAB, "no_techlab", {"upgrade": "STIMPACK"})
+                return False
+
+            lab = None
+            for x in labs:
+                if getattr(x, "is_idle", False):
+                    lab = x
+                    break
+            if lab is None:
+                self._fail("research", U.BARRACKSTECHLAB, "all_busy", {"upgrade": "STIMPACK"})
+                return False
+
+            # custo (python-sc2 geralmente aceita can_afford(AbilityId.RESEARCH_STIMPACK))
+            try:
+                if not bot.can_afford(A.RESEARCH_STIMPACK):
+                    self._fail("research", U.BARRACKSTECHLAB, "cant_afford", {"upgrade": "STIMPACK"})
+                    return False
+            except Exception:
+                pass
+
+            ok = await self._do(lab(A.RESEARCH_STIMPACK))
+            if ok:
+                self._ok("research", U.BARRACKSTECHLAB, {"upgrade": "STIMPACK", "lab_tag": int(lab.tag)})
+                return True
+
+            self._fail("research", U.BARRACKSTECHLAB, "do_failed", {"upgrade": "STIMPACK"})
+            return False
+
+        self._fail("research", U.BARRACKS, "unsupported_upgrade", {"upgrade": str(upgrade)})
         return False
 
     # ----------------------------
