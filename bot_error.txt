@@ -1,4 +1,0 @@
-C:\Users\Asus\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\LocalCache\local-packages\Python312\site-packages\sc2\main.py:325: DeprecationWarning: There is no current event loop
-  result = asyncio.get_event_loop().run_until_complete(
-C:\Users\Asus\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\LocalCache\local-packages\Python312\site-packages\sc2\sc2process.py:116: DeprecationWarning: parameter 'timeout' of type 'float' is deprecated, please use 'timeout=ClientWSTimeout(ws_close=...)'
-  ws = await self._session.ws_connect(self.ws_url, timeout=120)

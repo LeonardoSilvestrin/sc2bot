@@ -333,62 +333,59 @@ class Orchestrator:
     # MACRO: REFINERY (geyser-based)
     # =============================================================================
     def _iter_geyser_candidates(self):
-        """Yield all vespene geyser units from any available source"""
-        # 1) Try by unit type ID first (most reliable)
-        for tid in (U.VESPENEGEYSER, U.PROTOSSVESPENEGEYSER, U.SHAKURASVESPENEGEYSER):
-            try:
-                us = self.api.units(tid)
-                if us:
-                    for u in us:
-                        yield u
-                    return  # If we found any, don't try other methods
-            except Exception:
-                pass
-
-        # 2) Try built-in properties
-        for attr in ("vespene_geyser", "vespene_geysers"):
-            vg = getattr(self.bot, attr, None)
-            if vg is not None and getattr(vg, "exists", False):
-                try:
+        """Yield all vespene geyser units from any available source
+        
+        Note: self.api.units(type_id) returns PLAYER units only.
+        For neutral units, we must use bot.state.vespene_geyser, bot.vespene_geyser, or state.neutral_units.
+        """
+        # 1) Try bot.state.vespene_geyser first (if available in this fork)
+        try:
+            state = getattr(self.bot, "state", None)
+            if state is not None:
+                vg = getattr(state, "vespene_geyser", None)
+                if vg is not None:
                     for u in vg:
                         yield u
                     return
-                except Exception:
-                    pass
+        except Exception:
+            pass
 
-        # 3) Try game_info.map_neutral_units
+        # 2) Try bot.vespene_geyser property directly
         try:
-            gi = getattr(self.bot, "game_info", None)
-            neutrals = getattr(gi, "map_neutral_units", None) if gi is not None else None
-            if neutrals is not None:
-                for u in neutrals:
-                    name = str(getattr(u, "name", "")).lower()
-                    if "vespenegeyser" in name:
-                        yield u
+            vg = getattr(self.bot, "vespene_geyser", None)
+            if vg is not None and getattr(vg, "exists", False):
+                for u in vg:
+                    yield u
                 return
         except Exception:
             pass
 
-        # 4) Try neutral_units
+        # 3) Try state.neutral_units (not game_info.map_neutral_units)
         try:
-            nu = getattr(self.bot, "neutral_units", None)
-            if nu is not None:
-                for u in nu:
-                    name = str(getattr(u, "name", "")).lower()
-                    if "vespenegeyser" in name:
-                        yield u
-                return
+            state = getattr(self.bot, "state", None)
+            if state is not None:
+                neutrals = getattr(state, "neutral_units", None)
+                if neutrals is not None:
+                    for u in neutrals:
+                        tid = getattr(u, "type_id", None)
+                        if tid in (U.VESPENEGEYSER, U.PROTOSSVESPENEGEYSER, U.SHAKURASVESPENEGEYSER):
+                            yield u
+                    return
         except Exception:
             pass
 
-        # 5) Last resort: scan all_units
+        # 4) Fallback: Try all_units and filter by name (this is slow but comprehensive)
         try:
-            au = getattr(self.bot, "all_units", None)
-            if au is not None:
-                for u in au:
+            all_u = getattr(self.bot, "all_units", None)
+            if all_u is not None:
+                found = False
+                for u in all_u:
                     name = str(getattr(u, "name", "")).lower()
                     if "vespenegeyser" in name:
                         yield u
+                        found = True
+                if found:
+                    return
         except Exception:
             pass
 
