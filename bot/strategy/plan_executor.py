@@ -183,7 +183,15 @@ class PlanExecutor:
     def _my_start(self) -> Optional[Point2]:
         return getattr(self.bot, "start_location", None)
 
+# --- PLAN_EXECUTOR: substituir _my_natural por esta versão ---
+
     def _my_natural(self) -> Optional[Point2]:
+        loc = getattr(self.bot, "locations", None)
+        if loc is not None:
+            nat = loc.my_natural_exp()
+            if nat is not None:
+                return nat
+
         nat = getattr(self.bot, "cached_natural_expansion", None)
         if nat is not None:
             return nat
@@ -199,7 +207,6 @@ class PlanExecutor:
         if not candidates:
             return None
         return min(candidates, key=lambda p: p.distance_to(main_exp))
-
     def _resolve_near(self, near_key: str | None) -> Optional[Point2]:
         if near_key is None:
             return None

@@ -20,6 +20,7 @@
 │   │   ├── builder.py
 │   │   ├── economy.py
 │   │   ├── expansion_finder.py
+│   │   ├── locations.py
 │   │   ├── placement.py
 │   │   └── wall.py
 │   ├── strategy
@@ -152,12 +153,10 @@ class DropRuntime:
 
     fight_until_time: float = 0.0
 
-    # anti-stuck: tag -> (last_dist, stuck_count)
     stuck: Dict[int, tuple[float, int]] = field(default_factory=dict)
 
-    # robust loading tracking (fork fallback)
     loaded_count: int = 0
-    pending_load_until_loop: Dict[int, int] = field(default_factory=dict)  # marine_tag -> loop deadline
+    pending_load_until_loop: Dict[int, int] = field(default_factory=dict)
 
 
 class DropBehavior:
@@ -217,68 +216,53 @@ class DropBehavior:
             return res
         return True
 
-    # -------- points --------
+    # -------- points (CENTRALIZADO) --------
+    def _loc(self):
+        # TerranBot.locations.loc (MapLocations)
+        svc = getattr(self.bot, "locations", None)
+        return getattr(svc, "loc", None) if svc is not None else None
+
     def _enemy_main(self) -> Optional[Point2]:
+        loc = self._loc()
+        p = getattr(loc, "enemy_main", None) if loc is not None else None
+        if p is not None:
+            return p
+        # fallback: start location do inimigo
         locs = getattr(self.bot, "enemy_start_locations", None)
         return locs[0] if locs else None
 
-    def _my_start(self) -> Optional[Point2]:
-        return getattr(self.bot, "start_location", None
-
-        )
-
-    def _expansions(self) -> list[Point2]:
-        exps = getattr(self.bot, "expansion_locations_list", None)
-        return list(exps) if exps else []
-
-    def _enemy_main_expansion(self) -> Optional[Point2]:
-        enemy_main = self._enemy_main()
-        exps = self._expansions()
-        if enemy_main is None or not exps:
-            return None
-        return min(exps, key=lambda p: p.distance_to(enemy_main))
-
     def _enemy_natural(self) -> Optional[Point2]:
-        main_exp = self._enemy_main_expansion()
-        exps = self._expansions()
-        if main_exp is None or not exps:
-            return None
-        candidates = [p for p in exps if p.distance_to(main_exp) > 3.0]
-        if not candidates:
-            return None
-        return min(candidates, key=lambda p: p.distance_to(main_exp))
+        loc = self._loc()
+        p = getattr(loc, "enemy_natural", None) if loc is not None else None
+        return p
 
-    def _my_main_expansion(self) -> Optional[Point2]:
-        my_main = self._my_start()
-        exps = self._expansions()
-        if my_main is None or not exps:
-            return None
-        return min(exps, key=lambda p: p.distance_to(my_main))
+    def _my_main(self) -> Optional[Point2]:
+        loc = self._loc()
+        p = getattr(loc, "my_main", None) if loc is not None else None
+        if p is not None:
+            return p
+        return getattr(self.bot, "start_location", None)
 
     def _my_natural(self) -> Optional[Point2]:
-        main_exp = self._my_main_expansion()
-        exps = self._expansions()
-        if main_exp is None or not exps:
-            return None
-        candidates = [p for p in exps if p.distance_to(main_exp) > 3.0]
-        if not candidates:
-            return None
-        return min(candidates, key=lambda p: p.distance_to(main_exp))
+        loc = self._loc()
+        p = getattr(loc, "my_natural", None) if loc is not None else None
+        return p
 
     def _point_by_key(self, key: str) -> Optional[Point2]:
-        if key == "ENEMY_MAIN":
+        k = str(key).strip().upper()
+        if k == "ENEMY_MAIN":
             return self._enemy_main()
-        if key == "ENEMY_NATURAL":
-            return self._enemy_natural()
-        if key == "MY_MAIN":
-            return self._my_start()
-        if key == "MY_NATURAL":
-            return self._my_natural()
+        if k == "ENEMY_NATURAL":
+            return self._enemy_natural() or self._enemy_main()
+        if k == "MY_MAIN":
+            return self._my_main()
+        if k == "MY_NATURAL":
+            return self._my_natural() or self._my_main()
         return None
 
     def _resolve_points(self, drop_cfg) -> tuple[Optional[Point2], Optional[Point2], Optional[Point2]]:
         enemy_main = self._enemy_main()
-        my_main = self._my_start()
+        my_main = self._my_main()
         if enemy_main is None or my_main is None:
             return None, None, None
 
@@ -297,6 +281,7 @@ class DropBehavior:
         staging = staging_anchor.towards(my_main, dist)
         return pickup, staging, target
 
+    # ---- alive helpers etc (resto igual) ----
     def _alive_medivac(self, tag: int):
         meds = self.bot.units(U.MEDIVAC) if hasattr(self.bot, "units") else None
         if not meds:
@@ -328,12 +313,6 @@ class DropBehavior:
         self.rt.stuck.pop(int(tag), None)
 
     def _cargo_used(self, med: Any) -> int:
-        """
-        Fork-safe cargo:
-        - tenta cargo_used/cargo_space_used
-        - tenta passengers (list)
-        - fallback: usa contador interno (loaded_count)
-        """
         for attr in ("cargo_used", "cargo_space_used", "cargo_space_taken", "cargo_space"):
             v = getattr(med, attr, None)
             if v is None:
@@ -1732,36 +1711,33 @@ class Builder:
         self.last: LastAction | None = None
 
     # ----------------------------
-    # robust "mine only" access
+    # robust unit access
     # ----------------------------
-    def _owned_of_type(self, unit_type: U) -> list[Any]:
-        """
-        No teu fork, estruturas também entram via bot.units(UnitTypeId).
-        Isso tende a ser a fonte mais confiável do "owned only".
-        """
-        bot = self.bot
-
-        fn = getattr(bot, "units", None)
-        if callable(fn):
-            try:
-                units = fn(unit_type)
-                return list(units) if units else []
-            except Exception:
-                pass
-
-        # fallback legado (pior caso)
-        st = getattr(bot, "state", None)
+    def _iter_owned(self) -> Iterable[Any]:
+        st = getattr(self.bot, "state", None)
         if st is not None and hasattr(st, "units"):
-            out = []
-            try:
-                for u in st.units:
-                    if getattr(u, "type_id", None) == unit_type and bool(getattr(u, "is_mine", True)):
-                        out.append(u)
-            except Exception:
-                pass
-            return out
+            return st.units
+        if hasattr(self.bot, "all_units"):
+            return self.bot.all_units
+        return self.bot.units
 
-        return []
+    def _iter_all_units(self) -> Iterable[Any]:
+        st = getattr(self.bot, "state", None)
+        if st is not None and hasattr(st, "units"):
+            return st.units
+        if hasattr(self.bot, "all_units"):
+            return self.bot.all_units
+        return self.bot.units
+
+    def _owned_of_type(self, unit_type: U) -> list[Any]:
+        out = []
+        for u in self._iter_owned():
+            is_mine = getattr(u, "is_mine", None)
+            if is_mine is not None and not is_mine:
+                continue
+            if getattr(u, "type_id", None) == unit_type:
+                out.append(u)
+        return out
 
     # ----------------------------
     # counts
@@ -1771,7 +1747,7 @@ class Builder:
 
     def ready(self, unit_type: U) -> int:
         units = self._owned_of_type(unit_type)
-        return sum(1 for u in units if bool(getattr(u, "is_ready", False)))
+        return sum(1 for u in units if getattr(u, "is_ready", False))
 
     def pending(self, unit_type: U) -> int:
         return int(self.bot.already_pending(unit_type))
@@ -1789,11 +1765,14 @@ class Builder:
 
         res = fn(cmd)
         if inspect.isawaitable(res):
-            await res
-            return True
+            res = await res
 
+        # python-sc2 costuma retornar bool / ActionResult / None dependendo do fork
         if isinstance(res, bool):
             return res
+        if res is None:
+            # não dá pra afirmar sucesso: trate como "falhou" para não poluir o estado
+            return False
         return True
 
     # ----------------------------
@@ -1827,15 +1806,7 @@ class Builder:
             except Exception:
                 pass
 
-        # fallback bruto
-        try:
-            all_units = getattr(bot, "all_units", None)
-            if all_units is not None:
-                return [u for u in all_units if getattr(u, "type_id", None) == U.VESPENEGEYSER]
-        except Exception:
-            pass
-
-        return []
+        return [u for u in self._iter_all_units() if getattr(u, "type_id", None) == U.VESPENEGEYSER]
 
     # ----------------------------
     # upgrades (robust)
@@ -1866,30 +1837,8 @@ class Builder:
                 return 0
 
     # ----------------------------
-    # build at EXACT position
+    # actions
     # ----------------------------
-    def _select_worker(self, pos) -> Any | None:
-        bot = self.bot
-        fn = getattr(bot, "select_build_worker", None)
-        if callable(fn):
-            try:
-                w = fn(pos)
-                if w is not None:
-                    return w
-            except Exception:
-                pass
-
-        workers = getattr(bot, "workers", None)
-        if workers is None or workers.amount <= 0:
-            return None
-        try:
-            return workers.closest_to(pos)
-        except Exception:
-            try:
-                return workers.first
-            except Exception:
-                return None
-
     async def try_build(self, unit_type: U, *, near=None, wall_pref: str | None = None) -> bool:
         bot = self.bot
 
@@ -1897,11 +1846,11 @@ class Builder:
             self._fail("build", unit_type, "cant_afford", {"minerals": int(bot.minerals), "gas": int(bot.vespene)})
             return False
 
-        if getattr(bot, "workers", None) is None or bot.workers.amount == 0:
+        if bot.workers.amount == 0:
             self._fail("build", unit_type, "no_workers", None)
             return False
 
-        # Refinery: ainda usa "near geyser"
+        # ---- REFINERY (near = geyser) ----
         if unit_type == U.REFINERY:
             ths = getattr(bot, "townhalls", None)
             th = ths.ready.first if ths and ths.ready else None
@@ -1921,17 +1870,20 @@ class Builder:
                     continue
 
                 try:
-                    await bot.build(U.REFINERY, near=g)
-                except Exception:
-                    # fallback: tenta worker.build
-                    w = self._select_worker(g.position)
-                    if w is None:
-                        self._fail("build", unit_type, "no_workers", None)
-                        return False
-                    ok = await self._do(w.build(U.REFINERY, g.position))
-                    if not ok:
-                        self._fail("build", unit_type, "do_failed", {"unit": unit_type.name})
-                        return False
+                    res = await bot.build(U.REFINERY, near=g)
+                except Exception as e:
+                    self._fail("build", unit_type, "build_exception", {"error": str(e)})
+                    return False
+
+                if not res:
+                    # aqui está o bug que te trava: build rejeitado, mas antes você logava ok
+                    self._fail(
+                        "build",
+                        unit_type,
+                        "build_rejected",
+                        {"near_geyser": [float(g.position.x), float(g.position.y)]},
+                    )
+                    return False
 
                 self._ok("build", unit_type, {"geyser_pos": [float(g.position.x), float(g.position.y)]})
                 return True
@@ -1939,29 +1891,34 @@ class Builder:
             self._fail("build", unit_type, "all_geysers_occupied", None)
             return False
 
-        # Outras estruturas: pega um POS exato do Placement e executa worker.build(pos)
+        # ---- NORMAL BUILD (Placement + bot.build) ----
         pos = await self.placement.find_placement(unit_type, near=near, wall_pref=wall_pref)
         if pos is None:
-            self._fail("build", unit_type, "no_placement", None)
+            self._fail("build", unit_type, "no_placement", {"wall_pref": wall_pref})
             return False
 
-        w = self._select_worker(pos)
-        if w is None:
-            self._fail("build", unit_type, "no_workers", None)
+        try:
+            res = await bot.build(unit_type, near=pos)
+        except Exception as e:
+            self._fail("build", unit_type, "build_exception", {"error": str(e), "pos": [float(pos.x), float(pos.y)]})
             return False
 
-        ok = await self._do(w.build(unit_type, pos))
-        if ok:
-            self._ok("build", unit_type, {"pos": [float(pos.x), float(pos.y)], "wall_pref": wall_pref})
-            return True
+        if not res:
+            self._fail(
+                "build",
+                unit_type,
+                "build_rejected",
+                {"pos": [float(pos.x), float(pos.y)], "wall_pref": wall_pref},
+            )
+            return False
 
-        self._fail("build", unit_type, "do_failed", {"pos": [float(pos.x), float(pos.y)]})
-        return False
+        self._ok("build", unit_type, {"pos": [float(pos.x), float(pos.y)], "wall_pref": wall_pref})
+        return True
 
     async def try_train(self, unit_type: U, *, from_type: U) -> bool:
         bot = self.bot
 
-        producers = [u for u in self._owned_of_type(from_type) if bool(getattr(u, "is_ready", False))]
+        producers = [u for u in self._owned_of_type(from_type) if getattr(u, "is_ready", False)]
         if not producers:
             self._fail("train", unit_type, "no_producer", {"from": str(from_type)})
             return False
@@ -1975,30 +1932,41 @@ class Builder:
             return False
 
         for b in producers:
-            if not bool(getattr(b, "is_idle", False)):
+            if not getattr(b, "is_idle", False):
                 continue
+
             try:
-                b.train(unit_type)
-                self._ok("train", unit_type, {"from": str(from_type)})
+                cmd = b.train(unit_type)
+            except Exception as e:
+                self._fail("train", unit_type, "train_exception", {"error": str(e), "from": str(from_type)})
+                return False
+
+            ok = await self._do(cmd)
+            if ok:
+                self._ok("train", unit_type, {"from": str(from_type), "producer_tag": int(getattr(b, "tag", 0))})
                 return True
-            except Exception:
-                continue
+
+            self._fail("train", unit_type, "do_failed", {"from": str(from_type), "producer_tag": int(getattr(b, "tag", 0))})
+            return False
 
         self._fail("train", unit_type, "all_busy", {"from": str(from_type)})
         return False
 
+    # ----------------------------
+    # addons + research (inalterado)
+    # ----------------------------
     async def try_addon(self, *, on: U, addon: str) -> bool:
         bot = self.bot
         addon = addon.strip().upper()
 
-        parents = [b for b in self._owned_of_type(on) if bool(getattr(b, "is_ready", False))]
+        parents = [b for b in self._owned_of_type(on) if getattr(b, "is_ready", False)]
         if not parents:
             self._fail("addon", on, "no_parent", {"on": str(on)})
             return False
 
         parent = None
         for b in parents:
-            if bool(getattr(b, "is_idle", False)):
+            if getattr(b, "is_idle", False):
                 parent = b
                 break
         if parent is None:
@@ -2027,12 +1995,14 @@ class Builder:
             self._fail("addon", on, "unsupported_addon", {"on": str(on), "addon": addon})
             return False
 
-        try:
-            if hasattr(bot, "can_afford") and not bot.can_afford(ability):
-                self._fail("addon", on, "cant_afford", {"ability": str(ability)})
-                return False
-        except Exception:
-            pass
+        can_afford_ability = getattr(bot, "can_afford", None)
+        if callable(can_afford_ability):
+            try:
+                if not bot.can_afford(ability):
+                    self._fail("addon", on, "cant_afford", {"ability": str(ability)})
+                    return False
+            except Exception:
+                pass
 
         ok = await self._do(parent(ability))
         if ok:
@@ -2054,14 +2024,14 @@ class Builder:
             return False
 
         if upgrade == Up.STIMPACK:
-            labs = [x for x in self._owned_of_type(U.BARRACKSTECHLAB) if bool(getattr(x, "is_ready", False))]
+            labs = [x for x in self._owned_of_type(U.BARRACKSTECHLAB) if getattr(x, "is_ready", False)]
             if not labs:
                 self._fail("research", U.BARRACKSTECHLAB, "no_techlab", {"upgrade": "STIMPACK"})
                 return False
 
             lab = None
             for x in labs:
-                if bool(getattr(x, "is_idle", False)):
+                if getattr(x, "is_idle", False):
                     lab = x
                     break
             if lab is None:
@@ -2155,7 +2125,8 @@ class Economy:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from collections import deque
+from typing import Any, Dict, List, Optional, Tuple, Callable
 
 from sc2.position import Point2
 
@@ -2171,26 +2142,261 @@ def _k(p: Point2) -> Tuple[int, int]:
     return (int(round(float(p.x) * 2)), int(round(float(p.y) * 2)))
 
 
-async def _query_path(bot: Any, a: Point2, b: Point2) -> Optional[float]:
+def _tile(p: Point2) -> Tuple[int, int]:
+    # tile 1x1 (inteiro)
+    return (int(round(float(p.x))), int(round(float(p.y))))
+
+
+def _emit(emit: Optional[Callable[[str, dict], None]], event: str, payload: dict) -> None:
+    if emit is None:
+        return
+    try:
+        emit(event, payload)
+    except Exception:
+        # logging nunca pode quebrar o bot
+        pass
+
+
+def _in_pathing_grid(bot: Any, p: Point2) -> bool:
+    fn = getattr(bot, "in_pathing_grid", None)
+    if callable(fn):
+        try:
+            return bool(fn(p))
+        except Exception:
+            return False
+
+    # fallback: tenta game_info.pathing_grid
+    gi = getattr(bot, "game_info", None)
+    grid = getattr(gi, "pathing_grid", None) if gi is not None else None
+    if grid is None:
+        return False
+
+    x, y = _tile(p)
+    try:
+        return bool(grid[x, y])  # type: ignore[index]
+    except Exception:
+        try:
+            return bool(grid.is_set(Point2((x, y))))  # type: ignore[attr-defined]
+        except Exception:
+            return False
+
+
+def _nearest_pathable(bot: Any, p: Point2, *, max_r: int = 6) -> Optional[Point2]:
     """
-    Retorna distância de pathing (aprox) entre a e b.
-    Em python-sc2, normalmente: await bot.client.query_pathing(a, b)
+    Garante que o ponto usado no pathing esteja no grid caminhável.
+    Se já for válido, retorna p.
+    Senão, procura um ponto próximo (anel/espiral) no pathing grid.
+    """
+    if p is None:
+        return None
+    p = Point2((float(p.x), float(p.y)))
+
+    if _in_pathing_grid(bot, p):
+        return p
+
+    base_x, base_y = _tile(p)
+    for r in range(1, int(max_r) + 1):
+        for dx in range(-r, r + 1):
+            for dy in (-r, r):
+                q = Point2((base_x + dx, base_y + dy))
+                if _in_pathing_grid(bot, q):
+                    return q
+        for dy in range(-r + 1, r):
+            for dx in (-r, r):
+                q = Point2((base_x + dx, base_y + dy))
+                if _in_pathing_grid(bot, q):
+                    return q
+
+    return None
+
+
+def _start_from_townhall(bot: Any, preferred: Optional[Point2]) -> Optional[Point2]:
+    """
+    Anti-bug do caller: se existe townhall pronta, use o centro dela como start.
+    - se preferred existe, pega a townhall mais próxima de preferred
+    - senão, usa a mais próxima de bot.start_location
+    """
+    ths = getattr(bot, "townhalls", None)
+    if ths is None:
+        return None
+
+    try:
+        ready = ths.ready
+    except Exception:
+        return None
+
+    if not ready:
+        return None
+
+    anchor = preferred
+    if anchor is None:
+        anchor = getattr(bot, "start_location", None)
+
+    try:
+        if anchor is not None:
+            # python-sc2 Units tem closest_to
+            th = ready.closest_to(anchor)
+        else:
+            th = ready.first
+        return th.position
+    except Exception:
+        try:
+            return ready.first.position
+        except Exception:
+            return None
+
+
+async def _query_path(bot: Any, a: Point2, b: Point2, *, emit: Optional[Callable[[str, dict], None]] = None) -> Optional[float]:
+    """
+    Retorna distância de pathing (ground) entre a e b.
+    Robustez:
+    - ajusta a/b para pontos caminháveis (pathing grid)
+    - se query_pathing falhar/retornar None, devolve None (sem inventar euclidiano)
     """
     client = getattr(bot, "client", None)
     if client is None:
+        _emit(emit, "pathing_query_unavailable", {"reason": "no_client"})
         return None
 
     fn = getattr(client, "query_pathing", None)
     if not callable(fn):
+        _emit(emit, "pathing_query_unavailable", {"reason": "no_query_pathing"})
+        return None
+
+    a2 = _nearest_pathable(bot, a)
+    b2 = _nearest_pathable(bot, b)
+
+    if a2 is None or b2 is None:
+        _emit(
+            emit,
+            "pathing_query_adjust_fail",
+            {"a": [float(a.x), float(a.y)], "b": [float(b.x), float(b.y)]},
+        )
         return None
 
     try:
-        d = await fn(a, b)
+        d = await fn(a2, b2)
         if d is None:
+            _emit(
+                emit,
+                "pathing_query_none",
+                {
+                    "a": [float(a2.x), float(a2.y)],
+                    "b": [float(b2.x), float(b2.y)],
+                },
+            )
             return None
-        return float(d)
-    except Exception:
+        out = float(d)
+        _emit(
+            emit,
+            "pathing_query_ok",
+            {
+                "a": [float(a2.x), float(a2.y)],
+                "b": [float(b2.x), float(b2.y)],
+                "d": out,
+            },
+        )
+        return out
+    except Exception as e:
+        _emit(
+            emit,
+            "pathing_query_error",
+            {
+                "a": [float(a2.x), float(a2.y)],
+                "b": [float(b2.x), float(b2.y)],
+                "err": str(e)[:200],
+            },
+        )
         return None
+
+
+def _grid_accessor(bot: Any):
+    gi = getattr(bot, "game_info", None)
+    grid = getattr(gi, "pathing_grid", None) if gi is not None else None
+    if grid is None:
+        return None
+
+    w = getattr(grid, "width", None)
+    h = getattr(grid, "height", None)
+    if not isinstance(w, int) or not isinstance(h, int):
+        size = getattr(grid, "size", None)
+        if isinstance(size, tuple) and len(size) == 2:
+            w, h = int(size[0]), int(size[1])
+
+    if not isinstance(w, int) or not isinstance(h, int):
+        return None
+
+    def is_pathable(x: int, y: int) -> bool:
+        if x < 0 or y < 0 or x >= w or y >= h:
+            return False
+        try:
+            return bool(grid[x, y])  # type: ignore[index]
+        except Exception:
+            try:
+                return bool(grid.is_set(Point2((x, y))))  # type: ignore[attr-defined]
+            except Exception:
+                return False
+
+    return (w, h, is_pathable)
+
+
+def _bfs_distances_on_pathing_grid(bot: Any, start: Point2, *, emit: Optional[Callable[[str, dict], None]] = None) -> Optional[Dict[Tuple[int, int], int]]:
+    """
+    Fallback de chão (não-euclidiano):
+    BFS no pathing_grid, custo uniforme por tile.
+    Retorna dist[tile] = steps.
+    """
+    acc = _grid_accessor(bot)
+    if acc is None:
+        _emit(emit, "pathing_bfs_unavailable", {"reason": "no_grid_accessor"})
+        return None
+    w, h, is_pathable = acc
+
+    s = _nearest_pathable(bot, start)
+    if s is None:
+        _emit(emit, "pathing_bfs_unavailable", {"reason": "start_not_pathable"})
+        return None
+
+    sx, sy = _tile(s)
+    if not is_pathable(sx, sy):
+        _emit(emit, "pathing_bfs_unavailable", {"reason": "start_tile_not_pathable", "start": [sx, sy]})
+        return None
+
+    dist: Dict[Tuple[int, int], int] = {}
+    q = deque()
+    dist[(sx, sy)] = 0
+    q.append((sx, sy))
+
+    visited = 0
+
+    while q:
+        x, y = q.popleft()
+        visited += 1
+        d0 = dist[(x, y)]
+        nd = d0 + 1
+
+        nx, ny = x + 1, y
+        if (nx, ny) not in dist and is_pathable(nx, ny):
+            dist[(nx, ny)] = nd
+            q.append((nx, ny))
+
+        nx, ny = x - 1, y
+        if (nx, ny) not in dist and is_pathable(nx, ny):
+            dist[(nx, ny)] = nd
+            q.append((nx, ny))
+
+        nx, ny = x, y + 1
+        if (nx, ny) not in dist and is_pathable(nx, ny):
+            dist[(nx, ny)] = nd
+            q.append((nx, ny))
+
+        nx, ny = x, y - 1
+        if (nx, ny) not in dist and is_pathable(nx, ny):
+            dist[(nx, ny)] = nd
+            q.append((nx, ny))
+
+    _emit(emit, "pathing_bfs_ok", {"tiles_reached": len(dist), "popped": visited, "grid": [w, h]})
+    return dist
 
 
 async def rank_expansions_by_pathing(
@@ -2199,26 +2405,85 @@ async def rank_expansions_by_pathing(
     *,
     start: Point2,
     cache: Dict[Tuple[int, int], float] | None = None,
+    bfs_fail_ratio: float = 0.5,
+    emit: Optional[Callable[[str, dict], None]] = None,
 ) -> List[ExpansionRank]:
     """
-    Ordena expansões por distância de pathing a partir de start.
-    Cache por ponto (não por par) é suficiente aqui porque start é fixo (main).
+    Ordena expansões por distância de chão.
+
+    Estratégia:
+    1) tenta query_pathing (robusto com nearest pathable)
+    2) se muitas queries falharem, roda BFS no pathing_grid
+    3) se BFS não existir, retorna as que conseguir medir + INF temporário pras restantes (sem cachear INF)
     """
     cache = cache if cache is not None else {}
 
     ranks: List[ExpansionRank] = []
+    missing: List[Point2] = []
+
+    ok_q = 0
+    fail_q = 0
+
     for p in expansions:
         key = _k(p)
         if key in cache:
             ranks.append(ExpansionRank(pos=p, path_dist=float(cache[key])))
             continue
 
-        d = await _query_path(bot, start, p)
+        d = await _query_path(bot, start, p, emit=emit)
         if d is None:
-            # sem path: joga pra longe
-            d = 1e18
+            missing.append(p)
+            fail_q += 1
+            continue
+
         cache[key] = float(d)
         ranks.append(ExpansionRank(pos=p, path_dist=float(d)))
+        ok_q += 1
+
+    total = max(1, len(expansions))
+    fail_ratio = float(len(missing)) / float(total)
+
+    _emit(
+        emit,
+        "pathing_rank_summary",
+        {
+            "expansions": int(len(expansions)),
+            "query_ok": int(ok_q),
+            "query_fail": int(fail_q),
+            "missing": int(len(missing)),
+            "fail_ratio": float(fail_ratio),
+            "bfs_fail_ratio": float(bfs_fail_ratio),
+        },
+    )
+
+    if missing and fail_ratio >= float(bfs_fail_ratio):
+        dist_map = _bfs_distances_on_pathing_grid(bot, start, emit=emit)
+        if dist_map is not None:
+            solved = 0
+            for p in missing:
+                tx, ty = _tile(p)
+                steps = dist_map.get((tx, ty))
+                if steps is None:
+                    pp = _nearest_pathable(bot, p)
+                    if pp is not None:
+                        tx2, ty2 = _tile(pp)
+                        steps = dist_map.get((tx2, ty2))
+
+                if steps is None:
+                    continue
+
+                d = float(steps)
+                cache[_k(p)] = d
+                ranks.append(ExpansionRank(pos=p, path_dist=d))
+                solved += 1
+
+            _emit(emit, "pathing_bfs_solve", {"missing": int(len(missing)), "solved": int(solved)})
+
+    # ainda faltando? joga pra longe (SEM cachear INF)
+    for p in missing:
+        if _k(p) in cache:
+            continue
+        ranks.append(ExpansionRank(pos=p, path_dist=1e18))
 
     ranks.sort(key=lambda r: r.path_dist)
     return ranks
@@ -2230,25 +2495,278 @@ async def compute_main_and_natural(
     expansions: List[Point2],
     start: Point2,
     cache: Dict[Tuple[int, int], float] | None = None,
+    emit: Optional[Callable[[str, dict], None]] = None,
 ) -> tuple[Optional[Point2], Optional[Point2]]:
     """
-    Main = expansão mais próxima (pathing) do start.
-    Natural = segunda mais próxima (pathing) que seja > um pequeno epsilon do main.
+    Main = expansão mais próxima (ground) do start REAL.
+    Natural = segunda mais próxima que não seja “colada” no main.
+
+    PATCH CRÍTICO:
+    - Se houver townhall pronta, usa o centro dela como start, ignorando start ruim do caller.
     """
     if not expansions:
+        _emit(emit, "expansion_compute_fail", {"reason": "no_expansions"})
         return None, None
 
-    ranks = await rank_expansions_by_pathing(bot, expansions, start=start, cache=cache)
+    # Start “de verdade”: townhall center > caller start
+    th_start = _start_from_townhall(bot, start)
+    if th_start is not None:
+        _emit(
+            emit,
+            "expansion_start_override",
+            {
+                "caller_start": [float(start.x), float(start.y)] if start is not None else None,
+                "townhall_start": [float(th_start.x), float(th_start.y)],
+            },
+        )
+        start_eff = th_start
+    else:
+        start_eff = start
 
-    main = ranks[0].pos if ranks else None
+    ranks = await rank_expansions_by_pathing(bot, expansions, start=start_eff, cache=cache, emit=emit)
+
+    if not ranks:
+        _emit(emit, "expansion_compute_fail", {"reason": "no_ranks"})
+        return None, None
+
+    main = ranks[0].pos
     nat = None
-    if main is not None:
-        for r in ranks[1:]:
-            # evita pegar o mesmo ponto “colado”
-            if float(r.pos.distance_to(main)) > 3.0:
-                nat = r.pos
-                break
+
+    # filtro anti-lixo: natural normalmente não é “colada” no main.
+    # (3.0 é ok; se o seu mapa tiver expo muito perto, aumente depois)
+    for r in ranks[1:]:
+        if float(r.pos.distance_to(main)) > 3.0 and float(r.path_dist) < 1e17:
+            nat = r.pos
+            break
+
+    _emit(
+        emit,
+        "expansion_compute_ok",
+        {
+            "main": [float(main.x), float(main.y)] if main is not None else None,
+            "natural": [float(nat.x), float(nat.y)] if nat is not None else None,
+            "start_eff": [float(start_eff.x), float(start_eff.y)] if start_eff is not None else None,
+        },
+    )
+
     return main, nat
+
+# ---------- bot/engine/locations.py ----------
+#bot/engine/locations.py
+#bot/engine/locations.py
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Dict, Optional, Tuple, List
+
+from sc2.position import Point2
+from sc2.ids.unit_typeid import UnitTypeId as U
+
+from bot.engine.expansion_finder import compute_main_and_natural
+
+
+def _k(p: Point2) -> Tuple[int, int]:
+    return (int(round(float(p.x) * 2)), int(round(float(p.y) * 2)))
+
+
+@dataclass
+class MapLocations:
+    my_main: Optional[Point2] = None
+    my_natural: Optional[Point2] = None
+    enemy_main: Optional[Point2] = None
+    enemy_natural: Optional[Point2] = None
+
+
+class LocationsService:
+    """
+    Fonte única da verdade para:
+      - my_main / my_natural
+      - enemy_main / enemy_natural
+
+    Critério: distância de CHÃO.
+    Sem fallback silencioso pra euclidiana.
+    """
+
+    def __init__(self, bot: Any, *, ctx: Any, logger: Any | None = None, debug: bool = True):
+        self.bot = bot
+        self.ctx = ctx
+        self.log = logger
+        self.debug = debug
+
+        self.loc = MapLocations()
+
+        self._cache_my: Dict[Tuple[int, int], float] = {}
+        self._cache_enemy: Dict[Tuple[int, int], float] = {}
+
+        self._next_recalc_iter: int = 0
+        self._last_emit_iter: int = -999999
+
+    # -----------------------
+    # Legacy API (compat)
+    # -----------------------
+    def my_main_exp(self) -> Optional[Point2]:
+        return self.loc.my_main
+
+    def my_natural_exp(self) -> Optional[Point2]:
+        return self.loc.my_natural
+
+    def enemy_main_exp(self) -> Optional[Point2]:
+        return self.loc.enemy_main
+
+    def enemy_natural_exp(self) -> Optional[Point2]:
+        return self.loc.enemy_natural
+
+    # -----------------------
+    # Internals
+    # -----------------------
+    def _emit(self, event: str, payload: dict) -> None:
+        if self.log:
+            self.log.emit(event, payload, meta={"iter": int(getattr(self.ctx, "iteration", 0))})
+
+    def _expansions(self) -> List[Point2]:
+        exps = getattr(self.bot, "expansion_locations_list", None)
+        return list(exps) if exps else []
+
+    def _pt(self, p: Optional[Point2]) -> Optional[list[float]]:
+        if p is None:
+            return None
+        return [float(p.x), float(p.y)]
+
+    def _same(self, a: Optional[Point2], b: Optional[Point2], eps: float = 0.25) -> bool:
+        if a is None and b is None:
+            return True
+        if a is None or b is None:
+            return False
+        return float(a.distance_to(b)) <= float(eps)
+
+    # ---- START ORIGINS (sem euclidiano) ----
+    def _my_ground_start(self) -> Optional[Point2]:
+        """
+        Prioridade:
+        1) centro do townhall (muito melhor pro pathing do que start_location)
+        2) SCV (se por algum motivo não tem townhall)
+        3) start_location (último recurso)
+        """
+        ths = getattr(self.bot, "townhalls", None)
+        if ths is not None:
+            try:
+                if ths.ready:
+                    return ths.ready.first.position
+            except Exception:
+                pass
+            try:
+                if ths:
+                    return ths.first.position
+            except Exception:
+                pass
+
+        workers = getattr(self.bot, "workers", None)
+        if workers is not None:
+            try:
+                if workers:
+                    return workers.first.position
+            except Exception:
+                pass
+
+        return getattr(self.bot, "start_location", None)
+
+    def _enemy_ground_start(self) -> Optional[Point2]:
+        """
+        Prioridade:
+        1) inimigo visto: CC/Nexus/Hatch/Lair/Hive etc
+        2) enemy_start_locations[0]
+        """
+        # enemy structures seen (quando tiver)
+        try:
+            es = getattr(self.bot, "enemy_structures", None)
+            if es is not None:
+                for ut in (U.COMMANDCENTER, U.ORBITALCOMMAND, U.PLANETARYFORTRESS, U.NEXUS, U.HATCHERY, U.LAIR, U.HIVE):
+                    try:
+                        grp = es(ut)
+                        if grp:
+                            # pega o mais “central”/primeiro
+                            return grp.first.position
+                    except Exception:
+                        continue
+        except Exception:
+            pass
+
+        locs = getattr(self.bot, "enemy_start_locations", None)
+        return locs[0] if locs else None
+
+    async def recalc_if_needed(self, iteration: int, *, every_iters: int = 110) -> None:
+        iteration = int(iteration)
+        if iteration < int(self._next_recalc_iter):
+            return
+
+        exps = self._expansions()
+        if not exps:
+            return
+
+        my_start = self._my_ground_start()
+        enemy_start = self._enemy_ground_start()
+
+        # se nem start temos, não inventa
+        if my_start is None:
+            self._emit("locations_skip", {"reason": "no_my_start"})
+            self._next_recalc_iter = iteration + int(every_iters)
+            return
+
+        # --- MY ---
+        my_main, my_nat = await compute_main_and_natural(
+            self.bot, expansions=exps, start=my_start, cache=self._cache_my
+        )
+
+        # --- ENEMY ---
+        enemy_main, enemy_nat = (None, None)
+        if enemy_start is not None:
+            enemy_main, enemy_nat = await compute_main_and_natural(
+                self.bot, expansions=exps, start=enemy_start, cache=self._cache_enemy
+            )
+
+        # se enemy_start não existe ainda, não chuta
+        changed = (
+            (not self._same(self.loc.my_main, my_main))
+            or (not self._same(self.loc.my_natural, my_nat))
+            or (not self._same(self.loc.enemy_main, enemy_main))
+            or (not self._same(self.loc.enemy_natural, enemy_nat))
+        )
+
+        self.loc.my_main = my_main
+        self.loc.my_natural = my_nat
+        self.loc.enemy_main = enemy_main
+        self.loc.enemy_natural = enemy_nat
+
+        # publica também no bot (compat)
+        self.bot.cached_main_expansion = my_main
+        self.bot.cached_natural_expansion = my_nat
+        self.bot.cached_enemy_main_expansion = enemy_main
+        self.bot.cached_enemy_natural_expansion = enemy_nat
+
+        # loga origem usada (pra debug do “ponto errado”)
+        if self.log:
+            self._emit(
+                "locations_origin",
+                {
+                    "my_start": self._pt(my_start),
+                    "enemy_start": self._pt(enemy_start),
+                },
+            )
+
+        # emite evento: no máximo 1x por ~22 iters, ou sempre se mudou
+        if changed or (iteration - self._last_emit_iter) >= 22:
+            self._last_emit_iter = iteration
+            self._emit(
+                "locations_update",
+                {
+                    "my_main": self._pt(my_main),
+                    "my_natural": self._pt(my_nat),
+                    "enemy_main": self._pt(enemy_main),
+                    "enemy_natural": self._pt(enemy_nat),
+                },
+            )
+
+        self._next_recalc_iter = iteration + int(every_iters)
 
 # ---------- bot/engine/placement.py ----------
 #bot/engine/placement.py
@@ -2256,7 +2774,7 @@ async def compute_main_and_natural(
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Optional, Dict, List
+from typing import Any, Optional, Dict, List, Tuple
 
 from sc2.ids.unit_typeid import UnitTypeId as U
 from sc2.position import Point2
@@ -2270,6 +2788,16 @@ def _snap_half(p: Point2) -> Point2:
     return Point2((x, y))
 
 
+def _near_key(p: Point2 | None) -> str:
+    """
+    Cache key estável para 'near'. Não precisa ser perfeito; precisa ser consistente.
+    """
+    if p is None:
+        return "NONE"
+    p = _snap_half(p)
+    return f"{float(p.x):.1f},{float(p.y):.1f}"
+
+
 @dataclass
 class _Reservation:
     unit_type: U
@@ -2279,9 +2807,16 @@ class _Reservation:
 
 class Placement:
     """
-    - wall_pref="MAIN"/"NATURAL": pega slot da wall.
-    - main_wall_enabled=True: tenta colocar os PRIMEIROS depots/rax na MAIN wall, mas sem “queimar slot”.
-      Em vez de contador 'used', decide olhando se já existe building perto do slot.
+    Regra:
+      - Se main_wall_enabled=True:
+          * tenta colocar os 2 primeiros SUPPLYDEPOT e a 1a BARRACKS nos spots da MAIN wall,
+            baseado em ocupação real (não em contador interno).
+      - Se main_wall_enabled=False:
+          * tudo usa placement normal.
+
+    Patch importante:
+      - Anchor default NÃO pode depender de townhalls.ready.first (ordem não é garantida).
+      - Cache precisa respeitar o 'near', senão STARPORT pode “grudar” em base errada.
     """
 
     def __init__(
@@ -2293,8 +2828,10 @@ class Placement:
         wall_main: bool = True,
         wall_natural: bool = False,
         main_wall_enabled: bool = True,
-        reserve_ttl_iters: int = 60,
+        reserve_ttl_iters: int = 80,
         debug: bool = True,
+        # segurança: se cache estiver muito longe do near, ignora
+        cache_max_dist: float = 18.0,
     ):
         self.bot = bot
         self.ctx = ctx
@@ -2305,9 +2842,11 @@ class Placement:
         self.wall_natural = bool(wall_natural)
         self.main_wall_enabled = bool(main_wall_enabled)
         self.reserve_ttl_iters = int(reserve_ttl_iters)
+        self.cache_max_dist = float(cache_max_dist)
 
         self.wall = WallPlanner(bot, ctx=ctx, logger=logger, debug=debug) if ctx is not None else None
 
+        # cache agora é por (unit_type + near_key)
         self._cache: Dict[str, Point2] = {}
         self._reservations: List[_Reservation] = []
 
@@ -2357,21 +2896,60 @@ class Placement:
             except Exception:
                 pass
 
+        # fallback permissivo (mantém o teu comportamento), mas agora com logs melhores a montante
         return True
 
-    def _anchor_default(self) -> Point2:
+    def _pick_main_anchor(self) -> Point2:
+        """
+        Anchor default deve ser MAIN de forma estável.
+
+        Heurística:
+          1) Se ctx tiver my_main, usa.
+          2) Senão, pega o townhall ready mais perto de start_location.
+          3) Senão, start_location.
+        """
         bot = self.bot
-        if getattr(bot, "townhalls", None) and bot.townhalls.ready:
-            return bot.townhalls.ready.first.position
-        return bot.start_location
+
+        # (1) ctx.my_main (quando existir)
+        if self.ctx is not None:
+            mm = getattr(self.ctx, "my_main", None)
+            if isinstance(mm, Point2):
+                self._emit("placement_anchor", {"kind": "ctx.my_main", "pos": [float(mm.x), float(mm.y)]})
+                return mm
+
+        # (2) townhall mais perto do start_location
+        ths = getattr(bot, "townhalls", None)
+        if ths is not None:
+            try:
+                ready = ths.ready
+                if ready:
+                    sl = bot.start_location
+                    best = min(ready, key=lambda u: float(u.position.distance_to(sl)))
+                    p = best.position
+                    self._emit(
+                        "placement_anchor",
+                        {"kind": "townhall_closest_to_start", "pos": [float(p.x), float(p.y)]},
+                    )
+                    return p
+            except Exception:
+                pass
+
+        # (3) start_location
+        sl = bot.start_location
+        self._emit("placement_anchor", {"kind": "start_location", "pos": [float(sl.x), float(sl.y)]})
+        return sl
 
     async def _fallback_find(self, unit_type: U, *, near: Point2 | None) -> Point2 | None:
         bot = self.bot
         if near is None:
-            near = self._anchor_default()
+            near = self._pick_main_anchor()
         try:
             return await bot.find_placement(unit_type, near=near, placement_step=2)
-        except Exception:
+        except Exception as e:
+            self._emit(
+                "placement_find_placement_exc",
+                {"unit": unit_type.name, "near": [float(near.x), float(near.y)], "err": str(e)[:200]},
+            )
             return None
 
     def _ensure_wall_slots_loaded(self, where: str) -> None:
@@ -2400,64 +2978,84 @@ class Placement:
             self._wall_slots[w]["SUPPLYDEPOT"] = []
             self._wall_slots[w]["BARRACKS"] = []
 
-    def _owned_near(self, unit_type: U, pos: Point2, *, max_d: float = 1.25) -> bool:
-        """
-        Decide se "já existe" building no slot (sem depender de contador usado_...).
-        """
-        bot = self.bot
-        fn = getattr(bot, "units", None)
-        if not callable(fn):
-            return False
+    def _my_units_of_type(self, ut: U) -> list[Any]:
+        if not hasattr(self.bot, "units"):
+            return []
         try:
-            units = fn(unit_type)
-            if not units:
-                return False
-            for u in units:
-                try:
-                    if float(u.distance_to(pos)) <= float(max_d):
-                        return True
-                except Exception:
-                    continue
+            units = self.bot.units(ut)
         except Exception:
-            return False
+            return []
+        out = []
+        for u in units:
+            is_mine = getattr(u, "is_mine", None)
+            if is_mine is not None and not is_mine:
+                continue
+            out.append(u)
+        return out
+
+    def _occupied_near(self, ut: U, pos: Point2, *, max_d: float = 1.0) -> bool:
+        for u in self._my_units_of_type(ut):
+            try:
+                if float(u.distance_to(pos)) <= float(max_d):
+                    return True
+            except Exception:
+                continue
         return False
 
-    async def _try_main_wall_firsts(self, unit_type: U) -> Optional[Point2]:
+    async def _try_main_wall_firsts(self, ut: U) -> Optional[Point2]:
         """
-        Se main_wall_enabled:
-          - 1º/2º depot: pega slots MAIN se ainda não existe depot nos slots
-          - 1ª barracks: pega slot MAIN se ainda não existe barracks no slot
+        Força MAIN wall para:
+          - SUPPLYDEPOT: usa os 2 slots disponíveis
+          - BARRACKS: usa o 1 slot disponível
+        Sem contador interno: decide por ocupação real + reserva TTL.
         """
         if not self.main_wall_enabled:
             return None
         if self.wall is None or not self.wall_main:
             return None
-        if unit_type not in (U.SUPPLYDEPOT, U.BARRACKS):
+        if ut not in (U.SUPPLYDEPOT, U.BARRACKS):
             return None
 
         self._cleanup_reservations()
         self._ensure_wall_slots_loaded("MAIN")
 
-        slots = self._wall_slots["MAIN"][unit_type.name]
+        slots = self._wall_slots["MAIN"].get(ut.name, [])
+        if not slots:
+            return None
+
         for p in list(slots):
             p = _snap_half(p)
-            if self._is_reserved(unit_type, p):
+
+            if self._occupied_near(ut, p, max_d=1.0):
                 continue
-            if self._owned_near(unit_type, p, max_d=1.25):
+            if self._is_reserved(ut, p):
                 continue
-            if not await self._can_place(unit_type, p):
+            if not await self._can_place(ut, p):
                 continue
 
-            self._reserve(unit_type, p)
-            self._emit("placement_main_wall_forced", {"unit": unit_type.name, "pos": [float(p.x), float(p.y)]})
+            self._reserve(ut, p)
+            self._emit("placement_main_wall_forced", {"unit": ut.name, "pos": [float(p.x), float(p.y)]})
             return p
 
         return None
 
-    async def find_placement(self, unit_type, *, near: Point2 | None = None, wall_pref: str | None = None) -> Point2 | None:
+    def _cache_key(self, ut: U, near: Point2 | None) -> str:
+        return f"{ut.name}@{_near_key(near)}"
+
+    async def find_placement(
+        self,
+        unit_type,
+        *,
+        near: Point2 | None = None,
+        wall_pref: str | None = None,
+    ) -> Point2 | None:
         ut = unit_type
         if isinstance(unit_type, str):
             ut = getattr(U, unit_type)
+
+        # se near não veio, assume MAIN estável
+        if near is None:
+            near = self._pick_main_anchor()
 
         # (A) wall_pref explícita (opener/force)
         if wall_pref is not None:
@@ -2467,16 +3065,20 @@ class Placement:
             slots = self._wall_slots.get(w, {}).get(ut.name, [])
             for p in list(slots):
                 p = _snap_half(p)
+
+                if self._occupied_near(ut, p, max_d=1.0):
+                    continue
                 if self._is_reserved(ut, p):
                     continue
                 if not await self._can_place(ut, p):
                     continue
+
                 self._reserve(ut, p)
-                self._cache[f"{w}:{ut.name}"] = p
+                self._cache[self._cache_key(ut, near)] = p
                 self._emit("placement_wall_pick", {"where": w, "unit": ut.name, "pos": [float(p.x), float(p.y)]})
                 return p
 
-        # (B) primeiros buildings na MAIN wall sem queimar slot
+        # (B) primeiros buildings na MAIN wall
         forced = await self._try_main_wall_firsts(ut)
         if forced is not None:
             return forced
@@ -2484,22 +3086,44 @@ class Placement:
         # (C) fallback normal
         self._cleanup_reservations()
 
-        cached = self._cache.get(ut.name)
+        ck = self._cache_key(ut, near)
+        cached = self._cache.get(ck)
         if cached is not None and not self._is_reserved(ut, cached):
-            if await self._can_place(ut, cached):
-                self._reserve(ut, cached)
-                self._emit("placement_cache_hit", {"unit": ut.name, "pos": [float(cached.x), float(cached.y)]})
-                return cached
+            # guarda: se cache “vazou” pra longe do near, ignora
+            try:
+                d = float(cached.distance_to(near))
+            except Exception:
+                d = 9999.0
+
+            if d <= self.cache_max_dist:
+                if await self._can_place(ut, cached):
+                    self._reserve(ut, cached)
+                    self._emit(
+                        "placement_cache_hit",
+                        {"unit": ut.name, "near": [float(near.x), float(near.y)], "pos": [float(cached.x), float(cached.y)], "d": d},
+                    )
+                    return cached
+            else:
+                self._emit(
+                    "placement_cache_skip_far",
+                    {
+                        "unit": ut.name,
+                        "near": [float(near.x), float(near.y)],
+                        "cached": [float(cached.x), float(cached.y)],
+                        "d": d,
+                        "max": float(self.cache_max_dist),
+                    },
+                )
 
         pos = await self._fallback_find(ut, near=near)
         if pos is None:
-            self._emit("placement_fail", {"unit": ut.name, "near": [float(near.x), float(near.y)] if near else None})
+            self._emit("placement_fail", {"unit": ut.name, "near": [float(near.x), float(near.y)]})
             return None
 
         pos = _snap_half(pos)
         self._reserve(ut, pos)
-        self._cache[ut.name] = pos
-        self._emit("placement_ok", {"unit": ut.name, "pos": [float(pos.x), float(pos.y)]})
+        self._cache[ck] = pos
+        self._emit("placement_ok", {"unit": ut.name, "near": [float(near.x), float(near.y)], "pos": [float(pos.x), float(pos.y)]})
         return pos
 
 # ---------- bot/engine/wall.py ----------
@@ -3015,8 +3639,13 @@ _TEMPORARY_FAIL_REASONS: set[str] = {
     "all_busy",
     "no_idle_parent",
     "do_failed",
-}
 
+    # NOVO: não mate o plan por isso
+    "no_geyser_candidates",
+    "all_geysers_occupied",
+    "no_townhall",
+    "no_workers",
+}
 _ALLOWED_NEAR_POINTS = {"MY_MAIN", "MY_NATURAL"}
 
 
@@ -3148,7 +3777,15 @@ class PlanExecutor:
     def _my_start(self) -> Optional[Point2]:
         return getattr(self.bot, "start_location", None)
 
+# --- PLAN_EXECUTOR: substituir _my_natural por esta versão ---
+
     def _my_natural(self) -> Optional[Point2]:
+        loc = getattr(self.bot, "locations", None)
+        if loc is not None:
+            nat = loc.my_natural_exp()
+            if nat is not None:
+                return nat
+
         nat = getattr(self.bot, "cached_natural_expansion", None)
         if nat is not None:
             return nat
@@ -3164,7 +3801,6 @@ class PlanExecutor:
         if not candidates:
             return None
         return min(candidates, key=lambda p: p.distance_to(main_exp))
-
     def _resolve_near(self, near_key: str | None) -> Optional[Point2]:
         if near_key is None:
             return None
@@ -3776,7 +4412,8 @@ from bot.core.unit_manager import UnitManager
 from bot.engine.economy import Economy
 from bot.engine.placement import Placement
 from bot.engine.builder import Builder
-from bot.engine.expansion_finder import compute_main_and_natural
+
+from bot.engine.locations import LocationsService  # NEW
 
 from bot.strategy.loader import load_strategy
 from bot.strategy.plan_executor import PlanExecutor
@@ -3798,16 +4435,17 @@ class TerranBot(BotAI):
         self.strategy = load_strategy(strat_name)
         self.log.emit("bot_init", {"strategy": self.strategy.name, "strat_name": str(strat_name)})
 
-        # cache de expansões por pathing
+        # Fonte única da verdade para main/natural/enemy main/enemy natural (por PATHING)
+        self.locations = LocationsService(self, ctx=self.ctx, logger=self.log, debug=debug)
+
+        # atributos “legados” (serão preenchidos pelo LocationsService)
         self.cached_main_expansion = None
         self.cached_natural_expansion = None
-        self._exp_cache = {}
-        self._next_exp_recalc_iter = 0
+        self.cached_enemy_main_expansion = None
+        self.cached_enemy_natural_expansion = None
 
         self.econ = Economy(self, ctx=self.ctx, logger=self.log)
 
-        # wall_main continua ON (para placement usar spots quando pedirmos wall_pref="MAIN")
-        # wall_natural depende strategy.wall_natural
         self.place = Placement(
             self,
             ctx=self.ctx,
@@ -3822,7 +4460,6 @@ class TerranBot(BotAI):
 
         self.macro = MacroBehavior(self, self.econ, self.builder, ctx=self.ctx, logger=self.log, debug=debug)
 
-        # PlanExecutor agora contém o opener obrigatório (2 depots + 1 rax) com opção de override via JSON
         self.plan_exec = PlanExecutor(self, self.builder, self.strategy, ctx=self.ctx, logger=self.log)
         self.plan = PlanBehavior(self.plan_exec)
 
@@ -3838,8 +4475,6 @@ class TerranBot(BotAI):
         self._last_snapshot_iter = -999999
 
     def _active_pairs(self):
-        # Ordem importa: macro antes/ depois do plan é discutível, mas aqui plan vem cedo.
-        # O opener do plan é “build action” e vai competir com macro_supply — normal.
         pairs = [
             (self.plan, {"strategy": self.strategy}),
             (self.macro, {"econ": self.strategy.economy, "macro": self.strategy.behaviors.macro}),
@@ -3852,37 +4487,14 @@ class TerranBot(BotAI):
     def _compute_budget(self) -> int:
         drops = getattr(self.strategy, "drops", [])
         enabled_drops = sum(1 for d in drops if getattr(d, "enabled", False))
-        # mantém a ideia original: 2 ações por tick se tiver 2 drops
         return 2 if enabled_drops >= 2 else 1
-
-    async def _recalc_expansions_if_needed(self, iteration: int) -> None:
-        if iteration < int(self._next_exp_recalc_iter):
-            return
-
-        exps = getattr(self, "expansion_locations_list", None)
-        start = getattr(self, "start_location", None)
-        if not exps or start is None:
-            return
-
-        main, nat = await compute_main_and_natural(self, expansions=list(exps), start=start, cache=self._exp_cache)
-        self.cached_main_expansion = main
-        self.cached_natural_expansion = nat
-
-        self.log.emit(
-            "expansion_pathing",
-            {
-                "main": [float(main.x), float(main.y)] if main else None,
-                "natural": [float(nat.x), float(nat.y)] if nat else None,
-            },
-            meta={"iter": int(iteration)},
-        )
-        self._next_exp_recalc_iter = iteration + 110
 
     async def on_step(self, iteration: int):
         self.ctx.iteration = int(iteration)
         self.unitmgr.begin_tick(int(iteration))
 
-        await self._recalc_expansions_if_needed(int(iteration))
+        # ÚNICO lugar onde main/natural/enemy main/enemy natural é calculado
+        await self.locations.recalc_if_needed(int(iteration))
 
         if iteration - self._last_snapshot_iter >= 22:
             self._last_snapshot_iter = iteration

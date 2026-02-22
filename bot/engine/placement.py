@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Optional, Dict, List
+from typing import Any, Optional, Dict, List, Tuple
 
 from sc2.ids.unit_typeid import UnitTypeId as U
 from sc2.position import Point2
@@ -14,6 +14,16 @@ def _snap_half(p: Point2) -> Point2:
     x = round(float(p.x) * 2.0) / 2.0
     y = round(float(p.y) * 2.0) / 2.0
     return Point2((x, y))
+
+
+def _near_key(p: Point2 | None) -> str:
+    """
+    Cache key estável para 'near'. Não precisa ser perfeito; precisa ser consistente.
+    """
+    if p is None:
+        return "NONE"
+    p = _snap_half(p)
+    return f"{float(p.x):.1f},{float(p.y):.1f}"
 
 
 @dataclass
@@ -28,9 +38,13 @@ class Placement:
     Regra:
       - Se main_wall_enabled=True:
           * tenta colocar os 2 primeiros SUPPLYDEPOT e a 1a BARRACKS nos spots da MAIN wall,
-            MAS baseado em ocupação real (não em contador interno).
+            baseado em ocupação real (não em contador interno).
       - Se main_wall_enabled=False:
           * tudo usa placement normal.
+
+    Patch importante:
+      - Anchor default NÃO pode depender de townhalls.ready.first (ordem não é garantida).
+      - Cache precisa respeitar o 'near', senão STARPORT pode “grudar” em base errada.
     """
 
     def __init__(
@@ -44,6 +58,8 @@ class Placement:
         main_wall_enabled: bool = True,
         reserve_ttl_iters: int = 80,
         debug: bool = True,
+        # segurança: se cache estiver muito longe do near, ignora
+        cache_max_dist: float = 18.0,
     ):
         self.bot = bot
         self.ctx = ctx
@@ -54,9 +70,11 @@ class Placement:
         self.wall_natural = bool(wall_natural)
         self.main_wall_enabled = bool(main_wall_enabled)
         self.reserve_ttl_iters = int(reserve_ttl_iters)
+        self.cache_max_dist = float(cache_max_dist)
 
         self.wall = WallPlanner(bot, ctx=ctx, logger=logger, debug=debug) if ctx is not None else None
 
+        # cache agora é por (unit_type + near_key)
         self._cache: Dict[str, Point2] = {}
         self._reservations: List[_Reservation] = []
 
@@ -106,21 +124,60 @@ class Placement:
             except Exception:
                 pass
 
+        # fallback permissivo (mantém o teu comportamento), mas agora com logs melhores a montante
         return True
 
-    def _anchor_default(self) -> Point2:
+    def _pick_main_anchor(self) -> Point2:
+        """
+        Anchor default deve ser MAIN de forma estável.
+
+        Heurística:
+          1) Se ctx tiver my_main, usa.
+          2) Senão, pega o townhall ready mais perto de start_location.
+          3) Senão, start_location.
+        """
         bot = self.bot
-        if getattr(bot, "townhalls", None) and bot.townhalls.ready:
-            return bot.townhalls.ready.first.position
-        return bot.start_location
+
+        # (1) ctx.my_main (quando existir)
+        if self.ctx is not None:
+            mm = getattr(self.ctx, "my_main", None)
+            if isinstance(mm, Point2):
+                self._emit("placement_anchor", {"kind": "ctx.my_main", "pos": [float(mm.x), float(mm.y)]})
+                return mm
+
+        # (2) townhall mais perto do start_location
+        ths = getattr(bot, "townhalls", None)
+        if ths is not None:
+            try:
+                ready = ths.ready
+                if ready:
+                    sl = bot.start_location
+                    best = min(ready, key=lambda u: float(u.position.distance_to(sl)))
+                    p = best.position
+                    self._emit(
+                        "placement_anchor",
+                        {"kind": "townhall_closest_to_start", "pos": [float(p.x), float(p.y)]},
+                    )
+                    return p
+            except Exception:
+                pass
+
+        # (3) start_location
+        sl = bot.start_location
+        self._emit("placement_anchor", {"kind": "start_location", "pos": [float(sl.x), float(sl.y)]})
+        return sl
 
     async def _fallback_find(self, unit_type: U, *, near: Point2 | None) -> Point2 | None:
         bot = self.bot
         if near is None:
-            near = self._anchor_default()
+            near = self._pick_main_anchor()
         try:
             return await bot.find_placement(unit_type, near=near, placement_step=2)
-        except Exception:
+        except Exception as e:
+            self._emit(
+                "placement_find_placement_exc",
+                {"unit": unit_type.name, "near": [float(near.x), float(near.y)], "err": str(e)[:200]},
+            )
             return None
 
     def _ensure_wall_slots_loaded(self, where: str) -> None:
@@ -165,7 +222,6 @@ class Placement:
         return out
 
     def _occupied_near(self, ut: U, pos: Point2, *, max_d: float = 1.0) -> bool:
-        # se já existe estrutura (ou unidade do tipo) praticamente em cima do slot, considera ocupado
         for u in self._my_units_of_type(ut):
             try:
                 if float(u.distance_to(pos)) <= float(max_d):
@@ -198,13 +254,10 @@ class Placement:
         for p in list(slots):
             p = _snap_half(p)
 
-            # se já tem algo ali, pula pro próximo slot
             if self._occupied_near(ut, p, max_d=1.0):
                 continue
-
             if self._is_reserved(ut, p):
                 continue
-
             if not await self._can_place(ut, p):
                 continue
 
@@ -214,10 +267,23 @@ class Placement:
 
         return None
 
-    async def find_placement(self, unit_type, *, near: Point2 | None = None, wall_pref: str | None = None) -> Point2 | None:
+    def _cache_key(self, ut: U, near: Point2 | None) -> str:
+        return f"{ut.name}@{_near_key(near)}"
+
+    async def find_placement(
+        self,
+        unit_type,
+        *,
+        near: Point2 | None = None,
+        wall_pref: str | None = None,
+    ) -> Point2 | None:
         ut = unit_type
         if isinstance(unit_type, str):
             ut = getattr(U, unit_type)
+
+        # se near não veio, assume MAIN estável
+        if near is None:
+            near = self._pick_main_anchor()
 
         # (A) wall_pref explícita (opener/force)
         if wall_pref is not None:
@@ -236,11 +302,11 @@ class Placement:
                     continue
 
                 self._reserve(ut, p)
-                self._cache[f"{w}:{ut.name}"] = p
+                self._cache[self._cache_key(ut, near)] = p
                 self._emit("placement_wall_pick", {"where": w, "unit": ut.name, "pos": [float(p.x), float(p.y)]})
                 return p
 
-        # (B) primeiros buildings na MAIN wall (baseado em ocupação real)
+        # (B) primeiros buildings na MAIN wall
         forced = await self._try_main_wall_firsts(ut)
         if forced is not None:
             return forced
@@ -248,20 +314,42 @@ class Placement:
         # (C) fallback normal
         self._cleanup_reservations()
 
-        cached = self._cache.get(ut.name)
+        ck = self._cache_key(ut, near)
+        cached = self._cache.get(ck)
         if cached is not None and not self._is_reserved(ut, cached):
-            if await self._can_place(ut, cached):
-                self._reserve(ut, cached)
-                self._emit("placement_cache_hit", {"unit": ut.name, "pos": [float(cached.x), float(cached.y)]})
-                return cached
+            # guarda: se cache “vazou” pra longe do near, ignora
+            try:
+                d = float(cached.distance_to(near))
+            except Exception:
+                d = 9999.0
+
+            if d <= self.cache_max_dist:
+                if await self._can_place(ut, cached):
+                    self._reserve(ut, cached)
+                    self._emit(
+                        "placement_cache_hit",
+                        {"unit": ut.name, "near": [float(near.x), float(near.y)], "pos": [float(cached.x), float(cached.y)], "d": d},
+                    )
+                    return cached
+            else:
+                self._emit(
+                    "placement_cache_skip_far",
+                    {
+                        "unit": ut.name,
+                        "near": [float(near.x), float(near.y)],
+                        "cached": [float(cached.x), float(cached.y)],
+                        "d": d,
+                        "max": float(self.cache_max_dist),
+                    },
+                )
 
         pos = await self._fallback_find(ut, near=near)
         if pos is None:
-            self._emit("placement_fail", {"unit": ut.name, "near": [float(near.x), float(near.y)] if near else None})
+            self._emit("placement_fail", {"unit": ut.name, "near": [float(near.x), float(near.y)]})
             return None
 
         pos = _snap_half(pos)
         self._reserve(ut, pos)
-        self._cache[ut.name] = pos
-        self._emit("placement_ok", {"unit": ut.name, "pos": [float(pos.x), float(pos.y)]})
+        self._cache[ck] = pos
+        self._emit("placement_ok", {"unit": ut.name, "near": [float(near.x), float(near.y)], "pos": [float(pos.x), float(pos.y)]})
         return pos

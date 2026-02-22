@@ -37,12 +37,10 @@ class DropRuntime:
 
     fight_until_time: float = 0.0
 
-    # anti-stuck: tag -> (last_dist, stuck_count)
     stuck: Dict[int, tuple[float, int]] = field(default_factory=dict)
 
-    # robust loading tracking (fork fallback)
     loaded_count: int = 0
-    pending_load_until_loop: Dict[int, int] = field(default_factory=dict)  # marine_tag -> loop deadline
+    pending_load_until_loop: Dict[int, int] = field(default_factory=dict)
 
 
 class DropBehavior:
@@ -102,68 +100,53 @@ class DropBehavior:
             return res
         return True
 
-    # -------- points --------
+    # -------- points (CENTRALIZADO) --------
+    def _loc(self):
+        # TerranBot.locations.loc (MapLocations)
+        svc = getattr(self.bot, "locations", None)
+        return getattr(svc, "loc", None) if svc is not None else None
+
     def _enemy_main(self) -> Optional[Point2]:
+        loc = self._loc()
+        p = getattr(loc, "enemy_main", None) if loc is not None else None
+        if p is not None:
+            return p
+        # fallback: start location do inimigo
         locs = getattr(self.bot, "enemy_start_locations", None)
         return locs[0] if locs else None
 
-    def _my_start(self) -> Optional[Point2]:
-        return getattr(self.bot, "start_location", None
-
-        )
-
-    def _expansions(self) -> list[Point2]:
-        exps = getattr(self.bot, "expansion_locations_list", None)
-        return list(exps) if exps else []
-
-    def _enemy_main_expansion(self) -> Optional[Point2]:
-        enemy_main = self._enemy_main()
-        exps = self._expansions()
-        if enemy_main is None or not exps:
-            return None
-        return min(exps, key=lambda p: p.distance_to(enemy_main))
-
     def _enemy_natural(self) -> Optional[Point2]:
-        main_exp = self._enemy_main_expansion()
-        exps = self._expansions()
-        if main_exp is None or not exps:
-            return None
-        candidates = [p for p in exps if p.distance_to(main_exp) > 3.0]
-        if not candidates:
-            return None
-        return min(candidates, key=lambda p: p.distance_to(main_exp))
+        loc = self._loc()
+        p = getattr(loc, "enemy_natural", None) if loc is not None else None
+        return p
 
-    def _my_main_expansion(self) -> Optional[Point2]:
-        my_main = self._my_start()
-        exps = self._expansions()
-        if my_main is None or not exps:
-            return None
-        return min(exps, key=lambda p: p.distance_to(my_main))
+    def _my_main(self) -> Optional[Point2]:
+        loc = self._loc()
+        p = getattr(loc, "my_main", None) if loc is not None else None
+        if p is not None:
+            return p
+        return getattr(self.bot, "start_location", None)
 
     def _my_natural(self) -> Optional[Point2]:
-        main_exp = self._my_main_expansion()
-        exps = self._expansions()
-        if main_exp is None or not exps:
-            return None
-        candidates = [p for p in exps if p.distance_to(main_exp) > 3.0]
-        if not candidates:
-            return None
-        return min(candidates, key=lambda p: p.distance_to(main_exp))
+        loc = self._loc()
+        p = getattr(loc, "my_natural", None) if loc is not None else None
+        return p
 
     def _point_by_key(self, key: str) -> Optional[Point2]:
-        if key == "ENEMY_MAIN":
+        k = str(key).strip().upper()
+        if k == "ENEMY_MAIN":
             return self._enemy_main()
-        if key == "ENEMY_NATURAL":
-            return self._enemy_natural()
-        if key == "MY_MAIN":
-            return self._my_start()
-        if key == "MY_NATURAL":
-            return self._my_natural()
+        if k == "ENEMY_NATURAL":
+            return self._enemy_natural() or self._enemy_main()
+        if k == "MY_MAIN":
+            return self._my_main()
+        if k == "MY_NATURAL":
+            return self._my_natural() or self._my_main()
         return None
 
     def _resolve_points(self, drop_cfg) -> tuple[Optional[Point2], Optional[Point2], Optional[Point2]]:
         enemy_main = self._enemy_main()
-        my_main = self._my_start()
+        my_main = self._my_main()
         if enemy_main is None or my_main is None:
             return None, None, None
 
@@ -182,6 +165,7 @@ class DropBehavior:
         staging = staging_anchor.towards(my_main, dist)
         return pickup, staging, target
 
+    # ---- alive helpers etc (resto igual) ----
     def _alive_medivac(self, tag: int):
         meds = self.bot.units(U.MEDIVAC) if hasattr(self.bot, "units") else None
         if not meds:
@@ -213,12 +197,6 @@ class DropBehavior:
         self.rt.stuck.pop(int(tag), None)
 
     def _cargo_used(self, med: Any) -> int:
-        """
-        Fork-safe cargo:
-        - tenta cargo_used/cargo_space_used
-        - tenta passengers (list)
-        - fallback: usa contador interno (loaded_count)
-        """
         for attr in ("cargo_used", "cargo_space_used", "cargo_space_taken", "cargo_space"):
             v = getattr(med, attr, None)
             if v is None:

@@ -10,7 +10,8 @@ from bot.core.unit_manager import UnitManager
 from bot.engine.economy import Economy
 from bot.engine.placement import Placement
 from bot.engine.builder import Builder
-from bot.engine.expansion_finder import compute_main_and_natural
+
+from bot.engine.locations import LocationsService  # NEW
 
 from bot.strategy.loader import load_strategy
 from bot.strategy.plan_executor import PlanExecutor
@@ -32,16 +33,17 @@ class TerranBot(BotAI):
         self.strategy = load_strategy(strat_name)
         self.log.emit("bot_init", {"strategy": self.strategy.name, "strat_name": str(strat_name)})
 
-        # cache de expansões por pathing
+        # Fonte única da verdade para main/natural/enemy main/enemy natural (por PATHING)
+        self.locations = LocationsService(self, ctx=self.ctx, logger=self.log, debug=debug)
+
+        # atributos “legados” (serão preenchidos pelo LocationsService)
         self.cached_main_expansion = None
         self.cached_natural_expansion = None
-        self._exp_cache = {}
-        self._next_exp_recalc_iter = 0
+        self.cached_enemy_main_expansion = None
+        self.cached_enemy_natural_expansion = None
 
         self.econ = Economy(self, ctx=self.ctx, logger=self.log)
 
-        # wall_main continua ON (para placement usar spots quando pedirmos wall_pref="MAIN")
-        # wall_natural depende strategy.wall_natural
         self.place = Placement(
             self,
             ctx=self.ctx,
@@ -56,7 +58,6 @@ class TerranBot(BotAI):
 
         self.macro = MacroBehavior(self, self.econ, self.builder, ctx=self.ctx, logger=self.log, debug=debug)
 
-        # PlanExecutor agora contém o opener obrigatório (2 depots + 1 rax) com opção de override via JSON
         self.plan_exec = PlanExecutor(self, self.builder, self.strategy, ctx=self.ctx, logger=self.log)
         self.plan = PlanBehavior(self.plan_exec)
 
@@ -72,8 +73,6 @@ class TerranBot(BotAI):
         self._last_snapshot_iter = -999999
 
     def _active_pairs(self):
-        # Ordem importa: macro antes/ depois do plan é discutível, mas aqui plan vem cedo.
-        # O opener do plan é “build action” e vai competir com macro_supply — normal.
         pairs = [
             (self.plan, {"strategy": self.strategy}),
             (self.macro, {"econ": self.strategy.economy, "macro": self.strategy.behaviors.macro}),
@@ -86,37 +85,14 @@ class TerranBot(BotAI):
     def _compute_budget(self) -> int:
         drops = getattr(self.strategy, "drops", [])
         enabled_drops = sum(1 for d in drops if getattr(d, "enabled", False))
-        # mantém a ideia original: 2 ações por tick se tiver 2 drops
         return 2 if enabled_drops >= 2 else 1
-
-    async def _recalc_expansions_if_needed(self, iteration: int) -> None:
-        if iteration < int(self._next_exp_recalc_iter):
-            return
-
-        exps = getattr(self, "expansion_locations_list", None)
-        start = getattr(self, "start_location", None)
-        if not exps or start is None:
-            return
-
-        main, nat = await compute_main_and_natural(self, expansions=list(exps), start=start, cache=self._exp_cache)
-        self.cached_main_expansion = main
-        self.cached_natural_expansion = nat
-
-        self.log.emit(
-            "expansion_pathing",
-            {
-                "main": [float(main.x), float(main.y)] if main else None,
-                "natural": [float(nat.x), float(nat.y)] if nat else None,
-            },
-            meta={"iter": int(iteration)},
-        )
-        self._next_exp_recalc_iter = iteration + 110
 
     async def on_step(self, iteration: int):
         self.ctx.iteration = int(iteration)
         self.unitmgr.begin_tick(int(iteration))
 
-        await self._recalc_expansions_if_needed(int(iteration))
+        # ÚNICO lugar onde main/natural/enemy main/enemy natural é calculado
+        await self.locations.recalc_if_needed(int(iteration))
 
         if iteration - self._last_snapshot_iter >= 22:
             self._last_snapshot_iter = iteration
