@@ -12,7 +12,7 @@ from sc2.protocol import ConnectionAlreadyClosed
 import random
 
 from bot import CompetitiveBot
-from config import BOT_NAME, BOT_RACE, MAP_POOL, MAP_PATH, OPPONENT_RACE, OPPONENT_DIFFICULTY, REALTIME
+from config import BOT_NAME, BOT_RACE, MAP_POOL, MAP_PATH, OPPONENT_RACE, OPPONENT_DIFFICULTY, REALTIME, REPLAY_SAVE_PATH
 from sc2.data import Race, Difficulty
 
 
@@ -31,7 +31,7 @@ def run_ladder_game(args, bot):
     # Port config
     ports = [lan_port + p for p in range(1, 6)]
 
-    portconfig = sc2.portconfig.Portconfig()
+    portconfig = sc2.portconfig.Portconfig
     portconfig.shared = ports[0]  # Not used
     portconfig.server = [ports[1], ports[2]]
     portconfig.players = [[ports[3], ports[4]]]

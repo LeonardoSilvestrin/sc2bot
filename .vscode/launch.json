@@ -1,0 +1,29 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run SC2 Bot (offline vs AI)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/run.py",
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "PYTHONUNBUFFERED": "1"
+      },
+      "args": [
+        "--map",
+        "PersephoneAIE_v4",
+        "--race",
+        "Terran",
+        "--strategy",
+        "default",
+        "--difficulty",
+        "VeryEasy",
+        "--realtime",
+        "False"
+      ]
+    }
+  ]
+}

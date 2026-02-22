@@ -16,7 +16,10 @@ class TerranBot(BotAI):
     def __init__(self, strat_name: str = "default", debug: bool = True):
         super().__init__()
         self.debug = debug
-        self.state = BotState()
+
+        # NÃO use self.state: isso é GameState do python-sc2
+        self.ctx = BotState()
+
         self.strategy = load_strategy(strat_name)
 
         self.log = JsonlLogger(enabled=True)
@@ -24,15 +27,17 @@ class TerranBot(BotAI):
 
         self.econ = Economy(self)
         self.place = Placement(self)
-        self.builder = Builder(self, self.econ, self.place, self.state)
+
+        # passe o ctx (estado do seu bot) para os módulos
+        self.builder = Builder(self, self.econ, self.place, self.ctx)
 
         self.plan = PlanExecutor(self, self.builder, self.strategy, logger=self.log)
-        self.drop = DropBehavior(self, self.strategy.drop, self.state, debug=debug)
+        self.drop = DropBehavior(self, self.strategy.drop, self.ctx, debug=debug)
 
         self._last_snapshot_iter = -999999
 
     async def on_step(self, iteration: int):
-        self.state.iteration = iteration
+        self.ctx.iteration = iteration
 
         # snapshot a cada ~1 segundo (22.4 iterações por segundo em normal speed)
         if iteration - self._last_snapshot_iter >= 22:

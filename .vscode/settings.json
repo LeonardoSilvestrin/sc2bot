@@ -1,0 +1,25 @@
+{
+  "python.defaultInterpreterPath": "${workspaceFolder}/.venv/Scripts/python.exe",
+  "python.analysis.typeCheckingMode": "off",
+  "python.analysis.autoImportCompletions": true,
+  "python.analysis.extraPaths": [
+    "${workspaceFolder}"
+  ],
+  "terminal.integrated.env.windows": {
+    "PYTHONPATH": "${workspaceFolder}"
+  },
+  "editor.formatOnSave": true,
+  "editor.codeActionsOnSave": {
+    "source.organizeImports": "explicit"
+  },
+  "python.formatting.provider": "black",
+  "python.linting.enabled": true,
+  "python.linting.mypyEnabled": false,
+  "files.exclude": {
+    "**/__pycache__": true,
+    "**/*.pyc": true
+  },
+  "terminal.integrated.defaultProfile.windows": "PowerShell",
+  "python-envs.defaultEnvManager": "ms-python.python:venv",
+  "python-envs.pythonProjects": []
+}

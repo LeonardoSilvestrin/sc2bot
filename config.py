@@ -29,3 +29,7 @@ OPPONENT_DIFFICULTY = "Medium"  # VeryEasy, Easy, Medium, Hard, VeryHard, etc.
 # ===== GAME MODE =====
 # Set to True to play in realtime (like a human), False for faster simulation
 REALTIME = False
+
+# ===== REPLAY SETTINGS =====
+# Path where replays will be saved (set to None to disable replay saving)
+REPLAY_SAVE_PATH = "replays"  # Replays will be saved in this directory
