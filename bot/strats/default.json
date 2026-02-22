@@ -1,33 +1,8 @@
-{
+﻿{
   "name": "default",
-  "economy": {
-    "scv_target": 20,
-    "depot_trigger_supply_left": 4
-  },
-  "tech": {
-    "need_factory": true,
-    "need_starport": true
-  },
-  "production": {
-    "marine_cap": 32,
-    "marines_for_drop": 8
-  },
-  "drop": {
-    "enabled": true,
-    "min_marines": 8,
-    "load_count": 8,
-    "move_eps": 3.0,
-    "ground_radius": 12.0
-  },
-  "build": [
-    { "when": { "supply_left_lte": 2 }, "do": { "build": "SUPPLYDEPOT" } },
-    { "when": { "have_lte": { "BARRACKS": 0 }, "minerals_gte": 150 }, "do": { "build": "BARRACKS" } },
-    { "when": { "have_gte": { "BARRACKS": 1 }, "have_lte": { "REFINERY": 0 } }, "do": { "build": "REFINERY" } },
-    { "when": { "have_gte": { "BARRACKS": 1 }, "have_lte": { "FACTORY": 0 } }, "do": { "build": "FACTORY" } },
-    { "when": { "have_gte": { "FACTORY": 1 }, "have_lte": { "STARPORT": 0 } }, "do": { "build": "STARPORT" } }
-  ],
-  "production": [
-    { "when": { "have_gte": { "BARRACKS": 1 }, "supply_left_gte": 1 }, "do": { "train": "MARINE" }, "once": false },
-    { "when": { "have_gte": { "STARPORT": 1 }, "supply_left_gte": 2 }, "do": { "train": "MEDIVAC" }, "once": false }
-  ]
+  "economy": { "scv_target": 20, "depot_trigger_supply_left": 2 },
+  "production": { "marine_cap": 24 },
+  "drop": { "enabled": false },
+  "build": [],
+  "production_rules": []
 }
