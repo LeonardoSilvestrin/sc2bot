@@ -10,11 +10,13 @@ from .economy import Economy
 from .placement import Placement
 from .build import Builder
 from .drop import Drop
+from .strategy import StrategyConfig, load_strategy
 from .utils import snap
+from .plan import PlanExecutor
 
 
 class Orchestrator:
-    def __init__(self, bot, debug: bool = True):
+    def __init__(self, bot, debug: bool = True, strat: StrategyConfig | None = None):
         self.bot = bot
         self.api = BotAPI(bot)
         self.debug = debug
@@ -25,15 +27,34 @@ class Orchestrator:
         self.builder = Builder(bot, self.econ, self.place, self.state, debug=debug)
         self.drop = Drop(bot, self.state, debug=debug)
 
-        # knobs
-        self.scv_target = 20
-        self.depot_trigger_supply_left = 4
+        # strategy
+        self.strat = strat or load_strategy(None)
 
-        # tech goals for drop
-        self.marines_for_drop = 8
-        self.marine_cap = 32
-        self.need_factory = True
-        self.need_starport = True
+        # knobs (from strategy)
+        self.scv_target = self.strat.economy.scv_target
+        self.depot_trigger_supply_left = self.strat.economy.depot_trigger_supply_left
+
+        # tech goals for drop / production
+        self.marines_for_drop = self.strat.production.marines_for_drop
+        self.marine_cap = self.strat.production.marine_cap
+        self.need_factory = self.strat.tech.need_factory
+        self.need_starport = self.strat.tech.need_starport
+
+        # apply drop tunables to the Drop instance
+        try:
+            self.drop.min_marines = int(self.strat.drop.min_marines)
+            self.drop.load_count = int(self.strat.drop.load_count)
+            self.drop.move_eps = float(self.strat.drop.move_eps)
+            self.drop.ground_radius = float(self.strat.drop.ground_radius)
+        except Exception:
+            # be defensive: ignore and keep Drop defaults
+            pass
+
+        # plan executor
+        try:
+            self.plan = PlanExecutor(self)
+        except Exception:
+            self.plan = None
 
         # throttles
         self._last_intent_it: dict[str, int] = {}
@@ -691,8 +712,13 @@ class Orchestrator:
         await self._macro_factory(cc)
         await self._macro_starport(cc)
 
+        # Execute strategy plan (build/prod) if available
+        if getattr(self, "plan", None) is not None:
+            await self.plan.step()
+
         await self._produce_marines()
         await self._produce_medivac()
         await self._macro_workers(cc)
 
-        await self.drop.step()
+        if getattr(self.strat, "drop", None) is None or self.strat.drop.enabled:
+            await self.drop.step()

@@ -7,8 +7,20 @@ from sc2.main import run_game
 from sc2.maps import get
 from sc2.player import Bot, Computer
 
+import argparse
 from bot.debuglog import DebugLogger
 from bot.orchestrator import Orchestrator
+from bot.strategy import load_strategy
+
+
+def _parse_args():
+    p = argparse.ArgumentParser()
+    p.add_argument("--strat", default=None, help="Name of strategy JSON in strats/<name>.json")
+    return p.parse_args()
+
+
+ARGS = _parse_args()
+STRAT = load_strategy(ARGS.strat)
 
 
 class TerranBotV1(BotAI):
@@ -17,6 +29,7 @@ class TerranBotV1(BotAI):
         self.debug = debug
         self.dbg = DebugLogger(base_dir="debug_runs", enabled=debug)
         self.orch: Orchestrator | None = None
+        self._strat = STRAT
 
     # IMPORTANT: this fork calls on_start() without await -> must be sync
     # IMPORTANT: this fork calls on_start() without await -> must be sync
@@ -27,7 +40,7 @@ class TerranBotV1(BotAI):
     async def on_step(self, iteration: int):
         self.iteration = iteration  # Essential: cooldown logic depends on this
         if self.orch is None:
-            self.orch = Orchestrator(self, debug=self.debug)
+            self.orch = Orchestrator(self, debug=self.debug, strat=self._strat)
         await self.orch.step()
 
     # IMPORTANT: this fork calls on_end() without await -> must be sync
