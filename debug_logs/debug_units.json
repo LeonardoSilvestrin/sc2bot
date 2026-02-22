@@ -1,0 +1,2098 @@
+{
+  "map": "PersephoneAIE_v4",
+  "all_units": [
+    {
+      "name": "MineralField",
+      "unit_type_raw": 341,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 133.0,
+      "y": 23.5,
+      "tag": 8882683907
+    },
+    {
+      "name": "MineralField450",
+      "unit_type_raw": 1996,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 71.0,
+      "y": 110.5,
+      "tag": 8883470339
+    },
+    {
+      "name": "MineralField750",
+      "unit_type_raw": 483,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 86.0,
+      "y": 155.5,
+      "tag": 8884387843
+    },
+    {
+      "name": "MineralField",
+      "unit_type_raw": 341,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 54.0,
+      "y": 56.5,
+      "tag": 8885370883
+    },
+    {
+      "name": "MineralField750",
+      "unit_type_raw": 483,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 36.0,
+      "y": 123.5,
+      "tag": 8886222851
+    },
+    {
+      "name": "MineralField",
+      "unit_type_raw": 341,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 93.0,
+      "y": 157.5,
+      "tag": 8887271427
+    },
+    {
+      "name": "MineralField750",
+      "unit_type_raw": 483,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 37.0,
+      "y": 27.5,
+      "tag": 8888188931
+    },
+    {
+      "name": "VespeneGeyser",
+      "unit_type_raw": 342,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 96.5,
+      "y": 158.5,
+      "tag": 8890941443
+    },
+    {
+      "name": "DestructibleRockEx14x4",
+      "unit_type_raw": 638,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 120.0,
+      "y": 86.0,
+      "tag": 8892448771
+    },
+    {
+      "name": "RichMineralField750",
+      "unit_type_raw": 147,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 139.0,
+      "y": 92.5,
+      "tag": 8892710915
+    },
+    {
+      "name": "MineralField",
+      "unit_type_raw": 341,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 33.0,
+      "y": 124.5,
+      "tag": 8893562883
+    },
+    {
+      "name": "MineralField",
+      "unit_type_raw": 341,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 86.0,
+      "y": 153.5,
+      "tag": 8894611459
+    },
+    {
+      "name": "MineralField",
+      "unit_type_raw": 341,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 61.0,
+      "y": 129.5,
+      "tag": 8895397891
+    },
+    {
+      "name": "VespeneGeyser",
+      "unit_type_raw": 342,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 96.5,
+      "y": 21.5,
+      "tag": 8896380931
+    },
+    {
+      "name": "CollapsiblePurifierTowerDiagonal",
+      "unit_type_raw": 882,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 90.5,
+      "y": 132.5,
+      "tag": 8897560578
+    },
+    {
+      "name": "MineralField",
+      "unit_type_raw": 341,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 54.0,
+      "y": 54.5,
+      "tag": 8897757186
+    },
+    {
+      "name": "MineralField750",
+      "unit_type_raw": 483,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 92.0,
+      "y": 158.5,
+      "tag": 8898412546
+    },
+    {
+      "name": "VespeneGeyser",
+      "unit_type_raw": 342,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 135.5,
+      "y": 97.5,
+      "tag": 8898805762
+    },
+    {
+      "name": "MineralField750",
+      "unit_type_raw": 483,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 54.0,
+      "y": 127.5,
+      "tag": 8899198978
+    },
+    {
+      "name": "VespeneGeyser",
+      "unit_type_raw": 342,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 85.5,
+      "y": 148.5,
+      "tag": 8899657730
+    },
+    {
+      "name": "MineralField750",
+      "unit_type_raw": 483,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 37.0,
+      "y": 57.5,
+      "tag": 8900444162
+    },
+    {
+      "name": "DestructibleRockEx16x6",
+      "unit_type_raw": 639,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 105.0,
+      "y": 34.0,
+      "tag": 8900968450
+    },
+    {
+      "name": "ProtossVespeneGeyser",
+      "unit_type_raw": 608,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 72.5,
+      "y": 152.5,
+      "tag": 8901165058
+    },
+    {
+      "name": "MineralField750",
+      "unit_type_raw": 483,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 55.0,
+      "y": 128.5,
+      "tag": 8901754882
+    },
+    {
+      "name": "MineralField",
+      "unit_type_raw": 341,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 37.0,
+      "y": 61.5,
+      "tag": 8902541314
+    },
+    {
+      "name": "ProtossVespeneGeyser",
+      "unit_type_raw": 608,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 114.5,
+      "y": 112.5,
+      "tag": 8903196674
+    },
+    {
+      "name": "MineralField",
+      "unit_type_raw": 341,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 66.0,
+      "y": 155.5,
+      "tag": 8903393282
+    },
+    {
+      "name": "CollapsiblePurifierTowerDiagonal",
+      "unit_type_raw": 882,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 90.5,
+      "y": 47.5,
+      "tag": 8903786498
+    },
+    {
+      "name": "ProtossVespeneGeyser",
+      "unit_type_raw": 608,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 72.5,
+      "y": 27.5,
+      "tag": 8903983106
+    },
+    {
+      "name": "MineralField750",
+      "unit_type_raw": 483,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 60.0,
+      "y": 49.5,
+      "tag": 8904179714
+    },
+    {
+      "name": "MineralField",
+      "unit_type_raw": 341,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 37.0,
+      "y": 120.5,
+      "tag": 8904638466
+    },
+    {
+      "name": "RichMineralField750",
+      "unit_type_raw": 147,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 139.0,
+      "y": 88.5,
+      "tag": 8905031682
+    },
+    {
+      "name": "MineralField750",
+      "unit_type_raw": 483,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 86.0,
+      "y": 24.5,
+      "tag": 8905424898
+    },
+    {
+      "name": "ProtossVespeneGeyser",
+      "unit_type_raw": 608,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 69.5,
+      "y": 156.5,
+      "tag": 8907849729
+    },
+    {
+      "name": "MineralField",
+      "unit_type_raw": 341,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 58.0,
+      "y": 50.5,
+      "tag": 8907915265
+    },
+    {
+      "name": "MineralField",
+      "unit_type_raw": 341,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 119.0,
+      "y": 117.5,
+      "tag": 8908046337
+    },
+    {
+      "name": "MineralField750",
+      "unit_type_raw": 483,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 60.0,
+      "y": 25.5,
+      "tag": 8908177409
+    },
+    {
+      "name": "MineralField450",
+      "unit_type_raw": 1996,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 70.0,
+      "y": 70.5,
+      "tag": 8908308481
+    },
+    {
+      "name": "MineralField750",
+      "unit_type_raw": 483,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 53.0,
+      "y": 124.5,
+      "tag": 8908439553
+    },
+    {
+      "name": "MineralField750",
+      "unit_type_raw": 483,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 138.0,
+      "y": 151.5,
+      "tag": 8908570625
+    },
+    {
+      "name": "ProtossVespeneGeyser",
+      "unit_type_raw": 608,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 53.5,
+      "y": 121.5,
+      "tag": 8908701697
+    },
+    {
+      "name": "MineralField750",
+      "unit_type_raw": 483,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 38.0,
+      "y": 119.5,
+      "tag": 8908767233
+    },
+    {
+      "name": "MineralField750",
+      "unit_type_raw": 483,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 32.0,
+      "y": 29.5,
+      "tag": 8908898305
+    },
+    {
+      "name": "MineralField",
+      "unit_type_raw": 341,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 30.0,
+      "y": 55.5,
+      "tag": 8909029377
+    },
+    {
+      "name": "MineralField",
+      "unit_type_raw": 341,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 58.0,
+      "y": 129.5,
+      "tag": 8909160449
+    },
+    {
+      "name": "MineralField450",
+      "unit_type_raw": 1996,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 70.0,
+      "y": 109.5,
+      "tag": 8909291521
+    },
+    {
+      "name": "ProtossVespeneGeyser",
+      "unit_type_raw": 608,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 126.5,
+      "y": 157.5,
+      "tag": 8909422593
+    },
+    {
+      "name": "MineralField",
+      "unit_type_raw": 341,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 31.0,
+      "y": 32.5,
+      "tag": 8909488129
+    },
+    {
+      "name": "MineralField",
+      "unit_type_raw": 341,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 38.0,
+      "y": 28.5,
+      "tag": 8909619201
+    },
+    {
+      "name": "VespeneGeyser",
+      "unit_type_raw": 342,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 135.5,
+      "y": 83.5,
+      "tag": 8909881345
+    },
+    {
+      "name": "MineralField750",
+      "unit_type_raw": 483,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 31.0,
+      "y": 125.5,
+      "tag": 8910012417
+    },
+    {
+      "name": "MineralField",
+      "unit_type_raw": 341,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 86.0,
+      "y": 28.5,
+      "tag": 8910143489
+    },
+    {
+      "name": "MineralField750",
+      "unit_type_raw": 483,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 138.0,
+      "y": 28.5,
+      "tag": 8910274561
+    },
+    {
+      "name": "MineralField",
+      "unit_type_raw": 341,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 133.0,
+      "y": 156.5,
+      "tag": 8910405633
+    },
+    {
+      "name": "MineralField750",
+      "unit_type_raw": 483,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 137.0,
+      "y": 154.5,
+      "tag": 8910536705
+    },
+    {
+      "name": "MineralField750",
+      "unit_type_raw": 483,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 36.0,
+      "y": 56.5,
+      "tag": 8910667777
+    },
+    {
+      "name": "MineralField",
+      "unit_type_raw": 341,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 119.0,
+      "y": 121.5,
+      "tag": 8910798849
+    },
+    {
+      "name": "MineralField750",
+      "unit_type_raw": 483,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 58.0,
+      "y": 150.5,
+      "tag": 8910929921
+    },
+    {
+      "name": "DestructibleRockEx16x6",
+      "unit_type_raw": 639,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 105.0,
+      "y": 146.0,
+      "tag": 8911060993
+    },
+    {
+      "name": "CollapsibleRockTowerDiagonal",
+      "unit_type_raw": 588,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 45.5,
+      "y": 95.5,
+      "tag": 8911126529
+    },
+    {
+      "name": "MineralField750",
+      "unit_type_raw": 483,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 60.0,
+      "y": 154.5,
+      "tag": 8911192065
+    },
+    {
+      "name": "MineralField",
+      "unit_type_raw": 341,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 31.0,
+      "y": 34.5,
+      "tag": 8911323137
+    },
+    {
+      "name": "ProtossVespeneGeyser",
+      "unit_type_raw": 608,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 25.5,
+      "y": 124.5,
+      "tag": 8911454209
+    },
+    {
+      "name": "MineralField",
+      "unit_type_raw": 341,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 90.0,
+      "y": 157.5,
+      "tag": 8911519745
+    },
+    {
+      "name": "MineralField",
+      "unit_type_raw": 341,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 86.0,
+      "y": 26.5,
+      "tag": 8911650817
+    },
+    {
+      "name": "MineralField",
+      "unit_type_raw": 341,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 90.0,
+      "y": 22.5,
+      "tag": 8911781889
+    },
+    {
+      "name": "MineralField",
+      "unit_type_raw": 341,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 33.0,
+      "y": 55.5,
+      "tag": 8911912961
+    },
+    {
+      "name": "ProtossVespeneGeyser",
+      "unit_type_raw": 608,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 137.5,
+      "y": 32.5,
+      "tag": 8912044033
+    },
+    {
+      "name": "MineralField750",
+      "unit_type_raw": 483,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 119.0,
+      "y": 115.5,
+      "tag": 8912109569
+    },
+    {
+      "name": "MineralField750",
+      "unit_type_raw": 483,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 54.0,
+      "y": 52.5,
+      "tag": 8912240641
+    },
+    {
+      "name": "MineralField750",
+      "unit_type_raw": 483,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 87.0,
+      "y": 156.5,
+      "tag": 8912371713
+    },
+    {
+      "name": "MineralField750",
+      "unit_type_raw": 483,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 131.0,
+      "y": 157.5,
+      "tag": 8912502785
+    },
+    {
+      "name": "MineralField750",
+      "unit_type_raw": 483,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 55.0,
+      "y": 51.5,
+      "tag": 8912633857
+    },
+    {
+      "name": "MineralField750",
+      "unit_type_raw": 483,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 137.0,
+      "y": 25.5,
+      "tag": 8912764929
+    },
+    {
+      "name": "MineralField750",
+      "unit_type_raw": 483,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 60.0,
+      "y": 130.5,
+      "tag": 8912896001
+    },
+    {
+      "name": "MineralField750",
+      "unit_type_raw": 483,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 120.0,
+      "y": 61.5,
+      "tag": 8913027073
+    },
+    {
+      "name": "ProtossVespeneGeyser",
+      "unit_type_raw": 608,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 23.5,
+      "y": 59.5,
+      "tag": 8913420289
+    },
+    {
+      "name": "RichMineralField",
+      "unit_type_raw": 146,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 140.0,
+      "y": 89.5,
+      "tag": 8913485825
+    },
+    {
+      "name": "CollapsiblePurifierTowerDiagonal",
+      "unit_type_raw": 882,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 45.5,
+      "y": 84.5,
+      "tag": 8913616897
+    },
+    {
+      "name": "MineralField",
+      "unit_type_raw": 341,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 30.0,
+      "y": 124.5,
+      "tag": 8913682433
+    },
+    {
+      "name": "MineralField",
+      "unit_type_raw": 341,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 63.0,
+      "y": 24.5,
+      "tag": 8913813505
+    },
+    {
+      "name": "UnbuildableBricksDestructible",
+      "unit_type_raw": 473,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 59.0,
+      "y": 33.0,
+      "tag": 8913944577
+    },
+    {
+      "name": "ProtossVespeneGeyser",
+      "unit_type_raw": 608,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 137.5,
+      "y": 147.5,
+      "tag": 8914010113
+    },
+    {
+      "name": "MineralField750",
+      "unit_type_raw": 483,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 59.0,
+      "y": 153.5,
+      "tag": 8914075649
+    },
+    {
+      "name": "MineralField",
+      "unit_type_raw": 341,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 54.0,
+      "y": 125.5,
+      "tag": 8914206721
+    },
+    {
+      "name": "MineralField",
+      "unit_type_raw": 341,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 130.0,
+      "y": 156.5,
+      "tag": 8914337793
+    },
+    {
+      "name": "MineralField750",
+      "unit_type_raw": 483,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 136.0,
+      "y": 155.5,
+      "tag": 8914468865
+    },
+    {
+      "name": "ProtossVespeneGeyser",
+      "unit_type_raw": 608,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 114.5,
+      "y": 53.5,
+      "tag": 8914599937
+    },
+    {
+      "name": "MineralField",
+      "unit_type_raw": 341,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 59.0,
+      "y": 149.5,
+      "tag": 8914665473
+    },
+    {
+      "name": "MineralField750",
+      "unit_type_raw": 483,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 119.0,
+      "y": 64.5,
+      "tag": 8914796545
+    },
+    {
+      "name": "MineralField",
+      "unit_type_raw": 341,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 137.0,
+      "y": 29.5,
+      "tag": 8914927617
+    },
+    {
+      "name": "MineralField750",
+      "unit_type_raw": 483,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 59.0,
+      "y": 26.5,
+      "tag": 8915058689
+    },
+    {
+      "name": "MineralField750",
+      "unit_type_raw": 483,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 120.0,
+      "y": 118.5,
+      "tag": 8915189761
+    },
+    {
+      "name": "DestructibleRockEx16x6",
+      "unit_type_raw": 639,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 72.0,
+      "y": 66.0,
+      "tag": 8915320833
+    },
+    {
+      "name": "ProtossVespeneGeyser",
+      "unit_type_raw": 608,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 63.5,
+      "y": 49.5,
+      "tag": 8915517441
+    },
+    {
+      "name": "ProtossVespeneGeyser",
+      "unit_type_raw": 608,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 63.5,
+      "y": 130.5,
+      "tag": 8915582977
+    },
+    {
+      "name": "MineralField",
+      "unit_type_raw": 341,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 130.0,
+      "y": 23.5,
+      "tag": 8915648513
+    },
+    {
+      "name": "MineralField750",
+      "unit_type_raw": 483,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 31.0,
+      "y": 54.5,
+      "tag": 8915779585
+    },
+    {
+      "name": "ProtossVespeneGeyser",
+      "unit_type_raw": 608,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 25.5,
+      "y": 55.5,
+      "tag": 8915910657
+    },
+    {
+      "name": "MineralField",
+      "unit_type_raw": 341,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 37.0,
+      "y": 118.5,
+      "tag": 8915976193
+    },
+    {
+      "name": "MineralField",
+      "unit_type_raw": 341,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 137.0,
+      "y": 152.5,
+      "tag": 8916107265
+    },
+    {
+      "name": "RichMineralField",
+      "unit_type_raw": 146,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 138.0,
+      "y": 95.5,
+      "tag": 8916238337
+    },
+    {
+      "name": "ProtossVespeneGeyser",
+      "unit_type_raw": 608,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 114.5,
+      "y": 67.5,
+      "tag": 8916369409
+    },
+    {
+      "name": "MineralField",
+      "unit_type_raw": 341,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 118.0,
+      "y": 114.5,
+      "tag": 8916566017
+    },
+    {
+      "name": "MineralField",
+      "unit_type_raw": 341,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 37.0,
+      "y": 59.5,
+      "tag": 8916697089
+    },
+    {
+      "name": "ProtossVespeneGeyser",
+      "unit_type_raw": 608,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 126.5,
+      "y": 22.5,
+      "tag": 8916828161
+    },
+    {
+      "name": "ShakurasVespeneGeyser",
+      "unit_type_raw": 881,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 41.5,
+      "y": 27.5,
+      "tag": 8916893697
+    },
+    {
+      "name": "MineralField750",
+      "unit_type_raw": 483,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 65.0,
+      "y": 156.5,
+      "tag": 8916959233
+    },
+    {
+      "name": "MineralField",
+      "unit_type_raw": 341,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 35.0,
+      "y": 28.5,
+      "tag": 8917090305
+    },
+    {
+      "name": "MineralField",
+      "unit_type_raw": 341,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 63.0,
+      "y": 155.5,
+      "tag": 8917221377
+    },
+    {
+      "name": "MineralField750",
+      "unit_type_raw": 483,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 31.0,
+      "y": 30.5,
+      "tag": 8917352449
+    },
+    {
+      "name": "MineralField",
+      "unit_type_raw": 341,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 61.0,
+      "y": 50.5,
+      "tag": 8917483521
+    },
+    {
+      "name": "MineralField750",
+      "unit_type_raw": 483,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 38.0,
+      "y": 60.5,
+      "tag": 8917614593
+    },
+    {
+      "name": "MineralField750",
+      "unit_type_raw": 483,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 131.0,
+      "y": 22.5,
+      "tag": 8917745665
+    },
+    {
+      "name": "MineralField750",
+      "unit_type_raw": 483,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 87.0,
+      "y": 23.5,
+      "tag": 8917876737
+    },
+    {
+      "name": "XelNagaHealingShrine",
+      "unit_type_raw": 606,
+      "owner": 16,
+      "is_structure": false,
+      "is_visible": false,
+      "x": 102.5,
+      "y": 90.0,
+      "tag": 8918007809
+    },
+    {
+      "name": "DestructibleRockEx16x6",
+      "unit_type_raw": 639,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 72.0,
+      "y": 114.0,
+      "tag": 8918073345
+    },
+    {
+      "name": "MineralField",
+      "unit_type_raw": 341,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 54.0,
+      "y": 123.5,
+      "tag": 8918138881
+    },
+    {
+      "name": "ShakurasVespeneGeyser",
+      "unit_type_raw": 881,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 30.5,
+      "y": 37.5,
+      "tag": 8918269953
+    },
+    {
+      "name": "MineralField750",
+      "unit_type_raw": 483,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 119.0,
+      "y": 56.5,
+      "tag": 8918335489
+    },
+    {
+      "name": "VespeneGeyser",
+      "unit_type_raw": 342,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 85.5,
+      "y": 31.5,
+      "tag": 8918466561
+    },
+    {
+      "name": "MineralField750",
+      "unit_type_raw": 483,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 136.0,
+      "y": 24.5,
+      "tag": 8918597633
+    },
+    {
+      "name": "RichMineralField",
+      "unit_type_raw": 146,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 138.0,
+      "y": 85.5,
+      "tag": 8918728705
+    },
+    {
+      "name": "DestructibleRockEx14x4",
+      "unit_type_raw": 638,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 120.0,
+      "y": 94.0,
+      "tag": 8918859777
+    },
+    {
+      "name": "MineralField750",
+      "unit_type_raw": 483,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 30.0,
+      "y": 33.5,
+      "tag": 8918925313
+    },
+    {
+      "name": "ProtossVespeneGeyser",
+      "unit_type_raw": 608,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 114.5,
+      "y": 126.5,
+      "tag": 8919056385
+    },
+    {
+      "name": "MineralField750",
+      "unit_type_raw": 483,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 53.0,
+      "y": 55.5,
+      "tag": 8919121921
+    },
+    {
+      "name": "MineralField",
+      "unit_type_raw": 341,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 137.0,
+      "y": 150.5,
+      "tag": 8919384065
+    },
+    {
+      "name": "MineralField",
+      "unit_type_raw": 341,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 118.0,
+      "y": 124.5,
+      "tag": 8919515137
+    },
+    {
+      "name": "MineralField750",
+      "unit_type_raw": 483,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 120.0,
+      "y": 120.5,
+      "tag": 8919646209
+    },
+    {
+      "name": "MineralField750",
+      "unit_type_raw": 483,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 65.0,
+      "y": 23.5,
+      "tag": 8919777281
+    },
+    {
+      "name": "MineralField750",
+      "unit_type_raw": 483,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 120.0,
+      "y": 59.5,
+      "tag": 8919908353
+    },
+    {
+      "name": "MineralField",
+      "unit_type_raw": 341,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 66.0,
+      "y": 24.5,
+      "tag": 8920039425
+    },
+    {
+      "name": "MineralField",
+      "unit_type_raw": 341,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 93.0,
+      "y": 22.5,
+      "tag": 8920170497
+    },
+    {
+      "name": "MineralField750",
+      "unit_type_raw": 483,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 119.0,
+      "y": 123.5,
+      "tag": 8920301569
+    },
+    {
+      "name": "MineralField750",
+      "unit_type_raw": 483,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 85.0,
+      "y": 27.5,
+      "tag": 8920432641
+    },
+    {
+      "name": "MineralField",
+      "unit_type_raw": 341,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 86.0,
+      "y": 151.5,
+      "tag": 8920563713
+    },
+    {
+      "name": "MineralField750",
+      "unit_type_raw": 483,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 85.0,
+      "y": 152.5,
+      "tag": 8920694785
+    },
+    {
+      "name": "MineralField",
+      "unit_type_raw": 341,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 59.0,
+      "y": 151.5,
+      "tag": 8920825857
+    },
+    {
+      "name": "ProtossVespeneGeyser",
+      "unit_type_raw": 608,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 53.5,
+      "y": 58.5,
+      "tag": 8920956929
+    },
+    {
+      "name": "MineralField750",
+      "unit_type_raw": 483,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 92.0,
+      "y": 21.5,
+      "tag": 8921088001
+    },
+    {
+      "name": "MineralField",
+      "unit_type_raw": 341,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 118.0,
+      "y": 65.5,
+      "tag": 8921219073
+    },
+    {
+      "name": "MineralField",
+      "unit_type_raw": 341,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 118.0,
+      "y": 55.5,
+      "tag": 8921350145
+    },
+    {
+      "name": "MineralField",
+      "unit_type_raw": 341,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 137.0,
+      "y": 27.5,
+      "tag": 8921481217
+    },
+    {
+      "name": "ProtossVespeneGeyser",
+      "unit_type_raw": 608,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 69.5,
+      "y": 23.5,
+      "tag": 8921612289
+    },
+    {
+      "name": "UnbuildableBricksDestructible",
+      "unit_type_raw": 473,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 59.0,
+      "y": 147.0,
+      "tag": 8921677825
+    },
+    {
+      "name": "MineralField",
+      "unit_type_raw": 341,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 119.0,
+      "y": 62.5,
+      "tag": 8921743361
+    },
+    {
+      "name": "MineralField",
+      "unit_type_raw": 341,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 119.0,
+      "y": 58.5,
+      "tag": 8921874433
+    },
+    {
+      "name": "MineralField",
+      "unit_type_raw": 341,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 59.0,
+      "y": 30.5,
+      "tag": 8922005505
+    },
+    {
+      "name": "MineralField",
+      "unit_type_raw": 341,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 59.0,
+      "y": 28.5,
+      "tag": 8922136577
+    },
+    {
+      "name": "MineralField750",
+      "unit_type_raw": 483,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 37.0,
+      "y": 122.5,
+      "tag": 8922267649
+    },
+    {
+      "name": "ProtossVespeneGeyser",
+      "unit_type_raw": 608,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 23.5,
+      "y": 120.5,
+      "tag": 8922398721
+    },
+    {
+      "name": "MineralField750",
+      "unit_type_raw": 483,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 58.0,
+      "y": 29.5,
+      "tag": 8922464257
+    },
+    {
+      "name": "RichMineralField750",
+      "unit_type_raw": 147,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 140.0,
+      "y": 91.5,
+      "tag": 8922595329
+    },
+    {
+      "name": "MineralField450",
+      "unit_type_raw": 1996,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": false,
+      "x": 71.0,
+      "y": 69.5,
+      "tag": 8922726401
+    },
+    {
+      "name": "SCV",
+      "unit_type_raw": 45,
+      "owner": 1,
+      "is_structure": false,
+      "is_visible": true,
+      "x": 39.337989807128906,
+      "y": 148.54241943359375,
+      "tag": 4351066113
+    },
+    {
+      "name": "SCV",
+      "unit_type_raw": 45,
+      "owner": 1,
+      "is_structure": false,
+      "is_visible": true,
+      "x": 34.37016677856445,
+      "y": 148.60330200195312,
+      "tag": 4348444673
+    },
+    {
+      "name": "AccelerationZoneSmall",
+      "unit_type_raw": 1985,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": true,
+      "x": 120.0,
+      "y": 86.0,
+      "tag": 4324589569
+    },
+    {
+      "name": "SCV",
+      "unit_type_raw": 45,
+      "owner": 1,
+      "is_structure": false,
+      "is_visible": true,
+      "x": 38.33964920043945,
+      "y": 148.5486602783203,
+      "tag": 4350541825
+    },
+    {
+      "name": "ShakurasVespeneGeyser",
+      "unit_type_raw": 881,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": true,
+      "x": 41.5,
+      "y": 152.5,
+      "tag": 4309909505
+    },
+    {
+      "name": "SCV",
+      "unit_type_raw": 45,
+      "owner": 1,
+      "is_structure": false,
+      "is_visible": true,
+      "x": 34.393959045410156,
+      "y": 147.6272430419922,
+      "tag": 4348706817
+    },
+    {
+      "name": "MineralField",
+      "unit_type_raw": 341,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": true,
+      "x": 31.0,
+      "y": 147.5,
+      "tag": 4336648193
+    },
+    {
+      "name": "AccelerationZoneLarge",
+      "unit_type_raw": 1987,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": true,
+      "x": 132.0,
+      "y": 61.0,
+      "tag": 4309123073
+    },
+    {
+      "name": "SCV",
+      "unit_type_raw": 45,
+      "owner": 1,
+      "is_structure": false,
+      "is_visible": true,
+      "x": 37.34305953979492,
+      "y": 148.55621337890625,
+      "tag": 4350017537
+    },
+    {
+      "name": "MineralField",
+      "unit_type_raw": 341,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": true,
+      "x": 38.0,
+      "y": 151.5,
+      "tag": 4327735297
+    },
+    {
+      "name": "SCV",
+      "unit_type_raw": 45,
+      "owner": 1,
+      "is_structure": false,
+      "is_visible": true,
+      "x": 34.42789077758789,
+      "y": 145.65167236328125,
+      "tag": 4349755393
+    },
+    {
+      "name": "SCV",
+      "unit_type_raw": 45,
+      "owner": 1,
+      "is_structure": false,
+      "is_visible": true,
+      "x": 34.4119987487793,
+      "y": 146.64183044433594,
+      "tag": 4349231105
+    },
+    {
+      "name": "SCV",
+      "unit_type_raw": 45,
+      "owner": 1,
+      "is_structure": false,
+      "is_visible": true,
+      "x": 34.45334243774414,
+      "y": 142.6611785888672,
+      "tag": 4351328257
+    },
+    {
+      "name": "AccelerationZoneLarge",
+      "unit_type_raw": 1987,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": true,
+      "x": 132.0,
+      "y": 119.0,
+      "tag": 4321968129
+    },
+    {
+      "name": "SCV",
+      "unit_type_raw": 45,
+      "owner": 1,
+      "is_structure": false,
+      "is_visible": true,
+      "x": 34.44768524169922,
+      "y": 143.6569366455078,
+      "tag": 4350803969
+    },
+    {
+      "name": "CommandCenter",
+      "unit_type_raw": 18,
+      "owner": 1,
+      "is_structure": true,
+      "is_visible": true,
+      "x": 37.5,
+      "y": 145.5,
+      "tag": 4348182529
+    },
+    {
+      "name": "SCV",
+      "unit_type_raw": 45,
+      "owner": 1,
+      "is_structure": false,
+      "is_visible": true,
+      "x": 34.43910598754883,
+      "y": 144.65553283691406,
+      "tag": 4350279681
+    },
+    {
+      "name": "AccelerationZoneLarge",
+      "unit_type_raw": 1987,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": true,
+      "x": 132.0,
+      "y": 73.0,
+      "tag": 4340056065
+    },
+    {
+      "name": "SCV",
+      "unit_type_raw": 45,
+      "owner": 1,
+      "is_structure": false,
+      "is_visible": true,
+      "x": 35.35578536987305,
+      "y": 148.58175659179688,
+      "tag": 4348968961
+    },
+    {
+      "name": "MineralField",
+      "unit_type_raw": 341,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": true,
+      "x": 31.0,
+      "y": 145.5,
+      "tag": 4306501633
+    },
+    {
+      "name": "AccelerationZoneLarge",
+      "unit_type_raw": 1987,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": true,
+      "x": 132.0,
+      "y": 107.0,
+      "tag": 4324065281
+    },
+    {
+      "name": "MineralField750",
+      "unit_type_raw": 483,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": true,
+      "x": 31.0,
+      "y": 149.5,
+      "tag": 4326686721
+    },
+    {
+      "name": "MineralField",
+      "unit_type_raw": 341,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": true,
+      "x": 35.0,
+      "y": 151.5,
+      "tag": 4308598785
+    },
+    {
+      "name": "ShakurasVespeneGeyser",
+      "unit_type_raw": 881,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": true,
+      "x": 30.5,
+      "y": 142.5,
+      "tag": 4302831617
+    },
+    {
+      "name": "MineralField750",
+      "unit_type_raw": 483,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": true,
+      "x": 30.0,
+      "y": 146.5,
+      "tag": 4336123905
+    },
+    {
+      "name": "MineralField750",
+      "unit_type_raw": 483,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": true,
+      "x": 32.0,
+      "y": 150.5,
+      "tag": 4320657409
+    },
+    {
+      "name": "SCV",
+      "unit_type_raw": 45,
+      "owner": 1,
+      "is_structure": false,
+      "is_visible": true,
+      "x": 36.3473014831543,
+      "y": 148.56787109375,
+      "tag": 4349493249
+    },
+    {
+      "name": "AccelerationZoneSmall",
+      "unit_type_raw": 1985,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": true,
+      "x": 120.0,
+      "y": 94.0,
+      "tag": 4327997441
+    },
+    {
+      "name": "MineralField750",
+      "unit_type_raw": 483,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": true,
+      "x": 37.0,
+      "y": 152.5,
+      "tag": 4310695937
+    },
+    {
+      "name": "AccelerationZoneLarge",
+      "unit_type_raw": 1987,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": true,
+      "x": 132.0,
+      "y": 130.5,
+      "tag": 4300472321
+    },
+    {
+      "name": "AccelerationZoneLarge",
+      "unit_type_raw": 1987,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": true,
+      "x": 132.0,
+      "y": 49.5,
+      "tag": 4326948865
+    }
+  ],
+  "neutral_structures": [],
+  "near_base": [
+    {
+      "name": "SCV",
+      "unit_type_raw": 45,
+      "owner": 1,
+      "is_structure": false,
+      "is_visible": true,
+      "x": 39.337989807128906,
+      "y": 148.54241943359375,
+      "tag": 4351066113
+    },
+    {
+      "name": "SCV",
+      "unit_type_raw": 45,
+      "owner": 1,
+      "is_structure": false,
+      "is_visible": true,
+      "x": 34.37016677856445,
+      "y": 148.60330200195312,
+      "tag": 4348444673
+    },
+    {
+      "name": "SCV",
+      "unit_type_raw": 45,
+      "owner": 1,
+      "is_structure": false,
+      "is_visible": true,
+      "x": 38.33964920043945,
+      "y": 148.5486602783203,
+      "tag": 4350541825
+    },
+    {
+      "name": "ShakurasVespeneGeyser",
+      "unit_type_raw": 881,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": true,
+      "x": 41.5,
+      "y": 152.5,
+      "tag": 4309909505
+    },
+    {
+      "name": "SCV",
+      "unit_type_raw": 45,
+      "owner": 1,
+      "is_structure": false,
+      "is_visible": true,
+      "x": 34.393959045410156,
+      "y": 147.6272430419922,
+      "tag": 4348706817
+    },
+    {
+      "name": "MineralField",
+      "unit_type_raw": 341,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": true,
+      "x": 31.0,
+      "y": 147.5,
+      "tag": 4336648193
+    },
+    {
+      "name": "SCV",
+      "unit_type_raw": 45,
+      "owner": 1,
+      "is_structure": false,
+      "is_visible": true,
+      "x": 37.34305953979492,
+      "y": 148.55621337890625,
+      "tag": 4350017537
+    },
+    {
+      "name": "MineralField",
+      "unit_type_raw": 341,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": true,
+      "x": 38.0,
+      "y": 151.5,
+      "tag": 4327735297
+    },
+    {
+      "name": "SCV",
+      "unit_type_raw": 45,
+      "owner": 1,
+      "is_structure": false,
+      "is_visible": true,
+      "x": 34.42789077758789,
+      "y": 145.65167236328125,
+      "tag": 4349755393
+    },
+    {
+      "name": "SCV",
+      "unit_type_raw": 45,
+      "owner": 1,
+      "is_structure": false,
+      "is_visible": true,
+      "x": 34.4119987487793,
+      "y": 146.64183044433594,
+      "tag": 4349231105
+    },
+    {
+      "name": "SCV",
+      "unit_type_raw": 45,
+      "owner": 1,
+      "is_structure": false,
+      "is_visible": true,
+      "x": 34.45334243774414,
+      "y": 142.6611785888672,
+      "tag": 4351328257
+    },
+    {
+      "name": "SCV",
+      "unit_type_raw": 45,
+      "owner": 1,
+      "is_structure": false,
+      "is_visible": true,
+      "x": 34.44768524169922,
+      "y": 143.6569366455078,
+      "tag": 4350803969
+    },
+    {
+      "name": "CommandCenter",
+      "unit_type_raw": 18,
+      "owner": 1,
+      "is_structure": true,
+      "is_visible": true,
+      "x": 37.5,
+      "y": 145.5,
+      "tag": 4348182529
+    },
+    {
+      "name": "SCV",
+      "unit_type_raw": 45,
+      "owner": 1,
+      "is_structure": false,
+      "is_visible": true,
+      "x": 34.43910598754883,
+      "y": 144.65553283691406,
+      "tag": 4350279681
+    },
+    {
+      "name": "SCV",
+      "unit_type_raw": 45,
+      "owner": 1,
+      "is_structure": false,
+      "is_visible": true,
+      "x": 35.35578536987305,
+      "y": 148.58175659179688,
+      "tag": 4348968961
+    },
+    {
+      "name": "MineralField",
+      "unit_type_raw": 341,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": true,
+      "x": 31.0,
+      "y": 145.5,
+      "tag": 4306501633
+    },
+    {
+      "name": "MineralField750",
+      "unit_type_raw": 483,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": true,
+      "x": 31.0,
+      "y": 149.5,
+      "tag": 4326686721
+    },
+    {
+      "name": "MineralField",
+      "unit_type_raw": 341,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": true,
+      "x": 35.0,
+      "y": 151.5,
+      "tag": 4308598785
+    },
+    {
+      "name": "ShakurasVespeneGeyser",
+      "unit_type_raw": 881,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": true,
+      "x": 30.5,
+      "y": 142.5,
+      "tag": 4302831617
+    },
+    {
+      "name": "MineralField750",
+      "unit_type_raw": 483,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": true,
+      "x": 30.0,
+      "y": 146.5,
+      "tag": 4336123905
+    },
+    {
+      "name": "MineralField750",
+      "unit_type_raw": 483,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": true,
+      "x": 32.0,
+      "y": 150.5,
+      "tag": 4320657409
+    },
+    {
+      "name": "SCV",
+      "unit_type_raw": 45,
+      "owner": 1,
+      "is_structure": false,
+      "is_visible": true,
+      "x": 36.3473014831543,
+      "y": 148.56787109375,
+      "tag": 4349493249
+    },
+    {
+      "name": "MineralField750",
+      "unit_type_raw": 483,
+      "owner": 16,
+      "is_structure": true,
+      "is_visible": true,
+      "x": 37.0,
+      "y": 152.5,
+      "tag": 4310695937
+    }
+  ]
+}
