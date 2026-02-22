@@ -30,7 +30,9 @@
             "staging": "ENEMY_NATURAL",
             "target": "ENEMY_MAIN",
             "staging_dist": 18.0,
-            "require_stim": false
+            "require_stim": false,
+            "marine_select_maxd": 140.0,
+            "gather_radius": 16.0
         },
         {
             "enabled": true,
@@ -43,7 +45,9 @@
             "staging": "ENEMY_NATURAL",
             "target": "ENEMY_NATURAL",
             "staging_dist": 18.0,
-            "require_stim": false
+            "require_stim": false,
+            "marine_select_maxd": 140.0,
+            "gather_radius": 16.0
         }
     ],
     "build": [
@@ -71,6 +75,24 @@
             },
             "do": {
                 "build": "BARRACKS"
+            }
+        },
+        {
+            "name": "cc_natural_2",
+            "requires": {
+                "ready_gte": {
+                    "BARRACKS": 1
+                }
+            },
+            "when": {
+                "have_lte": {
+                    "COMMANDCENTER": 1
+                },
+                "minerals_gte": 400
+            },
+            "do": {
+                "build": "COMMANDCENTER",
+                "near": "MY_NATURAL"
             }
         },
         {

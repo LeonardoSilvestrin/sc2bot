@@ -1,10 +1,11 @@
-﻿# bot/strategy/plan_executor.py
+﻿#bot/strategy/plan_executor.py
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, Optional, List
 
 from sc2.ids.unit_typeid import UnitTypeId as U
 from sc2.ids.upgrade_id import UpgradeId as Up
+from sc2.position import Point2
 
 from .schema import StrategyConfig
 
@@ -37,6 +38,19 @@ def parse_up(name: str) -> Up:
         raise ValueError(f"UpgradeId inválido no JSON: {name}") from e
 
 
+_TEMPORARY_FAIL_REASONS: set[str] = {
+    "cant_afford",
+    "no_supply",
+    "no_placement",
+    "all_busy",
+    "no_idle_parent",
+    "do_failed",
+}
+
+
+_ALLOWED_NEAR_POINTS = {"MY_MAIN", "MY_NATURAL"}
+
+
 class PlanExecutor:
     def __init__(self, bot: Any, builder: Any, strategy: StrategyConfig, *, ctx: Any, logger: Any | None = None):
         self.bot = bot
@@ -49,7 +63,11 @@ class PlanExecutor:
         if self.log:
             self.log.emit(
                 "strategy_loaded",
-                {"name": self.strategy.name, "build_steps": int(len(self.strategy.build)), "production_rules": int(len(self.strategy.production_rules))},
+                {
+                    "name": self.strategy.name,
+                    "build_steps": int(len(self.strategy.build)),
+                    "production_rules": int(len(self.strategy.production_rules)),
+                },
                 meta={"iter": int(getattr(self.ctx, "iteration", 0))},
             )
 
@@ -58,6 +76,48 @@ class PlanExecutor:
             return
         await self._run_production_rules_one_action()
 
+    # -----------------------
+    # map-point helpers (near)
+    # -----------------------
+    def _my_start(self) -> Optional[Point2]:
+        return getattr(self.bot, "start_location", None)
+
+    def _expansions(self) -> List[Point2]:
+        exps = getattr(self.bot, "expansion_locations_list", None)
+        return list(exps) if exps else []
+
+    def _my_main_expansion(self) -> Optional[Point2]:
+        my_main = self._my_start()
+        exps = self._expansions()
+        if my_main is None or not exps:
+            return None
+        return min(exps, key=lambda p: p.distance_to(my_main))
+
+    def _my_natural(self) -> Optional[Point2]:
+        main_exp = self._my_main_expansion()
+        exps = self._expansions()
+        if main_exp is None or not exps:
+            return None
+        candidates = [p for p in exps if p.distance_to(main_exp) > 3.0]
+        if not candidates:
+            return None
+        return min(candidates, key=lambda p: p.distance_to(main_exp))
+
+    def _resolve_near(self, near_key: str | None) -> Optional[Point2]:
+        if near_key is None:
+            return None
+        key = str(near_key).strip().upper()
+        if key not in _ALLOWED_NEAR_POINTS:
+            raise ValueError(f"near inválido: {key} (allowed={sorted(_ALLOWED_NEAR_POINTS)})")
+        if key == "MY_MAIN":
+            return self._my_start()
+        if key == "MY_NATURAL":
+            return self._my_natural()
+        return None
+
+    # -----------------------
+    # main loop
+    # -----------------------
     async def _run_build_plan_one_step(self) -> bool:
         for step in self.strategy.build:
             name = str(step.get("name") or step.get("id") or "").strip() or f"_unnamed_{id(step)}"
@@ -81,15 +141,18 @@ class PlanExecutor:
                 self._emit("plan_step_done", {"name": name, "do": action})
                 return True
 
+            last = getattr(self.builder, "last", None)
+            last_reason = str(getattr(last, "reason", "") or "")
+            last_details = getattr(last, "details", None)
+
             self._emit(
                 "plan_step_blocked",
-                {
-                    "name": name,
-                    "do": action,
-                    "last_reason": getattr(getattr(self.builder, "last", None), "reason", ""),
-                    "last_details": getattr(getattr(self.builder, "last", None), "details", None),
-                },
+                {"name": name, "do": action, "last_reason": last_reason, "last_details": last_details},
             )
+
+            if last_reason in _TEMPORARY_FAIL_REASONS:
+                continue
+
             return False
 
         return False
@@ -124,9 +187,20 @@ class PlanExecutor:
             return False
         if "gas_gte" in cond and bot.vespene < _as_int(cond["gas_gte"], 0):
             return False
+
         if "supply_left_lte" in cond and bot.supply_left > _as_int(cond["supply_left_lte"], 0):
             return False
         if "supply_left_gte" in cond and bot.supply_left < _as_int(cond["supply_left_gte"], 0):
+            return False
+
+        if "supply_used_gte" in cond and bot.supply_used < _as_int(cond["supply_used_gte"], 0):
+            return False
+        if "supply_used_lte" in cond and bot.supply_used > _as_int(cond["supply_used_lte"], 0):
+            return False
+
+        if "supply_cap_gte" in cond and bot.supply_cap < _as_int(cond["supply_cap_gte"], 0):
+            return False
+        if "supply_cap_lte" in cond and bot.supply_cap > _as_int(cond["supply_cap_lte"], 0):
             return False
 
         if "have_gte" in cond and not self._check_unit_thresholds(cond["have_gte"], op="gte", mode="total"):
@@ -140,8 +214,6 @@ class PlanExecutor:
         if "unit_lte" in cond and not self._check_unit_thresholds(cond["unit_lte"], op="lte", mode="total"):
             return False
 
-        # --- upgrades ---
-        # formato: {"upgrade_done": ["STIMPACK"]}
         if "upgrade_done" in cond:
             ups = cond["upgrade_done"]
             if isinstance(ups, str):
@@ -153,7 +225,6 @@ class PlanExecutor:
                 if not self.builder.has_upgrade(up):
                     return False
 
-        # formato: {"upgrade_missing": ["STIMPACK"]}  (ou seja: ainda não pode ter e nem estar pendente)
         if "upgrade_missing" in cond:
             ups = cond["upgrade_missing"]
             if isinstance(ups, str):
@@ -197,10 +268,11 @@ class PlanExecutor:
             if self.builder.pending(ut) > 0:
                 return False
 
-            return await self.builder.try_build(ut)
+            near_key = action.get("near", None)
+            near_pt = self._resolve_near(near_key) if near_key is not None else None
+            return await self.builder.try_build(ut, near=near_pt)
 
         # ---- addons ----
-        # formato: {"build_addon": "TECHLAB", "on": "BARRACKS"}
         if "build_addon" in action:
             addon = str(action["build_addon"])
             on_name = str(action.get("on") or "").strip()
@@ -208,10 +280,8 @@ class PlanExecutor:
                 raise ValueError("Action build_addon exige campo 'on' (ex: 'BARRACKS').")
             on_ut = parse_u(on_name)
 
-            # opcional: limit por addon unit type (ex: BARRACKSTECHLAB)
             limit = action.get("limit")
             if limit is not None:
-                # tenta inferir unit type do addon pra limitar
                 addon_upper = addon.strip().upper()
                 infer = None
                 if on_ut == U.BARRACKS and addon_upper == "TECHLAB":
@@ -233,7 +303,6 @@ class PlanExecutor:
             return await self.builder.try_addon(on=on_ut, addon=addon)
 
         # ---- research ----
-        # formato: {"research": "STIMPACK"}
         if "research" in action:
             up = parse_up(str(action["research"]))
             return await self.builder.try_research(up)
