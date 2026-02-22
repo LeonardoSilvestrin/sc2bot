@@ -71,15 +71,10 @@ class Placement:
             except Exception:
                 pass
 
-        # 3) Weak fallback: placement_grid
-        grid = getattr(getattr(self.bot, "game_info", None), "placement_grid", None)
-        if grid is None:
-            # if we have no grid, assume ok (worst case it fails on build)
-            return False, False
-        try:
-            return bool(grid[int(pos.x), int(pos.y)]), False
-        except Exception:
-            return False, False
+        # 3) Weak fallback: placement_grid or assume ok
+        # If we reach here, the strict methods (query_building_placement, can_place) aren't available
+        # Always return True to let the actual build command determine if placement is valid
+        return True, False
 
     async def find_near(self, unit_type: U, near: Point2, max_dist: int = 25) -> Optional[PlacementResult]:
         near = snap(near)
@@ -98,12 +93,14 @@ class Placement:
 
         # Ring search (Manhattan-ish ring)
         x0, y0 = int(near.x), int(near.y)
+        checked_count = 0
         for r in range(0, max_dist + 1):
             # top/bottom edges
             for dx in range(-r, r + 1):
                 for dy in (-r, r):
                     p = Point2((x0 + dx, y0 + dy))
                     ok, strict = await self.can_place_strict(unit_type, p)
+                    checked_count += 1
                     if ok:
                         return PlacementResult(snap(p), strict)
             # left/right edges (excluding corners already tested)
@@ -111,6 +108,7 @@ class Placement:
                 for dx in (-r, r):
                     p = Point2((x0 + dx, y0 + dy))
                     ok, strict = await self.can_place_strict(unit_type, p)
+                    checked_count += 1
                     if ok:
                         return PlacementResult(snap(p), strict)
 

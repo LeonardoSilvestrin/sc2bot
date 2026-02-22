@@ -1,170 +1,211 @@
-#debuglog.py
+#api.py
 from __future__ import annotations
 
-import json
-import time
 from dataclasses import dataclass
-from datetime import datetime
-from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Optional
+
+import inspect
+
+from sc2.ids.unit_typeid import UnitTypeId as U
 
 
-@dataclass
-class _Run:
-    run_dir: Path
-    log_path: Path
+def _is_awaitable(x: Any) -> bool:
+    try:
+        return inspect.isawaitable(x)
+    except Exception:
+        return False
 
 
-class DebugLogger:
+async def _maybe_await(x: Any) -> Any:
+    if _is_awaitable(x):
+        return await x
+    return x
+
+
+@dataclass(frozen=True)
+class Snapshot:
+    t: float
+    it: int
+    m: int
+    g: int
+    supply_used: int
+    supply_cap: int
+    supply_left: int
+
+
+class BotAPI:
     """
-    Single-file JSONL logger, buffered (não dá flush a cada linha).
-    - Um arquivo: debug.jsonl
-    - Compatível com suas chamadas atuais:
-        log_action / log_state / log_placement / log_building
-    - Nunca quebra o bot: exceções do logger são engolidas.
+    Adapter para lidar com diferenças de forks:
+    - bot.units vs bot.structures
+    - .ready/.idle/.exists/.amount vs listas simples
+    - bot.do / distribute_workers sync ou async
+    - already_pending pode existir ou não
     """
 
-    def __init__(
-        self,
-        base_dir: str | Path = "debug_runs",
-        *,
-        enabled: bool = True,
-        flush_every_lines: int = 200,
-        flush_every_seconds: float = 1.0,
-        max_payload_bytes: int = 8_000,
-    ):
-        self.enabled = bool(enabled)
-        self.base_dir = Path(base_dir)
-        self.flush_every_lines = int(flush_every_lines)
-        self.flush_every_seconds = float(flush_every_seconds)
-        self.max_payload_bytes = int(max_payload_bytes)
+    def __init__(self, bot: Any):
+        self.bot = bot
 
-        self._run: Optional[_Run] = None
-        self._fp = None  # file handle
-        self._lines_since_flush = 0
-        self._last_flush_ts = 0.0
+    # ---------------------------
+    # Snapshot
+    # ---------------------------
+    def snapshot(self) -> Snapshot:
+        t = float(getattr(self.bot, "time", 0.0) or 0.0)
+        it = int(getattr(self.bot, "iteration", 0) or 0)
+        m = int(getattr(self.bot, "minerals", 0) or 0)
+        g = int(getattr(self.bot, "vespene", 0) or 0)
+        su = int(getattr(self.bot, "supply_used", 0) or 0)
+        sc = int(getattr(self.bot, "supply_cap", 0) or 0)
+        sl = int(getattr(self.bot, "supply_left", 0) or 0)
+        return Snapshot(t=t, it=it, m=m, g=g, supply_used=su, supply_cap=sc, supply_left=sl)
 
-    # -------------------------
-    # Lifecycle
-    # -------------------------
-    def start_run(self, *, map_name: str = "unknown_map", opponent: str = "unknown_opp") -> None:
-        if not self.enabled:
-            return
-
-        try:
-            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            safe_map = "".join(c for c in map_name if c.isalnum() or c in ("_", "-"))[:48] or "map"
-            safe_opp = "".join(c for c in opponent if c.isalnum() or c in ("_", "-"))[:48] or "opp"
-
-            run_dir = self.base_dir / f"{ts}_{safe_map}_{safe_opp}"
-            run_dir.mkdir(parents=True, exist_ok=True)
-
-            log_path = run_dir / "debug.jsonl"
-            # line-buffered off; we'll flush manually
-            self._fp = log_path.open("a", encoding="utf-8")
-            self._run = _Run(run_dir=run_dir, log_path=log_path)
-
-            self._lines_since_flush = 0
-            self._last_flush_ts = time.time()
-
-            self.log("state", {"event": "run_start", "map": map_name, "opponent": opponent})
-        except Exception:
-            # never break the bot due to logging
-            self._run = None
+    # ---------------------------
+    # Unit queries
+    # ---------------------------
+    def units(self, unit_type: U):
+        if hasattr(self.bot, "units"):
             try:
-                if self._fp:
-                    self._fp.close()
+                return self.bot.units(unit_type)
             except Exception:
                 pass
-            self._fp = None
+        if hasattr(self.bot, "structures"):
+            try:
+                return self.bot.structures(unit_type)
+            except Exception:
+                pass
+        return []
 
-    def close(self) -> None:
-        """Call optionally in on_end; safe if never called."""
+    def ready(self, unit_type: U):
+        us = self.units(unit_type)
+        if hasattr(us, "ready"):
+            return us.ready
+        return [u for u in us if getattr(u, "is_ready", False)]
+
+    def idle(self, units):
+        if hasattr(units, "idle"):
+            return units.idle
+        return [u for u in units if getattr(u, "is_idle", False)]
+
+    def exists(self, units) -> bool:
+        if units is None:
+            return False
+        if hasattr(units, "exists"):
+            return bool(units.exists)
         try:
-            if not self.enabled:
-                return
-            self._flush(force=True)
-            if self._fp:
-                self._fp.close()
+            return len(units) > 0
         except Exception:
-            pass
-        finally:
-            self._fp = None
-            self._run = None
+            return False
 
-    # -------------------------
-    # Public API
-    # -------------------------
-    def log(self, channel: str, obj: Dict[str, Any]) -> None:
-        if not self.enabled or self._fp is None:
-            return
-
+    def amount(self, units) -> int:
+        if units is None:
+            return 0
+        if hasattr(units, "amount"):
+            return int(units.amount)
         try:
-            payload = dict(obj) if isinstance(obj, dict) else {"msg": str(obj)}
-            payload.setdefault("channel", str(channel))
-
-            s = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
-            if len(s.encode("utf-8")) > self.max_payload_bytes:
-                payload = self._shrink(payload)
-                s = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
-
-            self._fp.write(s + "\n")
-            self._lines_since_flush += 1
-            self._flush()
+            return len(units)
         except Exception:
-            # swallow any logging failures
-            return
+            return 0
 
-    # Backward-compatible channels
-    def log_action(self, obj: Dict[str, Any]) -> None:
-        self.log("action", obj)
-
-    def log_state(self, obj: Dict[str, Any]) -> None:
-        self.log("state", obj)
-
-    def log_placement(self, obj: Dict[str, Any]) -> None:
-        self.log("placement", obj)
-
-    def log_building(self, obj: Dict[str, Any]) -> None:
-        self.log("building", obj)
-
-    # -------------------------
-    # Internals
-    # -------------------------
-    def _flush(self, *, force: bool = False) -> None:
-        if self._fp is None:
-            return
-
-        now = time.time()
-        if not force:
-            if self._lines_since_flush < self.flush_every_lines and (now - self._last_flush_ts) < self.flush_every_seconds:
-                return
-
+    def first(self, units):
+        if units is None:
+            return None
+        if hasattr(units, "first"):
+            return units.first
         try:
-            self._fp.flush()
+            return units[0] if len(units) else None
         except Exception:
-            return
-        finally:
-            self._lines_since_flush = 0
-            self._last_flush_ts = now
+            return None
 
-    def _shrink(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Se o payload ficar grande demais, remove campos comuns que explodem (args/kwargs/result),
-        mantendo os mais úteis para diagnóstico.
-        """
-        keep_keys = ("event", "fn", "what", "unit", "name", "ok", "reason", "exc_type", "exc", "t", "it", "channel")
-        slim: Dict[str, Any] = {k: payload[k] for k in keep_keys if k in payload}
+    def closest_to(self, units, pos):
+        if units is None:
+            return None
+        if hasattr(units, "closest_to"):
+            try:
+                return units.closest_to(pos)
+            except Exception:
+                pass
+        best = None
+        best_d = 1e18
+        try:
+            for u in units:
+                p = getattr(u, "position", None)
+                if p is None:
+                    continue
+                d = p.distance_to(pos)
+                if d < best_d:
+                    best_d = d
+                    best = u
+        except Exception:
+            return None
+        return best
 
-        # Preserve some positional hints if present
-        for k in ("pos", "desired", "near", "cc"):
-            if k in payload:
-                slim[k] = payload[k]
+    def closer_than(self, units, dist: float, pos):
+        if units is None:
+            return []
+        if hasattr(units, "closer_than"):
+            try:
+                return units.closer_than(dist, pos)
+            except Exception:
+                pass
+        out = []
+        try:
+            for u in units:
+                p = getattr(u, "position", None)
+                if p is None:
+                    continue
+                if p.distance_to(pos) < dist:
+                    out.append(u)
+        except Exception:
+            return []
+        return out
 
-        # If still nothing meaningful, keep a truncated repr
-        if len(slim) <= 2:
-            slim["event"] = payload.get("event", "log")
-            slim["note"] = "payload_truncated"
-            slim["repr"] = str(payload)[:400]
+    # ---------------------------
+    # Economy helpers
+    # ---------------------------
+    def already_pending(self, unit_type: U) -> int:
+        fn = getattr(self.bot, "already_pending", None)
+        if callable(fn):
+            try:
+                return int(fn(unit_type))
+            except Exception:
+                return 0
+        return 0
 
-        return slim
+    def can_afford(self, unit_type: U) -> bool:
+        fn = getattr(self.bot, "can_afford", None)
+        if callable(fn):
+            try:
+                return bool(fn(unit_type))
+            except Exception:
+                pass
+        # Fallback: check raw resources
+        m = int(getattr(self.bot, "minerals", 0)) or 0
+        g = int(getattr(self.bot, "vespene", 0)) or 0
+        calc = getattr(self.bot, "calculate_cost", None)
+        if callable(calc):
+            try:
+                c = calc(unit_type)
+                cm = int(getattr(c, "minerals", 0)) or 0
+                cg = int(getattr(c, "vespene", 0)) or 0
+                return m >= cm and g >= cg
+            except Exception:
+                pass
+        return False
+
+    # ---------------------------
+    # Commands (sync/async safe)
+    # ---------------------------
+    async def do(self, cmd) -> Any:
+        fn = getattr(self.bot, "do", None)
+        if not callable(fn):
+            return None
+        try:
+            return await _maybe_await(fn(cmd))
+        except Exception:
+            # do not swallow silently here; caller logs failures
+            raise
+
+    async def distribute_workers(self) -> Any:
+        fn = getattr(self.bot, "distribute_workers", None)
+        if not callable(fn):
+            return None
+        return await _maybe_await(fn())

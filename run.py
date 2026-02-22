@@ -18,7 +18,9 @@ class TerranBotV1(BotAI):
         self.dbg = DebugLogger(base_dir="debug_runs", enabled=debug)
         self.orch: Orchestrator | None = None
 
-    async def on_start(self):
+    # IMPORTANT: this fork calls on_start() without await -> must be sync
+    # IMPORTANT: this fork calls on_start() without await -> must be sync
+    def on_start(self):
         map_name = getattr(self.game_info, "map_name", "unknown_map")
         self.dbg.start_run(map_name=map_name, opponent="Computer")
 
@@ -29,8 +31,8 @@ class TerranBotV1(BotAI):
 
         await self.orch.step()
 
-    async def on_end(self, game_result):
-        # python-sc2 chama on_end em vários forks; se não chamar, tudo bem
+    # IMPORTANT: this fork calls on_end() without await -> must be sync
+    def on_end(self, game_result):
         try:
             if getattr(self, "dbg", None) is not None:
                 self.dbg.log_state({"event": "run_end", "result": str(game_result)})
