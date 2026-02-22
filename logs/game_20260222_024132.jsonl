@@ -1,0 +1,227 @@
+{"ts_utc": "2026-02-22T02:41:32.151297+00:00", "event": "bot_init", "payload": {"strategy": "default"}, "meta": {}}
+{"ts_utc": "2026-02-22T02:41:59.086788+00:00", "event": "snapshot", "payload": {"iteration": 0, "time": 0.0, "minerals": 50, "gas": 0, "supply_used": 12, "supply_cap": 15, "supply_left": 3, "workers": 12}, "meta": {"strategy": "default", "iter": 0}}
+{"ts_utc": "2026-02-22T02:41:59.093337+00:00", "event": "econ_train_scv", "payload": {"target": 20, "scv_total": 13}, "meta": {"iter": 0}}
+{"ts_utc": "2026-02-22T02:41:59.397709+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 0, "gas": 0}, "meta": {"iter": 1}}
+{"ts_utc": "2026-02-22T02:41:59.397709+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 1}}
+{"ts_utc": "2026-02-22T02:41:59.442822+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 0, "gas": 0}, "meta": {"iter": 2}}
+{"ts_utc": "2026-02-22T02:41:59.442822+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 2}}
+{"ts_utc": "2026-02-22T02:41:59.526234+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 0, "gas": 0}, "meta": {"iter": 3}}
+{"ts_utc": "2026-02-22T02:41:59.526234+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 3}}
+{"ts_utc": "2026-02-22T02:41:59.558532+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 0, "gas": 0}, "meta": {"iter": 4}}
+{"ts_utc": "2026-02-22T02:41:59.558532+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 4}}
+{"ts_utc": "2026-02-22T02:41:59.609936+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 0, "gas": 0}, "meta": {"iter": 5}}
+{"ts_utc": "2026-02-22T02:41:59.609936+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 5}}
+{"ts_utc": "2026-02-22T02:41:59.641617+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 0, "gas": 0}, "meta": {"iter": 6}}
+{"ts_utc": "2026-02-22T02:41:59.641617+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 6}}
+{"ts_utc": "2026-02-22T02:41:59.694517+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 0, "gas": 0}, "meta": {"iter": 7}}
+{"ts_utc": "2026-02-22T02:41:59.694517+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 7}}
+{"ts_utc": "2026-02-22T02:41:59.725369+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 0, "gas": 0}, "meta": {"iter": 8}}
+{"ts_utc": "2026-02-22T02:41:59.725369+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 8}}
+{"ts_utc": "2026-02-22T02:41:59.758838+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 0, "gas": 0}, "meta": {"iter": 9}}
+{"ts_utc": "2026-02-22T02:41:59.758838+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 9}}
+{"ts_utc": "2026-02-22T02:41:59.789677+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 0, "gas": 0}, "meta": {"iter": 10}}
+{"ts_utc": "2026-02-22T02:41:59.789677+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 10}}
+{"ts_utc": "2026-02-22T02:41:59.833933+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 0, "gas": 0}, "meta": {"iter": 11}}
+{"ts_utc": "2026-02-22T02:41:59.833933+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 11}}
+{"ts_utc": "2026-02-22T02:41:59.872372+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 0, "gas": 0}, "meta": {"iter": 12}}
+{"ts_utc": "2026-02-22T02:41:59.872372+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 12}}
+{"ts_utc": "2026-02-22T02:41:59.936484+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 0, "gas": 0}, "meta": {"iter": 13}}
+{"ts_utc": "2026-02-22T02:41:59.936484+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 13}}
+{"ts_utc": "2026-02-22T02:41:59.974192+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 0, "gas": 0}, "meta": {"iter": 14}}
+{"ts_utc": "2026-02-22T02:41:59.975189+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 14}}
+{"ts_utc": "2026-02-22T02:42:00.016266+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 0, "gas": 0}, "meta": {"iter": 15}}
+{"ts_utc": "2026-02-22T02:42:00.016266+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 15}}
+{"ts_utc": "2026-02-22T02:42:00.041518+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 0, "gas": 0}, "meta": {"iter": 16}}
+{"ts_utc": "2026-02-22T02:42:00.041518+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 16}}
+{"ts_utc": "2026-02-22T02:42:00.090000+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 0, "gas": 0}, "meta": {"iter": 17}}
+{"ts_utc": "2026-02-22T02:42:00.091559+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 17}}
+{"ts_utc": "2026-02-22T02:42:00.126718+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 0, "gas": 0}, "meta": {"iter": 18}}
+{"ts_utc": "2026-02-22T02:42:00.126718+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 18}}
+{"ts_utc": "2026-02-22T02:42:00.183250+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 0, "gas": 0}, "meta": {"iter": 19}}
+{"ts_utc": "2026-02-22T02:42:00.183250+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 19}}
+{"ts_utc": "2026-02-22T02:42:00.215418+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 0, "gas": 0}, "meta": {"iter": 20}}
+{"ts_utc": "2026-02-22T02:42:00.215418+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 20}}
+{"ts_utc": "2026-02-22T02:42:00.261172+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 0, "gas": 0}, "meta": {"iter": 21}}
+{"ts_utc": "2026-02-22T02:42:00.261172+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 21}}
+{"ts_utc": "2026-02-22T02:42:00.289646+00:00", "event": "snapshot", "payload": {"iteration": 22, "time": 3.928571428571429, "minerals": 0, "gas": 0, "supply_used": 13, "supply_cap": 15, "supply_left": 2, "workers": 12}, "meta": {"strategy": "default", "iter": 22}}
+{"ts_utc": "2026-02-22T02:42:00.293195+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 0, "gas": 0}, "meta": {"iter": 22}}
+{"ts_utc": "2026-02-22T02:42:00.293195+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 22}}
+{"ts_utc": "2026-02-22T02:42:00.331313+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 0, "gas": 0}, "meta": {"iter": 23}}
+{"ts_utc": "2026-02-22T02:42:00.331313+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 23}}
+{"ts_utc": "2026-02-22T02:42:00.364357+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 0, "gas": 0}, "meta": {"iter": 24}}
+{"ts_utc": "2026-02-22T02:42:00.364357+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 24}}
+{"ts_utc": "2026-02-22T02:42:00.415264+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 0, "gas": 0}, "meta": {"iter": 25}}
+{"ts_utc": "2026-02-22T02:42:00.415264+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 25}}
+{"ts_utc": "2026-02-22T02:42:00.446412+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 0, "gas": 0}, "meta": {"iter": 26}}
+{"ts_utc": "2026-02-22T02:42:00.446412+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 26}}
+{"ts_utc": "2026-02-22T02:42:00.481643+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 0, "gas": 0}, "meta": {"iter": 27}}
+{"ts_utc": "2026-02-22T02:42:00.481643+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 27}}
+{"ts_utc": "2026-02-22T02:42:00.523306+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 5, "gas": 0}, "meta": {"iter": 28}}
+{"ts_utc": "2026-02-22T02:42:00.523306+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 28}}
+{"ts_utc": "2026-02-22T02:42:00.561173+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 5, "gas": 0}, "meta": {"iter": 29}}
+{"ts_utc": "2026-02-22T02:42:00.561173+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 29}}
+{"ts_utc": "2026-02-22T02:42:00.596228+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 5, "gas": 0}, "meta": {"iter": 30}}
+{"ts_utc": "2026-02-22T02:42:00.596228+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 30}}
+{"ts_utc": "2026-02-22T02:42:00.639995+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 5, "gas": 0}, "meta": {"iter": 31}}
+{"ts_utc": "2026-02-22T02:42:00.639995+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 31}}
+{"ts_utc": "2026-02-22T02:42:00.679698+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 10, "gas": 0}, "meta": {"iter": 32}}
+{"ts_utc": "2026-02-22T02:42:00.679698+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 32}}
+{"ts_utc": "2026-02-22T02:42:00.761636+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 15, "gas": 0}, "meta": {"iter": 33}}
+{"ts_utc": "2026-02-22T02:42:00.761636+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 33}}
+{"ts_utc": "2026-02-22T02:42:00.791157+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 15, "gas": 0}, "meta": {"iter": 34}}
+{"ts_utc": "2026-02-22T02:42:00.791157+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 34}}
+{"ts_utc": "2026-02-22T02:42:00.884539+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 15, "gas": 0}, "meta": {"iter": 35}}
+{"ts_utc": "2026-02-22T02:42:00.884539+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 35}}
+{"ts_utc": "2026-02-22T02:42:00.916978+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 20, "gas": 0}, "meta": {"iter": 36}}
+{"ts_utc": "2026-02-22T02:42:00.916978+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 36}}
+{"ts_utc": "2026-02-22T02:42:00.957612+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 20, "gas": 0}, "meta": {"iter": 37}}
+{"ts_utc": "2026-02-22T02:42:00.957612+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 37}}
+{"ts_utc": "2026-02-22T02:42:00.992204+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 25, "gas": 0}, "meta": {"iter": 38}}
+{"ts_utc": "2026-02-22T02:42:00.992204+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 38}}
+{"ts_utc": "2026-02-22T02:42:01.037673+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 25, "gas": 0}, "meta": {"iter": 39}}
+{"ts_utc": "2026-02-22T02:42:01.037673+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 39}}
+{"ts_utc": "2026-02-22T02:42:01.069541+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 30, "gas": 0}, "meta": {"iter": 40}}
+{"ts_utc": "2026-02-22T02:42:01.070541+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 40}}
+{"ts_utc": "2026-02-22T02:42:01.113456+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 40, "gas": 0}, "meta": {"iter": 41}}
+{"ts_utc": "2026-02-22T02:42:01.113456+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 41}}
+{"ts_utc": "2026-02-22T02:42:01.147497+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 45, "gas": 0}, "meta": {"iter": 42}}
+{"ts_utc": "2026-02-22T02:42:01.147497+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 42}}
+{"ts_utc": "2026-02-22T02:42:01.193534+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 45, "gas": 0}, "meta": {"iter": 43}}
+{"ts_utc": "2026-02-22T02:42:01.193534+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 43}}
+{"ts_utc": "2026-02-22T02:42:01.221368+00:00", "event": "snapshot", "payload": {"iteration": 44, "time": 7.857142857142858, "minerals": 50, "gas": 0, "supply_used": 13, "supply_cap": 15, "supply_left": 2, "workers": 12}, "meta": {"strategy": "default", "iter": 44}}
+{"ts_utc": "2026-02-22T02:42:01.225404+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 50, "gas": 0}, "meta": {"iter": 44}}
+{"ts_utc": "2026-02-22T02:42:01.225404+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 44}}
+{"ts_utc": "2026-02-22T02:42:01.267771+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 55, "gas": 0}, "meta": {"iter": 45}}
+{"ts_utc": "2026-02-22T02:42:01.267771+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 45}}
+{"ts_utc": "2026-02-22T02:42:01.302315+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 55, "gas": 0}, "meta": {"iter": 46}}
+{"ts_utc": "2026-02-22T02:42:01.302315+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 46}}
+{"ts_utc": "2026-02-22T02:42:01.346409+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 55, "gas": 0}, "meta": {"iter": 47}}
+{"ts_utc": "2026-02-22T02:42:01.347425+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 47}}
+{"ts_utc": "2026-02-22T02:42:01.378265+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 60, "gas": 0}, "meta": {"iter": 48}}
+{"ts_utc": "2026-02-22T02:42:01.379269+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 48}}
+{"ts_utc": "2026-02-22T02:42:01.424438+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 60, "gas": 0}, "meta": {"iter": 49}}
+{"ts_utc": "2026-02-22T02:42:01.424438+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 49}}
+{"ts_utc": "2026-02-22T02:42:01.457792+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 60, "gas": 0}, "meta": {"iter": 50}}
+{"ts_utc": "2026-02-22T02:42:01.457792+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 50}}
+{"ts_utc": "2026-02-22T02:42:01.497899+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 60, "gas": 0}, "meta": {"iter": 51}}
+{"ts_utc": "2026-02-22T02:42:01.497899+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 51}}
+{"ts_utc": "2026-02-22T02:42:01.534156+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 60, "gas": 0}, "meta": {"iter": 52}}
+{"ts_utc": "2026-02-22T02:42:01.534156+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 52}}
+{"ts_utc": "2026-02-22T02:42:01.578330+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 60, "gas": 0}, "meta": {"iter": 53}}
+{"ts_utc": "2026-02-22T02:42:01.579355+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 53}}
+{"ts_utc": "2026-02-22T02:42:01.615242+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 60, "gas": 0}, "meta": {"iter": 54}}
+{"ts_utc": "2026-02-22T02:42:01.615242+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 54}}
+{"ts_utc": "2026-02-22T02:42:01.666804+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 60, "gas": 0}, "meta": {"iter": 55}}
+{"ts_utc": "2026-02-22T02:42:01.666804+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 55}}
+{"ts_utc": "2026-02-22T02:42:01.699687+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 60, "gas": 0}, "meta": {"iter": 56}}
+{"ts_utc": "2026-02-22T02:42:01.699687+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 56}}
+{"ts_utc": "2026-02-22T02:42:01.734377+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 60, "gas": 0}, "meta": {"iter": 57}}
+{"ts_utc": "2026-02-22T02:42:01.734377+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 57}}
+{"ts_utc": "2026-02-22T02:42:01.773354+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 60, "gas": 0}, "meta": {"iter": 58}}
+{"ts_utc": "2026-02-22T02:42:01.773354+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 58}}
+{"ts_utc": "2026-02-22T02:42:01.812449+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 60, "gas": 0}, "meta": {"iter": 59}}
+{"ts_utc": "2026-02-22T02:42:01.812449+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 59}}
+{"ts_utc": "2026-02-22T02:42:01.852549+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 65, "gas": 0}, "meta": {"iter": 60}}
+{"ts_utc": "2026-02-22T02:42:01.852549+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 60}}
+{"ts_utc": "2026-02-22T02:42:01.889699+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 70, "gas": 0}, "meta": {"iter": 61}}
+{"ts_utc": "2026-02-22T02:42:01.889699+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 61}}
+{"ts_utc": "2026-02-22T02:42:01.921312+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 75, "gas": 0}, "meta": {"iter": 62}}
+{"ts_utc": "2026-02-22T02:42:01.921312+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 62}}
+{"ts_utc": "2026-02-22T02:42:01.966182+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 80, "gas": 0}, "meta": {"iter": 63}}
+{"ts_utc": "2026-02-22T02:42:01.966182+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 63}}
+{"ts_utc": "2026-02-22T02:42:01.999705+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 80, "gas": 0}, "meta": {"iter": 64}}
+{"ts_utc": "2026-02-22T02:42:02.001214+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 64}}
+{"ts_utc": "2026-02-22T02:42:02.047493+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 85, "gas": 0}, "meta": {"iter": 65}}
+{"ts_utc": "2026-02-22T02:42:02.047493+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 65}}
+{"ts_utc": "2026-02-22T02:42:02.076207+00:00", "event": "snapshot", "payload": {"iteration": 66, "time": 11.785714285714286, "minerals": 85, "gas": 0, "supply_used": 13, "supply_cap": 15, "supply_left": 2, "workers": 12}, "meta": {"strategy": "default", "iter": 66}}
+{"ts_utc": "2026-02-22T02:42:02.081549+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 85, "gas": 0}, "meta": {"iter": 66}}
+{"ts_utc": "2026-02-22T02:42:02.081549+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 66}}
+{"ts_utc": "2026-02-22T02:42:02.123253+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 90, "gas": 0}, "meta": {"iter": 67}}
+{"ts_utc": "2026-02-22T02:42:02.123253+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 67}}
+{"ts_utc": "2026-02-22T02:42:02.157974+00:00", "event": "econ_train_scv", "payload": {"target": 20, "scv_total": 14}, "meta": {"iter": 68}}
+{"ts_utc": "2026-02-22T02:42:02.157974+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 40, "gas": 0}, "meta": {"iter": 68}}
+{"ts_utc": "2026-02-22T02:42:02.157974+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 2, "trigger": 2}, "meta": {"iter": 68}}
+{"ts_utc": "2026-02-22T02:42:02.206042+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 40, "gas": 0}, "meta": {"iter": 69}}
+{"ts_utc": "2026-02-22T02:42:02.206659+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 1, "trigger": 2}, "meta": {"iter": 69}}
+{"ts_utc": "2026-02-22T02:42:02.241247+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 40, "gas": 0}, "meta": {"iter": 70}}
+{"ts_utc": "2026-02-22T02:42:02.242290+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 1, "trigger": 2}, "meta": {"iter": 70}}
+{"ts_utc": "2026-02-22T02:42:02.284177+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 45, "gas": 0}, "meta": {"iter": 71}}
+{"ts_utc": "2026-02-22T02:42:02.285176+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 1, "trigger": 2}, "meta": {"iter": 71}}
+{"ts_utc": "2026-02-22T02:42:02.321173+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 45, "gas": 0}, "meta": {"iter": 72}}
+{"ts_utc": "2026-02-22T02:42:02.321173+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 1, "trigger": 2}, "meta": {"iter": 72}}
+{"ts_utc": "2026-02-22T02:42:02.366541+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 60, "gas": 0}, "meta": {"iter": 73}}
+{"ts_utc": "2026-02-22T02:42:02.366541+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 1, "trigger": 2}, "meta": {"iter": 73}}
+{"ts_utc": "2026-02-22T02:42:02.402481+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 65, "gas": 0}, "meta": {"iter": 74}}
+{"ts_utc": "2026-02-22T02:42:02.402481+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 1, "trigger": 2}, "meta": {"iter": 74}}
+{"ts_utc": "2026-02-22T02:42:02.446532+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 65, "gas": 0}, "meta": {"iter": 75}}
+{"ts_utc": "2026-02-22T02:42:02.446532+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 1, "trigger": 2}, "meta": {"iter": 75}}
+{"ts_utc": "2026-02-22T02:42:02.485193+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 70, "gas": 0}, "meta": {"iter": 76}}
+{"ts_utc": "2026-02-22T02:42:02.485193+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 1, "trigger": 2}, "meta": {"iter": 76}}
+{"ts_utc": "2026-02-22T02:42:02.522366+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 70, "gas": 0}, "meta": {"iter": 77}}
+{"ts_utc": "2026-02-22T02:42:02.522366+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 1, "trigger": 2}, "meta": {"iter": 77}}
+{"ts_utc": "2026-02-22T02:42:02.559730+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 70, "gas": 0}, "meta": {"iter": 78}}
+{"ts_utc": "2026-02-22T02:42:02.559730+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 1, "trigger": 2}, "meta": {"iter": 78}}
+{"ts_utc": "2026-02-22T02:42:02.641230+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 70, "gas": 0}, "meta": {"iter": 79}}
+{"ts_utc": "2026-02-22T02:42:02.641230+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 1, "trigger": 2}, "meta": {"iter": 79}}
+{"ts_utc": "2026-02-22T02:42:02.678579+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 70, "gas": 0}, "meta": {"iter": 80}}
+{"ts_utc": "2026-02-22T02:42:02.678579+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 1, "trigger": 2}, "meta": {"iter": 80}}
+{"ts_utc": "2026-02-22T02:42:02.712522+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 70, "gas": 0}, "meta": {"iter": 81}}
+{"ts_utc": "2026-02-22T02:42:02.712522+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 1, "trigger": 2}, "meta": {"iter": 81}}
+{"ts_utc": "2026-02-22T02:42:02.756649+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 70, "gas": 0}, "meta": {"iter": 82}}
+{"ts_utc": "2026-02-22T02:42:02.756649+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 1, "trigger": 2}, "meta": {"iter": 82}}
+{"ts_utc": "2026-02-22T02:42:02.794615+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 70, "gas": 0}, "meta": {"iter": 83}}
+{"ts_utc": "2026-02-22T02:42:02.794615+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 1, "trigger": 2}, "meta": {"iter": 83}}
+{"ts_utc": "2026-02-22T02:42:02.832576+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 70, "gas": 0}, "meta": {"iter": 84}}
+{"ts_utc": "2026-02-22T02:42:02.832576+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 1, "trigger": 2}, "meta": {"iter": 84}}
+{"ts_utc": "2026-02-22T02:42:02.872217+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 70, "gas": 0}, "meta": {"iter": 85}}
+{"ts_utc": "2026-02-22T02:42:02.872217+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 1, "trigger": 2}, "meta": {"iter": 85}}
+{"ts_utc": "2026-02-22T02:42:02.906645+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 70, "gas": 0}, "meta": {"iter": 86}}
+{"ts_utc": "2026-02-22T02:42:02.906645+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 1, "trigger": 2}, "meta": {"iter": 86}}
+{"ts_utc": "2026-02-22T02:42:02.949449+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 70, "gas": 0}, "meta": {"iter": 87}}
+{"ts_utc": "2026-02-22T02:42:02.950450+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 1, "trigger": 2}, "meta": {"iter": 87}}
+{"ts_utc": "2026-02-22T02:42:02.979853+00:00", "event": "snapshot", "payload": {"iteration": 88, "time": 15.714285714285715, "minerals": 75, "gas": 0, "supply_used": 14, "supply_cap": 15, "supply_left": 1, "workers": 13}, "meta": {"strategy": "default", "iter": 88}}
+{"ts_utc": "2026-02-22T02:42:02.982413+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 75, "gas": 0}, "meta": {"iter": 88}}
+{"ts_utc": "2026-02-22T02:42:02.982413+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 1, "trigger": 2}, "meta": {"iter": 88}}
+{"ts_utc": "2026-02-22T02:42:03.019989+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 75, "gas": 0}, "meta": {"iter": 89}}
+{"ts_utc": "2026-02-22T02:42:03.019989+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 1, "trigger": 2}, "meta": {"iter": 89}}
+{"ts_utc": "2026-02-22T02:42:03.067911+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 80, "gas": 0}, "meta": {"iter": 90}}
+{"ts_utc": "2026-02-22T02:42:03.067911+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 1, "trigger": 2}, "meta": {"iter": 90}}
+{"ts_utc": "2026-02-22T02:42:03.138288+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 85, "gas": 0}, "meta": {"iter": 91}}
+{"ts_utc": "2026-02-22T02:42:03.138288+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 1, "trigger": 2}, "meta": {"iter": 91}}
+{"ts_utc": "2026-02-22T02:42:03.182373+00:00", "event": "action_fail", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "reason": "cant_afford", "minerals": 95, "gas": 0}, "meta": {"iter": 92}}
+{"ts_utc": "2026-02-22T02:42:03.182373+00:00", "event": "macro_supply", "payload": {"did": false, "supply_left": 1, "trigger": 2}, "meta": {"iter": 92}}
+{"ts_utc": "2026-02-22T02:42:03.251227+00:00", "event": "action_ok", "payload": {"kind": "build", "unit": "SUPPLYDEPOT", "pos": [41.5, 36.5]}, "meta": {"iter": 93}}
+{"ts_utc": "2026-02-22T02:42:03.251227+00:00", "event": "macro_supply", "payload": {"did": true, "supply_left": 1, "trigger": 2}, "meta": {"iter": 93}}
+{"ts_utc": "2026-02-22T02:42:03.961324+00:00", "event": "snapshot", "payload": {"iteration": 110, "time": 19.642857142857142, "minerals": 30, "gas": 0, "supply_used": 14, "supply_cap": 15, "supply_left": 1, "workers": 13}, "meta": {"strategy": "default", "iter": 110}}
+{"ts_utc": "2026-02-22T02:42:04.913595+00:00", "event": "snapshot", "payload": {"iteration": 132, "time": 23.571428571428573, "minerals": 70, "gas": 0, "supply_used": 14, "supply_cap": 15, "supply_left": 1, "workers": 13}, "meta": {"strategy": "default", "iter": 132}}
+{"ts_utc": "2026-02-22T02:42:05.086003+00:00", "event": "econ_train_scv", "payload": {"target": 20, "scv_total": 15}, "meta": {"iter": 136}}
+{"ts_utc": "2026-02-22T02:42:05.939866+00:00", "event": "snapshot", "payload": {"iteration": 154, "time": 27.5, "minerals": 75, "gas": 0, "supply_used": 15, "supply_cap": 15, "supply_left": 0, "workers": 14}, "meta": {"strategy": "default", "iter": 154}}
+{"ts_utc": "2026-02-22T02:42:06.827165+00:00", "event": "snapshot", "payload": {"iteration": 176, "time": 31.42857142857143, "minerals": 120, "gas": 0, "supply_used": 15, "supply_cap": 15, "supply_left": 0, "workers": 14}, "meta": {"strategy": "default", "iter": 176}}
+{"ts_utc": "2026-02-22T02:42:07.536387+00:00", "event": "snapshot", "payload": {"iteration": 198, "time": 35.35714285714286, "minerals": 170, "gas": 0, "supply_used": 15, "supply_cap": 15, "supply_left": 0, "workers": 14}, "meta": {"strategy": "default", "iter": 198}}
+{"ts_utc": "2026-02-22T02:42:08.299166+00:00", "event": "snapshot", "payload": {"iteration": 220, "time": 39.285714285714285, "minerals": 210, "gas": 0, "supply_used": 15, "supply_cap": 15, "supply_left": 0, "workers": 15}, "meta": {"strategy": "default", "iter": 220}}
+{"ts_utc": "2026-02-22T02:42:08.434382+00:00", "event": "econ_train_scv", "payload": {"target": 20, "scv_total": 16}, "meta": {"iter": 224}}
+{"ts_utc": "2026-02-22T02:42:09.032402+00:00", "event": "snapshot", "payload": {"iteration": 242, "time": 43.214285714285715, "minerals": 220, "gas": 0, "supply_used": 16, "supply_cap": 23, "supply_left": 7, "workers": 15}, "meta": {"strategy": "default", "iter": 242}}
+{"ts_utc": "2026-02-22T02:42:09.780595+00:00", "event": "snapshot", "payload": {"iteration": 264, "time": 47.142857142857146, "minerals": 270, "gas": 0, "supply_used": 16, "supply_cap": 23, "supply_left": 7, "workers": 15}, "meta": {"strategy": "default", "iter": 264}}
+{"ts_utc": "2026-02-22T02:42:10.506487+00:00", "event": "snapshot", "payload": {"iteration": 286, "time": 51.07142857142858, "minerals": 330, "gas": 0, "supply_used": 16, "supply_cap": 23, "supply_left": 7, "workers": 15}, "meta": {"strategy": "default", "iter": 286}}
+{"ts_utc": "2026-02-22T02:42:10.702387+00:00", "event": "econ_train_scv", "payload": {"target": 20, "scv_total": 17}, "meta": {"iter": 292}}
+{"ts_utc": "2026-02-22T02:42:11.302363+00:00", "event": "snapshot", "payload": {"iteration": 308, "time": 55.0, "minerals": 335, "gas": 0, "supply_used": 17, "supply_cap": 23, "supply_left": 6, "workers": 16}, "meta": {"strategy": "default", "iter": 308}}
+{"ts_utc": "2026-02-22T02:42:12.007797+00:00", "event": "snapshot", "payload": {"iteration": 330, "time": 58.92857142857143, "minerals": 390, "gas": 0, "supply_used": 17, "supply_cap": 23, "supply_left": 6, "workers": 16}, "meta": {"strategy": "default", "iter": 330}}
+{"ts_utc": "2026-02-22T02:42:12.771289+00:00", "event": "snapshot", "payload": {"iteration": 352, "time": 62.85714285714286, "minerals": 445, "gas": 0, "supply_used": 17, "supply_cap": 23, "supply_left": 6, "workers": 16}, "meta": {"strategy": "default", "iter": 352}}
+{"ts_utc": "2026-02-22T02:42:13.023641+00:00", "event": "econ_train_scv", "payload": {"target": 20, "scv_total": 18}, "meta": {"iter": 360}}
+{"ts_utc": "2026-02-22T02:42:13.537004+00:00", "event": "snapshot", "payload": {"iteration": 374, "time": 66.78571428571429, "minerals": 455, "gas": 0, "supply_used": 18, "supply_cap": 23, "supply_left": 5, "workers": 17}, "meta": {"strategy": "default", "iter": 374}}
+{"ts_utc": "2026-02-22T02:42:14.386243+00:00", "event": "snapshot", "payload": {"iteration": 396, "time": 70.71428571428572, "minerals": 515, "gas": 0, "supply_used": 18, "supply_cap": 23, "supply_left": 5, "workers": 17}, "meta": {"strategy": "default", "iter": 396}}
+{"ts_utc": "2026-02-22T02:42:15.254406+00:00", "event": "snapshot", "payload": {"iteration": 418, "time": 74.64285714285715, "minerals": 580, "gas": 0, "supply_used": 18, "supply_cap": 23, "supply_left": 5, "workers": 17}, "meta": {"strategy": "default", "iter": 418}}
+{"ts_utc": "2026-02-22T02:42:15.689925+00:00", "event": "econ_train_scv", "payload": {"target": 20, "scv_total": 19}, "meta": {"iter": 428}}
+{"ts_utc": "2026-02-22T02:42:16.184325+00:00", "event": "snapshot", "payload": {"iteration": 440, "time": 78.57142857142857, "minerals": 590, "gas": 0, "supply_used": 19, "supply_cap": 23, "supply_left": 4, "workers": 18}, "meta": {"strategy": "default", "iter": 440}}
+{"ts_utc": "2026-02-22T02:42:16.999412+00:00", "event": "snapshot", "payload": {"iteration": 462, "time": 82.5, "minerals": 655, "gas": 0, "supply_used": 19, "supply_cap": 23, "supply_left": 4, "workers": 18}, "meta": {"strategy": "default", "iter": 462}}
+{"ts_utc": "2026-02-22T02:42:17.754232+00:00", "event": "snapshot", "payload": {"iteration": 484, "time": 86.42857142857143, "minerals": 715, "gas": 0, "supply_used": 19, "supply_cap": 23, "supply_left": 4, "workers": 18}, "meta": {"strategy": "default", "iter": 484}}
+{"ts_utc": "2026-02-22T02:42:18.308847+00:00", "event": "econ_train_scv", "payload": {"target": 20, "scv_total": 20}, "meta": {"iter": 496}}
+{"ts_utc": "2026-02-22T02:42:18.658744+00:00", "event": "snapshot", "payload": {"iteration": 506, "time": 90.35714285714286, "minerals": 740, "gas": 0, "supply_used": 20, "supply_cap": 23, "supply_left": 3, "workers": 19}, "meta": {"strategy": "default", "iter": 506}}
+{"ts_utc": "2026-02-22T02:42:19.438602+00:00", "event": "snapshot", "payload": {"iteration": 528, "time": 94.28571428571429, "minerals": 805, "gas": 0, "supply_used": 20, "supply_cap": 23, "supply_left": 3, "workers": 19}, "meta": {"strategy": "default", "iter": 528}}
+{"ts_utc": "2026-02-22T02:42:20.196069+00:00", "event": "snapshot", "payload": {"iteration": 550, "time": 98.21428571428572, "minerals": 865, "gas": 0, "supply_used": 20, "supply_cap": 23, "supply_left": 3, "workers": 19}, "meta": {"strategy": "default", "iter": 550}}
+{"ts_utc": "2026-02-22T02:42:20.987835+00:00", "event": "snapshot", "payload": {"iteration": 572, "time": 102.14285714285715, "minerals": 930, "gas": 0, "supply_used": 20, "supply_cap": 23, "supply_left": 3, "workers": 20}, "meta": {"strategy": "default", "iter": 572}}
+{"ts_utc": "2026-02-22T02:42:21.779272+00:00", "event": "snapshot", "payload": {"iteration": 594, "time": 106.07142857142858, "minerals": 1005, "gas": 0, "supply_used": 20, "supply_cap": 23, "supply_left": 3, "workers": 20}, "meta": {"strategy": "default", "iter": 594}}
+{"ts_utc": "2026-02-22T02:42:22.601325+00:00", "event": "snapshot", "payload": {"iteration": 616, "time": 110.0, "minerals": 1060, "gas": 0, "supply_used": 20, "supply_cap": 23, "supply_left": 3, "workers": 20}, "meta": {"strategy": "default", "iter": 616}}
+{"ts_utc": "2026-02-22T02:42:23.411428+00:00", "event": "snapshot", "payload": {"iteration": 638, "time": 113.92857142857143, "minerals": 1130, "gas": 0, "supply_used": 20, "supply_cap": 23, "supply_left": 3, "workers": 20}, "meta": {"strategy": "default", "iter": 638}}
+{"ts_utc": "2026-02-22T02:42:24.571136+00:00", "event": "snapshot", "payload": {"iteration": 660, "time": 117.85714285714286, "minerals": 1195, "gas": 0, "supply_used": 20, "supply_cap": 23, "supply_left": 3, "workers": 20}, "meta": {"strategy": "default", "iter": 660}}
+{"ts_utc": "2026-02-22T02:42:25.574367+00:00", "event": "game_end", "payload": {"result": "Result.Defeat", "time": 121.42857142857143}, "meta": {}}

@@ -15,10 +15,6 @@
       "args": [
         "--map",
         "PersephoneAIE_v4",
-        "--race",
-        "Terran",
-        "--strategy",
-        "default",
         "--difficulty",
         "VeryEasy",
       ]

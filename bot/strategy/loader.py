@@ -1,10 +1,19 @@
-﻿from __future__ import annotations
+﻿# loader.py
+from __future__ import annotations
 
 import json
 from pathlib import Path
 from typing import Any, Dict
 
-from .schema import StrategyConfig, EconomyCfg, ProductionCfg, DropCfg
+from .schema import (
+    StrategyConfig,
+    EconomyCfg,
+    ProductionCfg,
+    DropCfg,
+    BehaviorsCfg,
+    MacroBehaviorCfg,
+    CombatBehaviorCfg,
+)
 
 
 def _as_int(x: Any, default: int) -> int:
@@ -36,11 +45,14 @@ def _as_bool(x: Any, default: bool) -> bool:
 
 
 def load_strategy(name: str) -> StrategyConfig:
+    """
+    Carrega bot/strats/<name>.json (utf-8-sig para suportar BOM)
+    Fallback: bot/strats/default.json
+    """
     base = Path(__file__).resolve().parents[1] / "strats"  # bot/strats
     path = base / f"{name}.json"
 
     if not path.exists():
-        # fallback to default.json if exists
         fallback = base / "default.json"
         if fallback.exists():
             path = fallback
@@ -49,9 +61,13 @@ def load_strategy(name: str) -> StrategyConfig:
 
     data: Dict[str, Any] = json.loads(path.read_text(encoding="utf-8-sig"))
 
-    econ = data.get("economy", {}) or {}
-    prod = data.get("production", {}) or {}
-    drop = data.get("drop", {}) or {}
+    econ = data.get("economy") or {}
+    prod = data.get("production") or {}
+    drop = data.get("drop") or {}
+
+    beh = data.get("behaviors") or {}
+    macro = beh.get("macro") or {}
+    combat = beh.get("combat") or {}
 
     return StrategyConfig(
         name=str(data.get("name", name)),
@@ -69,6 +85,17 @@ def load_strategy(name: str) -> StrategyConfig:
             move_eps=_as_float(drop.get("move_eps", 3.0), 3.0),
             ground_radius=_as_float(drop.get("ground_radius", 12.0), 12.0),
         ),
-        build=data.get("build", []) or [],
-        production_rules=data.get("production_rules", []) or [],
+        behaviors=BehaviorsCfg(
+            macro=MacroBehaviorCfg(
+                enabled=_as_bool(macro.get("enabled", True), True),
+                auto_workers=_as_bool(macro.get("auto_workers", True), True),
+                auto_scv=_as_bool(macro.get("auto_scv", True), True),
+                auto_supply=_as_bool(macro.get("auto_supply", True), True),
+            ),
+            combat=CombatBehaviorCfg(
+                enabled=_as_bool(combat.get("enabled", False), False),
+            ),
+        ),
+        build=data.get("build") or [],
+        production_rules=data.get("production_rules") or [],
     )

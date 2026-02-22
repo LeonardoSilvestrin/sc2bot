@@ -1,4 +1,5 @@
-﻿from __future__ import annotations
+﻿# terran_bot.py
+from __future__ import annotations
 
 from sc2.bot_ai import BotAI
 
@@ -9,43 +10,55 @@ from bot.engine.placement import Placement
 from bot.engine.builder import Builder
 from bot.strategy.loader import load_strategy
 from bot.strategy.plan_executor import PlanExecutor
+from bot.behaviors.macro import MacroBehavior
 from bot.behaviors.drop import DropBehavior
+from bot.behaviors.combat import CombatBehavior
 
 
 class TerranBot(BotAI):
-    def __init__(self, strat_name: str = "default", debug: bool = True):
+    def __init__(self, strat_name: str, debug: bool = True):
         super().__init__()
+        if not strat_name:
+            raise ValueError("strat_name é obrigatório (ex: 'default').")
+
         self.debug = debug
-
-        # NÃO use self.state: isso é GameState do python-sc2
         self.ctx = BotState()
-
         self.strategy = load_strategy(strat_name)
 
         self.log = JsonlLogger(enabled=True)
-        self.log.emit("bot_init", {"strategy": self.strategy.name})
+        self.log.emit("bot_init", {"strategy": self.strategy.name, "strat_name": strat_name})
 
-        self.econ = Economy(self)
-        self.place = Placement(self)
+        self.econ = Economy(self, ctx=self.ctx, logger=self.log)
+        self.place = Placement(self, ctx=self.ctx, logger=self.log)
 
-        # passe o ctx (estado do seu bot) para os módulos
-        self.builder = Builder(self, self.econ, self.place, self.ctx)
+        self.builder = Builder(self, self.econ, self.place, self.ctx, logger=self.log)
+        self.plan = PlanExecutor(self, self.builder, self.strategy, ctx=self.ctx, logger=self.log)
 
-        self.plan = PlanExecutor(self, self.builder, self.strategy, logger=self.log)
-        self.drop = DropBehavior(self, self.strategy.drop, self.ctx, debug=debug)
+        self.macro = MacroBehavior(
+            self,
+            self.econ,
+            self.builder,
+            econ_cfg=self.strategy.economy,
+            cfg=self.strategy.behaviors.macro,
+            ctx=self.ctx,
+            logger=self.log,
+            debug=debug,
+        )
+
+        self.combat = CombatBehavior(self, self.ctx, logger=self.log, debug=debug)
+        self.drop = DropBehavior(self, self.strategy.drop, self.ctx, logger=self.log, debug=debug)
 
         self._last_snapshot_iter = -999999
 
     async def on_step(self, iteration: int):
-        self.ctx.iteration = iteration
+        self.ctx.iteration = int(iteration)
 
-        # snapshot a cada ~1 segundo (22.4 iterações por segundo em normal speed)
         if iteration - self._last_snapshot_iter >= 22:
             self._last_snapshot_iter = iteration
             self.log.emit(
                 "snapshot",
                 {
-                    "iteration": iteration,
+                    "iteration": int(iteration),
                     "time": float(self.time),
                     "minerals": int(self.minerals),
                     "gas": int(self.vespene),
@@ -54,15 +67,17 @@ class TerranBot(BotAI):
                     "supply_left": int(self.supply_left),
                     "workers": int(self.workers.amount),
                 },
-                meta={"strategy": self.strategy.name},
+                meta={"strategy": self.strategy.name, "iter": int(self.ctx.iteration)},
             )
 
+        await self.macro.step()
         await self.plan.step()
 
+        if self.strategy.behaviors.combat.enabled:
+            await self.combat.step()
         if self.strategy.drop.enabled:
             await self.drop.step()
 
     async def on_end(self, game_result):
-        # python-sc2 chama quando o jogo termina
         self.log.emit("game_end", {"result": str(game_result), "time": float(self.time)})
         self.log.close()
