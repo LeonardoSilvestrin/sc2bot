@@ -104,9 +104,18 @@ class Orchestrator:
     # RESERVA / PRIORIDADES
     # =============================================================================
     def _need_depot(self) -> bool:
-        if self.state.build.depot_started:
-            return False
-        return int(getattr(self.bot, "supply_left", 0) or 0) <= self.depot_trigger_supply_left
+        # Count existing + pending depots
+        existing_depots = self.api.amount(self.api.units(U.SUPPLYDEPOT))
+        pending_depots = self.api.already_pending(U.SUPPLYDEPOT)
+        total_depots = existing_depots + pending_depots
+        
+        supply_left = int(getattr(self.bot, "supply_left", 0) or 0)
+        
+        # Allow more depots if supply is low and none are pending
+        if supply_left <= self.depot_trigger_supply_left and pending_depots == 0:
+            return True
+        
+        return False
 
     def _need_rax(self) -> bool:
         if not self.api.exists(self.api.ready(U.SUPPLYDEPOT)):
@@ -114,9 +123,13 @@ class Orchestrator:
         return not self.api.exists(self.api.units(U.BARRACKS))
 
     def _need_refinery(self) -> bool:
-        if not self.api.exists(self.api.ready(U.BARRACKS)):
+        # Refinery can start once barracks exists (even if still building), not just when ready
+        if not self.api.exists(self.api.units(U.BARRACKS)):
             return False
-        return not self.api.exists(self.api.units(U.REFINERY))
+        # Check if refinery already exists or is pending
+        existing_refinery = self.api.amount(self.api.units(U.REFINERY))
+        pending_refinery = self.api.already_pending(U.REFINERY)
+        return (existing_refinery + pending_refinery) == 0
 
     def _need_factory(self) -> bool:
         return (
@@ -210,8 +223,6 @@ class Orchestrator:
                 "ok": bool(ok),
             },
         )
-        if ok:
-            self.state.build.depot_started = True
 
     async def _macro_rax(self, cc) -> None:
         if not self._need_rax():
