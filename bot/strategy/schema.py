@@ -34,28 +34,34 @@ class BehaviorsCfg:
     combat: CombatBehaviorCfg = CombatBehaviorCfg()
 
 
+
 @dataclass(frozen=True)
 class DropCfg:
     enabled: bool = False
     name: str = "drop"
 
+    # schedule
+    start_loop: Optional[int] = None
+    start_time: Optional[float] = None
+
+    # composition / micro
     min_marines: int = 8
     load_count: int = 8
     move_eps: float = 3.0
     ground_radius: float = 12.0
 
-    pickup: str = "MY_MAIN"          # << NOVO
-    pickup_eps: float = 6.0          # << NOVO
-    load_range: float = 7.0          # << NOVO
-
+    # points
+    pickup: str = "MY_MAIN"
     staging: str = "ENEMY_NATURAL"
     target: str = "ENEMY_MAIN"
+    staging_dist: float = 18.0
 
-    staging_dist: float = 18.0       # se você quiser fixo no schema
+    # load tuning
+    pickup_eps: float = 6.0
+    load_range: float = 7.0
 
-    start_loop: Optional[int] = None
-    start_time: Optional[float] = None
-
+    # gates
+    require_stim: bool = False
 @dataclass(frozen=True)
 class StrategyConfig:
     name: str = "default"

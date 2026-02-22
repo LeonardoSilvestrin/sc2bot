@@ -62,6 +62,7 @@ def _require_list(d: Dict[str, Any], key: str, *, path: str) -> list:
 def _parse_drop_obj(raw: Dict[str, Any], *, path: str, default_name: str) -> DropCfg:
     enabled = _as_bool(raw.get("enabled", False), path=f"{path}.enabled")
     if not enabled:
+        print("DropCfg fields:", DropCfg.__dataclass_fields__.keys())
         return DropCfg(enabled=False, name=default_name)
 
     for k in ("min_marines", "load_count", "move_eps", "ground_radius", "staging", "target"):
@@ -89,6 +90,12 @@ def _parse_drop_obj(raw: Dict[str, Any], *, path: str, default_name: str) -> Dro
     start_loop = raw.get("start_loop", None)
     if start_loop is not None:
         start_loop = _as_int(start_loop, path=f"{path}.start_loop")
+    pickup = _as_str(raw.get("pickup", "MY_MAIN"), path=f"{path}.pickup")
+    if pickup not in _ALLOWED_POINTS:
+        raise ValueError(f"{path}.pickup inválido: {pickup} (allowed={sorted(_ALLOWED_POINTS)})")
+
+    pickup_eps = _as_float(raw.get("pickup_eps", 6.0), path=f"{path}.pickup_eps")
+    load_range = _as_float(raw.get("load_range", 7.0), path=f"{path}.load_range")
 
     return DropCfg(
         enabled=True,
@@ -99,12 +106,17 @@ def _parse_drop_obj(raw: Dict[str, Any], *, path: str, default_name: str) -> Dro
         load_count=_as_int(raw["load_count"], path=f"{path}.load_count"),
         move_eps=_as_float(raw["move_eps"], path=f"{path}.move_eps"),
         ground_radius=_as_float(raw["ground_radius"], path=f"{path}.ground_radius"),
+
+        pickup=pickup,
         staging=staging,
         target=target,
         staging_dist=staging_dist,
+
+        pickup_eps=pickup_eps,
+        load_range=load_range,
+
         require_stim=_as_bool(raw.get("require_stim", False), path=f"{path}.require_stim"),
     )
-
 
 def load_strategy(name: str) -> StrategyConfig:
     base = Path(__file__).resolve().parents[1] / "strats"

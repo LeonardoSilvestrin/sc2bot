@@ -1,0 +1,2550 @@
+# Project tree (export)
+.
+├── bot
+│   ├── __init__.py
+│   ├── behaviors
+│   │   ├── base.py
+│   │   ├── combat.py
+│   │   ├── drop.py
+│   │   ├── macro.py
+│   │   ├── orchestrator.py
+│   │   ├── plan.py
+│   │   └── supply.py
+│   ├── core
+│   │   ├── logger.py
+│   │   └── state.py
+│   ├── engine
+│   │   ├── builder.py
+│   │   ├── economy.py
+│   │   └── placement.py
+│   ├── strategy
+│   │   ├── loader.py
+│   │   ├── plan_executor.py
+│   │   └── schema.py
+│   ├── strats
+│   │   ├── default.json
+│   │   └── future.json
+│   └── terran_bot.py
+└── run.py
+
+# =====================
+# Files (export)
+# =====================
+
+# ---------- bot/__init__.py ----------
+#bot/__init__.py
+# __init__.py
+from __future__ import annotations
+
+from sc2.data import Race
+
+from .terran_bot import TerranBot
+
+
+class CompetitiveBot(TerranBot):
+    NAME = "Boi Bandido"
+    RACE = Race.Terran
+
+    # Estratégia fixa do build (não de CLI)
+    STRATEGY = "default"
+
+    def __init__(self, *, debug: bool = True):
+        super().__init__(strat_name=self.STRATEGY, debug=debug)
+
+# ---------- bot/behaviors/base.py ----------
+#bot/behaviors/base.py
+# behaviors/base.py
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Protocol
+
+
+@dataclass
+class TickBudget:
+    remaining: int = 1
+
+    def spend(self, n: int = 1) -> bool:
+        if self.remaining < n:
+            return False
+        self.remaining -= n
+        return True
+
+
+class Behavior(Protocol):
+    """Contrato único. Config NÃO fica no __init__."""
+    name: str
+
+    async def step(self, budget: TickBudget, cfg: Any) -> bool:
+        """
+        Retorna True se emitiu ação relevante (normalmente gasta budget).
+        """
+        ...
+
+# ---------- bot/behaviors/combat.py ----------
+#bot/behaviors/combat.py
+from __future__ import annotations
+
+from typing import Any
+
+from .base import TickBudget
+
+
+class CombatBehavior:
+    name = "combat"
+
+    def __init__(self, bot: Any, ctx: Any, logger: Any | None = None, debug: bool = True):
+        self.bot = bot
+        self.ctx = ctx
+        self.log = logger
+        self.debug = debug
+
+    async def step(self, budget: TickBudget, cfg: dict) -> bool:
+        combat_cfg = cfg["combat"]
+        if not combat_cfg.enabled:
+            return False
+        # ainda vazio
+        return False
+
+# ---------- bot/behaviors/drop.py ----------
+#bot/behaviors/drop.py
+from __future__ import annotations
+
+from dataclasses import dataclass
+from enum import Enum
+from typing import Any, Optional
+
+import inspect
+from sc2.ids.unit_typeid import UnitTypeId as U
+from sc2.ids.ability_id import AbilityId as A
+from sc2.position import Point2
+
+from .base import TickBudget
+
+
+class DropPhase(str, Enum):
+    WAIT = "wait"
+    PICKUP = "pickup"  # aproxima do pickup antes de tentar LOAD
+    LOAD = "load"
+    MOVE = "move"
+    DROP = "drop"
+    FIGHT = "fight"
+    DONE = "done"
+
+
+@dataclass
+class DropRuntime:
+    phase: DropPhase = DropPhase.WAIT
+    medivac_tag: Optional[int] = None
+    pickup: Optional[Point2] = None
+    staging: Optional[Point2] = None
+    target: Optional[Point2] = None
+    next_loop: int = 0
+
+
+class DropBehavior:
+    name = "drop"
+
+    def __init__(self, bot: Any, ctx: Any, logger: Any | None = None, debug: bool = True):
+        self.bot = bot
+        self.ctx = ctx
+        self.log = logger
+        self.debug = debug
+        self.rt = DropRuntime()
+
+    # ----------------------------
+    # helpers
+    # ----------------------------
+    def _loop(self) -> int:
+        st = getattr(self.bot, "state", None)
+        gl = getattr(st, "game_loop", None)
+        if gl is not None:
+            return int(gl)
+        it = getattr(self.ctx, "iteration", None)
+        return int(it) if it is not None else 0
+
+    def _time(self) -> float:
+        t = getattr(self.bot, "time", None)
+        try:
+            return float(t)
+        except Exception:
+            return 0.0
+
+    def _emit(self, event: str, payload: dict):
+        if self.log:
+            self.log.emit(event, payload, meta={"iter": int(getattr(self.ctx, "iteration", 0))})
+
+    # ----------------------------
+    # claims (shared between drop instances via ctx)
+    # ----------------------------
+    def _claims(self) -> dict:
+        c = getattr(self.ctx, "claims", None)
+        if not isinstance(c, dict):
+            c = {}
+            setattr(self.ctx, "claims", c)
+        c.setdefault("medivac_by_drop", {})   # drop_id -> medivac_tag
+        c.setdefault("marine_by_drop", {})    # drop_id -> set[marine_tag]
+        c.setdefault("owner_by_unit", {})     # unit_tag -> drop_id
+        return c
+
+    def _drop_id(self, drop_cfg) -> str:
+        return str(getattr(drop_cfg, "name", "drop")).strip() or "drop"
+
+    def _unit_owner(self, tag: int) -> Optional[str]:
+        return self._claims()["owner_by_unit"].get(int(tag))
+
+    def _claim_unit(self, drop_id: str, tag: int):
+        self._claims()["owner_by_unit"][int(tag)] = drop_id
+
+    def _release_unit(self, tag: int):
+        self._claims()["owner_by_unit"].pop(int(tag), None)
+
+    def _release_drop_marines(self, drop_id: str):
+        claims = self._claims()
+        tags = claims["marine_by_drop"].get(drop_id, set())
+        for t in list(tags):
+            if claims["owner_by_unit"].get(int(t)) == drop_id:
+                claims["owner_by_unit"].pop(int(t), None)
+        claims["marine_by_drop"][drop_id] = set()
+
+    def _release_drop_medivac(self, drop_id: str):
+        claims = self._claims()
+        tag = claims["medivac_by_drop"].pop(drop_id, None)
+        if tag is None:
+            return
+        if claims["owner_by_unit"].get(int(tag)) == drop_id:
+            claims["owner_by_unit"].pop(int(tag), None)
+
+    # ----------------------------
+    # command bridge (awaitable or sync)
+    # ----------------------------
+    async def _do(self, cmd) -> bool:
+        fn = getattr(self.bot, "do", None)
+        if fn is None:
+            return False
+        res = fn(cmd)
+        if inspect.isawaitable(res):
+            await res
+            return True
+        if isinstance(res, bool):
+            return res
+        return True
+
+    # ----------------------------
+    # points
+    # ----------------------------
+    def _enemy_main(self) -> Optional[Point2]:
+        locs = getattr(self.bot, "enemy_start_locations", None)
+        return locs[0] if locs else None
+
+    def _my_start(self) -> Optional[Point2]:
+        return getattr(self.bot, "start_location", None)
+
+    def _expansions(self) -> list[Point2]:
+        exps = getattr(self.bot, "expansion_locations_list", None)
+        return list(exps) if exps else []
+
+    def _enemy_main_expansion(self) -> Optional[Point2]:
+        enemy_main = self._enemy_main()
+        exps = self._expansions()
+        if enemy_main is None or not exps:
+            return None
+        return min(exps, key=lambda p: p.distance_to(enemy_main))
+
+    def _enemy_natural(self) -> Optional[Point2]:
+        main_exp = self._enemy_main_expansion()
+        exps = self._expansions()
+        if main_exp is None or not exps:
+            return None
+        candidates = [p for p in exps if p.distance_to(main_exp) > 3.0]
+        if not candidates:
+            return None
+        return min(candidates, key=lambda p: p.distance_to(main_exp))
+
+    def _my_main_expansion(self) -> Optional[Point2]:
+        my_main = self._my_start()
+        exps = self._expansions()
+        if my_main is None or not exps:
+            return None
+        return min(exps, key=lambda p: p.distance_to(my_main))
+
+    def _my_natural(self) -> Optional[Point2]:
+        main_exp = self._my_main_expansion()
+        exps = self._expansions()
+        if main_exp is None or not exps:
+            return None
+        candidates = [p for p in exps if p.distance_to(main_exp) > 3.0]
+        if not candidates:
+            return None
+        return min(candidates, key=lambda p: p.distance_to(main_exp))
+
+    def _point_by_key(self, key: str) -> Optional[Point2]:
+        if key == "ENEMY_MAIN":
+            return self._enemy_main()
+        if key == "ENEMY_NATURAL":
+            return self._enemy_natural()
+        if key == "MY_MAIN":
+            return self._my_start()
+        if key == "MY_NATURAL":
+            return self._my_natural()
+        return None
+
+    def _resolve_points(self, drop_cfg) -> tuple[Optional[Point2], Optional[Point2], Optional[Point2]]:
+        enemy_main = self._enemy_main()
+        my_main = self._my_start()
+        if enemy_main is None or my_main is None:
+            return None, None, None
+
+        pickup_key = str(getattr(drop_cfg, "pickup", None) or "MY_MAIN")
+        staging_key = str(getattr(drop_cfg, "staging", None) or "ENEMY_NATURAL")
+        target_key = str(getattr(drop_cfg, "target", None) or "ENEMY_MAIN")
+
+        pickup = self._point_by_key(pickup_key)
+        staging_anchor = self._point_by_key(staging_key)
+        target = self._point_by_key(target_key)
+
+        if pickup is None or staging_anchor is None or target is None:
+            return None, None, None
+
+        dist = float(getattr(drop_cfg, "staging_dist", 18.0))
+        staging = staging_anchor.towards(my_main, dist)
+        return pickup, staging, target
+
+    # ----------------------------
+    # resource selection
+    # ----------------------------
+    def _pick_medivac_for(self, drop_id: str) -> Optional[Any]:
+        meds = self.bot.units(U.MEDIVAC) if hasattr(self.bot, "units") else None
+        if not meds:
+            return None
+
+        claims = self._claims()
+        med_by_drop = claims["medivac_by_drop"]
+
+        claimed_tag = med_by_drop.get(drop_id)
+        if claimed_tag is not None:
+            m = meds.find_by_tag(int(claimed_tag))
+            if m:
+                self.rt.medivac_tag = int(m.tag)
+                return m
+            # morreu/sumiu
+            med_by_drop.pop(drop_id, None)
+            if self._unit_owner(int(claimed_tag)) == drop_id:
+                self._release_unit(int(claimed_tag))
+
+        ready = meds.ready if hasattr(meds, "ready") else meds
+        if not ready:
+            return None
+
+        for m in ready:
+            tag = int(m.tag)
+            if self._unit_owner(tag) is None:
+                med_by_drop[drop_id] = tag
+                self._claim_unit(drop_id, tag)
+                self.rt.medivac_tag = tag
+                return m
+
+        return None
+
+    def _pick_marine_for(self, drop_id: str, med, *, max_range: float) -> Optional[Any]:
+        marines = self.bot.units(U.MARINE) if hasattr(self.bot, "units") else None
+        if not marines:
+            return None
+        marines_ready = marines.ready if hasattr(marines, "ready") else marines
+        if not marines_ready:
+            return None
+
+        claims = self._claims()
+        claims["marine_by_drop"].setdefault(drop_id, set())
+
+        best = None
+        best_d = 1e18
+        for m in marines_ready:
+            tag = int(m.tag)
+            if self._unit_owner(tag) is not None:
+                continue
+            d = m.distance_to(med)
+            if d <= max_range and d < best_d:
+                best = m
+                best_d = d
+
+        if best is None:
+            return None
+
+        t = int(best.tag)
+        self._claim_unit(drop_id, t)
+        claims["marine_by_drop"][drop_id].add(t)
+        return best
+
+    def _count_free_marines(self) -> int:
+        marines = self.bot.units(U.MARINE) if hasattr(self.bot, "units") else None
+        if not marines:
+            return 0
+        marines_ready = marines.ready if hasattr(marines, "ready") else marines
+        if not marines_ready:
+            return 0
+        free = 0
+        for m in marines_ready:
+            if self._unit_owner(int(m.tag)) is None:
+                free += 1
+        return free
+
+    async def _nudge_marines_to_pickup(self, pickup: Point2, *, max_orders: int = 1) -> int:
+        """
+        Opcional mas MUITO útil:
+        - puxa marines antigos/espalhados para o pickup, evitando o medivac ficar no vazio.
+        - 1 comando por tick (default) pra não spammar.
+        """
+        marines = self.bot.units(U.MARINE) if hasattr(self.bot, "units") else None
+        if not marines:
+            return 0
+        marines_ready = marines.ready if hasattr(marines, "ready") else marines
+        if not marines_ready:
+            return 0
+
+        issued = 0
+        # pega marines idle e longe
+        candidates = [m for m in marines_ready if getattr(m, "is_idle", False) and m.distance_to(pickup) > 8]
+        # move os mais longe primeiro (tende a convergir)
+        candidates.sort(key=lambda m: m.distance_to(pickup), reverse=True)
+
+        for m in candidates[:max_orders]:
+            ok = await self._do(m.move(pickup))
+            if ok:
+                issued += 1
+            else:
+                break
+        return issued
+
+    # ----------------------------
+    # main
+    # ----------------------------
+    async def step(self, budget: TickBudget, cfg: dict) -> bool:
+        drop_cfg = cfg["drop"]
+        if not drop_cfg.enabled:
+            return False
+
+        drop_id = self._drop_id(drop_cfg)
+        loop = self._loop()
+
+        if loop < self.rt.next_loop or budget.remaining <= 0:
+            return False
+
+        # ---- schedule gate ----
+        start_loop = getattr(drop_cfg, "start_loop", None)
+        start_time = getattr(drop_cfg, "start_time", None)
+
+        if self.rt.phase == DropPhase.WAIT:
+            if start_loop is not None and loop < int(start_loop):
+                self._emit(
+                    "drop_wait",
+                    {"drop": drop_id, "reason": "waiting_start_loop", "now": loop, "start_loop": int(start_loop)},
+                )
+                self.rt.next_loop = loop + 12
+                return False
+            if start_time is not None and self._time() < float(start_time):
+                self._emit(
+                    "drop_wait",
+                    {"drop": drop_id, "reason": "waiting_start_time", "now": self._time(), "start_time": float(start_time)},
+                )
+                self.rt.next_loop = loop + 12
+                return False
+
+        # resolve points (1x)
+        if self.rt.pickup is None or self.rt.staging is None or self.rt.target is None:
+            pickup, staging, target = self._resolve_points(drop_cfg)
+            self.rt.pickup, self.rt.staging, self.rt.target = pickup, staging, target
+            if pickup is None or staging is None or target is None:
+                self._emit("drop_wait", {"drop": drop_id, "reason": "no_points"})
+                self.rt.next_loop = loop + 12
+                return False
+
+        min_marines = int(getattr(drop_cfg, "min_marines", 8))
+        load_count = int(getattr(drop_cfg, "load_count", min_marines))
+        move_eps = float(getattr(drop_cfg, "move_eps", 3.0))
+        pickup_eps = float(getattr(drop_cfg, "pickup_eps", 6.0))
+        load_max_range = float(getattr(drop_cfg, "load_range", 7.0))
+
+        # pega medivac (claimado ou novo)
+        med = self._pick_medivac_for(drop_id)
+        if med is None:
+            self._emit("drop_wait", {"drop": drop_id, "reason": "no_medivac"})
+            self.rt.next_loop = loop + 12
+            return False
+
+        # gate melhor: se está no WAIT, garanta marines LIVRES suficientes (sincroniza melhor em multi-drop)
+        if self.rt.phase == DropPhase.WAIT:
+            free = self._count_free_marines()
+            if free < min_marines:
+                self._emit(
+                    "drop_wait",
+                    {"drop": drop_id, "reason": "not_enough_free_marines", "free": int(free), "need": int(min_marines)},
+                )
+                self.rt.next_loop = loop + 12
+                return False
+
+        # ----------------------------
+        # state machine
+        # ----------------------------
+        if self.rt.phase == DropPhase.WAIT:
+            self._emit(
+                "drop_armed",
+                {"drop": drop_id, "min_marines": min_marines, "load_count": load_count, "medivac_tag": int(med.tag)},
+            )
+            self.rt.phase = DropPhase.PICKUP
+            self.rt.next_loop = loop + 1
+            return False
+
+        if self.rt.phase == DropPhase.PICKUP:
+            # puxa marines ao pickup (ajuda muito com "marines antigos" espalhados)
+            if budget.remaining > 0:
+                issued = await self._nudge_marines_to_pickup(self.rt.pickup, max_orders=1)
+                if issued > 0:
+                    budget.remaining -= 1
+                    self._emit("drop_pickup_nudge", {"drop": drop_id, "issued": int(issued)})
+
+            # garante medivac no pickup
+            if med.distance_to(self.rt.pickup) <= pickup_eps:
+                self._emit("drop_at_pickup", {"drop": drop_id, "pickup": [float(self.rt.pickup.x), float(self.rt.pickup.y)]})
+                self.rt.phase = DropPhase.LOAD
+                self.rt.next_loop = loop + 1
+                return issued > 0  # se nudged, consumiu action
+
+            ok = await self._do(med.move(self.rt.pickup))
+            if ok:
+                budget.remaining -= 1
+                self._emit("drop_pickup_move", {"drop": drop_id, "to": [float(self.rt.pickup.x), float(self.rt.pickup.y)]})
+                self.rt.next_loop = loop + 8
+                return True
+
+            self.rt.next_loop = loop + 8
+            return False
+
+        if self.rt.phase == DropPhase.LOAD:
+            # tenta carregar 1 por tick (coop com RR)
+            m = self._pick_marine_for(drop_id, med, max_range=load_max_range)
+            if m is None:
+                # se não tem marine em range, reposiciona e/ou espera sem spam
+                if med.distance_to(self.rt.pickup) > pickup_eps:
+                    ok = await self._do(med.move(self.rt.pickup))
+                    if ok:
+                        budget.remaining -= 1
+                        self._emit("drop_loading_reposition", {"drop": drop_id, "to_pickup": True})
+                        self.rt.next_loop = loop + 8
+                        return True
+
+                self._emit(
+                    "drop_loading",
+                    {"drop": drop_id, "reason": "no_free_marine_in_range", "range": float(load_max_range)},
+                )
+                self.rt.next_loop = loop + 6
+                return False
+
+            dist = float(m.distance_to(med))
+            ok = await self._do(med(A.LOAD, m))
+            if ok:
+                budget.remaining -= 1
+            else:
+                # se falhou, libera o marine (provavelmente range/estado)
+                self._release_unit(int(m.tag))
+
+            cargo_used = int(getattr(med, "cargo_used", 0))
+            self._emit(
+                "drop_loading",
+                {"drop": drop_id, "cargo_used": cargo_used, "target": load_count, "picked_dist": dist, "ok": bool(ok)},
+            )
+
+            if cargo_used >= load_count:
+                self._emit("drop_loaded", {"drop": drop_id, "cargo_used": cargo_used})
+                self.rt.phase = DropPhase.MOVE
+                self.rt.next_loop = loop + 1
+                return True
+
+            self.rt.next_loop = loop + 4
+            return True
+
+        if self.rt.phase == DropPhase.MOVE:
+            if med.distance_to(self.rt.staging) <= move_eps:
+                self._emit("drop_at_staging", {"drop": drop_id, "pos": [float(med.position.x), float(med.position.y)]})
+                self.rt.phase = DropPhase.DROP
+                self.rt.next_loop = loop + 1
+                return False
+
+            ok = await self._do(med.move(self.rt.staging))
+            if ok:
+                budget.remaining -= 1
+                self._emit("drop_move", {"drop": drop_id, "to": [float(self.rt.staging.x), float(self.rt.staging.y)]})
+                self.rt.next_loop = loop + 8
+                return True
+
+            self.rt.next_loop = loop + 8
+            return False
+
+        if self.rt.phase == DropPhase.DROP:
+            if med.distance_to(self.rt.target) > move_eps * 2:
+                ok = await self._do(med.move(self.rt.target))
+                if ok:
+                    budget.remaining -= 1
+                    self._emit("drop_approach", {"drop": drop_id, "to": [float(self.rt.target.x), float(self.rt.target.y)]})
+                    self.rt.next_loop = loop + 8
+                    return True
+                self.rt.next_loop = loop + 8
+                return False
+
+            ok = await self._do(med(A.UNLOADALLAT, self.rt.target))
+            if ok:
+                budget.remaining -= 1
+                self._emit("drop_unload", {"drop": drop_id, "at": [float(self.rt.target.x), float(self.rt.target.y)]})
+
+                # libera marines após unload (senão outro drop pode travar)
+                self._release_drop_marines(drop_id)
+
+                # libera medivac também (evita “prisão eterna” do medivac no drop)
+                self._release_drop_medivac(drop_id)
+
+                self.rt.phase = DropPhase.FIGHT
+                self.rt.next_loop = loop + 6
+                return True
+
+            self.rt.next_loop = loop + 6
+            return False
+
+        if self.rt.phase == DropPhase.FIGHT:
+            # aqui você ainda não está fazendo stim (isso depende de research/upgrades)
+            # então deixo só o ataque simples.
+            ground = self.bot.units(U.MARINE) if hasattr(self.bot, "units") else None
+            if ground and ground.amount > 0:
+                for mm in ground:
+                    if budget.remaining <= 0:
+                        break
+                    if mm.distance_to(self.rt.target) < 15 and getattr(mm, "is_idle", True):
+                        ok = await self._do(mm.attack(self.rt.target))
+                        if ok:
+                            budget.remaining -= 1
+                            self._emit("drop_attack", {"drop": drop_id, "target": [float(self.rt.target.x), float(self.rt.target.y)]})
+                            self.rt.next_loop = loop + 10
+                            self.rt.phase = DropPhase.DONE
+                            return True
+
+            self.rt.next_loop = loop + 12
+            self.rt.phase = DropPhase.DONE
+            return False
+
+        if self.rt.phase == DropPhase.DONE:
+            return False
+
+        return False
+
+# ---------- bot/behaviors/macro.py ----------
+#bot/behaviors/macro.py
+# behaviors/macro.py
+from __future__ import annotations
+
+from typing import Any
+
+from sc2.ids.unit_typeid import UnitTypeId as U
+
+from bot.strategy.schema import EconomyCfg, MacroBehaviorCfg
+from .base import TickBudget
+
+
+class MacroBehavior:
+    name = "macro"
+
+    def __init__(
+        self,
+        bot: Any,
+        econ: Any,
+        builder: Any,
+        ctx: Any,
+        logger: Any | None = None,
+        debug: bool = True,
+    ):
+        self.bot = bot
+        self.econ = econ
+        self.builder = builder
+        self.ctx = ctx
+        self.log = logger
+        self.debug = debug
+        self._supply_cooldown_until_iter = 0
+
+    async def step(self, budget: TickBudget, cfg: dict) -> bool:
+        """
+        cfg esperado:
+          { "econ": EconomyCfg, "macro": MacroBehaviorCfg }
+        """
+        econ_cfg: EconomyCfg = cfg["econ"]
+        macro_cfg: MacroBehaviorCfg = cfg["macro"]
+
+        if not macro_cfg.enabled:
+            return False
+
+        did_any = False
+
+        if macro_cfg.auto_workers:
+            await self.econ.step()
+
+        if macro_cfg.auto_scv:
+            await self.econ.train_scv(int(econ_cfg.scv_target))
+
+        if macro_cfg.auto_supply and budget.remaining > 0:
+            if await self._auto_supply(int(econ_cfg.depot_trigger_supply_left)):
+                # supply é “ação” -> consome budget
+                budget.spend(1)
+                did_any = True
+
+        return did_any
+
+    async def _auto_supply(self, trigger: int) -> bool:
+        bot = self.bot
+        it = int(getattr(self.ctx, "iteration", 0))
+        if it < self._supply_cooldown_until_iter:
+            return False
+
+        if bot.supply_left > trigger:
+            return False
+
+        if self.builder.pending(U.SUPPLYDEPOT) > 0:
+            return False
+
+        did = await self.builder.try_build(U.SUPPLYDEPOT)
+
+        if self.log:
+            self.log.emit(
+                "macro_supply",
+                {"did": bool(did), "supply_left": int(bot.supply_left), "trigger": int(trigger)},
+                meta={"iter": it},
+            )
+
+        self._supply_cooldown_until_iter = it + 22
+        return bool(did)
+
+# ---------- bot/behaviors/orchestrator.py ----------
+#bot/behaviors/orchestrator.py
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Iterable, List, Tuple, Optional
+
+from .base import TickBudget
+
+
+@dataclass
+class ActiveBehavior:
+    behavior: Any
+    cfg: dict
+    key: str  # id estável por behavior
+
+
+class BehaviorOrchestrator:
+    """
+    Agenda behaviors com Round-Robin real.
+    - Mantém ponteiro (_rr_index) ESTÁVEL entre ticks usando `key`.
+    - Se a lista de behaviors muda (ativou/desativou), tenta preservar justiça.
+    - Contrato: behavior.step(budget, cfg) -> bool (True se consumiu 1 action do budget)
+    """
+
+    def __init__(self):
+        self.active: List[ActiveBehavior] = []
+        self._rr_index: int = 0
+        self._last_keys: List[str] = []
+
+    def _mk_key(self, behavior: Any) -> str:
+        # nome + id garante unicidade de instâncias (você tem múltiplos drops)
+        name = getattr(behavior, "name", behavior.__class__.__name__)
+        return f"{name}:{id(behavior)}"
+
+    def set_active(self, pairs: Iterable[Tuple[Any, dict]]) -> None:
+        new_active: List[ActiveBehavior] = []
+        new_keys: List[str] = []
+
+        for b, cfg in pairs:
+            k = self._mk_key(b)
+            new_active.append(ActiveBehavior(behavior=b, cfg=cfg, key=k))
+            new_keys.append(k)
+
+        # Se keys mudaram, tenta manter o ponteiro "apontando" para o mesmo próximo behavior
+        if self._last_keys and new_keys:
+            if new_keys != self._last_keys:
+                # behavior que seria o próximo no ciclo antigo
+                old_next_key: Optional[str] = None
+                if 0 <= self._rr_index < len(self._last_keys):
+                    old_next_key = self._last_keys[self._rr_index]
+
+                if old_next_key in new_keys:
+                    self._rr_index = new_keys.index(old_next_key)
+                else:
+                    # fallback seguro
+                    self._rr_index = 0
+
+        # atualiza
+        self.active = new_active
+        self._last_keys = new_keys
+
+        # clamp final
+        if self._rr_index >= len(self.active):
+            self._rr_index = 0
+
+    async def step(self, *, budget_actions: int = 1) -> None:
+        if not self.active:
+            return
+
+        budget = TickBudget(remaining=int(budget_actions))
+        n = len(self.active)
+        start = self._rr_index % n
+
+        # percorre todos a partir do start (RR)
+        for i in range(n):
+            if budget.remaining <= 0:
+                break
+
+            idx = (start + i) % n
+            ab = self.active[idx]
+
+            did = await ab.behavior.step(budget, ab.cfg)
+
+            # se consumiu 1 action, o próximo tick começa depois dele
+            if did:
+                self._rr_index = (idx + 1) % n
+                # NÃO quebra: ainda pode sobrar budget pra mais 1 action
+                # e é exatamente isso que você quer com 2 drops (budget=2).
+
+# ---------- bot/behaviors/plan.py ----------
+#bot/behaviors/plan.py
+# bot/behaviors/plan.py
+from __future__ import annotations
+
+from typing import Any
+
+from .base import TickBudget
+
+
+class PlanBehavior:
+    name = "plan"
+
+    def __init__(self, plan_executor: Any):
+        self.plan = plan_executor
+
+    async def step(self, budget: TickBudget, cfg: dict) -> bool:
+        # o PlanExecutor já tem sua própria política de 1 ação por tick (do jeito que você escreveu)
+        # então aqui, se não tem budget, nem roda.
+        if budget.remaining <= 0:
+            return False
+
+        before = getattr(self.plan.builder, "last", None)
+        await self.plan.step()
+
+        # se o plan executou algo “relevante”, ele terá action_ok no logger,
+        # mas pra consumir budget sem depender de log, usa heuristic simples:
+        after = getattr(self.plan.builder, "last", None)
+        did = bool(after is not None and after is not before and getattr(after, "reason", "") == "ok")
+
+        if did:
+            budget.spend(1)
+        return did
+
+# ---------- bot/behaviors/supply.py ----------
+#bot/behaviors/supply.py
+# behaviors/supply.py
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any
+
+from sc2.ids.unit_typeid import UnitTypeId as U
+
+from .base import Behavior, TickBudget
+
+
+@dataclass
+class SupplyCfg:
+    enabled: bool = True
+    trigger_supply_left: int = 2
+
+
+class SupplyBehavior(Behavior):
+    name = "supply"
+
+    def __init__(self, bot: Any, builder: Any, cfg: SupplyCfg, ctx: Any, logger: Any | None = None, debug: bool = True):
+        super().__init__(bot, ctx, logger=logger, debug=debug)
+        self.builder = builder
+        self.cfg = cfg
+
+    async def step(self, budget: TickBudget) -> bool:
+        if not self.cfg.enabled:
+            return False
+
+        if self.bot.supply_left > int(self.cfg.trigger_supply_left):
+            return False
+
+        # não gasta budget se não vai tentar
+        if self.builder.pending(U.SUPPLYDEPOT) > 0:
+            return False
+
+        if not budget.spend(1):
+            return False
+
+        did = await self.builder.try_build(U.SUPPLYDEPOT)
+        if self.log:
+            self.log.emit(
+                "behavior_supply",
+                {"attempt": True, "did": bool(did), "supply_left": int(self.bot.supply_left)},
+                meta={"iter": int(self.ctx.iteration)},
+            )
+        return bool(did)
+
+# ---------- bot/core/logger.py ----------
+#bot/core/logger.py
+from __future__ import annotations
+
+import json
+import os
+from dataclasses import asdict, is_dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, Optional
+
+
+def _json_default(o: Any):
+    # dataclass -> dict
+    if is_dataclass(o):
+        return asdict(o)
+    # objetos comuns do python-sc2 que têm .name
+    name = getattr(o, "name", None)
+    if isinstance(name, str):
+        return name
+    # fallback
+    return str(o)
+
+
+class JsonlLogger:
+    """
+    Escreve eventos em JSON Lines (1 JSON por linha).
+    - Não trava o bot: I/O mínimo, append.
+    - Você pode abrir o arquivo enquanto o jogo roda.
+    """
+
+    def __init__(self, *, log_dir: str = "logs", filename: Optional[str] = None, enabled: bool = True):
+        self.enabled = enabled
+        self.log_dir = Path(log_dir)
+        self.log_dir.mkdir(parents=True, exist_ok=True)
+
+        if filename is None:
+            ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+            filename = f"game_{ts}.jsonl"
+
+        self.path = self.log_dir / filename
+        self._fp = open(self.path, "a", encoding="utf-8")
+
+    def close(self):
+        try:
+            self._fp.close()
+        except Exception:
+            pass
+
+    def emit(self, event: str, payload: Dict[str, Any] | None = None, *, meta: Dict[str, Any] | None = None):
+        if not self.enabled:
+            return
+        rec = {
+            "ts_utc": datetime.now(timezone.utc).isoformat(),
+            "event": event,
+            "payload": payload or {},
+            "meta": meta or {},
+        }
+        self._fp.write(json.dumps(rec, ensure_ascii=False, default=_json_default) + "\n")
+        self._fp.flush()
+
+# ---------- bot/core/state.py ----------
+#bot/core/state.py
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+
+@dataclass
+class BotState:
+    iteration: int = 0
+
+# ---------- bot/engine/builder.py ----------
+#bot/engine/builder.py
+# bot/engine/builder.py
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Iterable, Optional
+import inspect
+
+from sc2.ids.unit_typeid import UnitTypeId as U
+from sc2.ids.ability_id import AbilityId as A
+from sc2.ids.upgrade_id import UpgradeId as Up
+
+
+@dataclass
+class LastAction:
+    ok: bool
+    kind: str
+    unit: str
+    reason: str
+    details: Any | None = None
+
+
+class Builder:
+    def __init__(self, bot, economy, placement, state, logger=None):
+        self.bot = bot
+        self.economy = economy
+        self.placement = placement
+        self.state = state
+        self.log = logger
+        self.last: LastAction | None = None
+
+    # ----------------------------
+    # robust unit access
+    # ----------------------------
+    def _iter_owned(self) -> Iterable[Any]:
+        st = getattr(self.bot, "state", None)
+        if st is not None and hasattr(st, "units"):
+            return st.units
+        if hasattr(self.bot, "all_units"):
+            return self.bot.all_units
+        return self.bot.units
+
+    def _iter_all_units(self) -> Iterable[Any]:
+        st = getattr(self.bot, "state", None)
+        if st is not None and hasattr(st, "units"):
+            return st.units
+        if hasattr(self.bot, "all_units"):
+            return self.bot.all_units
+        return self.bot.units
+
+    def _owned_of_type(self, unit_type: U) -> list[Any]:
+        out = []
+        for u in self._iter_owned():
+            is_mine = getattr(u, "is_mine", None)
+            if is_mine is not None and not is_mine:
+                continue
+            if getattr(u, "type_id", None) == unit_type:
+                out.append(u)
+        return out
+
+    # ----------------------------
+    # geyser access (neutral units)
+    # ----------------------------
+    def _iter_geyser_candidates(self) -> list[Any]:
+        bot = self.bot
+        st = getattr(bot, "state", None)
+
+        if st is not None and hasattr(st, "vespene_geyser"):
+            try:
+                gs = list(st.vespene_geyser)
+                if gs:
+                    return gs
+            except Exception:
+                pass
+
+        if hasattr(bot, "vespene_geyser"):
+            try:
+                gs = list(bot.vespene_geyser)
+                if gs:
+                    return gs
+            except Exception:
+                pass
+
+        if st is not None and hasattr(st, "neutral_units"):
+            try:
+                gs = [u for u in st.neutral_units if getattr(u, "type_id", None) == U.VESPENEGEYSER]
+                if gs:
+                    return gs
+            except Exception:
+                pass
+
+        return [u for u in self._iter_all_units() if getattr(u, "type_id", None) == U.VESPENEGEYSER]
+
+    # ----------------------------
+    # counts
+    # ----------------------------
+    def have(self, unit_type: U) -> int:
+        return len(self._owned_of_type(unit_type))
+
+    def ready(self, unit_type: U) -> int:
+        units = self._owned_of_type(unit_type)
+        return sum(1 for u in units if getattr(u, "is_ready", False))
+
+    def pending(self, unit_type: U) -> int:
+        return int(self.bot.already_pending(unit_type))
+
+    def total(self, unit_type: U) -> int:
+        return self.have(unit_type) + self.pending(unit_type)
+
+    # ----------------------------
+    # low-level do() compatible
+    # ----------------------------
+    async def _do(self, cmd) -> bool:
+        fn = getattr(self.bot, "do", None)
+        if fn is None:
+            return False
+
+        res = fn(cmd)
+        if inspect.isawaitable(res):
+            await res
+            return True
+
+        if isinstance(res, bool):
+            return res
+        return True
+
+    # ----------------------------
+    # upgrades (robust)
+    # ----------------------------
+    def has_upgrade(self, up: Up) -> bool:
+        st = getattr(self.bot, "state", None)
+        ups = getattr(st, "upgrades", None)
+        if ups is None:
+            return False
+        try:
+            # python-sc2 geralmente usa set[UpgradeId]
+            return up in ups
+        except Exception:
+            # forks podem usar ints
+            try:
+                return int(up.value) in set(int(x) for x in ups)
+            except Exception:
+                return False
+
+    def pending_upgrade(self, up: Up) -> int:
+        fn = getattr(self.bot, "already_pending_upgrade", None)
+        if fn is None:
+            return 0
+        try:
+            return int(fn(up))
+        except Exception:
+            try:
+                return int(fn(int(up.value)))
+            except Exception:
+                return 0
+
+    # ----------------------------
+    # actions
+    # ----------------------------
+    async def try_build(self, unit_type: U, *, near=None) -> bool:
+        bot = self.bot
+
+        if not bot.can_afford(unit_type):
+            self._fail("build", unit_type, "cant_afford", {"minerals": int(bot.minerals), "gas": int(bot.vespene)})
+            return False
+
+        if bot.workers.amount == 0:
+            self._fail("build", unit_type, "no_workers", None)
+            return False
+
+        if unit_type == U.REFINERY:
+            ths = getattr(bot, "townhalls", None)
+            th = ths.ready.first if ths and ths.ready else None
+            if th is None:
+                self._fail("build", unit_type, "no_townhall", None)
+                return False
+
+            geysers = sorted(self._iter_geyser_candidates(), key=lambda g: g.distance_to(th))
+            if not geysers:
+                self._fail("build", unit_type, "no_geyser_candidates", None)
+                return False
+
+            existing_refineries = self._owned_of_type(U.REFINERY)
+            for g in geysers:
+                occupied = any(r.distance_to(g) < 1.0 for r in existing_refineries)
+                if occupied:
+                    continue
+
+                await bot.build(U.REFINERY, near=g)
+                self._ok("build", unit_type, {"geyser_pos": [float(g.position.x), float(g.position.y)]})
+                return True
+
+            self._fail("build", unit_type, "all_geysers_occupied", None)
+            return False
+
+        pos = await self.placement.find_placement(unit_type, near=near)
+        if pos is None:
+            self._fail("build", unit_type, "no_placement", None)
+            return False
+
+        await bot.build(unit_type, near=pos)
+        self._ok("build", unit_type, {"pos": [float(pos.x), float(pos.y)]})
+        return True
+
+    async def try_train(self, unit_type: U, *, from_type: U) -> bool:
+        bot = self.bot
+
+        producers = [u for u in self._owned_of_type(from_type) if getattr(u, "is_ready", False)]
+        if not producers:
+            self._fail("train", unit_type, "no_producer", {"from": str(from_type)})
+            return False
+
+        if not bot.can_afford(unit_type):
+            self._fail("train", unit_type, "cant_afford", {"minerals": int(bot.minerals), "gas": int(bot.vespene)})
+            return False
+
+        if bot.supply_left <= 0:
+            self._fail("train", unit_type, "no_supply", {"supply_left": int(bot.supply_left)})
+            return False
+
+        for b in producers:
+            if not getattr(b, "is_idle", False):
+                continue
+            b.train(unit_type)
+            self._ok("train", unit_type, {"from": str(from_type)})
+            return True
+
+        self._fail("train", unit_type, "all_busy", {"from": str(from_type)})
+        return False
+
+    # ----------------------------
+    # addons
+    # ----------------------------
+    async def try_addon(self, *, on: U, addon: str) -> bool:
+        """
+        addon: "TECHLAB" | "REACTOR"
+        """
+        bot = self.bot
+        addon = addon.strip().upper()
+
+        parents = [b for b in self._owned_of_type(on) if getattr(b, "is_ready", False)]
+        if not parents:
+            self._fail("addon", on, "no_parent", {"on": str(on)})
+            return False
+
+        # precisa estar idle pra construir addon
+        parent = None
+        for b in parents:
+            if getattr(b, "is_idle", False):
+                parent = b
+                break
+        if parent is None:
+            self._fail("addon", on, "no_idle_parent", {"on": str(on)})
+            return False
+
+        # mapeia ability + custo via can_afford(ability)
+        if on == U.BARRACKS and addon == "TECHLAB":
+            ability = A.BUILD_TECHLAB_BARRACKS
+            unit_name = "BARRACKSTECHLAB"
+        elif on == U.BARRACKS and addon == "REACTOR":
+            ability = A.BUILD_REACTOR_BARRACKS
+            unit_name = "BARRACKSREACTOR"
+        elif on == U.FACTORY and addon == "TECHLAB":
+            ability = A.BUILD_TECHLAB_FACTORY
+            unit_name = "FACTORYTECHLAB"
+        elif on == U.FACTORY and addon == "REACTOR":
+            ability = A.BUILD_REACTOR_FACTORY
+            unit_name = "FACTORYREACTOR"
+        elif on == U.STARPORT and addon == "TECHLAB":
+            ability = A.BUILD_TECHLAB_STARPORT
+            unit_name = "STARPORTTECHLAB"
+        elif on == U.STARPORT and addon == "REACTOR":
+            ability = A.BUILD_REACTOR_STARPORT
+            unit_name = "STARPORTREACTOR"
+        else:
+            self._fail("addon", on, "unsupported_addon", {"on": str(on), "addon": addon})
+            return False
+
+        # custo
+        can_afford_ability = getattr(bot, "can_afford", None)
+        if callable(can_afford_ability):
+            try:
+                if not bot.can_afford(ability):
+                    self._fail("addon", on, "cant_afford", {"ability": str(ability)})
+                    return False
+            except Exception:
+                # alguns forks não suportam can_afford(AbilityId); deixa passar e falha no action result se houver
+                pass
+
+        ok = await self._do(parent(ability))
+        if ok:
+            self._ok("addon", on, {"on": on.name, "addon": addon, "unit": unit_name, "parent_tag": int(parent.tag)})
+            return True
+
+        self._fail("addon", on, "do_failed", {"on": on.name, "addon": addon})
+        return False
+
+    # ----------------------------
+    # research
+    # ----------------------------
+    async def try_research(self, upgrade: Up) -> bool:
+        bot = self.bot
+
+        if self.has_upgrade(upgrade):
+            self._fail("research", U.BARRACKS, "already_done", {"upgrade": str(upgrade)})
+            return False
+
+        if self.pending_upgrade(upgrade) > 0:
+            self._fail("research", U.BARRACKS, "already_pending", {"upgrade": str(upgrade)})
+            return False
+
+        # STIMPACK precisa de Barracks Tech Lab
+        if upgrade == Up.STIMPACK:
+            labs = [x for x in self._owned_of_type(U.BARRACKSTECHLAB) if getattr(x, "is_ready", False)]
+            if not labs:
+                self._fail("research", U.BARRACKSTECHLAB, "no_techlab", {"upgrade": "STIMPACK"})
+                return False
+
+            lab = None
+            for x in labs:
+                if getattr(x, "is_idle", False):
+                    lab = x
+                    break
+            if lab is None:
+                self._fail("research", U.BARRACKSTECHLAB, "all_busy", {"upgrade": "STIMPACK"})
+                return False
+
+            # custo (python-sc2 geralmente aceita can_afford(AbilityId.RESEARCH_STIMPACK))
+            try:
+                if not bot.can_afford(A.RESEARCH_STIMPACK):
+                    self._fail("research", U.BARRACKSTECHLAB, "cant_afford", {"upgrade": "STIMPACK"})
+                    return False
+            except Exception:
+                pass
+
+            ok = await self._do(lab(A.RESEARCH_STIMPACK))
+            if ok:
+                self._ok("research", U.BARRACKSTECHLAB, {"upgrade": "STIMPACK", "lab_tag": int(lab.tag)})
+                return True
+
+            self._fail("research", U.BARRACKSTECHLAB, "do_failed", {"upgrade": "STIMPACK"})
+            return False
+
+        self._fail("research", U.BARRACKS, "unsupported_upgrade", {"upgrade": str(upgrade)})
+        return False
+
+    # ----------------------------
+    # logging helpers
+    # ----------------------------
+    def _ok(self, kind: str, unit_type: U, details: dict | None):
+        self.last = LastAction(ok=True, kind=kind, unit=str(unit_type.name), reason="ok", details=details)
+        if self.log:
+            self.log.emit(
+                "action_ok",
+                {"kind": kind, "unit": unit_type.name, **(details or {})},
+                meta={"iter": int(self.state.iteration)},
+            )
+
+    def _fail(self, kind: str, unit_type: U, reason: str, details: dict | None):
+        self.last = LastAction(ok=False, kind=kind, unit=str(unit_type.name), reason=reason, details=details)
+        if self.log:
+            payload = {"kind": kind, "unit": unit_type.name, "reason": reason}
+            if details:
+                payload.update(details)
+            self.log.emit("action_fail", payload, meta={"iter": int(self.state.iteration)})
+
+# ---------- bot/engine/economy.py ----------
+#bot/engine/economy.py
+# economy.py
+from __future__ import annotations
+
+from typing import Any
+
+from sc2.ids.unit_typeid import UnitTypeId as U
+
+
+class Economy:
+    def __init__(self, bot: Any, *, ctx: Any | None = None, logger: Any | None = None):
+        self.bot = bot
+        self.ctx = ctx
+        self.log = logger
+
+    async def step(self) -> None:
+        # python-sc2 worker distribution
+        await self.bot.distribute_workers()
+
+    async def train_scv(self, target: int) -> bool:
+        """Treina SCV até atingir target (conta pending)."""
+        bot = self.bot
+        if not bot.townhalls.ready:
+            return False
+
+        scv_total = bot.workers.amount + bot.already_pending(U.SCV)
+        if scv_total >= int(target):
+            return False
+
+        cc = bot.townhalls.ready.first
+        if cc.is_idle and bot.can_afford(U.SCV) and bot.supply_left > 0:
+            cc.train(U.SCV)
+            if self.log:
+                self.log.emit(
+                    "econ_train_scv",
+                    {"target": int(target), "scv_total": int(scv_total) + 1},
+                    meta={"iter": int(getattr(self.ctx, "iteration", 0))},
+                )
+            return True
+
+        return False
+
+# ---------- bot/engine/placement.py ----------
+#bot/engine/placement.py
+# placement.py
+from __future__ import annotations
+
+from typing import Any
+
+from sc2.position import Point2
+
+
+class Placement:
+    def __init__(self, bot: Any, *, ctx: Any | None = None, logger: Any | None = None):
+        self.bot = bot
+        self.ctx = ctx
+        self.log = logger
+
+    async def find_placement(self, unit_type, *, near: Point2 | None = None) -> Point2 | None:
+        bot = self.bot
+        if near is None:
+            if bot.townhalls.ready:
+                near = bot.townhalls.ready.first.position
+            else:
+                near = bot.start_location
+
+        pos = await bot.find_placement(unit_type, near=near, placement_step=2)
+        return pos
+
+# ---------- bot/strategy/loader.py ----------
+#bot/strategy/loader.py
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+from .schema import (
+    StrategyConfig,
+    EconomyCfg,
+    ProductionCfg,
+    DropCfg,
+    BehaviorsCfg,
+    MacroBehaviorCfg,
+    CombatBehaviorCfg,
+)
+
+_ALLOWED_POINTS = {"ENEMY_MAIN", "ENEMY_NATURAL", "MY_MAIN", "MY_NATURAL"}
+
+
+def _as_str(x: Any, *, path: str) -> str:
+    if not isinstance(x, str):
+        raise TypeError(f"{path}: expected str, got {type(x).__name__}")
+    return x
+
+
+def _as_int(x: Any, *, path: str) -> int:
+    if not isinstance(x, (int, float)):
+        raise TypeError(f"{path}: expected int, got {type(x).__name__}")
+    return int(x)
+
+
+def _as_float(x: Any, *, path: str) -> float:
+    if not isinstance(x, (int, float)):
+        raise TypeError(f"{path}: expected float, got {type(x).__name__}")
+    return float(x)
+
+
+def _as_bool(x: Any, *, path: str) -> bool:
+    if not isinstance(x, bool):
+        raise TypeError(f"{path}: expected bool, got {type(x).__name__}")
+    return x
+
+
+def _require_obj(d: Dict[str, Any], key: str, *, path: str) -> Dict[str, Any]:
+    if key not in d:
+        raise KeyError(f"{path}: missing required key '{key}'")
+    v = d[key]
+    if not isinstance(v, dict):
+        raise TypeError(f"{path}.{key}: must be object")
+    return v
+
+
+def _require_list(d: Dict[str, Any], key: str, *, path: str) -> list:
+    if key not in d:
+        raise KeyError(f"{path}: missing required key '{key}'")
+    v = d[key]
+    if not isinstance(v, list):
+        raise TypeError(f"{path}.{key}: must be array")
+    return v
+
+
+def _parse_drop_obj(raw: Dict[str, Any], *, path: str, default_name: str) -> DropCfg:
+    enabled = _as_bool(raw.get("enabled", False), path=f"{path}.enabled")
+    if not enabled:
+        print("DropCfg fields:", DropCfg.__dataclass_fields__.keys())
+        return DropCfg(enabled=False, name=default_name)
+
+    for k in ("min_marines", "load_count", "move_eps", "ground_radius", "staging", "target"):
+        if k not in raw:
+            raise KeyError(f"{path}.enabled=true exige '{k}'")
+
+    name = raw.get("name", default_name)
+    if not isinstance(name, str):
+        raise TypeError(f"{path}.name: expected str")
+
+    staging = _as_str(raw["staging"], path=f"{path}.staging")
+    target = _as_str(raw["target"], path=f"{path}.target")
+
+    if staging not in _ALLOWED_POINTS:
+        raise ValueError(f"{path}.staging inválido: {staging} (allowed={sorted(_ALLOWED_POINTS)})")
+    if target not in _ALLOWED_POINTS:
+        raise ValueError(f"{path}.target inválido: {target} (allowed={sorted(_ALLOWED_POINTS)})")
+
+    staging_dist = _as_float(raw.get("staging_dist", 18.0), path=f"{path}.staging_dist")
+
+    start_time = raw.get("start_time", None)
+    if start_time is not None:
+        start_time = _as_float(start_time, path=f"{path}.start_time")
+
+    start_loop = raw.get("start_loop", None)
+    if start_loop is not None:
+        start_loop = _as_int(start_loop, path=f"{path}.start_loop")
+    pickup = _as_str(raw.get("pickup", "MY_MAIN"), path=f"{path}.pickup")
+    if pickup not in _ALLOWED_POINTS:
+        raise ValueError(f"{path}.pickup inválido: {pickup} (allowed={sorted(_ALLOWED_POINTS)})")
+
+    pickup_eps = _as_float(raw.get("pickup_eps", 6.0), path=f"{path}.pickup_eps")
+    load_range = _as_float(raw.get("load_range", 7.0), path=f"{path}.load_range")
+
+    return DropCfg(
+        enabled=True,
+        name=name,
+        start_time=start_time,
+        start_loop=start_loop,
+        min_marines=_as_int(raw["min_marines"], path=f"{path}.min_marines"),
+        load_count=_as_int(raw["load_count"], path=f"{path}.load_count"),
+        move_eps=_as_float(raw["move_eps"], path=f"{path}.move_eps"),
+        ground_radius=_as_float(raw["ground_radius"], path=f"{path}.ground_radius"),
+
+        pickup=pickup,
+        staging=staging,
+        target=target,
+        staging_dist=staging_dist,
+
+        pickup_eps=pickup_eps,
+        load_range=load_range,
+
+        require_stim=_as_bool(raw.get("require_stim", False), path=f"{path}.require_stim"),
+    )
+
+def load_strategy(name: str) -> StrategyConfig:
+    base = Path(__file__).resolve().parents[1] / "strats"
+    path = base / f"{name}.json"
+
+    if not path.exists():
+        raise FileNotFoundError(f"Strategy file not found: {path}")
+
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+    except Exception as e:
+        raise RuntimeError(f"Failed to parse JSON strategy: {path}") from e
+
+    if not isinstance(data, dict):
+        raise ValueError(f"Strategy root must be JSON object: {path}")
+
+    econ = _require_obj(data, "economy", path=str(path))
+    beh = _require_obj(data, "behaviors", path=str(path))
+    build = _require_list(data, "build", path=str(path))
+    prod_rules = _require_list(data, "production_rules", path=str(path))
+
+    scv_target = _as_int(econ.get("scv_target"), path="economy.scv_target")
+    depot_trigger = _as_int(econ.get("depot_trigger_supply_left"), path="economy.depot_trigger_supply_left")
+
+    prod_cfg = data.get("production", {})
+    if not isinstance(prod_cfg, dict):
+        raise TypeError("production must be object")
+    marine_cap = _as_int(prod_cfg.get("marine_cap", 24), path="production.marine_cap")
+
+    macro = beh.get("macro")
+    if not isinstance(macro, dict):
+        raise TypeError("behaviors.macro must be object")
+    for k in ("enabled", "auto_workers", "auto_scv", "auto_supply"):
+        if k not in macro:
+            raise KeyError(f"behaviors.macro: missing required key '{k}'")
+
+    combat = beh.get("combat")
+    if not isinstance(combat, dict):
+        raise TypeError("behaviors.combat must be object")
+    if "enabled" not in combat:
+        raise KeyError("behaviors.combat: missing required key 'enabled'")
+
+    drops: List[DropCfg] = []
+    if "drops" in data and data["drops"] is not None:
+        raw_drops = data["drops"]
+        if not isinstance(raw_drops, list):
+            raise TypeError("drops must be array")
+        for i, rd in enumerate(raw_drops):
+            if not isinstance(rd, dict):
+                raise TypeError(f"drops[{i}] must be object")
+            dc = _parse_drop_obj(rd, path=f"drops[{i}]", default_name=f"drop_{i}")
+            if dc.enabled:
+                drops.append(dc)
+    else:
+        # compat opcional: "drop" antigo vira drops[0]
+        raw_drop = data.get("drop", None)
+        if raw_drop is not None:
+            if not isinstance(raw_drop, dict):
+                raise TypeError("drop must be object")
+            dc = _parse_drop_obj(raw_drop, path="drop", default_name="drop_0")
+            if dc.enabled:
+                drops.append(dc)
+
+    return StrategyConfig(
+        name=str(data.get("name", name)),
+        economy=EconomyCfg(scv_target=scv_target, depot_trigger_supply_left=depot_trigger),
+        production=ProductionCfg(marine_cap=marine_cap),
+        behaviors=BehaviorsCfg(
+            macro=MacroBehaviorCfg(
+                enabled=_as_bool(macro["enabled"], path="behaviors.macro.enabled"),
+                auto_workers=_as_bool(macro["auto_workers"], path="behaviors.macro.auto_workers"),
+                auto_scv=_as_bool(macro["auto_scv"], path="behaviors.macro.auto_scv"),
+                auto_supply=_as_bool(macro["auto_supply"], path="behaviors.macro.auto_supply"),
+            ),
+            combat=CombatBehaviorCfg(
+                enabled=_as_bool(combat["enabled"], path="behaviors.combat.enabled"),
+            ),
+        ),
+        drops=drops,
+        build=build,
+        production_rules=prod_rules,
+    )
+
+# ---------- bot/strategy/plan_executor.py ----------
+#bot/strategy/plan_executor.py
+# bot/strategy/plan_executor.py
+from __future__ import annotations
+
+from typing import Any, Dict
+
+from sc2.ids.unit_typeid import UnitTypeId as U
+from sc2.ids.upgrade_id import UpgradeId as Up
+
+from .schema import StrategyConfig
+
+
+def _as_int(x: Any, default: int = 0) -> int:
+    try:
+        return int(x)
+    except Exception:
+        return default
+
+
+def _as_bool(x: Any, default: bool = False) -> bool:
+    try:
+        return bool(x)
+    except Exception:
+        return default
+
+
+def parse_u(name: str) -> U:
+    try:
+        return getattr(U, name)
+    except AttributeError as e:
+        raise ValueError(f"UnitTypeId inválido no JSON: {name}") from e
+
+
+def parse_up(name: str) -> Up:
+    try:
+        return getattr(Up, name)
+    except AttributeError as e:
+        raise ValueError(f"UpgradeId inválido no JSON: {name}") from e
+
+
+class PlanExecutor:
+    def __init__(self, bot: Any, builder: Any, strategy: StrategyConfig, *, ctx: Any, logger: Any | None = None):
+        self.bot = bot
+        self.builder = builder
+        self.strategy = strategy
+        self.ctx = ctx
+        self.log = logger
+        self._done_steps: set[str] = set()
+
+        if self.log:
+            self.log.emit(
+                "strategy_loaded",
+                {"name": self.strategy.name, "build_steps": int(len(self.strategy.build)), "production_rules": int(len(self.strategy.production_rules))},
+                meta={"iter": int(getattr(self.ctx, "iteration", 0))},
+            )
+
+    async def step(self) -> None:
+        if await self._run_build_plan_one_step():
+            return
+        await self._run_production_rules_one_action()
+
+    async def _run_build_plan_one_step(self) -> bool:
+        for step in self.strategy.build:
+            name = str(step.get("name") or step.get("id") or "").strip() or f"_unnamed_{id(step)}"
+            if name in self._done_steps:
+                continue
+
+            requires = step.get("requires") or {}
+            when = step.get("when") or {}
+            action = step.get("do") or {}
+
+            if not self._check_conditions(requires):
+                continue
+            if not self._check_conditions(when):
+                continue
+
+            self._emit("plan_step_ready", {"name": name, "requires": requires, "when": when, "do": action})
+
+            did = await self._execute_action(action)
+            if did:
+                self._done_steps.add(name)
+                self._emit("plan_step_done", {"name": name, "do": action})
+                return True
+
+            self._emit(
+                "plan_step_blocked",
+                {
+                    "name": name,
+                    "do": action,
+                    "last_reason": getattr(getattr(self.builder, "last", None), "reason", ""),
+                    "last_details": getattr(getattr(self.builder, "last", None), "details", None),
+                },
+            )
+            return False
+
+        return False
+
+    async def _run_production_rules_one_action(self) -> bool:
+        for rule in self.strategy.production_rules:
+            requires = rule.get("requires") or {}
+            when = rule.get("when") or {}
+            action = rule.get("do") or {}
+
+            if not self._check_conditions(requires):
+                continue
+            if not self._check_conditions(when):
+                continue
+
+            self._emit("prod_rule_ready", {"name": rule.get("name", ""), "do": action})
+
+            did = await self._execute_action(action)
+            if did:
+                self._emit("prod_rule_done", {"name": rule.get("name", ""), "do": action})
+                return True
+
+        return False
+
+    def _check_conditions(self, cond: Dict[str, Any]) -> bool:
+        if not cond:
+            return True
+
+        bot = self.bot
+
+        if "minerals_gte" in cond and bot.minerals < _as_int(cond["minerals_gte"], 0):
+            return False
+        if "gas_gte" in cond and bot.vespene < _as_int(cond["gas_gte"], 0):
+            return False
+        if "supply_left_lte" in cond and bot.supply_left > _as_int(cond["supply_left_lte"], 0):
+            return False
+        if "supply_left_gte" in cond and bot.supply_left < _as_int(cond["supply_left_gte"], 0):
+            return False
+
+        if "have_gte" in cond and not self._check_unit_thresholds(cond["have_gte"], op="gte", mode="total"):
+            return False
+        if "have_lte" in cond and not self._check_unit_thresholds(cond["have_lte"], op="lte", mode="total"):
+            return False
+        if "ready_gte" in cond and not self._check_unit_thresholds(cond["ready_gte"], op="gte", mode="ready"):
+            return False
+        if "unit_gte" in cond and not self._check_unit_thresholds(cond["unit_gte"], op="gte", mode="total"):
+            return False
+        if "unit_lte" in cond and not self._check_unit_thresholds(cond["unit_lte"], op="lte", mode="total"):
+            return False
+
+        # --- upgrades ---
+        # formato: {"upgrade_done": ["STIMPACK"]}
+        if "upgrade_done" in cond:
+            ups = cond["upgrade_done"]
+            if isinstance(ups, str):
+                ups = [ups]
+            if not isinstance(ups, list):
+                raise TypeError("upgrade_done must be string or list of strings")
+            for u in ups:
+                up = parse_up(str(u))
+                if not self.builder.has_upgrade(up):
+                    return False
+
+        # formato: {"upgrade_missing": ["STIMPACK"]}  (ou seja: ainda não pode ter e nem estar pendente)
+        if "upgrade_missing" in cond:
+            ups = cond["upgrade_missing"]
+            if isinstance(ups, str):
+                ups = [ups]
+            if not isinstance(ups, list):
+                raise TypeError("upgrade_missing must be string or list of strings")
+            for u in ups:
+                up = parse_up(str(u))
+                if self.builder.has_upgrade(up):
+                    return False
+                if self.builder.pending_upgrade(up) > 0:
+                    return False
+
+        return True
+
+    def _check_unit_thresholds(self, table: Dict[str, Any], *, op: str, mode: str) -> bool:
+        for k, v in table.items():
+            ut = parse_u(str(k))
+            thr = _as_int(v, 0)
+            val = self.builder.ready(ut) if mode == "ready" else self.builder.total(ut)
+
+            if op == "gte":
+                if val < thr:
+                    return False
+            else:
+                if val > thr:
+                    return False
+        return True
+
+    async def _execute_action(self, action: Dict[str, Any]) -> bool:
+        if not action:
+            return False
+
+        # ---- normal build (structures/refinery/etc) ----
+        if "build" in action:
+            ut = parse_u(str(action["build"]))
+
+            limit = action.get("limit")
+            if limit is not None and self.builder.total(ut) >= _as_int(limit, 0):
+                return False
+            if self.builder.pending(ut) > 0:
+                return False
+
+            return await self.builder.try_build(ut)
+
+        # ---- addons ----
+        # formato: {"build_addon": "TECHLAB", "on": "BARRACKS"}
+        if "build_addon" in action:
+            addon = str(action["build_addon"])
+            on_name = str(action.get("on") or "").strip()
+            if not on_name:
+                raise ValueError("Action build_addon exige campo 'on' (ex: 'BARRACKS').")
+            on_ut = parse_u(on_name)
+
+            # opcional: limit por addon unit type (ex: BARRACKSTECHLAB)
+            limit = action.get("limit")
+            if limit is not None:
+                # tenta inferir unit type do addon pra limitar
+                addon_upper = addon.strip().upper()
+                infer = None
+                if on_ut == U.BARRACKS and addon_upper == "TECHLAB":
+                    infer = U.BARRACKSTECHLAB
+                elif on_ut == U.BARRACKS and addon_upper == "REACTOR":
+                    infer = U.BARRACKSREACTOR
+                elif on_ut == U.STARPORT and addon_upper == "REACTOR":
+                    infer = U.STARPORTREACTOR
+                elif on_ut == U.STARPORT and addon_upper == "TECHLAB":
+                    infer = U.STARPORTTECHLAB
+                elif on_ut == U.FACTORY and addon_upper == "TECHLAB":
+                    infer = U.FACTORYTECHLAB
+                elif on_ut == U.FACTORY and addon_upper == "REACTOR":
+                    infer = U.FACTORYREACTOR
+
+                if infer is not None and self.builder.total(infer) >= _as_int(limit, 0):
+                    return False
+
+            return await self.builder.try_addon(on=on_ut, addon=addon)
+
+        # ---- research ----
+        # formato: {"research": "STIMPACK"}
+        if "research" in action:
+            up = parse_up(str(action["research"]))
+            return await self.builder.try_research(up)
+
+        # ---- train ----
+        if "train" in action:
+            ut = parse_u(str(action["train"]))
+            from_name = str(action.get("from") or "").strip()
+            if not from_name:
+                raise ValueError("Action train exige campo 'from' (ex: 'BARRACKS').")
+            ft = parse_u(from_name)
+
+            cap = action.get("cap")
+            if cap is not None and self.builder.total(ut) >= _as_int(cap, 0):
+                return False
+
+            return await self.builder.try_train(ut, from_type=ft)
+
+        return False
+
+    def _emit(self, event: str, payload: dict) -> None:
+        if not self.log:
+            return
+        self.log.emit(event, payload, meta={"strategy": self.strategy.name, "iter": int(self.ctx.iteration)})
+
+# ---------- bot/strategy/schema.py ----------
+#bot/strategy/schema.py
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional
+
+
+@dataclass(frozen=True)
+class EconomyCfg:
+    scv_target: int = 20
+    depot_trigger_supply_left: int = 2
+
+
+@dataclass(frozen=True)
+class ProductionCfg:
+    marine_cap: int = 24
+
+
+@dataclass(frozen=True)
+class MacroBehaviorCfg:
+    enabled: bool = True
+    auto_workers: bool = True
+    auto_scv: bool = True
+    auto_supply: bool = True
+
+
+@dataclass(frozen=True)
+class CombatBehaviorCfg:
+    enabled: bool = False
+
+
+@dataclass(frozen=True)
+class BehaviorsCfg:
+    macro: MacroBehaviorCfg = MacroBehaviorCfg()
+    combat: CombatBehaviorCfg = CombatBehaviorCfg()
+
+
+
+@dataclass(frozen=True)
+class DropCfg:
+    enabled: bool = False
+    name: str = "drop"
+
+    # schedule
+    start_loop: Optional[int] = None
+    start_time: Optional[float] = None
+
+    # composition / micro
+    min_marines: int = 8
+    load_count: int = 8
+    move_eps: float = 3.0
+    ground_radius: float = 12.0
+
+    # points
+    pickup: str = "MY_MAIN"
+    staging: str = "ENEMY_NATURAL"
+    target: str = "ENEMY_MAIN"
+    staging_dist: float = 18.0
+
+    # load tuning
+    pickup_eps: float = 6.0
+    load_range: float = 7.0
+
+    # gates
+    require_stim: bool = False
+@dataclass(frozen=True)
+class StrategyConfig:
+    name: str = "default"
+
+    economy: EconomyCfg = EconomyCfg()
+    production: ProductionCfg = ProductionCfg()
+    behaviors: BehaviorsCfg = BehaviorsCfg()
+
+    drops: List[DropCfg] = field(default_factory=list)
+
+    build: List[Dict[str, Any]] = field(default_factory=list)
+    production_rules: List[Dict[str, Any]] = field(default_factory=list)
+
+# ---------- bot/strats/default.json ----------
+#bot/strats/default.json
+{
+    "name": "default",
+    "economy": {
+        "scv_target": 20,
+        "depot_trigger_supply_left": 2
+    },
+    "production": {
+        "marine_cap": 32
+    },
+    "behaviors": {
+        "macro": {
+            "enabled": true,
+            "auto_workers": true,
+            "auto_scv": true,
+            "auto_supply": true
+        },
+        "combat": {
+            "enabled": false
+        }
+    },
+    "drops": [
+        {
+            "enabled": true,
+            "name": "drop_main",
+            "start_time": 240.0,
+            "min_marines": 8,
+            "load_count": 8,
+            "move_eps": 3.0,
+            "ground_radius": 12.0,
+            "staging": "ENEMY_NATURAL",
+            "target": "ENEMY_MAIN",
+            "staging_dist": 18.0,
+            "require_stim": false
+        },
+        {
+            "enabled": true,
+            "name": "drop_natural",
+            "start_time": 240.0,
+            "min_marines": 8,
+            "load_count": 8,
+            "move_eps": 3.0,
+            "ground_radius": 12.0,
+            "staging": "ENEMY_NATURAL",
+            "target": "ENEMY_NATURAL",
+            "staging_dist": 18.0,
+            "require_stim": false
+        }
+    ],
+    "build": [
+        {
+            "name": "depot_12",
+            "when": {
+                "supply_used_gte": 12
+            },
+            "do": {
+                "build": "SUPPLYDEPOT"
+            }
+        },
+        {
+            "name": "barracks_1",
+            "requires": {
+                "ready_gte": {
+                    "SUPPLYDEPOT": 1
+                }
+            },
+            "when": {
+                "have_lte": {
+                    "BARRACKS": 0
+                },
+                "minerals_gte": 150
+            },
+            "do": {
+                "build": "BARRACKS"
+            }
+        },
+        {
+            "name": "refinery_1_after_rax",
+            "requires": {
+                "ready_gte": {
+                    "BARRACKS": 1
+                }
+            },
+            "when": {
+                "have_lte": {
+                    "REFINERY": 0
+                },
+                "minerals_gte": 75
+            },
+            "do": {
+                "build": "REFINERY"
+            }
+        },
+        {
+            "name": "refinery_2_after_ref1",
+            "requires": {
+                "ready_gte": {
+                    "REFINERY": 1
+                }
+            },
+            "when": {
+                "have_lte": {
+                    "REFINERY": 1
+                },
+                "minerals_gte": 75
+            },
+            "do": {
+                "build": "REFINERY"
+            }
+        },
+        {
+            "name": "barracks_2",
+            "requires": {
+                "ready_gte": {
+                    "BARRACKS": 1
+                }
+            },
+            "when": {
+                "have_lte": {
+                    "BARRACKS": 1
+                },
+                "minerals_gte": 150
+            },
+            "do": {
+                "build": "BARRACKS"
+            }
+        },
+        {
+            "name": "factory_1",
+            "requires": {
+                "ready_gte": {
+                    "BARRACKS": 1
+                }
+            },
+            "when": {
+                "have_lte": {
+                    "FACTORY": 0
+                },
+                "minerals_gte": 150
+            },
+            "do": {
+                "build": "FACTORY"
+            }
+        },
+        {
+            "name": "starport_1",
+            "requires": {
+                "ready_gte": {
+                    "FACTORY": 1
+                }
+            },
+            "when": {
+                "have_lte": {
+                    "STARPORT": 0
+                },
+                "minerals_gte": 150,
+                "gas_gte": 100
+            },
+            "do": {
+                "build": "STARPORT"
+            }
+        }
+    ],
+    "production_rules": [
+        {
+            "name": "medivacs_2",
+            "requires": {
+                "ready_gte": {
+                    "STARPORT": 1
+                }
+            },
+            "when": {
+                "unit_lte": {
+                    "MEDIVAC": 2
+                }
+            },
+            "do": {
+                "train": "MEDIVAC",
+                "from": "STARPORT",
+                "cap": 2
+            }
+        },
+        {
+            "name": "marines_cap_32",
+            "requires": {
+                "ready_gte": {
+                    "BARRACKS": 1
+                }
+            },
+            "when": {
+                "unit_lte": {
+                    "MARINE": 32
+                }
+            },
+            "do": {
+                "train": "MARINE",
+                "from": "BARRACKS",
+                "cap": 32
+            }
+        }
+    ]
+}
+
+# ---------- bot/strats/future.json ----------
+#bot/strats/future.json
+{
+  "name": "default",
+  "initial_state": "NORMAL",
+  "states": {
+    "NORMAL": {
+      "priority": [
+        "macro",
+        "plan",
+        "drop",
+        "combat"
+      ],
+      "macro": {
+        "enabled": true,
+        "auto_workers": true,
+        "auto_scv": true,
+        "auto_supply": true,
+        "scv_target": 20,
+        "depot_trigger_supply_left": 2
+      },
+      "drop": {
+        "enabled": false
+      },
+      "combat": {
+        "enabled": false
+      },
+      "plan": {
+        "opener": [
+          {
+            "when": {
+              "supply_used_gte": 12
+            },
+            "do": {
+              "build": "SUPPLYDEPOT"
+            }
+          },
+          {
+            "when": {
+              "ready_gte": {
+                "SUPPLYDEPOT": 1
+              }
+            },
+            "do": {
+              "build": "BARRACKS"
+            }
+          },
+          {
+            "when": {
+              "ready_gte": {
+                "BARRACKS": 1
+              }
+            },
+            "do": {
+              "build": "REFINERY"
+            }
+          },
+          {
+            "when": {
+              "ready_gte": {
+                "BARRACKS": 1
+              }
+            },
+            "do": {
+              "build": "FACTORY"
+            }
+          }
+        ]
+      }
+    }
+  },
+  "transitions": []
+}
+
+# ---------- bot/terran_bot.py ----------
+#bot/terran_bot.py
+from __future__ import annotations
+
+from sc2.bot_ai import BotAI
+
+from bot.core.state import BotState
+from bot.core.logger import JsonlLogger
+from bot.engine.economy import Economy
+from bot.engine.placement import Placement
+from bot.engine.builder import Builder
+from bot.strategy.loader import load_strategy
+from bot.strategy.plan_executor import PlanExecutor
+
+from bot.behaviors.macro import MacroBehavior
+from bot.behaviors.drop import DropBehavior
+from bot.behaviors.combat import CombatBehavior
+from bot.behaviors.plan import PlanBehavior
+from bot.behaviors.orchestrator import BehaviorOrchestrator
+
+
+class TerranBot(BotAI):
+    def __init__(self, strat_name: str = "default", debug: bool = True):
+        super().__init__()
+        self.debug = debug
+        self.ctx = BotState()
+
+        self.log = JsonlLogger(enabled=True)
+        self.strategy = load_strategy(strat_name)
+        self.log.emit("bot_init", {"strategy": self.strategy.name, "strat_name": str(strat_name)})
+
+        self.econ = Economy(self, ctx=self.ctx, logger=self.log)
+        self.place = Placement(self, ctx=self.ctx, logger=self.log)
+        self.builder = Builder(self, self.econ, self.place, self.ctx, logger=self.log)
+
+        # behaviors base
+        self.macro = MacroBehavior(self, self.econ, self.builder, ctx=self.ctx, logger=self.log, debug=debug)
+        self.plan_exec = PlanExecutor(self, self.builder, self.strategy, ctx=self.ctx, logger=self.log)
+        self.plan = PlanBehavior(self.plan_exec)
+        self.combat = CombatBehavior(self, self.ctx, logger=self.log, debug=debug)
+
+        # drops: 1 instância por cfg (estável)
+        self.drop_behaviors: list[DropBehavior] = [
+            DropBehavior(self, self.ctx, logger=self.log, debug=debug) for _ in getattr(self.strategy, "drops", [])
+        ]
+
+        self.orch = BehaviorOrchestrator()
+        self._last_snapshot_iter = -999999
+
+    def _active_pairs(self):
+        pairs = [
+            (self.macro, {"econ": self.strategy.economy, "macro": self.strategy.behaviors.macro}),
+            (self.plan, {"strategy": self.strategy}),
+        ]
+
+        # cada drop tem seu cfg próprio
+        drops = getattr(self.strategy, "drops", [])
+        for beh, dc in zip(self.drop_behaviors, drops):
+            # deixa drop desabilitado ficar ativo? pode, ele retorna False rápido.
+            # se preferir, filtra: if dc.enabled: ...
+            pairs.append((beh, {"drop": dc}))
+
+        pairs.append((self.combat, {"combat": self.strategy.behaviors.combat}))
+        return pairs
+
+    def _compute_budget(self) -> int:
+        """
+        Regra pragmática:
+        - 1 action/tick no early game
+        - Se houver >=2 drops enabled, sobe pra 2 actions/tick para “sincronizar” melhor.
+        (Você pode sofisticar depois: considerar fase do drop, etc.)
+        """
+        drops = getattr(self.strategy, "drops", [])
+        enabled_drops = sum(1 for d in drops if getattr(d, "enabled", False))
+        if enabled_drops >= 2:
+            return 2
+        return 1
+
+    async def on_step(self, iteration: int):
+        self.ctx.iteration = int(iteration)
+
+        if iteration - self._last_snapshot_iter >= 22:
+            self._last_snapshot_iter = iteration
+            self.log.emit(
+                "snapshot",
+                {
+                    "iteration": int(iteration),
+                    "time": float(self.time),
+                    "minerals": int(self.minerals),
+                    "gas": int(self.vespene),
+                    "supply_used": int(self.supply_used),
+                    "supply_cap": int(self.supply_cap),
+                    "supply_left": int(self.supply_left),
+                    "workers": int(self.workers.amount),
+                },
+                meta={"strategy": self.strategy.name, "iter": int(self.ctx.iteration)},
+            )
+
+        self.orch.set_active(self._active_pairs())
+        await self.orch.step(budget_actions=self._compute_budget())
+
+    async def on_end(self, game_result):
+        self.log.emit("game_end", {"result": str(game_result), "time": float(self.time)})
+        self.log.close()
+
+# ---------- run.py ----------
+#run.py
+import argparse
+import asyncio
+import logging
+import aiohttp
+import os
+import sc2
+from sc2.main import run_game
+from sc2.data import Race, Difficulty
+from sc2.client import Client
+from sc2.player import Bot, Computer
+from sc2.protocol import ConnectionAlreadyClosed
+import random
+
+from bot import CompetitiveBot
+from config import BOT_NAME, BOT_RACE, MAP_POOL, MAP_PATH, OPPONENT_RACE, OPPONENT_DIFFICULTY, REALTIME, REPLAY_SAVE_PATH
+from sc2.data import Race, Difficulty
+
+
+# Run ladder game
+# This lets python-sc2 connect to a ladder game.
+# Based on: https://github.com/Dentosal/python-sc2/blob/master/examples/run_external.py
+def run_ladder_game(args, bot):
+    if args.LadderServer == None:
+        host = "127.0.0.1"
+    else:
+        host = args.LadderServer
+
+    host_port = args.GamePort
+    lan_port = args.StartPort
+
+    # Port config
+    ports = [lan_port + p for p in range(1, 6)]
+
+    portconfig = sc2.portconfig.Portconfig
+    portconfig.shared = ports[0]  # Not used
+    portconfig.server = [ports[1], ports[2]]
+    portconfig.players = [[ports[3], ports[4]]]
+
+    # Join ladder game
+    g = join_ladder_game(host=host, port=host_port, players=[bot], realtime=args.Realtime, portconfig=portconfig)
+
+    # Ensure replay directory exists
+    if REPLAY_SAVE_PATH and not os.path.exists(REPLAY_SAVE_PATH):
+        os.makedirs(REPLAY_SAVE_PATH, exist_ok=True)
+    
+    # Run the game
+    result = asyncio.get_event_loop().run_until_complete(g)
+    
+    # Save replay if we have a path and a result
+    if result and REPLAY_SAVE_PATH:
+        replay_path = os.path.join(REPLAY_SAVE_PATH, f"{BOT_NAME}_vs_{args.OpponentId}.SC2Replay")
+        try:
+            result.save_replay(replay_path)
+            print(f"Replay saved to: {replay_path}")
+        except Exception as e:
+            print(f"Failed to save replay: {e}")
+    
+    return result, args.OpponentId
+
+
+# Modified version of sc2.main._join_game to allow custom host and port, and to not spawn an additional sc2process (thanks to alkurbatov for fix)
+async def join_ladder_game(
+        host, port, players, realtime, portconfig, save_replay_as=None, step_time_limit=None, game_time_limit=None
+):
+    ws_url = "ws://{}:{}/sc2api".format(host, port)
+    ws_connection = await aiohttp.ClientSession().ws_connect(ws_url, timeout=120)
+    client = Client(ws_connection)
+    try:
+        result = await sc2.main._play_game(players[0], client, realtime, portconfig, step_time_limit, game_time_limit)
+        if save_replay_as is not None:
+            await client.save_replay(save_replay_as)
+        # await client.leave()
+        # await client.quit()
+    except ConnectionAlreadyClosed:
+        logging.error(f"Connection was closed before the game ended")
+        return None
+    finally:
+        await ws_connection.close()
+
+    return result
+
+
+def parse_arguments():
+    # Load command line arguments
+    parser = argparse.ArgumentParser()
+
+    # Ladder play arguments
+    parser.add_argument("--GamePort", type=int, help="Game port.")
+    parser.add_argument("--StartPort", type=int, help="Start port.")
+    parser.add_argument("--LadderServer", type=str, help="Ladder server.")
+
+    # Bot settings
+    parser.add_argument("--bot-name", type=str, default=BOT_NAME,
+                       help=f"Name of your bot. Default: {BOT_NAME}")
+    parser.add_argument("--bot-race", type=str, default=BOT_RACE,
+                       help=f"Bot race (Terran, Zerg, Protoss, Random). Default: {BOT_RACE}")
+    
+    # Game settings
+    parser.add_argument("--map", type=str, default=None,
+                       help=f"Map to play on. If not specified, a random map will be selected from: {', '.join(MAP_POOL)}")
+    parser.add_argument("--opponent-race", type=str, default=OPPONENT_RACE,
+                       help=f"Computer race (Terran, Zerg, Protoss, Random). Default: {OPPONENT_RACE}")
+    parser.add_argument("--difficulty", type=str, default=OPPONENT_DIFFICULTY,
+                       help=f"Computer difficulty (VeryEasy to VeryHard). Default: {OPPONENT_DIFFICULTY}")
+    parser.add_argument("--realtime", action='store_true', default=REALTIME,
+                       help=f"Play in realtime. Default: {REALTIME}")
+    parser.add_argument("--sc2-version", type=str, help="Starcraft 2 game version (optional)")
+
+    args, unknown_args = parser.parse_known_args()
+
+    for unknown_arg in unknown_args:
+        print(f"Unknown argument: {unknown_arg}")
+
+    # Set default opponent ID if not provided
+    if not hasattr(args, 'OpponentId') or not args.OpponentId:
+        args.OpponentId = f"{args.opponent_race}_{args.difficulty}"
+
+    return args
+
+
+def load_bot(args):
+    """Initialize and configure the bot."""
+    # Create bot instance
+    bot = CompetitiveBot()
+
+    # Convert string race to Race enum
+    try:
+        bot_race = Race[args.bot_race.capitalize()]
+    except KeyError:
+        print(f"Invalid bot race: {args.bot_race}. Using Terran.")
+        bot_race = Race.Terran
+
+    # Return configured bot
+    return Bot(bot_race, bot)
+
+
+def run():
+    """Legacy run function - kept for compatibility."""
+    print("Warning: Using legacy run() function. Consider updating your code.")
+    main()
+
+
+def main():
+    """Main function to run the bot."""
+    # Parse command line arguments
+    args = parse_arguments()
+    
+    # Simple console logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(message)s",
+    )
+    
+    # Get bot name and race from args (with fallback to config)
+    bot_name = getattr(args, 'bot_name', BOT_NAME)
+    bot_race = getattr(args, 'bot_race', BOT_RACE)
+    
+    print(f"===== {bot_name} ({bot_race}) =====")
+    print(f"Available maps: {', '.join(MAP_POOL)}")
+    print(f"Opponent: {args.opponent_race} {args.difficulty}")
+    print(f"Realtime: {'Yes' if args.realtime else 'No'}")
+
+    try:
+        # Load and run the bot
+        bot = load_bot(args)
+
+        # Convert string to Race and Difficulty enums for opponent
+        try:
+            opponent_race = Race[args.opponent_race.capitalize()]
+        except KeyError:
+            print(f"Invalid opponent race: {args.opponent_race}. Using Terran.")
+            opponent_race = Race.Terran
+        try:
+            difficulty = Difficulty[args.difficulty]
+        except KeyError:
+            print(f"Invalid difficulty: {args.difficulty}. Using VeryHard.")
+            difficulty = Difficulty.VeryHard
+
+        # Select a random map if none specified
+        map_name = args.map if args.map else random.choice(MAP_POOL)
+
+        # Get map from specified path or default SC2 maps
+        if MAP_PATH and os.path.exists(MAP_PATH):
+            try:
+                print(f"Loading map from custom path: {MAP_PATH}")
+                # Use the map_dir parameter directly with the full Maps path
+                map_obj = sc2.maps.get(map_name, map_dir=MAP_PATH)
+            except Exception as e:
+                print(f"Error loading custom map: {e}")
+                print("Falling back to default SC2 maps...")
+                map_obj = sc2.maps.get(map_name)
+        else:
+            map_obj = sc2.maps.get(map_name)
+
+        # Start a local game
+        print(f"\nStarting game on {map_name}...")
+        run_game(
+            map_obj,
+            [bot, Computer(opponent_race, difficulty)],
+            realtime=args.realtime,
+            sc2_version=args.sc2_version if hasattr(args, 'sc2_version') else None
+        )
+    except KeyboardInterrupt:
+        print("\nGame stopped by user")
+    except Exception as e:
+        print(f"\nAn error occurred: {e}")
+        if __debug__:
+            import traceback
+            traceback.print_exc()
+        return 1
+    return 0
+
+if __name__ == "__main__":
+    import sys
+    sys.exit(main())
