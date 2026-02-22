@@ -110,6 +110,23 @@ class Orchestrator:
         total_depots = existing_depots + pending_depots
         
         supply_left = int(getattr(self.bot, "supply_left", 0) or 0)
+        minerals = int(getattr(self.bot, "minerals", 0) or 0)
+        
+        # Log depot status every 20 iterations for debugging
+        snap0 = self.api.snapshot()
+        if snap0.it % 20 == 0:
+            self._log(
+                "action",
+                {
+                    "event": "depot_check",
+                    "existing": existing_depots,
+                    "pending": pending_depots,
+                    "supply_left": supply_left,
+                    "trigger": self.depot_trigger_supply_left,
+                    "minerals": minerals,
+                    "should_build": (supply_left <= self.depot_trigger_supply_left and pending_depots == 0),
+                },
+            )
         
         # Allow more depots if supply is low and none are pending
         if supply_left <= self.depot_trigger_supply_left and pending_depots == 0:
@@ -208,8 +225,11 @@ class Orchestrator:
             max(3, min(map_h - 3, towards.y))
         ))
         
+        snap0 = self.api.snapshot()
+        minerals = int(getattr(self.bot, "minerals", 0) or 0)
+        
         if self.debug:
-            print(f"[DEPOT] cc={cc.position}, map_center={self.bot.game_info.map_center}, towards={towards}, map_size={map_w}x{map_h}, desired={desired}")
+            print(f"[DEPOT] Attempting build: cc={cc.position}, desired={desired}, minerals={minerals}, it={snap0.it}")
 
         self._emit_intent(
             "intent_depot",
@@ -224,6 +244,7 @@ class Orchestrator:
         )
 
         ok = await self.builder.try_build("depot", U.SUPPLYDEPOT, desired, cooldown=10)
+        
         self._log(
             "building",
             {
@@ -232,8 +253,14 @@ class Orchestrator:
                 "unit": str(U.SUPPLYDEPOT),
                 "desired": [int(desired.x), int(desired.y)],
                 "ok": bool(ok),
+                "minerals": minerals,
+                "it": snap0.it,
             },
         )
+        
+        if not ok and self.debug:
+            print(f"[DEPOT] Build failed, will retry (cooldown=10)")
+
 
     async def _macro_rax(self, cc) -> None:
         if not self._need_rax():
