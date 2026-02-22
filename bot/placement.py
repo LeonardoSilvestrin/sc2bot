@@ -58,22 +58,34 @@ class Placement:
         if client is not None and hasattr(client, "query_building_placement") and ab is not None:
             try:
                 res = await client.query_building_placement(ab, [pos])
-                return bool(res[0]), True
-            except Exception:
+                result = bool(res[0])
+                if self.debug:
+                    print(f"[PLACEMENT] query_building_placement result: {result}")
+                return result, True
+            except Exception as e:
                 # silent fallback
+                if self.debug:
+                    print(f"[PLACEMENT] query_building_placement failed: {e}")
                 pass
 
         # 2) Common: bot.can_place(unit_type, pos)
         if hasattr(self.bot, "can_place"):
             try:
                 ok = await self.bot.can_place(unit_type, pos)
-                return bool(ok), True
-            except Exception:
+                result = bool(ok)
+                if self.debug:
+                    print(f"[PLACEMENT] bot.can_place({unit_type}) result: {result}")
+                return result, True
+            except Exception as e:
+                if self.debug:
+                    print(f"[PLACEMENT] bot.can_place failed: {e}")
                 pass
 
         # 3) Weak fallback: placement_grid or assume ok
         # If we reach here, the strict methods (query_building_placement, can_place) aren't available
         # Always return True to let the actual build command determine if placement is valid
+        if self.debug:
+            print(f"[PLACEMENT] Using fallback (returning True)")
         return True, False
 
     async def find_near(self, unit_type: U, near: Point2, max_dist: int = 25) -> Optional[PlacementResult]:
