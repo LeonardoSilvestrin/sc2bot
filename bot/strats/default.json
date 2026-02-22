@@ -1,0 +1,29 @@
+﻿{
+  "name": "default",
+  "economy": { "scv_target": 20, "depot_trigger_supply_left": 2 },
+  "production": { "marine_cap": 24 },
+  "drop": { "enabled": false },
+
+  "build": [
+    {
+      "name": "first_depot",
+      "when": { "have_lte": { "SUPPLYDEPOT": 0 }, "minerals_gte": 100 },
+      "do": { "build": "SUPPLYDEPOT" }
+    },
+    {
+      "name": "first_barracks",
+      "requires": { "ready_gte": { "SUPPLYDEPOT": 1 } },
+      "when": { "have_lte": { "BARRACKS": 0 }, "minerals_gte": 150 },
+      "do": { "build": "BARRACKS" }
+    }
+  ],
+
+  "production_rules": [
+    {
+      "name": "marines",
+      "requires": { "have_gte": { "BARRACKS": 1 } },
+      "when": { "unit_lte": { "MARINE": 24 } },
+      "do": { "train": "MARINE", "from": "BARRACKS", "cap": 24 }
+    }
+  ]
+}
