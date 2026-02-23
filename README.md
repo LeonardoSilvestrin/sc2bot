@@ -19,7 +19,7 @@ Before proceeding, ensure the following prerequisites are installed:
 - [Maps](https://aiarena.net/wiki/maps/) Ensure maps are moved to the correct folder as suggested in this wiki.
 
 
-**Additional:**
+**Additional:** 
 
 *Linux:*  can either download the SC2 Linux package [here](https://github.com/Blizzard/s2client-proto#linux-packages)  from Blizzard or, alternatively, set up Battle.net via WINE using this [lutris script](https://lutris.net/games/battlenet/). 
 
