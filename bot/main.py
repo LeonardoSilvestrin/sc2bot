@@ -7,13 +7,12 @@ from typing import Optional
 from ares import AresBot
 from sc2.data import Result
 
+from bot.actions.base import TickContext
+from bot.actions.scout import ScoutAction
+from bot.core.orchestrator import Orchestrator
 from bot.devlog import DevLogger
 from bot.policies.drop import DropPolicy
 from bot.policies.threat import ThreatPolicy
-from bot.policies.scout import ScoutPolicy
-
-from bot.services.roles import RoleService
-from bot.services.map import MapService
 
 
 class MyBot(AresBot):
@@ -21,27 +20,21 @@ class MyBot(AresBot):
         super().__init__(game_step_override)
         self.debug = debug
 
-        # services (comunicação com managers/mediator)
-        self.roles: RoleService | None = None
-        self.maps: MapService | None = None
+        self.log = DevLogger(enabled=True)
 
-        # policies
+        # policies (legado por enquanto)
         self.threat_policy = ThreatPolicy(defend_radius=22.0, min_enemy=1)
         self.drop_policy = DropPolicy(enabled=True, min_marines=8, load_count=8)
-        self.scout_policy = ScoutPolicy()
 
-        # devlog
-        self.log = DevLogger(enabled=True)
+        # orchestrator + actions
+        self.orch = Orchestrator(command_budget=2, defense_floor=80)
+        self.orch.add(ScoutAction(trigger_time=25.0, log_every=6.0, see_radius=14.0))
 
     async def on_start(self) -> None:
         await super().on_start()
 
-        # services prontos (sem fallback)
-        self.roles = RoleService(self)
-        self.maps = MapService(self)
-
-        map_name = self.game_info.map_name  # sem getattr
-        enemy = self.enemy_race.name        # sem try/except
+        map_name = self.game_info.map_name
+        enemy = self.enemy_race.name
 
         fname = f"MyBot__{map_name}__vs__{enemy}__start.jsonl".replace(" ", "_")
         self.log.set_file(fname)
@@ -55,37 +48,22 @@ class MyBot(AresBot):
     async def on_step(self, iteration: int) -> None:
         await super().on_step(iteration)
 
-        # opening do Ares
-        if not self.build_order_runner.build_completed:
-            if self.debug and iteration % 22 == 0:
-                print(
-                    f"[opening] iter={iteration} "
-                    f"t={self.time:.1f} "
-                    f"m={int(self.minerals)} g={int(self.vespene)} "
-                    f"s={int(self.supply_used)}/{int(self.supply_cap)}"
-                )
-            if iteration % 44 == 0:
-                self.log.emit(
-                    "opening_tick",
-                    {
-                        "iteration": iteration,
-                        "time": round(self.time, 2),
-                        "minerals": int(self.minerals),
-                        "gas": int(self.vespene),
-                        "supply_used": int(self.supply_used),
-                        "supply_cap": int(self.supply_cap),
-                    },
-                )
-            return
+        opening_done = bool(self.build_order_runner.build_completed)
 
-        # services obrigatórios (se estiver None -> crash, como você quer)
-        roles = self.roles
-        maps = self.maps
-        assert roles is not None
-        assert maps is not None
-
-        # 1) threat primeiro
+        # Threat sempre avalia (mesmo na opening)
         threat_report = self.threat_policy.evaluate(self)
+
+        ctx = TickContext(
+            iteration=iteration,
+            time=float(self.time),
+            opening_done=opening_done,
+            threatened=bool(threat_report.threatened),
+        )
+
+        # 1) Orchestrator roda SEMPRE (inclusive durante opening)
+        await self.orch.tick(self, ctx)
+
+        # 2) Defesa reativa (pode ficar fora do orch por enquanto)
         if threat_report.threatened:
             acted = await self.threat_policy.act(self, threat_report)
             if acted:
@@ -99,44 +77,25 @@ class MyBot(AresBot):
                         "pos": [round(threat_report.threat_pos.x, 1), round(threat_report.threat_pos.y, 1)]
                         if threat_report.threat_pos
                         else None,
+                        "opening_done": opening_done,
                     },
                 )
 
-        # 2) scout (exemplo: só se não estiver ameaçado)
-        if not threat_report.threatened:
-            scout_acted = await self.scout_policy.act(self, roles=roles, maps=maps)
-            if scout_acted:
-                self.log.emit(
-                    "scout_dispatch",
-                    {
-                        "iteration": iteration,
-                        "time": round(self.time, 2),
-                        "scout_tag": self.scout_policy.state.scout_tag,
-                        "target": [round(maps.enemy_main().x, 1), round(maps.enemy_main().y, 1)],
-                    },
-                )
-
-        # 3) drop (depois)
-        if not threat_report.threatened:
+        # 3) Drop só pós-opening e sem ameaça (por enquanto)
+        if opening_done and (not threat_report.threatened):
             drop_acted = await self.drop_policy.act(self)
             if drop_acted and iteration % 11 == 0:
                 self.log.emit(
                     "drop_tick",
-                    {
-                        "iteration": iteration,
-                        "time": round(self.time, 2),
-                        "phase": str(self.drop_policy.state.phase),
-                    },
+                    {"iteration": iteration, "time": round(self.time, 2), "phase": str(self.drop_policy.state.phase)},
                 )
 
         if self.debug and iteration % 44 == 0:
             print(
-                f"[post_opening] iter={iteration} "
-                f"t={self.time:.1f} "
+                f"[tick] iter={iteration} t={self.time:.1f} "
                 f"m={int(self.minerals)} g={int(self.vespene)} "
                 f"s={int(self.supply_used)}/{int(self.supply_cap)} "
-                f"threat={threat_report.threatened} "
-                f"scout_dispatched={self.scout_policy.state.dispatched} "
+                f"opening_done={opening_done} threat={threat_report.threatened} "
                 f"drop={self.drop_policy.state.phase}"
             )
 

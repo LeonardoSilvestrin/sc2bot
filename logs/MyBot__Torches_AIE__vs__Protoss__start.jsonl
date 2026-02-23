@@ -1,0 +1,2 @@
+{"ts_utc": "2026-02-23T10:22:20.195249+00:00", "event": "bot_init", "payload": {"strategy": "terran_builds.yml/Default"}, "meta": {"map": "Torches AIE"}}
+{"ts_utc": "2026-02-23T10:22:30.464387+00:00", "event": "scout_dispatch", "payload": {"iteration": 280, "time": 25.0, "scout_tag": 4357095425, "target": [124.5, 48.5], "trigger_time": 25.0, "opening_done": false}, "meta": {}}
