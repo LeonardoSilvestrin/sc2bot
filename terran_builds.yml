@@ -1,0 +1,36 @@
+UseData: False
+BuildSelection: Cycle
+MinGamesWinrateBased: 3
+
+BuildChoices:
+  Protoss:
+    BotName: BoiBandido
+    Cycle:
+      - Default
+  Terran:
+    BotName: BoiBandido
+    Cycle:
+      - Default
+  Zerg:
+    BotName: BoiBandido
+    Cycle:
+      - Default
+  Random:
+    BotName: BoiBandido
+    Cycle:
+      - Default
+
+Builds:
+  Default:
+    ConstantWorkerProductionTill: 20
+    AutoSupplyAtSupply: 16
+    OpeningBuildOrder:
+      - 14 supply @ ramp
+      - 16 barracks @ ramp
+      - 16 gas
+      - 0 orbital
+      - 19 expand
+      - 20 marine *2
+      - 1 factory
+      - 21 gas
+      - 1 starport

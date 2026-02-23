@@ -1,3 +1,4 @@
+#run.py
 import random
 import sys
 from os import path
@@ -21,15 +22,11 @@ from bot.main import MyBot
 from ladder import run_ladder_game
 
 plt = platform.system()
-# change if non default setup / linux
-# if having issues with this, modify `map_list` below manually
 if plt == "Windows":
     MAPS_PATH: str = "C:\\Program Files (x86)\\StarCraft II\\Maps"
 elif plt == "Darwin":
     MAPS_PATH: str = "/Applications/StarCraft II/Maps"
 elif plt == "Linux":
-    # path would look a bit like this on linux after installing
-    # SC2 via lutris
     MAPS_PATH: str = (
         "~/<username>/Games/battlenet/drive_c/Program Files (x86)/StarCraft II/Maps"
     )
@@ -45,28 +42,38 @@ MY_BOT_RACE: str = "MyBotRace"
 
 def main():
     bot_name: str = "MyBot"
-    race: Race = Race.Random
+
+    # ✅ não deixe Random aqui, sua build order é Terran
+    race: Race = Race.Terran
 
     __user_config_location__: str = path.abspath(".")
     user_config_path: str = path.join(__user_config_location__, CONFIG_FILE)
-    # attempt to get race and bot name from config file if they exist
+
+    # opcional: permitir override por config.yml, mas valida
     if path.isfile(user_config_path):
         with open(user_config_path) as config_file:
-            config: dict = yaml.safe_load(config_file)
+            config: dict = yaml.safe_load(config_file) or {}
             if MY_BOT_NAME in config:
                 bot_name = config[MY_BOT_NAME]
             if MY_BOT_RACE in config:
-                race = Race[config[MY_BOT_RACE].title()]
+                cfg_race = str(config[MY_BOT_RACE]).title()
+                try:
+                    race = Race[cfg_race]
+                except Exception:
+                    logger.warning(f"Invalid {MY_BOT_RACE}='{cfg_race}', forcing Terran.")
+                    race = Race.Terran
+
+    # ✅ se alguém colocar Random no config, ainda assim trava tudo.
+    # então aqui eu garanto Terran:
+    race = Race.Terran
 
     bot1 = Bot(race, MyBot(), bot_name)
 
     if "--LadderServer" in sys.argv:
-        # Ladder game started by LadderManager
         print("Starting ladder game...")
         result, opponentid = run_ladder_game(bot1)
         print(result, " against opponent ", opponentid)
     else:
-        # Local game
         map_list: List[str] = [
             p.name.replace(f".{MAP_FILE_EXT}", "")
             for p in Path(MAPS_PATH).glob(f"*.{MAP_FILE_EXT}")
@@ -75,15 +82,7 @@ def main():
         if len(map_list) == 0:
             logger.error(f"Can't find maps, please check `MAPS_PATH` in `run.py'")
             logger.info("Trying back up option")
-            logger.info(
-                f"\nLooking for maps in {MAPS_PATH} but didn't find anything. \n"
-                f"If this path is correct please ensure maps are present. \n"
-                f"If this path is incorrect please edit the `MAPS_PATH` in `run.py` \n"
-                f"Tip: If you're using linux, MAPS_PATH will definitely need updating\n"
-            )
-
-            # see if user has any recent ladder maps
-            map_list: List[str] = [
+            map_list = [
                 "PylonAIE_v4",
                 "PersephoneAIE_v4",
                 "TorchesAIE_v4",
@@ -104,6 +103,5 @@ def main():
         )
 
 
-# Start game
 if __name__ == "__main__":
     main()

@@ -2,30 +2,43 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "SC2 - Local (run.py)",
-      "type": "debugpy",
+      "name": "SC2 Bot - Local (run.py)",
+      "type": "python",
       "request": "launch",
       "program": "${workspaceFolder}/run.py",
       "console": "integratedTerminal",
-      "cwd": "${workspaceFolder}",
       "justMyCode": true,
+      "cwd": "${workspaceFolder}",
       "env": {
-        "PYTHONUNBUFFERED": "1"
-      },
-      "args": []
+        "SC2BOT_DEV_LOG": "1",
+        "SC2BOT_DEV_LOG_DIR": "${workspaceFolder}/logs"
+      }
     },
     {
-      "name": "SC2 - Ladder (run.py --LadderServer)",
-      "type": "debugpy",
+      "name": "SC2 Bot - Ladder (run.py --LadderServer)",
+      "type": "python",
       "request": "launch",
       "program": "${workspaceFolder}/run.py",
       "console": "integratedTerminal",
-      "cwd": "${workspaceFolder}",
       "justMyCode": true,
+      "cwd": "${workspaceFolder}",
+      "args": ["--LadderServer"],
       "env": {
-        "PYTHONUNBUFFERED": "1"
-      },
-      "args": ["--LadderServer"]
+        "SC2BOT_DEV_LOG": "0"
+      }
+    },
+    {
+      "name": "SC2 Bot - Local (module bot.main)",
+      "type": "python",
+      "request": "launch",
+      "module": "bot.main",
+      "console": "integratedTerminal",
+      "justMyCode": true,
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "SC2BOT_DEV_LOG": "1",
+        "SC2BOT_DEV_LOG_DIR": "${workspaceFolder}/logs"
+      }
     }
   ]
 }
