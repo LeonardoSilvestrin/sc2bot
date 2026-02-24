@@ -8,9 +8,42 @@
 │   ├── launch.json
 │   └── settings.json
 ├── bot
-│   ├── policies
+│   ├── actions
+│   │   ├── __init__.py
+│   │   ├── anchor_tank.py
+│   │   ├── base.py
+│   │   ├── defend.py
 │   │   ├── drop.py
+│   │   ├── macro.py
+│   │   └── scout.py
+│   ├── config
+│   │   ├── __init__.py
+│   │   ├── loader.py
+│   │   └── schema.py
+│   ├── core
+│   │   ├── __init__.py
+│   │   ├── allocator.py
+│   │   ├── blackboard.py
+│   │   ├── context.py
+│   │   └── orchestrator.py
+│   ├── policies
+│   │   ├── __init__.py
+│   │   ├── base.py
+│   │   ├── drop.py
+│   │   ├── scout.py
+│   │   ├── strategy.py
 │   │   └── threat.py
+│   ├── services
+│   │   ├── __init__.py
+│   │   ├── grid.py
+│   │   ├── map.py
+│   │   ├── query.py
+│   │   ├── roles.py
+│   │   └── workers.py
+│   ├── utils
+│   │   ├── __init__.py
+│   │   ├── geometry.py
+│   │   └── time.py
 │   ├── __init__.py
 │   ├── devlog.py
 │   └── main.py
@@ -18,9 +51,9 @@
 │   └── None-protoss.json
 ├── logs
 │   ├── MyBot__Ley_Lines_AIE__vs__Protoss__start.jsonl
-│   ├── MyBot__Ley_Lines_AIE__vs__Terran__start.jsonl
+│   ├── MyBot__Ley_Lines_AIE__vs__Zerg__start.jsonl
 │   ├── MyBot__Persephone_AIE__vs__Terran__start.jsonl
-│   └── MyBot__Torches_AIE__vs__Terran__start.jsonl
+│   └── MyBot__Torches_AIE__vs__Protoss__start.jsonl
 ├── scripts
 │   ├── create_ladder_zip.py
 │   ├── create_pyinstaller_exe.py
@@ -46,6 +79,347 @@
 # bot/__init__.py
 ```python
 
+```
+
+# bot/actions/__init__.py
+```python
+
+```
+
+# bot/actions/anchor_tank.py
+```python
+#bot/actions/anchor_tank.py
+
+class AnchorTankAction:
+    """Ação para posicionar siege tank em choke."""
+    pass
+```
+
+# bot/actions/base.py
+```python
+#bot/actions/base.py
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Protocol
+
+
+@dataclass
+class TickContext:
+    iteration: int
+    time: float
+    opening_done: bool
+    threatened: bool
+
+
+class Action(Protocol):
+    name: str
+    priority: int
+    allow_during_opening: bool
+
+    def is_done(self) -> bool: ...
+    async def step(self, bot, ctx: TickContext) -> bool: ...
+```
+
+# bot/actions/defend.py
+```python
+#bot/actions/defend.py
+
+class DefendAction:
+    """Ação de defesa."""
+    pass
+```
+
+# bot/actions/drop.py
+```python
+#bot/actions/drop.py
+
+class DropAction:
+    """Ação de drop."""
+    pass
+```
+
+# bot/actions/macro.py
+```python
+#bot/actions/macro.py
+
+class MacroAction:
+    """Ação de manutenção macro."""
+    pass
+```
+
+# bot/actions/scout.py
+```python
+#bot/actions/scout.py
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Optional
+
+from ares.consts import UnitRole
+from sc2.position import Point2
+from sc2.unit import Unit
+
+
+@dataclass
+class ScoutState:
+    dispatched: bool = False
+    arrived: bool = False
+    scout_tag: Optional[int] = None
+    last_seen_log_at: float = 0.0
+
+
+class ScoutAction:
+    name = "scout_main_scv"
+    priority = 30
+    allow_during_opening = True
+
+    def __init__(self, *, trigger_time: float = 25.0, log_every: float = 6.0, see_radius: float = 14.0):
+        self.trigger_time = trigger_time
+        self.log_every = log_every
+        self.see_radius = see_radius
+        self.state = ScoutState()
+
+    def is_done(self) -> bool:
+        # Scout “não termina” por enquanto; ele continua reportando até morrer.
+        return False
+
+    def _enemy_main(self, bot) -> Point2:
+        return bot.enemy_start_locations[0]
+
+    def _get_scout(self, bot) -> Optional[Unit]:
+        if self.state.scout_tag is None:
+            return None
+        return bot.units.find_by_tag(self.state.scout_tag)
+
+
+    async def step(self, bot, ctx) -> bool:
+        target = self._enemy_main(bot)
+
+        # 1) Só dispara após trigger_time
+        if not self.state.dispatched:
+            if bot.time < self.trigger_time:
+                return False
+
+            # pega worker via Ares
+            worker: Unit = bot.mediator.select_worker(target_position=target)
+
+            # marca role scout
+            bot.mediator.assign_role(tag=worker.tag, role=UnitRole.BUILD_RUNNER_SCOUT, remove_from_squad=True)
+
+            # envia
+            worker.move(target)
+
+            self.state.dispatched = True
+            self.state.scout_tag = worker.tag
+
+            bot.log.emit(
+                "scout_dispatch",
+                {
+                    "iteration": ctx.iteration,
+                    "time": round(bot.time, 2),
+                    "scout_tag": worker.tag,
+                    "target": [round(target.x, 1), round(target.y, 1)],
+                    "trigger_time": self.trigger_time,
+                    "opening_done": ctx.opening_done,
+                },
+            )
+            return True  # consumiu budget (emitimos comando)
+
+        # 2) Pós-dispatch: log do que vê
+        scout = self._get_scout(bot)
+        if scout is None:
+            return False
+
+        # arrived 1x
+        if not self.state.arrived and scout.distance_to(target) <= 8:
+            self.state.arrived = True
+            bot.log.emit(
+                "scout_arrived",
+                {
+                    "iteration": ctx.iteration,
+                    "time": round(bot.time, 2),
+                    "scout_tag": scout.tag,
+                    "pos": [round(scout.position.x, 1), round(scout.position.y, 1)],
+                },
+            )
+
+        # log structures seen periodically
+        if (bot.time - self.state.last_seen_log_at) >= self.log_every:
+            self.state.last_seen_log_at = bot.time
+
+            seen = bot.enemy_structures.closer_than(self.see_radius, scout.position)
+            payload = {
+                "iteration": ctx.iteration,
+                "time": round(bot.time, 2),
+                "scout_tag": scout.tag,
+                "scout_pos": [round(scout.position.x, 1), round(scout.position.y, 1)],
+                "count": int(seen.amount),
+                "types": [s.type_id.name for s in seen],
+                "structures": [
+                    {"type": s.type_id.name, "pos": [round(s.position.x, 1), round(s.position.y, 1)], "hp": int(s.health)}
+                    for s in seen
+                ],
+            }
+            bot.log.emit("scout_seen_structures", payload)
+
+        return False
+```
+
+# bot/config/__init__.py
+```python
+
+```
+
+# bot/config/loader.py
+```python
+#bot/config/loader.py
+
+class ConfigLoader:
+    """Carregamento de config externa."""
+    pass
+```
+
+# bot/config/schema.py
+```python
+#bot/config/schema.py
+
+class ConfigSchema:
+    """Definições de schema para validação."""
+    pass
+```
+
+# bot/core/__init__.py
+```python
+
+```
+
+# bot/core/allocator.py
+```python
+#bot/core/allocator.py
+
+class Allocator:
+    """Responsável por reservar/unlock unidades."""
+    pass
+```
+
+# bot/core/blackboard.py
+```python
+#bot/core/blackboard.py
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Optional
+
+from sc2.position import Point2
+
+
+@dataclass
+class Blackboard:
+    opening_done: bool = False
+    enemy_main: Optional[Point2] = None
+    threatened: bool = False
+
+    @staticmethod
+    def build(bot) -> "Blackboard":
+        bb = Blackboard()
+        try:
+            bb.opening_done = bool(getattr(bot.build_order_runner, "build_completed", False))
+        except Exception:
+            bb.opening_done = False
+
+        # enemy main best-effort
+        try:
+            if bot.enemy_start_locations:
+                bb.enemy_main = bot.enemy_start_locations[0]
+        except Exception:
+            bb.enemy_main = None
+
+        return bb
+```
+
+# bot/core/context.py
+```python
+#bot/core/context.py
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Optional
+
+from bot.devlog import DevLogger
+from bot.services.roles import RoleService
+
+
+@dataclass
+class BotContext:
+    """
+    Container de serviços, config e logger.
+    A ideia: actions/policies recebem (ctx, bb) e não ficam pescando bot.mediator.
+    """
+    bot: Any
+    log: DevLogger
+    roles: RoleService
+    cfg: Optional[dict] = None
+
+    @staticmethod
+    def from_bot(bot: Any, log: DevLogger, *, cfg: Optional[dict] = None) -> "BotContext":
+        return BotContext(
+            bot=bot,
+            log=log,
+            roles=RoleService(bot),
+            cfg=cfg,
+        )
+```
+
+# bot/core/orchestrator.py
+```python
+#bot/core/orchestrator.py
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import List
+
+from bot.actions.base import Action, TickContext
+
+
+@dataclass
+class Orchestrator:
+    """
+    MVP:
+      - Agenda ações por prioridade.
+      - Gating por opening (allow_during_opening).
+      - Budget de comandos por tick.
+      - Preempção simples em ameaça.
+    """
+    command_budget: int = 2
+    defense_floor: int = 80  # se threatened, só roda ações >= isso
+
+    actions: List[Action] = field(default_factory=list)
+
+    def add(self, action: Action) -> None:
+        self.actions.append(action)
+
+    async def tick(self, bot, ctx: TickContext) -> None:
+        runnable: List[Action] = []
+
+        for a in self.actions:
+            if a.is_done():
+                continue
+            if (not ctx.opening_done) and (not a.allow_during_opening):
+                continue
+            if ctx.threatened and a.priority < self.defense_floor:
+                continue
+            runnable.append(a)
+
+        runnable.sort(key=lambda x: x.priority, reverse=True)
+
+        budget = self.command_budget
+        for a in runnable:
+            if budget <= 0:
+                break
+            used = await a.step(bot, ctx)
+            if used:
+                budget -= 1
 ```
 
 # bot/devlog.py
@@ -111,6 +485,9 @@ from typing import Optional
 from ares import AresBot
 from sc2.data import Result
 
+from bot.actions.base import TickContext
+from bot.actions.scout import ScoutAction
+from bot.core.orchestrator import Orchestrator
 from bot.devlog import DevLogger
 from bot.policies.drop import DropPolicy
 from bot.policies.threat import ThreatPolicy
@@ -121,30 +498,23 @@ class MyBot(AresBot):
         super().__init__(game_step_override)
         self.debug = debug
 
-        # policies
+        self.log = DevLogger(enabled=True)
+
+        # policies (legado por enquanto)
         self.threat_policy = ThreatPolicy(defend_radius=22.0, min_enemy=1)
         self.drop_policy = DropPolicy(enabled=True, min_marines=8, load_count=8)
 
-        # devlog
-        self.log = DevLogger(enabled=True)
+        # orchestrator + actions
+        self.orch = Orchestrator(command_budget=2, defense_floor=80)
+        self.orch.add(ScoutAction(trigger_time=25.0, log_every=6.0, see_radius=14.0))
 
     async def on_start(self) -> None:
         await super().on_start()
 
-        # log file por partida
-        # tenta um nome estável; se faltar info, usa timestamp
-        map_name = getattr(self.game_info.map_name, "name", None) or str(getattr(self.game_info, "map_name", "map"))
-        enemy = "opponent"
-        try:
-            enemy = self.enemy_race.name if self.enemy_race else "opponent"
-        except Exception:
-            pass
+        map_name = self.game_info.map_name
+        enemy = self.enemy_race.name
 
-        fname = f"MyBot__{map_name}__vs__{enemy}__{int(self.time)}.jsonl".replace(" ", "_")
-        # se "int(self.time)" vier 0 no start, usa path fallback
-        if fname.endswith("__0.jsonl"):
-            fname = f"MyBot__{map_name}__vs__{enemy}__start.jsonl".replace(" ", "_")
-
+        fname = f"MyBot__{map_name}__vs__{enemy}__start.jsonl".replace(" ", "_")
         self.log.set_file(fname)
 
         if self.debug:
@@ -156,38 +526,22 @@ class MyBot(AresBot):
     async def on_step(self, iteration: int) -> None:
         await super().on_step(iteration)
 
-        # Enquanto a opening do Ares não terminou, não faça macro/combate paralelos
-        if not self.build_order_runner.build_completed:
-            if self.debug and iteration % 22 == 0:
-                print(
-                    f"[opening] iter={iteration} "
-                    f"t={self.time:.1f} "
-                    f"m={int(self.minerals)} g={int(self.vespene)} "
-                    f"s={int(self.supply_used)}/{int(self.supply_cap)}"
-                )
-            if iteration % 44 == 0:
-                self.log.emit(
-                    "opening_tick",
-                    {
-                        "iteration": iteration,
-                        "time": round(self.time, 2),
-                        "minerals": int(self.minerals),
-                        "gas": int(self.vespene),
-                        "supply_used": int(self.supply_used),
-                        "supply_cap": int(self.supply_cap),
-                    },
-                )
-            return
+        opening_done = bool(self.build_order_runner.build_completed)
 
-        # ----------------------------
-        # Pós-opening: policies
-        # Ordem importa:
-        #   1) Threat: não morrer
-        #   2) Drop: fazer algo agressivo sem depender de “A-move cego”
-        # ----------------------------
-
-        # Threat
+        # Threat sempre avalia (mesmo na opening)
         threat_report = self.threat_policy.evaluate(self)
+
+        ctx = TickContext(
+            iteration=iteration,
+            time=float(self.time),
+            opening_done=opening_done,
+            threatened=bool(threat_report.threatened),
+        )
+
+        # 1) Orchestrator roda SEMPRE (inclusive durante opening)
+        await self.orch.tick(self, ctx)
+
+        # 2) Defesa reativa (pode ficar fora do orch por enquanto)
         if threat_report.threatened:
             acted = await self.threat_policy.act(self, threat_report)
             if acted:
@@ -201,30 +555,25 @@ class MyBot(AresBot):
                         "pos": [round(threat_report.threat_pos.x, 1), round(threat_report.threat_pos.y, 1)]
                         if threat_report.threat_pos
                         else None,
+                        "opening_done": opening_done,
                     },
                 )
 
-        # Drop (só tenta se não estiver em ameaça imediata forte)
-        # Heurística seca: se tem ameaça, prioriza defesa e não inicia drop.
-        if not threat_report.threatened:
+        # 3) Drop só pós-opening e sem ameaça (por enquanto)
+        if opening_done and (not threat_report.threatened):
             drop_acted = await self.drop_policy.act(self)
             if drop_acted and iteration % 11 == 0:
                 self.log.emit(
                     "drop_tick",
-                    {
-                        "iteration": iteration,
-                        "time": round(self.time, 2),
-                        "phase": str(self.drop_policy.state.phase),
-                    },
+                    {"iteration": iteration, "time": round(self.time, 2), "phase": str(self.drop_policy.state.phase)},
                 )
 
         if self.debug and iteration % 44 == 0:
             print(
-                f"[post_opening] iter={iteration} "
-                f"t={self.time:.1f} "
+                f"[tick] iter={iteration} t={self.time:.1f} "
                 f"m={int(self.minerals)} g={int(self.vespene)} "
                 f"s={int(self.supply_used)}/{int(self.supply_cap)} "
-                f"threat={threat_report.threatened} "
+                f"opening_done={opening_done} threat={threat_report.threatened} "
                 f"drop={self.drop_policy.state.phase}"
             )
 
@@ -233,6 +582,20 @@ class MyBot(AresBot):
         if self.debug:
             print(f"[game_end] result={game_result}")
         self.log.emit("game_end", {"result": str(game_result)})
+```
+
+# bot/policies/__init__.py
+```python
+
+```
+
+# bot/policies/base.py
+```python
+#bot/policies/base.py
+
+class Policy:
+    """Classe base para policies estratégicas."""
+    pass
 ```
 
 # bot/policies/drop.py
@@ -497,6 +860,62 @@ class DropPolicy:
         return issued
 ```
 
+# bot/policies/scout.py
+```python
+#bot/policies/scout.py
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from sc2.unit import Unit
+
+from bot.services.map import MapService
+from bot.services.roles import RoleService
+
+
+@dataclass
+class ScoutState:
+    dispatched: bool = False
+    scout_tag: int | None = None
+
+
+class ScoutPolicy:
+    """
+    MVP de scout:
+      - quando chamado, se ainda não despachou:
+          - pega 1 SCV via RoleService.request_worker_scout()
+          - manda mover/atacar-move até a main inimiga (aqui: move simples)
+          - marca dispatched
+
+    Sem fallback.
+    """
+
+    def __init__(self) -> None:
+        self.state = ScoutState()
+
+    async def act(self, bot, *, roles: RoleService, maps: MapService) -> bool:
+        if self.state.dispatched:
+            return False
+
+        target = maps.enemy_main()
+
+        scout: Unit = roles.request_worker_scout(target_position=target)
+        scout.move(target)
+
+        self.state.dispatched = True
+        self.state.scout_tag = scout.tag
+        return True
+```
+
+# bot/policies/strategy.py
+```python
+#bot/policies/strategy.py
+
+class StrategyPolicy:
+    """Define fase do jogo e estratégia ativa."""
+    pass
+```
+
 # bot/policies/threat.py
 ```python
 #bot/policies/threat.py
@@ -605,6 +1024,128 @@ class ThreatPolicy:
                 issued = True
 
         return issued
+```
+
+# bot/services/__init__.py
+```python
+
+```
+
+# bot/services/grid.py
+```python
+#bot/services/grid.py
+
+class GridService:
+    """Encapsula grids e helpers de pathfinding."""
+    pass
+```
+
+# bot/services/map.py
+```python
+#bot/services/map.py
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from sc2.position import Point2
+
+
+@dataclass(frozen=True)
+class MapService:
+    """
+    Encapsula leituras de "onde ir" no mapa.
+
+    Sem fallback:
+    - Se enemy_start_locations não existir ou estiver vazio -> crash.
+    """
+
+    bot: object  # AresBot / BotAI
+
+    def enemy_main(self) -> Point2:
+        return self.bot.enemy_start_locations[0]
+```
+
+# bot/services/query.py
+```python
+#bot/services/query.py
+
+class QueryService:
+    """Consultas rápidas de unidades."""
+    pass
+```
+
+# bot/services/roles.py
+```python
+#bot/services/roles.py
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from ares.consts import UnitRole
+from sc2.ids.unit_typeid import UnitTypeId as U
+from sc2.position import Point2
+from sc2.unit import Unit
+
+
+@dataclass(frozen=True)
+class RoleService:
+    """
+    Wrapper mínimo e direto do UnitRoleManager via mediator.
+
+    Regra: sem fallback.
+    Se mediator não tiver o método esperado, crasha.
+    """
+
+    bot: object  # AresBot / BotAI
+
+    def assign(self, *, unit: Unit, role: UnitRole, remove_from_squad: bool = True) -> None:
+        self.bot.mediator.assign_role(tag=unit.tag, role=role, remove_from_squad=remove_from_squad)
+
+    def get_scout_workers(self):
+        return self.bot.mediator.get_units_from_role(role=UnitRole.BUILD_RUNNER_SCOUT, unit_type=U.SCV)
+
+    def request_worker_scout(self, *, target_position: Point2) -> Unit:
+        """
+        Seleciona 1 worker e marca como scout.
+
+        - Usa select_worker do Ares (não é python-sc2 puro).
+        - Atribui UnitRole.BUILD_RUNNER_SCOUT.
+        """
+        worker: Unit = self.bot.mediator.select_worker(target_position=target_position)
+        self.assign(unit=worker, role=UnitRole.BUILD_RUNNER_SCOUT, remove_from_squad=True)
+        return worker
+```
+
+# bot/services/workers.py
+```python
+#bot/services/workers.py
+
+class WorkerService:
+    """Seleção inteligente de workers."""
+    pass
+```
+
+# bot/utils/__init__.py
+```python
+
+```
+
+# bot/utils/geometry.py
+```python
+#bot/utils/geometry.py
+
+class GeometryUtils:
+    """Funções auxiliares geométricas."""
+    pass
+```
+
+# bot/utils/time.py
+```python
+#bot/utils/time.py
+
+class TimeUtils:
+    """Helpers de tempo e cooldown."""
+    pass
 ```
 
 ===== terran_builds.yml (ROOT) =====
