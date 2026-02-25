@@ -1,4 +1,4 @@
-# bot/runtime/attention.py
+# bot/mind/attention.py
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -14,10 +14,10 @@ from bot.mind.awareness import Awareness
 @dataclass(frozen=True)
 class Attention:
     """
-    Snapshot do tick atual.
-    - IMUTÁVEL
-    - Recalculado todo tick via derive_attention()
-    - Read-only para planners/tasks
+    Tick snapshot (read-only).
+    - immutable
+    - derived each tick
+    - should NOT carry history; history belongs in Awareness
     """
 
     opening_done: bool
@@ -47,8 +47,7 @@ def _orbital_scan_status(bot) -> Tuple[bool, float]:
 
 def derive_attention(bot, *, awareness: Awareness, threat: Threat) -> Attention:
     """
-    Deriva o snapshot do tick atual.
-    Regra: NÃO escreve em awareness (sem side-effects).
+    Derive tick snapshot. Rule: no side-effects (do not write awareness).
     """
     opening_done = bool(getattr(bot, "build_order_runner", None) and bot.build_order_runner.build_completed)
 

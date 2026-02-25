@@ -1,33 +1,36 @@
+# bot/tasks/defend.py
 from __future__ import annotations
+
+from dataclasses import dataclass
 
 from sc2.ids.unit_typeid import UnitTypeId as U
 
+from bot.devlog import DevLogger
 from bot.mind.attention import Attention
-from bot.tasks.base import TaskStatus, TaskTick
+from bot.tasks.base import BaseTask, TaskTick
 
 
-class Defend:
-    task_id = "defend_bases"
-    domain = "DEFENSE"
-    commitment = 90
-    status = TaskStatus.ACTIVE
+@dataclass
+class Defend(BaseTask):
+    """
+    Defesa reativa das bases.
 
-    def is_done(self) -> bool:
-        return False
+    Contrato:
+      - Implementa Task via BaseTask (status(), pause(), abort(), etc).
+      - Consome budget quando emite comandos.
+    """
 
-    def evaluate(self, bot, attention: Attention) -> int:
+    log: DevLogger | None = None
+    log_every_iters: int = 11
+
+    def __init__(self, *, log: DevLogger | None = None, log_every_iters: int = 11):
+        super().__init__(task_id="defend_bases", domain="DEFENSE", commitment=90)
+        self.log = log
+        self.log_every_iters = int(log_every_iters)
+
+    async def on_step(self, bot, tick: TaskTick, attention: Attention) -> bool:
         if not attention.threatened or not attention.threat_pos:
-            return 0
-        return 50 + int(attention.defense_urgency)
-
-    async def pause(self, bot, reason: str) -> None:
-        bot.log.emit("defend_pause_ignored", {"reason": reason})
-
-    async def abort(self, bot, reason: str) -> None:
-        bot.log.emit("defend_abort_ignored", {"reason": reason})
-
-    async def step(self, bot, tick: TaskTick, attention: Attention) -> bool:
-        if not attention.threatened or not attention.threat_pos:
+            self._paused("no_threat")
             return False
 
         defenders = bot.units.of_type(
@@ -44,6 +47,7 @@ class Defend:
             }
         )
         if defenders.amount == 0:
+            self._paused("no_defenders")
             return False
 
         local = defenders.closer_than(45, attention.threat_pos)
@@ -54,6 +58,7 @@ class Defend:
         army = local - medivacs
 
         issued = False
+
         for u in army:
             if u.is_idle:
                 u.attack(attention.threat_pos)
@@ -64,16 +69,20 @@ class Defend:
                 m.move(attention.threat_pos.towards(bot.start_location, 6))
                 issued = True
 
-        if issued and tick.iteration % 11 == 0:
-            bot.log.emit(
-                "defend_tick",
-                {
-                    "iteration": tick.iteration,
-                    "time": round(bot.time, 2),
-                    "enemy_count": int(attention.enemy_count_near_bases),
-                    "urgency": int(attention.defense_urgency),
-                    "pos": [round(attention.threat_pos.x, 1), round(attention.threat_pos.y, 1)],
-                },
-            )
+        if issued:
+            self._active("defending")
+            if self.log and (tick.iteration % self.log_every_iters == 0):
+                self.log.emit(
+                    "defend_tick",
+                    {
+                        "iteration": int(tick.iteration),
+                        "time": round(float(getattr(bot, "time", 0.0)), 2),
+                        "enemy_count": int(attention.enemy_count_near_bases),
+                        "urgency": int(attention.defense_urgency),
+                        "pos": [round(attention.threat_pos.x, 1), round(attention.threat_pos.y, 1)],
+                    },
+                )
+        else:
+            self._active("defending_no_orders")
 
-        return issued
+        return bool(issued)

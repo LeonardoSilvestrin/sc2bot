@@ -4,203 +4,110 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
-from ares.consts import UnitRole
-from sc2.unit import Unit
+from sc2.position import Point2
 
+from ares.consts import UnitRole
+
+from bot.devlog import DevLogger
 from bot.infra.unit_leases import UnitLeases
 from bot.mind.attention import Attention
 from bot.mind.awareness import Awareness
-from bot.tasks.base import TaskStatus, TaskTick
+from bot.tasks.base import BaseTask, TaskTick
 
 
 @dataclass
-class ScoutState:
-    dispatched: bool = False
-    arrived: bool = False
-    scout_tag: Optional[int] = None
-    last_seen_log_at: float = 0.0
+class Scout(BaseTask):
+    leases: UnitLeases = None
+    awareness: Awareness = None
+    log: DevLogger | None = None
 
-
-class Scout:
-    """
-    INTEL task:
-      - Dispara um SCV scout após trigger_time
-      - Move até enemy main (Ares map wrapper)
-      - Marca flags em Awareness
-      - Loga estruturas vistas periodicamente
-      - Usa UnitLeases para evitar disputa por unidade
-    """
-
-    task_id = "scout_worker_main"
-    domain = "INTEL"
-    commitment = 10
-    status = TaskStatus.ACTIVE
+    trigger_time: float = 25.0
+    log_every: float = 6.0
+    see_radius: float = 14.0
 
     def __init__(
         self,
         *,
         leases: UnitLeases,
         awareness: Awareness,
+        log: DevLogger | None = None,
         trigger_time: float = 25.0,
         log_every: float = 6.0,
         see_radius: float = 14.0,
-        lease_ttl: float = 10.0,
-        pause_at_urgency: int = 70,
-        resume_below_urgency: int = 50,
     ):
+        super().__init__(task_id="scout_scv", domain="INTEL")
         self.leases = leases
         self.awareness = awareness
-
+        self.log = log
         self.trigger_time = float(trigger_time)
         self.log_every = float(log_every)
         self.see_radius = float(see_radius)
-        self.lease_ttl = float(lease_ttl)
 
-        self.pause_at_urgency = int(pause_at_urgency)
-        self.resume_below_urgency = int(resume_below_urgency)
+        self._scv_tag: Optional[int] = None
+        self._target: Optional[Point2] = None
+        self._last_log_t: float = 0.0
 
-        self.state = ScoutState()
+    async def on_step(self, bot, tick: TaskTick, attention: Attention) -> bool:
+        now = float(tick.time)
 
-    def is_done(self) -> bool:
-        return self.status == TaskStatus.DONE
-
-    def _get_scout(self, bot) -> Optional[Unit]:
-        if self.state.scout_tag is None:
-            return None
-        return bot.units.find_by_tag(self.state.scout_tag)
-
-    def evaluate(self, bot, attention: Attention) -> int:
-        # Se já finalizou, não compete
-        if self.is_done():
-            return 0
-
-        # Evita insistir quando defesa está apertada
-        if attention.threatened and attention.defense_urgency >= self.pause_at_urgency:
-            return 1
-
-        # Se já despachou, score baixo (deixa outras coisas acontecerem)
-        if self.state.dispatched:
-            return 2
-
-        # Ainda não despachou => interesse moderado
-        return 20
-
-    async def pause(self, bot, reason: str) -> None:
-        if self.status != TaskStatus.PAUSED:
-            self.status = TaskStatus.PAUSED
-            bot.log.emit("scout_paused", {"reason": reason, "time": round(float(getattr(bot, "time", 0.0)), 2)})
-
-    async def abort(self, bot, reason: str) -> None:
-        tag = int(self.state.scout_tag) if self.state.scout_tag is not None else None
-
-        # solta lease se existia
-        self.leases.release_owner(task_id=self.task_id)
-
-        self.status = TaskStatus.DONE
-        bot.log.emit("scout_aborted", {"reason": reason, "time": round(float(bot.time), 2), "scout_tag": tag})
-
-    async def step(self, bot, tick: TaskTick, attention: Attention) -> bool:
-        if self.is_done():
+        if now < self.trigger_time:
+            self._paused("before_trigger_time")
             return False
 
-        # pausa/resume automático
-        if self.status == TaskStatus.PAUSED:
-            if attention.defense_urgency < self.resume_below_urgency:
-                self.status = TaskStatus.ACTIVE
-                bot.log.emit("scout_resumed", {"time": round(float(bot.time), 2)})
-            else:
+        if self._scv_tag is None:
+            if bot.workers.amount == 0:
+                self._paused("no_worker_available")
                 return False
 
-        if attention.threatened and attention.defense_urgency >= self.pause_at_urgency:
-            await self.pause(bot, reason=f"threat urgency={attention.defense_urgency}")
-            return False
-
-        target, source = bot.ares.map.enemy_main()
-        if source != "ENEMY_START" and tick.iteration % 44 == 0:
-            bot.log.emit("map_fallback", {"source": source, "time": round(float(bot.time), 2)})
-
-        # 1) disparo (uma vez)
-        if not self.state.dispatched:
-            if float(bot.time) < self.trigger_time:
-                return False
-
-            worker: Unit = bot.ares.roles.request_worker_scout(target_position=target)
-
-            now = float(bot.time)
-            ok = self.leases.claim(
-                task_id=self.task_id,
-                unit_tag=int(worker.tag),
-                role=UnitRole.BUILD_RUNNER_SCOUT,
+            scv = bot.workers.random
+            ok = self.leases.try_acquire(
+                self.task_id,
+                unit_tag=int(scv.tag),
                 now=now,
-                ttl=self.lease_ttl,
-                force=False,
+                role=UnitRole.SCOUTING,
             )
             if not ok:
-                # alguém já pegou a unidade; tenta de novo em ticks futuros
+                self._paused("lease_denied")
                 return False
 
-            worker.move(target)
+            self._scv_tag = int(scv.tag)
+            self.awareness.mark_scv_dispatched(now=now)
 
-            self.state.dispatched = True
-            self.state.scout_tag = int(worker.tag)
+            try:
+                self._target = bot.enemy_start_locations[0]
+            except Exception:
+                self._target = bot.game_info.map_center
 
-            # awareness persistente
-            self.awareness.intel.scv_dispatched = True
-            self.awareness.intel.last_scv_dispatch_at = now
+            if self.log:
+                self.log.emit("scout_started", {"t": round(now, 2), "scv_tag": self._scv_tag})
+            self._active("scout_started")
 
-            bot.log.emit(
-                "scout_dispatch",
-                {
-                    "iteration": tick.iteration,
-                    "time": round(now, 2),
-                    "scout_tag": int(worker.tag),
-                    "target": [round(target.x, 1), round(target.y, 1)],
-                    "trigger_time": self.trigger_time,
-                    "map_source": source,
-                },
-            )
-            return True
-
-        # 2) pós-dispatch
-        scout = self._get_scout(bot)
-        if scout is None:
-            await self.abort(bot, reason="scout_missing")
+        scv = bot.units.find_by_tag(self._scv_tag)
+        if scv is None:
+            self.leases.release_owner(task_id=self.task_id)
+            self._done("unit_missing")
+            self.awareness.emit("scout_lost", now=now)
             return False
 
-        # mantém lease viva
-        self.leases.touch(task_id=self.task_id, unit_tag=int(scout.tag), now=float(bot.time), ttl=self.lease_ttl)
+        # keep lease alive
+        self.leases.touch(task_id=self.task_id, unit_tag=self._scv_tag, now=now)
 
-        # chegou no main?
-        if (not self.state.arrived) and scout.distance_to(target) <= 8:
-            self.state.arrived = True
-            self.awareness.intel.scv_arrived_main = True
+        if self._target:
+            scv.move(self._target)
 
-            bot.log.emit(
-                "scout_arrived",
-                {
-                    "iteration": tick.iteration,
-                    "time": round(float(bot.time), 2),
-                    "scout_tag": int(scout.tag),
-                    "pos": [round(scout.position.x, 1), round(scout.position.y, 1)],
-                },
-            )
+        if self._target and scv.position.distance_to(self._target) <= self.see_radius:
+            if not self.awareness.intel_scv_arrived_main(now=now):
+                self.awareness.mark_scv_arrived_main(now=now)
+                if self.log:
+                    self.log.emit("scout_arrived_main", {"t": round(now, 2)})
 
-        # log periódico do que viu
-        if (float(bot.time) - float(self.state.last_seen_log_at)) >= self.log_every:
-            self.state.last_seen_log_at = float(bot.time)
+        if now - self._last_log_t >= self.log_every:
+            self._last_log_t = now
+            if self.log:
+                self.log.emit(
+                    "scout_status",
+                    {"t": round(now, 2), "arrived": bool(self.awareness.intel_scv_arrived_main(now=now))},
+                )
 
-            seen = bot.enemy_structures.closer_than(self.see_radius, scout.position)
-            bot.log.emit(
-                "scout_seen_structures",
-                {
-                    "iteration": tick.iteration,
-                    "time": round(float(bot.time), 2),
-                    "scout_tag": int(scout.tag),
-                    "scout_pos": [round(scout.position.x, 1), round(scout.position.y, 1)],
-                    "count": int(seen.amount),
-                    "types": [s.type_id.name for s in seen],
-                },
-            )
-
-        # não emite comando todo tick (evita spam)
-        return False
+        self._active("scouting")
+        return True

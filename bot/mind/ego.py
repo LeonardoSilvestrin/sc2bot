@@ -1,3 +1,4 @@
+# bot/mind/ego.py
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -12,10 +13,14 @@ from bot.tasks.base import Task, TaskTick
 
 
 @dataclass
-class egoConfig:
+class EgoConfig:
     command_budget: int = 2
     soft_preempt_at: int = 60
     hard_preempt_at: int = 80
+
+    # audit/debug
+    log_ego_steps: bool = True
+    log_every_iters: int = 22  # throttle: loga a cada N iters mesmo sem mudança
 
 
 @dataclass
@@ -25,12 +30,16 @@ class Active:
 
 
 class Ego:
-    def __init__(self, *, leases: UnitLeases, log: DevLogger, cfg: Optional[egoConfig] = None):
+    def __init__(self, *, leases: UnitLeases, log: DevLogger, cfg: Optional[EgoConfig] = None):
         self.leases = leases
         self.log = log
-        self.cfg = cfg or egoConfig()
+        self.cfg = cfg or EgoConfig()
         self._planners: List[Planner] = []
         self._active_by_domain: Dict[str, Active] = {}
+
+        # audit state: último tid logado por domínio + iteração do último log
+        self._last_logged_tid: Dict[str, str] = {}
+        self._last_logged_iter: Dict[str, int] = {}
 
     def register_planner(self, planner: Planner) -> None:
         self._planners.append(planner)
@@ -45,6 +54,38 @@ class Ego:
             if cur is None or score > cur.score:
                 best[p.domain] = Active(task=p.task, score=score)
         return best
+
+    def _maybe_log_ego_step(self, *, tick: TaskTick, domain: str, slot: Active) -> None:
+        """
+        Auditoria: prova que o Ego chamou step() para um task.
+        Throttle para não floodar o JSONL.
+        """
+        if not self.cfg.log_ego_steps:
+            return
+
+        tid = str(slot.task.task_id)
+        it = int(tick.iteration)
+
+        last_tid = self._last_logged_tid.get(domain)
+        last_it = self._last_logged_iter.get(domain, -10_000)
+
+        changed = (last_tid != tid)
+        due = (it - last_it) >= int(self.cfg.log_every_iters)
+
+        if changed or due:
+            self._last_logged_tid[domain] = tid
+            self._last_logged_iter[domain] = it
+
+            self.log.emit(
+                "ego_step",
+                {
+                    "iteration": it,
+                    "time": round(float(tick.time), 2),
+                    "domain": domain,
+                    "tid": tid,
+                    "score": int(slot.score),
+                },
+            )
 
     async def tick(self, bot, *, tick: TaskTick, attention: Attention, awareness: Awareness) -> None:
         now = float(tick.time)
@@ -97,6 +138,10 @@ class Ego:
         for domain, slot in ordered:
             if budget <= 0:
                 break
+
+            # audit (prova empírica)
+            self._maybe_log_ego_step(tick=tick, domain=domain, slot=slot)
+
             used = await slot.task.step(bot, tick, attention)
             if used:
                 budget -= 1
