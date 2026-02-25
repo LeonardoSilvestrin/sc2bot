@@ -1,2 +1,0 @@
-{"ts_utc": "2026-02-23T10:23:35.438405+00:00", "event": "bot_init", "payload": {"strategy": "terran_builds.yml/Default"}, "meta": {"map": "Persephone AIE"}}
-{"ts_utc": "2026-02-23T10:23:48.542036+00:00", "event": "scout_dispatch", "payload": {"iteration": 280, "time": 25.0, "scout_tag": 4350017537, "target": [37.5, 145.5], "trigger_time": 25.0, "opening_done": false}, "meta": {}}

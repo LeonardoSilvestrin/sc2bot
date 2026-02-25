@@ -4,19 +4,19 @@ MinGamesWinrateBased: 3
 
 BuildChoices:
   Protoss:
-    BotName: BoiBandido
+    BotName: MyBot
     Cycle:
       - Default
   Terran:
-    BotName: BoiBandido
+    BotName: MyBot
     Cycle:
       - Default
   Zerg:
-    BotName: BoiBandido
+    BotName: MyBot
     Cycle:
       - Default
   Random:
-    BotName: BoiBandido
+    BotName: MyBot
     Cycle:
       - Default
 

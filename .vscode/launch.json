@@ -3,7 +3,7 @@
   "configurations": [
     {
       "name": "SC2 Bot - Local (run.py)",
-      "type": "python",
+      "type": "debugpy",
       "request": "launch",
       "program": "${workspaceFolder}/run.py",
       "console": "integratedTerminal",
@@ -16,7 +16,7 @@
     },
     {
       "name": "SC2 Bot - Ladder (run.py --LadderServer)",
-      "type": "python",
+      "type": "debugpy",
       "request": "launch",
       "program": "${workspaceFolder}/run.py",
       "console": "integratedTerminal",
@@ -29,7 +29,7 @@
     },
     {
       "name": "SC2 Bot - Local (module bot.main)",
-      "type": "python",
+      "type": "debugpy",
       "request": "launch",
       "module": "bot.main",
       "console": "integratedTerminal",

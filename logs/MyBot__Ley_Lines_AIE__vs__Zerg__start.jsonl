@@ -1,9 +1,0 @@
-{"ts_utc": "2026-02-23T10:28:20.975454+00:00", "event": "bot_init", "payload": {"strategy": "terran_builds.yml/Default"}, "meta": {"map": "Ley Lines AIE"}}
-{"ts_utc": "2026-02-23T10:28:31.198024+00:00", "event": "scout_dispatch", "payload": {"iteration": 280, "time": 25.0, "scout_tag": 4350279681, "target": [42.5, 40.5], "trigger_time": 25.0, "opening_done": false}, "meta": {}}
-{"ts_utc": "2026-02-23T10:28:31.242037+00:00", "event": "scout_seen_structures", "payload": {"iteration": 281, "time": 25.09, "scout_tag": 4350279681, "scout_pos": [158.5, 133.8], "count": 0, "types": [], "structures": []}, "meta": {}}
-{"ts_utc": "2026-02-23T10:28:34.042171+00:00", "event": "scout_seen_structures", "payload": {"iteration": 349, "time": 31.16, "scout_tag": 4350279681, "scout_pos": [150.5, 113.2], "count": 0, "types": [], "structures": []}, "meta": {}}
-{"ts_utc": "2026-02-23T10:28:40.549235+00:00", "event": "scout_seen_structures", "payload": {"iteration": 417, "time": 37.23, "scout_tag": 4350279681, "scout_pos": [131.8, 98.6], "count": 0, "types": [], "structures": []}, "meta": {}}
-{"ts_utc": "2026-02-23T10:28:44.649945+00:00", "event": "scout_seen_structures", "payload": {"iteration": 485, "time": 43.3, "scout_tag": 4350279681, "scout_pos": [108.9, 94.3], "count": 0, "types": [], "structures": []}, "meta": {}}
-{"ts_utc": "2026-02-23T10:28:47.676825+00:00", "event": "scout_seen_structures", "payload": {"iteration": 553, "time": 49.38, "scout_tag": 4350279681, "scout_pos": [92.9, 76.8], "count": 0, "types": [], "structures": []}, "meta": {}}
-{"ts_utc": "2026-02-23T10:28:50.950964+00:00", "event": "scout_seen_structures", "payload": {"iteration": 621, "time": 55.45, "scout_tag": 4350279681, "scout_pos": [76.0, 63.0], "count": 0, "types": [], "structures": []}, "meta": {}}
-{"ts_utc": "2026-02-23T10:28:51.018744+00:00", "event": "game_end", "payload": {"result": "Result.Defeat"}, "meta": {}}
