@@ -14,6 +14,7 @@ from bot.mind.awareness import Awareness
 from bot.mind.ego import Ego, EgoConfig
 from bot.planners.defense_planner import DefensePlanner
 from bot.planners.intel_planner import IntelPlanner
+from bot.planners.macro_planner import MacroPlanner, MacroBasic
 from bot.tasks.base import TaskTick
 from bot.tasks.defend import Defend
 from bot.tasks.scout import Scout
@@ -59,9 +60,9 @@ class RuntimeApp:
         # planners
         defense_planner = DefensePlanner(awareness=awareness, defend_task=defend_task)
         intel_planner = IntelPlanner(awareness=awareness, log=log, scout_task=scout_task)
+        macro_planner = MacroPlanner(macro_task=MacroBasic(log=log))
 
-        ego.register_planner(defense_planner)
-        ego.register_planner(intel_planner)
+        ego.register_planners([defense_planner, intel_planner, macro_planner])
 
         return cls(
             log=log,

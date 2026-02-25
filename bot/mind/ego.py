@@ -37,12 +37,16 @@ class Ego:
         self._planners: List[Planner] = []
         self._active_by_domain: Dict[str, Active] = {}
 
-        # audit state: último tid logado por domínio + iteração do último log
+        # audit state
         self._last_logged_tid: Dict[str, str] = {}
         self._last_logged_iter: Dict[str, int] = {}
 
     def register_planner(self, planner: Planner) -> None:
         self._planners.append(planner)
+
+    def register_planners(self, planners: List[Planner]) -> None:
+        for p in planners:
+            self.register_planner(p)
 
     def _pick_from_proposals(self, proposals: List[Proposal]) -> Dict[str, Active]:
         best: Dict[str, Active] = {}
@@ -56,10 +60,6 @@ class Ego:
         return best
 
     def _maybe_log_ego_step(self, *, tick: TaskTick, domain: str, slot: Active) -> None:
-        """
-        Auditoria: prova que o Ego chamou step() para um task.
-        Throttle para não floodar o JSONL.
-        """
         if not self.cfg.log_ego_steps:
             return
 
@@ -87,20 +87,57 @@ class Ego:
                 },
             )
 
+    def _cleanup_done_tasks(self, *, now: float) -> None:
+        """
+        Remove tasks that reached DONE/ABORTED and free their leases.
+        """
+        to_remove: List[str] = []
+
+        for domain, slot in self._active_by_domain.items():
+            if slot.task.is_done():
+                # libera unidades associadas
+                try:
+                    self.leases.release_owner(task_id=slot.task.task_id)
+                except Exception:
+                    pass
+
+                self.log.emit(
+                    "task_finished",
+                    {
+                        "domain": domain,
+                        "tid": slot.task.task_id,
+                        "status": slot.task.status().value,
+                    },
+                )
+
+                to_remove.append(domain)
+
+        for domain in to_remove:
+            del self._active_by_domain[domain]
+
     async def tick(self, bot, *, tick: TaskTick, attention: Attention, awareness: Awareness) -> None:
         now = float(tick.time)
+
+        # 1) limpeza de leases expirados
         self.leases.reap(now=now)
 
+        # 2) limpeza de tasks concluídas (fix principal)
+        self._cleanup_done_tasks(now=now)
+
+        # 3) coletar propostas
         proposals: List[Proposal] = []
         for pl in self._planners:
             try:
                 proposals.extend(pl.propose(bot, awareness=awareness, attention=attention))
             except Exception as e:
-                self.log.emit("planner_error", {"planner": getattr(pl, "planner_id", "unknown"), "err": str(e)})
+                self.log.emit(
+                    "planner_error",
+                    {"planner": getattr(pl, "planner_id", "unknown"), "err": str(e)},
+                )
 
         desired = self._pick_from_proposals(proposals)
 
-        # preempção
+        # 4) preempção por urgência
         if attention.defense_urgency >= self.cfg.hard_preempt_at:
             for domain in ("HARASS", "MAP"):
                 slot = self._active_by_domain.get(domain)
@@ -109,6 +146,7 @@ class Ego:
                     self.leases.release_owner(task_id=slot.task.task_id)
                     del self._active_by_domain[domain]
                     self.log.emit("task_hard_preempt", {"domain": domain, "tid": slot.task.task_id})
+
         elif attention.defense_urgency >= self.cfg.soft_preempt_at:
             for domain in ("HARASS", "MAP"):
                 slot = self._active_by_domain.get(domain)
@@ -116,20 +154,28 @@ class Ego:
                     await slot.task.pause(bot, reason=f"soft_preempt urgency={attention.defense_urgency}")
                     self.log.emit("task_soft_preempt", {"domain": domain, "tid": slot.task.task_id})
 
-        # swap active
+        # 5) swap active tasks
         for domain, slot in desired.items():
             cur = self._active_by_domain.get(domain)
+
             if cur is None or cur.task.task_id != slot.task.task_id:
                 if cur is not None:
                     await cur.task.abort(bot, reason="replaced")
                     self.leases.release_owner(task_id=cur.task.task_id)
-                    self.log.emit("task_replaced", {"domain": domain, "from": cur.task.task_id, "to": slot.task.task_id})
+                    self.log.emit(
+                        "task_replaced",
+                        {"domain": domain, "from": cur.task.task_id, "to": slot.task.task_id},
+                    )
 
                 self._active_by_domain[domain] = slot
-                self.log.emit("task_selected", {"domain": domain, "tid": slot.task.task_id, "score": slot.score})
+                self.log.emit(
+                    "task_selected",
+                    {"domain": domain, "tid": slot.task.task_id, "score": slot.score},
+                )
 
-        # execute with budget (DEFENSE first)
+        # 6) execução com budget (DEFENSE first)
         budget = int(self.cfg.command_budget)
+
         ordered: List[Tuple[str, Active]] = sorted(
             self._active_by_domain.items(),
             key=lambda kv: (0 if kv[0] == "DEFENSE" else 1, -kv[1].score),
@@ -139,9 +185,24 @@ class Ego:
             if budget <= 0:
                 break
 
-            # audit (prova empírica)
+            # audit
             self._maybe_log_ego_step(tick=tick, domain=domain, slot=slot)
 
             used = await slot.task.step(bot, tick, attention)
+
+            # pós-step: se terminou durante step, limpar imediatamente
+            if slot.task.is_done():
+                self.leases.release_owner(task_id=slot.task.task_id)
+                self.log.emit(
+                    "task_finished",
+                    {
+                        "domain": domain,
+                        "tid": slot.task.task_id,
+                        "status": slot.task.status().value,
+                    },
+                )
+                del self._active_by_domain[domain]
+                continue
+
             if used:
                 budget -= 1

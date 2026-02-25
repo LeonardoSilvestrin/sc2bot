@@ -22,7 +22,7 @@ BuildChoices:
 
 Builds:
   Default:
-    ConstantWorkerProductionTill: 20
+    ConstantWorkerProductionTill: 0
     AutoSupplyAtSupply: 16
     OpeningBuildOrder:
       - 14 supply @ ramp
@@ -30,7 +30,14 @@ Builds:
       - 16 gas
       - 0 orbital
       - 19 expand
+      - 20 supply @ ramp
       - 20 marine *2
-      - 1 factory
-      - 21 gas
-      - 1 starport
+      - 21 barracks reactor
+      - 21 factory
+      - 22 gas
+      - 23 starport
+      - 0 orbital
+      - 1 medivac
+      - 1 siegetank
+      - 1 barracks
+      - 2 marine *6
