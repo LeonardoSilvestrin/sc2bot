@@ -7,7 +7,7 @@ from sc2.ids.unit_typeid import UnitTypeId as U
 
 from bot.devlog import DevLogger
 from bot.mind.attention import Attention
-from bot.tasks.base import BaseTask, TaskTick
+from bot.tasks.base_task import BaseTask, TaskTick
 
 
 @dataclass
@@ -29,7 +29,7 @@ class Defend(BaseTask):
         self.log_every_iters = int(log_every_iters)
 
     async def on_step(self, bot, tick: TaskTick, attention: Attention) -> bool:
-        if not attention.threatened or not attention.threat_pos:
+        if not attention.combat.threatened or not attention.combat.threat_pos:
             self._paused("no_threat")
             return False
 
@@ -50,7 +50,7 @@ class Defend(BaseTask):
             self._paused("no_defenders")
             return False
 
-        local = defenders.closer_than(45, attention.threat_pos)
+        local = defenders.closer_than(45, attention.combat.threat_pos)
         if local.amount == 0:
             local = defenders
 
@@ -61,12 +61,12 @@ class Defend(BaseTask):
 
         for u in army:
             if u.is_idle:
-                u.attack(attention.threat_pos)
+                u.attack(attention.combat.threat_pos)
                 issued = True
 
         for m in medivacs:
             if m.is_idle:
-                m.move(attention.threat_pos.towards(bot.start_location, 6))
+                m.move(attention.combat.threat_pos.towards(bot.start_location, 6))
                 issued = True
 
         if issued:
@@ -77,9 +77,9 @@ class Defend(BaseTask):
                     {
                         "iteration": int(tick.iteration),
                         "time": round(float(getattr(bot, "time", 0.0)), 2),
-                        "enemy_count": int(attention.enemy_count_near_bases),
-                        "urgency": int(attention.defense_urgency),
-                        "pos": [round(attention.threat_pos.x, 1), round(attention.threat_pos.y, 1)],
+                        "enemy_count": int(attention.combat.enemy_count_near_bases),
+                        "urgency": int(attention.combat.defense_urgency),
+                        "pos": [round(attention.combat.threat_pos.x, 1), round(attention.combat.threat_pos.y, 1)],
                     },
                 )
         else:

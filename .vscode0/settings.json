@@ -1,0 +1,37 @@
+{
+  // ---------- Python ----------
+  //"python.defaultInterpreterPath": "${workspaceFolder}/.venv/Scripts/python.exe",
+  //"python.terminal.activateEnvironment": true,
+  // Se o Pylance ainda insistir em import errors, isso geralmente resolve
+  "python.analysis.typeCheckingMode": "basic",
+  "python.analysis.autoImportCompletions": true,
+  // IMPORTANT: seu run.py está fazendo sys.path.append("ares-sc2/src/ares") etc.
+  // Isso é runtime. Pro Pylance entender no editor, precisamos espelhar aqui:
+  "python.analysis.extraPaths": [
+    "${workspaceFolder}",
+    "${workspaceFolder}/ares-sc2",
+    "${workspaceFolder}/ares-sc2/src",
+    "${workspaceFolder}/ares-sc2/src/ares"
+  ],
+  // ---------- Formatting ----------
+  "editor.formatOnSave": true,
+  "editor.codeActionsOnSave": {
+    "source.organizeImports": "explicit"
+  },
+  // Black (se você usa)
+  "python.formatting.provider": "black",
+  // ---------- Lint / UI ----------
+  "files.exclude": {
+    "**/__pycache__": true,
+    "**/*.pyc": true,
+    "**/.pytest_cache": true
+  },
+  // Ajuda em repo SC2 (muitos arquivos grandes)
+  "search.exclude": {
+    "**/.venv": true,
+    "**/logs": true,
+    "**/data": true
+  },
+  // Terminal no Windows
+  "terminal.integrated.defaultProfile.windows": "PowerShell"
+}

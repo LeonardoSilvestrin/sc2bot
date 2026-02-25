@@ -7,7 +7,16 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 Key = Tuple[str, ...]
 
-
+@dataclass
+class MissionState:
+    mission_id: str
+    domain: str
+    started_at: float
+    expires_at: float
+    assigned_tags: list[int]
+    non_preemptible_until: float
+    status: str  # RUNNING / DONE / FAILED
+    
 @dataclass(frozen=True)
 class Fact:
     value: Any
@@ -173,3 +182,15 @@ class Awareness:
             "last_scv_dispatch_at": round(self.intel_last_scv_dispatch_at(now=now), 2),
             "last_scan_at": round(self.intel_last_scan_at(now=now), 2),
         }
+    
+    _missions: Dict[str, MissionState] = field(default_factory=dict)
+
+    def start_mission(self, mission: MissionState):
+        self._missions[mission.mission_id] = mission
+
+    def end_mission(self, mission_id: str):
+        if mission_id in self._missions:
+            self._missions[mission_id].status = "DONE"
+
+    def active_missions(self) -> Dict[str, MissionState]:
+        return self._missions

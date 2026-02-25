@@ -1,0 +1,3093 @@
+Você é meu parceiro técnico para desenvolver um bot de StarCraft II em Python. Vou te fornecer um dump do repositório (árvore + arquivos). Seu objetivo é propor e aplicar mudanças no código com precisão, consistência de contrato e baixo retrabalho.
+
+1) Regra de contexto
+
+Não invente contratos, nomes, enums, assinaturas ou estruturas que não estejam no dump atual.
+
+Considere como fonte da verdade apenas o que eu fornecer nesta conversa.
+
+Se faltar algo para decidir corretamente, peça apenas o arquivo/trecho mínimo necessário ou ofereça duas alternativas explicitando impactos.
+
+2) Modos de resposta (eu começo o pedido com um deles)
+
+[PATCH]: mudança pequena (1–10 linhas).
+Responda com o mínimo (antes/depois ou patch). Não reenviar arquivo inteiro. mas se mudar uma função por exemplo, mande ela inteira.
+
+[FILE]: refactor ou muitas mudanças no mesmo arquivo.
+Responda com o arquivo inteiro refeito, pronto para colar.
+
+[MULTI]: mudança em múltiplos arquivos.
+Responda com cada arquivo completo, um bloco por arquivo, e liste no topo os arquivos alterados.
+
+Se eu não indicar modo:
+
+Use [PATCH] por padrão.
+
+Só use [FILE]/[MULTI] se for necessário para manter consistência.
+
+3) Padrão obrigatório no topo dos scripts
+
+Em todo arquivo .py que você me devolver em [FILE] ou [MULTI], inclua uma linha comentário antes de todos os imports com o path do arquivo:
+
+# bot/.../arquivo.py
+
+Em [PATCH], só inclua isso se você estiver devolvendo o arquivo inteiro.
+
+4) Consistência de contratos (prioridade máxima)
+
+Antes de sugerir mudanças estruturais (Task / Planner / Ego / Awareness / Attention / UnitLeases), verifique:
+
+quem chama quem
+
+campos esperados (score vs urgency, domain string vs enum, etc.)
+
+retorno esperado (step -> bool vs TaskResult)
+Se detectar mistura de versões/contratos, priorize unificar antes de adicionar features.
+
+5) Logs e validação
+
+Quando houver trade-off, apresente opções e recomende uma.
+
+Sempre que fizer mudança de comportamento (não só sintaxe), proponha um teste funcional simples:
+
+quais logs/eventos devem aparecer
+
+quais condições devem mudar (antes/depois)
+Se eu te mandar logs, use-os como verdade empírica para diagnosticar.
+
+
+7) Meu formato de contexto
+
+Eu vou colar um dump gerado por export_repo_dump.py contendo:
+
+PROJECT TREE
+
+bot/*.py (conteúdo completo)
+
+terran_builds.yml (raiz)
+
+A partir disso, você deve:
+
+entender arquitetura e contratos atuais
+
+apontar inconsistências críticas primeiro
+
+só então implementar evoluções
+
+===== PROJECT TREE =====
+.
+├── .github
+│   └── workflows
+│       ├── build_windows_exe.yaml
+│       └── ladder_zip.yml
+├── .vscode0
+│   ├── launch.json
+│   └── settings.json
+├── bot
+│   ├── ares_wrapper
+│   │   ├── __init__.py
+│   │   ├── map.py
+│   │   └── roles.py
+│   ├── config
+│   │   ├── __init__.py
+│   │   ├── loader.py
+│   │   └── schema.py
+│   ├── intel
+│   │   ├── __init__.py
+│   │   ├── economy_intel.py
+│   │   └── threat_intel.py
+│   ├── mind
+│   │   ├── __init__.py
+│   │   ├── attention.py
+│   │   ├── awareness.py
+│   │   ├── body.py
+│   │   ├── ego.py
+│   │   └── self.py
+│   ├── planners
+│   │   ├── defense_planner.py
+│   │   ├── intel_planner.py
+│   │   ├── macro_planner.py
+│   │   └── proposals.py
+│   ├── tasks
+│   │   ├── __init__.py
+│   │   ├── base_task.py
+│   │   ├── defend_task.py
+│   │   ├── macro_task.py
+│   │   ├── scan_task.py
+│   │   └── scout_task.py
+│   ├── __init__.py
+│   ├── devlog.py
+│   └── main.py
+├── data
+│   └── None-protoss.json
+├── logs
+│   ├── MyBot__Incorporeal_AIE__vs__Zerg__start.jsonl
+│   ├── MyBot__Ley_Lines_AIE__vs__Zerg__start.jsonl
+│   ├── MyBot__Pylon_AIE__vs__Protoss__start.jsonl
+│   └── MyBot__Pylon_AIE__vs__Terran__start.jsonl
+├── scripts
+│   ├── create_ladder_zip.py
+│   ├── create_pyinstaller_exe.py
+│   ├── update_ares.py
+│   └── upload_to_ai_arena.py
+├── .env
+├── .gitignore
+├── .gitmodules
+├── ARCHITECTURE.md
+├── config.yml
+├── ladder.py
+├── LICENSE
+├── poetry.lock
+├── protoss_builds.yml
+├── pyproject.toml
+├── README.md
+├── run.py
+└── terran_builds.yml
+
+===== bot/*.py (FULL CONTENT) =====
+
+# bot/__init__.py
+```python
+
+```
+
+# bot/ares_wrapper/__init__.py
+```python
+#bot/ares_wrapper/__init__.py
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from bot.ares_wrapper.map import Map
+from bot.ares_wrapper.roles import Roles
+
+
+@dataclass(frozen=True)
+class AresWrapper:
+    """
+    Camada de adaptação ao Ares/python-sc2.
+
+    Regra:
+      - Pode chamar bot.mediator, bot.game_info, etc.
+      - NÃO contém decisão estratégica e NÃO contém state machine de missão.
+    """
+    bot: object
+
+    @property
+    def roles(self) -> Roles:
+        return Roles(self.bot)
+
+    @property
+    def map(self) -> Map:
+        return Map(self.bot)
+```
+
+# bot/ares_wrapper/map.py
+```python
+#bot/ares_wrapper/map.py
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Literal, Tuple
+
+from sc2.position import Point2
+
+
+EnemyMainSource = Literal["ENEMY_START", "FALLBACK_CENTER", "FALLBACK_START"]
+
+
+@dataclass(frozen=True)
+class Map:
+    bot: object
+
+    def enemy_main(self) -> Tuple[Point2, EnemyMainSource]:
+        # 1) normal
+        try:
+            locs = getattr(self.bot, "enemy_start_locations", None)
+            if locs and len(locs) > 0:
+                return locs[0], "ENEMY_START"
+        except Exception:
+            pass
+
+        # 2) fallback map center
+        try:
+            return self.bot.game_info.map_center, "FALLBACK_CENTER"
+        except Exception:
+            pass
+
+        # 3) fallback final
+        return self.bot.start_location, "FALLBACK_START"
+```
+
+# bot/ares_wrapper/roles.py
+```python
+#bot/ares_wrapper/roles.py
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from ares.consts import UnitRole
+from sc2.ids.unit_typeid import UnitTypeId as U
+from sc2.position import Point2
+from sc2.unit import Unit
+
+
+@dataclass(frozen=True)
+class Roles:
+    bot: object  # AresBot / BotAI
+
+    def assign(self, *, unit: Unit, role: UnitRole, remove_from_squad: bool = True) -> None:
+        self.bot.mediator.assign_role(tag=unit.tag, role=role, remove_from_squad=remove_from_squad)
+
+    def get_scout_workers(self):
+        return self.bot.mediator.get_units_from_role(role=UnitRole.BUILD_RUNNER_SCOUT, unit_type=U.SCV)
+
+    def request_worker_scout(self, *, target_position: Point2) -> Unit:
+        worker: Unit = self.bot.mediator.select_worker(target_position=target_position)
+        self.assign(unit=worker, role=UnitRole.BUILD_RUNNER_SCOUT, remove_from_squad=True)
+        return worker
+```
+
+# bot/config/__init__.py
+```python
+
+```
+
+# bot/config/loader.py
+```python
+#bot/config/loader.py
+
+class ConfigLoader:
+    """Carregamento de config externa."""
+    pass
+```
+
+# bot/config/schema.py
+```python
+#bot/config/schema.py
+
+class ConfigSchema:
+    """Definições de schema para validação."""
+    pass
+```
+
+# bot/devlog.py
+```python
+#bot/devlog.py
+from __future__ import annotations
+
+import json
+import os
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Any, Dict, Optional
+
+
+@dataclass
+class DevLogger:
+    """
+    Logger JSONL simples (1 evento por linha).
+    Objetivo: você conseguir auditar decisões ("flags") pós-partida.
+    """
+
+    log_dir: str = "logs"
+    filename: Optional[str] = None
+    enabled: bool = True
+
+    def _ensure_dir(self) -> None:
+        os.makedirs(self.log_dir, exist_ok=True)
+
+    def set_file(self, filename: str) -> None:
+        self.filename = filename
+
+    def emit(self, event: str, payload: Optional[Dict[str, Any]] = None, *, meta: Optional[Dict[str, Any]] = None) -> None:
+        if not self.enabled:
+            return
+        if not self.filename:
+            # Se esquecer de setar, não explode o jogo.
+            return
+
+        self._ensure_dir()
+        row = {
+            "ts_utc": datetime.now(timezone.utc).isoformat(),
+            "event": event,
+            "payload": payload or {},
+            "meta": meta or {},
+        }
+        path = os.path.join(self.log_dir, self.filename)
+        try:
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        except Exception:
+            # logging nunca pode matar o bot
+            pass
+```
+
+# bot/intel/__init__.py
+```python
+
+```
+
+# bot/intel/economy_intel.py
+```python
+# bot/inteligence/economy.py
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from bot.mind.awareness import Awareness, K
+from bot.mind.attention import Attention
+
+
+@dataclass(frozen=True)
+class EconomyIntelConfig:
+    macro_profile: str = "BIO_2BASE"
+    target_bases: int = 3
+
+
+def derive_economy_intel(
+    bot,
+    *,
+    awareness: Awareness,
+    attention: Attention,
+    now: float,
+    cfg: EconomyIntelConfig = EconomyIntelConfig(),
+) -> None:
+    """
+    Atualiza a Awareness (memória) com o plano macro ativo e fase do jogo.
+    - Não executa nada.
+    - Não decide estratégia dinâmica.
+    - Só escreve sinais estáveis de economia/plano.
+    """
+
+    try:
+        bases = int(bot.townhalls.ready.amount)
+    except Exception:
+        bases = 0
+
+    opening_done = bool(attention.macro.opening_done)
+
+    if not opening_done:
+        phase = "OPENING"
+    elif bases < int(cfg.target_bases):
+        phase = "MIDGAME"
+    else:
+        phase = "LATEGAME"
+
+    awareness.mem.set(K("plan", "macro"), value=str(cfg.macro_profile), now=now, ttl=None)
+    awareness.mem.set(K("plan", "phase"), value=str(phase), now=now, ttl=None)
+    awareness.mem.set(K("plan", "opening_done"), value=opening_done, now=now, ttl=None)
+    awareness.mem.set(K("plan", "target_bases"), value=int(cfg.target_bases), now=now, ttl=None)
+    awareness.mem.set(K("plan", "bases_ready"), value=int(bases), now=now, ttl=8.0)
+```
+
+# bot/intel/threat_intel.py
+```python
+#bot/inteligence/threat.py
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import List, Optional, Tuple
+
+from sc2.position import Point2
+from sc2.unit import Unit
+
+
+@dataclass(frozen=True)
+class ThreatReport:
+    threatened: bool
+    threat_pos: Optional[Point2]
+    enemy_count: int
+    radius: float
+    urgency: int  # 0..100
+
+
+class Threat:
+    """
+    Intelligence-only:
+      - Detecta inimigos perto de townhalls
+      - Produz threat_pos + enemy_count + urgency
+    """
+
+    def __init__(self, *, defend_radius: float = 22.0, min_enemy: int = 1):
+        self.defend_radius = float(defend_radius)
+        self.min_enemy = int(min_enemy)
+
+    def _townhalls(self, bot) -> List[Unit]:
+        try:
+            return list(bot.townhalls)
+        except Exception:
+            return []
+
+    def evaluate(self, bot) -> ThreatReport:
+        ths = self._townhalls(bot)
+        if not ths:
+            return ThreatReport(False, None, 0, self.defend_radius, 0)
+
+        enemies = bot.enemy_units
+        if not enemies:
+            return ThreatReport(False, None, 0, self.defend_radius, 0)
+
+        best: Tuple[int, Optional[Point2]] = (0, None)
+        for th in ths:
+            near = enemies.closer_than(self.defend_radius, th.position)
+            c = int(near.amount)
+            if c > best[0]:
+                best = (c, th.position)
+
+        threatened = best[0] >= self.min_enemy
+        enemy_count = int(best[0])
+
+        # urgência simples (MVP): ameaça => 50 + 10*count, cap 100
+        urgency = 0
+        if threatened:
+            urgency = min(100, 50 + 10 * enemy_count)
+
+        return ThreatReport(threatened, best[1], enemy_count, self.defend_radius, int(urgency))
+```
+
+# bot/main.py
+```python
+# bot/main.py
+from __future__ import annotations
+
+from typing import Optional
+
+from ares import AresBot
+from sc2.data import Result
+
+from bot.ares_wrapper import AresWrapper
+from bot.devlog import DevLogger
+from bot.mind.self import RuntimeApp
+
+
+class MyBot(AresBot):
+    def __init__(self, game_step_override: Optional[int] = None, *, debug: bool = True):
+        super().__init__(game_step_override)
+        self.debug = debug
+
+        # logger pode ficar aqui (infra), mas runtime decide como usar
+        self.log = DevLogger(enabled=True)
+
+        # wrapper do engine (opcional ficar aqui; pode migrar pro runtime depois)
+        self.ares = AresWrapper(self)
+
+        # runtime é a única "inteligência" conectada ao main
+        self.rt = RuntimeApp.build(log=self.log, debug=debug)
+
+    async def on_start(self) -> None:
+        await super().on_start()
+        await self.rt.on_start(self)
+
+    async def on_step(self, iteration: int) -> None:
+        await super().on_step(iteration)
+        await self.rt.on_step(self, iteration=iteration)
+
+    async def on_end(self, game_result: Result) -> None:
+        await super().on_end(game_result)
+        await self.rt.on_end(self, game_result=game_result)
+```
+
+# bot/mind/__init__.py
+```python
+
+```
+
+# bot/mind/attention.py
+```python
+# bot/mind/attention.py
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Optional, Tuple
+from collections import Counter
+
+from sc2.ids.unit_typeid import UnitTypeId as U
+from sc2.position import Point2
+
+from bot.intel.threat_intel import Threat, ThreatReport
+from bot.mind.awareness import Awareness
+
+
+@dataclass(frozen=True)
+class EconomySnapshot:
+    units_ready: dict
+    supply_left: int
+    minerals: int
+    gas: int
+
+
+@dataclass(frozen=True)
+class CombatSnapshot:
+    threatened: bool
+    defense_urgency: int
+    threat_pos: Optional[Point2]
+    enemy_count_near_bases: int
+
+
+@dataclass(frozen=True)
+class IntelSnapshot:
+    orbital_ready_to_scan: bool
+    orbital_energy: float
+
+
+@dataclass(frozen=True)
+class MacroSnapshot:
+    opening_done: bool
+
+
+@dataclass(frozen=True)
+class Attention:
+    """
+    Tick snapshot (read-only).
+    - immutable
+    - derived each tick
+    - history belongs in Awareness
+    """
+    economy: EconomySnapshot
+    combat: CombatSnapshot
+    intel: IntelSnapshot
+    macro: MacroSnapshot
+    time: float = 0.0
+
+
+def _orbital_scan_status(bot) -> Tuple[bool, float]:
+    try:
+        orbitals = bot.structures(U.ORBITALCOMMAND).ready
+        if orbitals.amount == 0:
+            return False, 0.0
+        oc = orbitals.first
+        energy = float(getattr(oc, "energy", 0.0) or 0.0)
+        return (energy >= 50.0), energy
+    except Exception:
+        return False, 0.0
+
+
+def _opening_done(bot) -> bool:
+    # (1) Ares build order runner
+    bor = getattr(bot, "build_order_runner", None)
+    if bor is not None:
+        try:
+            if bool(getattr(bor, "build_completed", False)):
+                return True
+        except Exception:
+            pass
+
+    # time fallback
+    try:
+        now = float(getattr(bot, "time", 0.0) or 0.0)
+    except Exception:
+        now = 0.0
+
+    # (2) Milestones
+    try:
+        if bot.structures(U.FACTORY).ready.amount > 0:
+            return True
+        if bot.structures(U.STARPORT).ready.amount > 0:
+            return True
+        if bot.townhalls.ready.amount >= 2:
+            return True
+    except Exception:
+        pass
+
+    # (3) Hard fallback
+    return now >= 180.0
+
+
+def derive_attention(bot, *, awareness: Awareness, threat: Threat) -> Attention:
+    """
+    Derive tick snapshot.
+    Rule: no side-effects.
+    """
+    thr: ThreatReport = threat.evaluate(bot)
+    orbital_ready, orbital_energy = _orbital_scan_status(bot)
+
+    units_ready = Counter()
+    try:
+        for u in bot.units.ready:
+            units_ready[u.type_id] += 1
+    except Exception:
+        pass
+
+    economy = EconomySnapshot(
+        units_ready=dict(units_ready),
+        supply_left=int(getattr(bot, "supply_left", 0) or 0),
+        minerals=int(getattr(bot, "minerals", 0) or 0),
+        gas=int(getattr(bot, "vespene", 0) or 0),
+    )
+
+    combat = CombatSnapshot(
+        threatened=bool(thr.threatened),
+        defense_urgency=int(thr.urgency),
+        threat_pos=thr.threat_pos,
+        enemy_count_near_bases=int(thr.enemy_count),
+    )
+
+    intel = IntelSnapshot(
+        orbital_ready_to_scan=bool(orbital_ready),
+        orbital_energy=float(orbital_energy),
+    )
+
+    macro = MacroSnapshot(
+        opening_done=bool(_opening_done(bot)),
+    )
+
+    return Attention(
+        economy=economy,
+        combat=combat,
+        intel=intel,
+        macro=macro,
+        time=float(getattr(bot, "time", 0.0)),
+    )
+```
+
+# bot/mind/awareness.py
+```python
+# bot/mind/awareness.py
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any, Dict, Iterable, List, Optional, Tuple
+
+
+Key = Tuple[str, ...]
+
+@dataclass
+class MissionState:
+    mission_id: str
+    domain: str
+    started_at: float
+    expires_at: float
+    assigned_tags: list[int]
+    non_preemptible_until: float
+    status: str  # RUNNING / DONE / FAILED
+    
+@dataclass(frozen=True)
+class Fact:
+    value: Any
+    t: float
+    confidence: float = 1.0
+    ttl: Optional[float] = None  # seconds; None = never expires
+
+
+@dataclass
+class MemoryStore:
+    """
+    Keyed memory with timestamped facts + optional TTL.
+    Designed for fast per-tick usage (dict lookups), not analytics.
+    """
+    _facts: Dict[Key, Fact] = field(default_factory=dict)
+
+    def set(
+        self,
+        key: Key,
+        *,
+        value: Any,
+        now: float,
+        ttl: Optional[float] = None,
+        confidence: float = 1.0,
+    ) -> None:
+        self._facts[key] = Fact(value=value, t=float(now), confidence=float(confidence), ttl=ttl)
+
+    def get(self, key: Key, *, now: float, default: Any = None, max_age: Optional[float] = None) -> Any:
+        f = self._facts.get(key)
+        if f is None:
+            return default
+        age = float(now) - float(f.t)
+        if age < 0:
+            # clock skew / weirdness: treat as fresh
+            age = 0.0
+        if max_age is not None and age > float(max_age):
+            return default
+        if f.ttl is not None and age > float(f.ttl):
+            return default
+        return f.value
+
+    def age(self, key: Key, *, now: float) -> Optional[float]:
+        f = self._facts.get(key)
+        if f is None:
+            return None
+        return max(0.0, float(now) - float(f.t))
+
+    def is_stale(self, key: Key, *, now: float, max_age: float) -> bool:
+        a = self.age(key, now=now)
+        if a is None:
+            return True
+        return a > float(max_age)
+
+    def has(self, key: Key, *, now: float, max_age: Optional[float] = None) -> bool:
+        sentinel = object()
+        return self.get(key, now=now, default=sentinel, max_age=max_age) is not sentinel
+
+    def keys(self) -> Iterable[Key]:
+        return self._facts.keys()
+
+    def snapshot(self, *, now: float, prefix: Optional[Key] = None, max_age: Optional[float] = None) -> Dict[str, Any]:
+        """
+        Returns a JSON-friendly dict of { "a:b:c": {value,t,age,ttl,confidence} }
+        filtered by optional prefix and optional max_age.
+        """
+        out: Dict[str, Any] = {}
+        for k, f in self._facts.items():
+            if prefix is not None and k[: len(prefix)] != prefix:
+                continue
+            age = max(0.0, float(now) - float(f.t))
+            if max_age is not None and age > float(max_age):
+                continue
+            if f.ttl is not None and age > float(f.ttl):
+                continue
+            sk = ":".join(k)
+            out[sk] = {
+                "value": f.value,
+                "t": round(float(f.t), 2),
+                "age": round(float(age), 2),
+                "ttl": f.ttl,
+                "confidence": round(float(f.confidence), 2),
+            }
+        return out
+
+
+def K(*parts: str) -> Key:
+    return tuple(parts)
+
+
+@dataclass
+class Awareness:
+    """
+    Persistent world memory.
+    - Use mem for generic facts (keyed, timestamped, TTL-aware)
+    - Keep only a few structured helpers where it buys clarity/perf.
+    """
+    mem: MemoryStore = field(default_factory=MemoryStore)
+
+    # ring buffer style event log (debug/audit)
+    _events: List[Dict[str, Any]] = field(default_factory=list)
+    _events_cap: int = 200
+
+    # -----------------------
+    # Logging / events
+    # -----------------------
+    def emit(self, name: str, *, now: float, data: Optional[Dict[str, Any]] = None) -> None:
+        evt = {"t": round(float(now), 2), "name": str(name)}
+        if data:
+            evt["data"] = data
+        self._events.append(evt)
+        if len(self._events) > self._events_cap:
+            self._events = self._events[-self._events_cap :]
+
+    def tail_events(self, n: int = 10) -> List[Dict[str, Any]]:
+        if n <= 0:
+            return []
+        return self._events[-n:]
+
+    # -----------------------
+    # Convenience “intel” API
+    # (minimal wrappers so the rest of the bot stays clean)
+    # -----------------------
+    _K_SCV_DISPATCHED = K("intel", "scv", "dispatched")
+    _K_SCV_ARRIVED_MAIN = K("intel", "scv", "arrived_main")
+    _K_SCAN_ENEMY_MAIN = K("intel", "scan", "enemy_main")
+    _K_LAST_SCV_DISPATCH_AT = K("intel", "scv", "last_dispatch_at")
+    _K_LAST_SCAN_AT = K("intel", "scan", "last_scan_at")
+
+    def intel_scv_dispatched(self, *, now: float) -> bool:
+        return bool(self.mem.get(self._K_SCV_DISPATCHED, now=now, default=False))
+
+    def intel_scv_arrived_main(self, *, now: float) -> bool:
+        return bool(self.mem.get(self._K_SCV_ARRIVED_MAIN, now=now, default=False))
+
+    def intel_scanned_enemy_main(self, *, now: float) -> bool:
+        return bool(self.mem.get(self._K_SCAN_ENEMY_MAIN, now=now, default=False))
+
+    def intel_last_scv_dispatch_at(self, *, now: float) -> float:
+        return float(self.mem.get(self._K_LAST_SCV_DISPATCH_AT, now=now, default=0.0))
+
+    def intel_last_scan_at(self, *, now: float) -> float:
+        return float(self.mem.get(self._K_LAST_SCAN_AT, now=now, default=0.0))
+
+    def mark_scv_dispatched(self, *, now: float) -> None:
+        self.mem.set(self._K_SCV_DISPATCHED, value=True, now=now, ttl=None)
+        self.mem.set(self._K_LAST_SCV_DISPATCH_AT, value=float(now), now=now, ttl=None)
+        self.emit("intel_scv_dispatched", now=now)
+
+    def mark_scv_arrived_main(self, *, now: float) -> None:
+        self.mem.set(self._K_SCV_ARRIVED_MAIN, value=True, now=now, ttl=None)
+        self.emit("intel_scv_arrived_main", now=now)
+
+    def mark_scan_enemy_main(self, *, now: float) -> None:
+        self.mem.set(self._K_SCAN_ENEMY_MAIN, value=True, now=now, ttl=None)
+        self.mem.set(self._K_LAST_SCAN_AT, value=float(now), now=now, ttl=None)
+        self.emit("intel_scan_enemy_main", now=now)
+
+    def intel_snapshot(self, *, now: float) -> Dict[str, Any]:
+        return {
+            "scv_dispatched": self.intel_scv_dispatched(now=now),
+            "scv_arrived_main": self.intel_scv_arrived_main(now=now),
+            "scanned_enemy_main": self.intel_scanned_enemy_main(now=now),
+            "last_scv_dispatch_at": round(self.intel_last_scv_dispatch_at(now=now), 2),
+            "last_scan_at": round(self.intel_last_scan_at(now=now), 2),
+        }
+    
+    _missions: Dict[str, MissionState] = field(default_factory=dict)
+
+    def start_mission(self, mission: MissionState):
+        self._missions[mission.mission_id] = mission
+
+    def end_mission(self, mission_id: str):
+        if mission_id in self._missions:
+            self._missions[mission_id].status = "DONE"
+
+    def active_missions(self) -> Dict[str, MissionState]:
+        return self._missions
+```
+
+# bot/mind/body.py
+```python
+# bot/mind/body.py
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Dict, Optional, Set, List
+
+from ares.consts import UnitRole
+
+@dataclass
+class Lease:
+    owner: str          # task_id
+    role: UnitRole
+    expires_at: float
+
+
+class UnitLeases:
+    """
+    Unit ownership with TTL and reverse index.
+    (isso é "corpo": recurso escasso + locks + validade)
+    """
+
+    def __init__(self, *, default_ttl: float = 8.0):
+        self.default_ttl = float(default_ttl)
+        self._leases: Dict[int, Lease] = {}          # unit_tag -> Lease
+        self._by_owner: Dict[str, Set[int]] = {}     # task_id -> {unit_tag}
+
+    def reap(self, *, now: float) -> None:
+        expired: List[int] = [tag for tag, lease in self._leases.items() if lease.expires_at <= now]
+        for tag in expired:
+            self._remove_tag(tag)
+
+    def _remove_tag(self, unit_tag: int) -> None:
+        lease = self._leases.pop(unit_tag, None)
+        if lease is None:
+            return
+        s = self._by_owner.get(lease.owner)
+        if s:
+            s.discard(unit_tag)
+            if not s:
+                del self._by_owner[lease.owner]
+
+    # ---------------- Queries ----------------
+
+    def owner_of(self, unit_tag: int, *, now: float) -> Optional[str]:
+        self.reap(now=now)
+        lease = self._leases.get(unit_tag)
+        return lease.owner if lease else None
+
+    def units_of(self, task_id: str, *, now: float) -> Set[int]:
+        self.reap(now=now)
+        return set(self._by_owner.get(task_id, set()))
+
+    def can_claim(self, unit_tag: int, *, now: float) -> bool:
+        self.reap(now=now)
+        return unit_tag not in self._leases
+
+    # ---------------- Claim API ----------------
+
+    def claim(
+        self,
+        *,
+        task_id: str,
+        unit_tag: int,
+        role: UnitRole,
+        now: float,
+        ttl: Optional[float] = None,
+        force: bool = False,
+    ) -> bool:
+        self.reap(now=now)
+
+        if (not force) and unit_tag in self._leases:
+            return False
+
+        if unit_tag in self._leases:
+            self._remove_tag(unit_tag)
+
+        t = float(ttl) if ttl is not None else self.default_ttl
+        self._leases[unit_tag] = Lease(owner=task_id, role=role, expires_at=now + t)
+        self._by_owner.setdefault(task_id, set()).add(unit_tag)
+        return True
+
+    def try_acquire(
+        self,
+        task_id: str,
+        *,
+        unit_tag: int,
+        role: UnitRole,
+        now: float,
+        ttl: Optional[float] = None,
+        force: bool = False,
+    ) -> bool:
+        """Alias mantido pra compat com tasks."""
+        return self.claim(
+            task_id=task_id,
+            unit_tag=unit_tag,
+            role=role,
+            now=now,
+            ttl=ttl,
+            force=force,
+        )
+
+    def touch(self, *, task_id: str, unit_tag: int, now: float, ttl: Optional[float] = None) -> None:
+        self.reap(now=now)
+        lease = self._leases.get(unit_tag)
+        if not lease or lease.owner != task_id:
+            return
+        t = float(ttl) if ttl is not None else self.default_ttl
+        lease.expires_at = now + t
+
+    def release(self, *, unit_tag: int) -> None:
+        self._remove_tag(unit_tag)
+
+    def release_owner(self, *, task_id: str) -> None:
+        tags = list(self._by_owner.get(task_id, []))
+        for tag in tags:
+            self._remove_tag(tag)
+
+    def snapshot(self, *, now: float) -> dict:
+        self.reap(now=now)
+        return {
+            "total_leases": len(self._leases),
+            "by_owner": {owner: len(tags) for owner, tags in self._by_owner.items()},
+        }
+    
+    # -----------------------
+    # Role mapping
+    # -----------------------
+    def _role_for_domain(self, domain: str) -> UnitRole:
+        d = domain.upper()
+        if d == "DEFENSE":
+            return UnitRole.DEFENDING
+        if d in ("HARASS", "DROP"):
+            return UnitRole.HARASSING
+        if d in ("SCOUT", "INTEL"):
+            return UnitRole.SCOUTING
+        return UnitRole.IDLE
+```
+
+# bot/mind/ego.py
+```python
+# bot/mind/ego.py
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional, Sequence, Tuple
+
+from bot.mind.attention import Attention
+from bot.mind.awareness import Awareness, K
+from bot.mind.body import UnitLeases
+from bot.planners.proposals import Proposal, UnitRequirement
+from bot.tasks.base import TaskTick, TaskResult, TaskStatus  # ajuste import se seu arquivo chama base.py
+# Se o seu path real for bot/tasks/base_task.py, troque pra:
+# from bot.tasks.base_task import TaskTick, TaskResult, TaskStatus
+
+
+# -----------------------
+# CompositeTask (execução de N subtasks dentro da mesma missão)
+# -----------------------
+@dataclass
+class CompositeTask:
+    """
+    Um 'task' composto que executa várias subtasks no mesmo tick.
+    Ele implementa a interface que o Ego espera (step/status/is_done).
+
+    IMPORTANTE:
+    - O mission_id é único (da missão).
+    - assigned_tags é o pool da missão (por enquanto).
+      No próximo passo, vamos particionar tags por subtask (LeaseGroup).
+    """
+    domain: str
+    children: List[Any] = field(default_factory=list)
+
+    # mission binding (injetado pelo Ego)
+    mission_id: Optional[str] = None
+    assigned_tags: List[int] = field(default_factory=list)
+
+    _status: str = "IDLE"
+    _last_reason: str = ""
+
+    def bind_mission(self, *, mission_id: str, assigned_tags: List[int]) -> None:
+        self.mission_id = str(mission_id)
+        self.assigned_tags = [int(x) for x in (assigned_tags or [])]
+
+        # repassa bind pra children (se suportarem)
+        for t in self.children:
+            if hasattr(t, "bind_mission"):
+                t.bind_mission(mission_id=self.mission_id, assigned_tags=list(self.assigned_tags))
+            else:
+                # fallback: não ideal, mas mantém compat
+                try:
+                    setattr(t, "mission_id", self.mission_id)
+                    setattr(t, "assigned_tags", list(self.assigned_tags))
+                except Exception:
+                    pass
+
+    def status(self) -> str:
+        return self._status
+
+    def is_done(self) -> bool:
+        return self._status in ("DONE", "ABORTED")
+
+    async def step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult:
+        if self.is_done():
+            return TaskResult.noop("already_done")
+
+        if not self.mission_id:
+            self._status = "PAUSED"
+            self._last_reason = "unbound_mission"
+            return TaskResult.failed("unbound_mission", retry_after_s=0.0)
+
+        self._status = "ACTIVE"
+
+        any_running = False
+        any_noop = False
+
+        for t in self.children:
+            # roda cada child; se child não tiver step, tenta on_step
+            try:
+                if hasattr(t, "step"):
+                    r = await t.step(bot, tick, attention)
+                else:
+                    r = await t.on_step(bot, tick, attention)
+            except Exception:
+                # falha hard do plano
+                self._status = "ACTIVE"
+                self._last_reason = "child_exception"
+                return TaskResult.failed("child_exception", retry_after_s=8.0)
+
+            # normaliza bool legado
+            if isinstance(r, bool):
+                r = TaskResult.running("did_any" if r else "idle")
+
+            if not isinstance(r, TaskResult):
+                r = TaskResult.running("unknown_child_return")
+
+            if r.status == "FAILED":
+                self._last_reason = f"child_failed:{r.reason}"
+                return TaskResult.failed(self._last_reason, retry_after_s=max(0.0, float(r.retry_after_s or 0.0)))
+
+            if r.status == "DONE":
+                # continua rodando outros; o plano só termina quando TODOS terminarem
+                pass
+            elif r.status == "NOOP":
+                any_noop = True
+            else:
+                any_running = True
+
+        # Se nenhum child está RUNNING, consideramos plano DONE
+        if not any_running:
+            self._status = "DONE"
+            self._last_reason = "all_children_done"
+            return TaskResult.done("all_children_done")
+
+        # Caso contrário, está ativo
+        self._status = "ACTIVE"
+        return TaskResult.running("composite_running" if not any_noop else "composite_running_with_noop")
+
+
+# -----------------------
+# Commitment / Mission
+# -----------------------
+@dataclass
+class Commitment:
+    """
+    An admitted proposal becomes a commitment (mission).
+    Holds unit ownership via Body (leases) under mission_id.
+    """
+    mission_id: str
+    proposal_id: str
+    domain: str
+    task: Any  # Task-like (BaseTask or CompositeTask)
+    started_at: float
+    expires_at: float
+    non_preemptible_until: float
+    assigned_tags: List[int] = field(default_factory=list)
+
+    def is_expired(self, now: float) -> bool:
+        return float(now) >= float(self.expires_at)
+
+    def is_non_preemptible(self, now: float) -> bool:
+        return float(now) < float(self.non_preemptible_until)
+
+
+# -----------------------
+# Ego config
+# -----------------------
+@dataclass(frozen=True)
+class EgoConfig:
+    one_commitment_per_domain: bool = True
+
+    threat_block_start_at: int = 70
+    threat_force_preempt_at: int = 90
+
+    non_preemptible_grace_s: float = 2.5
+    default_failure_cooldown_s: float = 8.0
+
+
+# -----------------------
+# Ego
+# -----------------------
+class Ego:
+    def __init__(
+        self,
+        *,
+        body: UnitLeases,
+        log: Any = None,
+        cfg: EgoConfig = EgoConfig(),
+    ):
+        self.body = body
+        self.log = log
+        self.cfg = cfg
+
+        self._planners: List[Any] = []
+        self._active_by_domain: Dict[str, Commitment] = {}
+
+    def register_planners(self, planners: Sequence[Any]) -> None:
+        self._planners = list(planners)
+
+    async def tick(self, bot, *, tick: TaskTick, attention: Attention, awareness: Awareness) -> None:
+        now = float(tick.time)
+
+        # Reap expired leases
+        try:
+            self.body.reap(now=now)
+        except Exception:
+            pass
+
+        # End expired commitments (and release their leases)
+        self._reap_commitments(now=now, awareness=awareness)
+
+        # Collect proposals
+        proposals: List[Proposal] = []
+        for p in self._planners:
+            try:
+                ps = p.propose(bot, awareness=awareness, attention=attention) or []
+                proposals.extend(ps)
+            except Exception as e:
+                awareness.emit("planner_error", now=now, data={"planner": getattr(p, "planner_id", "?"), "err": str(e)})
+                continue
+
+        proposals.sort(key=lambda x: int(getattr(x, "score", 0)), reverse=True)
+
+        await self._admit(bot, now=now, attention=attention, awareness=awareness, proposals=proposals)
+        await self._execute(bot, tick=tick, attention=attention, awareness=awareness)
+
+    # -----------------------
+    # Admission
+    # -----------------------
+    async def _admit(
+        self,
+        bot,
+        *,
+        now: float,
+        attention: Attention,
+        awareness: Awareness,
+        proposals: List[Proposal],
+    ) -> None:
+        threatened = bool(attention.combat.threatened)
+        urgency = int(attention.combat.defense_urgency)
+
+        for prop in proposals:
+            domain = str(prop.domain)
+
+            if self._is_in_cooldown(awareness, now=now, proposal_id=prop.proposal_id):
+                continue
+
+            if self.cfg.one_commitment_per_domain and domain in self._active_by_domain:
+                continue
+
+            if threatened and urgency >= self.cfg.threat_block_start_at and domain != "DEFENSE":
+                continue
+
+            # 1) mission_id único
+            mission_id = f"{prop.proposal_id}:{int(now * 1000)}"
+
+            # 2) claim atômico do plano (por enquanto: requirements agregados no Proposal)
+            ok, tags, fail_reason = self._select_and_claim_units(
+                bot,
+                now=now,
+                attention=attention,
+                proposal=prop,
+                mission_id=mission_id,
+            )
+            if not ok:
+                self._set_cooldown(
+                    awareness,
+                    now=now,
+                    proposal_id=prop.proposal_id,
+                    seconds=max(2.0, float(getattr(prop, "cooldown_s", 2.0))),
+                    reason=fail_reason,
+                )
+                continue
+
+            # 3) construir tasks do plano (compat: 1 factory vira plano de 1 task)
+            try:
+                task_obj = self._build_task_plan(prop, mission_id=mission_id)
+            except Exception as e:
+                try:
+                    self.body.release_owner(task_id=mission_id)
+                except Exception:
+                    pass
+                self._set_cooldown(awareness, now=now, proposal_id=prop.proposal_id, seconds=8.0, reason="task_factory_error")
+                awareness.emit("mission_rejected", now=now, data={"proposal_id": prop.proposal_id, "err": str(e)})
+                continue
+
+            # 4) bind missão (contrato único)
+            self._bind_task(task_obj, mission_id=mission_id, assigned_tags=list(tags))
+
+            ttl = float(getattr(prop, "lease_ttl", 30.0))
+            non_preempt = now + float(getattr(prop, "non_preemptible_s", 0.0) or self.cfg.non_preemptible_grace_s)
+
+            c = Commitment(
+                mission_id=mission_id,
+                proposal_id=prop.proposal_id,
+                domain=domain,
+                task=task_obj,
+                started_at=now,
+                expires_at=now + ttl,
+                non_preemptible_until=non_preempt,
+                assigned_tags=list(tags),
+            )
+            self._active_by_domain[domain] = c
+
+            self._awareness_start_mission(awareness, now=now, c=c)
+
+            awareness.emit(
+                "mission_started",
+                now=now,
+                data={"mission_id": mission_id, "proposal_id": prop.proposal_id, "domain": domain, "tags": len(tags), "ttl": ttl},
+            )
+            if self.log:
+                try:
+                    self.log.emit(
+                        "mission_started",
+                        {"time": round(now, 2), "mission_id": mission_id, "proposal_id": prop.proposal_id, "domain": domain, "tags": len(tags)},
+                    )
+                except Exception:
+                    pass
+
+    def _build_task_plan(self, prop: Proposal, *, mission_id: str) -> Any:
+        """
+        Compat mode:
+        - Se prop tiver `task_factories: List[Callable[[str], object]]`, vira CompositeTask.
+        - Caso contrário, usa `task_factory` único como antes.
+        """
+        task_factories = getattr(prop, "task_factories", None)
+        if task_factories:
+            children = [f(mission_id) for f in list(task_factories)]
+            return CompositeTask(domain=str(prop.domain), children=children)
+
+        # fallback: 1 task
+        return prop.task_factory(mission_id)
+
+    def _bind_task(self, task_obj: Any, *, mission_id: str, assigned_tags: List[int]) -> None:
+        if hasattr(task_obj, "bind_mission"):
+            task_obj.bind_mission(mission_id=mission_id, assigned_tags=list(assigned_tags))
+            return
+
+        # fallback (não ideal)
+        try:
+            setattr(task_obj, "mission_id", str(mission_id))
+            setattr(task_obj, "assigned_tags", list(assigned_tags))
+        except Exception:
+            pass
+
+    def _select_and_claim_units(
+        self,
+        bot,
+        *,
+        now: float,
+        attention: Attention,
+        proposal: Proposal,
+        mission_id: str,
+    ) -> Tuple[bool, List[int], str]:
+        reqs: List[UnitRequirement] = list(getattr(proposal, "unit_requirements", []) or [])
+        if not reqs:
+            return True, [], ""
+
+        units_ready = getattr(attention.economy, "units_ready", {}) or {}
+        selected: List[int] = []
+
+        for req in reqs:
+            utype = req.unit_type
+            need = int(req.count)
+
+            if int(units_ready.get(utype, 0)) <= 0:
+                return False, [], f"no_{utype.name.lower()}"
+
+            candidates: List[int] = []
+            try:
+                for u in bot.units.of_type(utype).ready:
+                    tag = int(u.tag)
+                    if self.body.can_claim(tag, now=now):
+                        candidates.append(tag)
+            except Exception:
+                return False, [], "unit_iter_error"
+
+            if len(candidates) < need:
+                return False, [], f"insufficient_free_{utype.name.lower()}"
+
+            selected.extend(candidates[:need])
+
+        ttl = float(getattr(proposal, "lease_ttl", 30.0))
+        role = self.body._role_for_domain(str(getattr(proposal, "domain", "MACRO")))
+
+        # claim atômico: se falhar 1, rollback tudo
+        for tag in selected:
+            ok = self.body.claim(task_id=mission_id, unit_tag=tag, role=role, now=now, ttl=ttl, force=False)
+            if not ok:
+                try:
+                    self.body.release_owner(task_id=mission_id)
+                except Exception:
+                    pass
+                return False, [], "claim_failed"
+
+        return True, selected, ""
+
+    # -----------------------
+    # Execution
+    # -----------------------
+    async def _execute(self, bot, *, tick: TaskTick, attention: Attention, awareness: Awareness) -> None:
+        now = float(tick.time)
+
+        for domain, c in list(self._active_by_domain.items()):
+            if c.is_expired(now):
+                self._finish_mission(awareness, now=now, c=c, status="DONE", reason="expired")
+                continue
+
+            res = await self._run_task_safely(c, bot=bot, tick=tick, attention=attention, awareness=awareness)
+
+            if res.status == "FAILED":
+                cooldown = res.retry_after_s if res.retry_after_s > 0 else self.cfg.default_failure_cooldown_s
+                self._set_cooldown(awareness, now=now, proposal_id=c.proposal_id, seconds=cooldown, reason=res.reason)
+                self._finish_mission(awareness, now=now, c=c, status="FAILED", reason=res.reason)
+                continue
+
+            if res.status == "DONE":
+                self._finish_mission(awareness, now=now, c=c, status="DONE", reason=res.reason)
+                continue
+
+            awareness.emit("mission_step", now=now, data={"mission_id": c.mission_id, "domain": c.domain, "status": res.status, "reason": res.reason})
+
+    async def _run_task_safely(self, c: Commitment, *, bot, tick: TaskTick, attention: Attention, awareness: Awareness) -> TaskResult:
+        now = float(tick.time)
+
+        try:
+            if hasattr(c.task, "step"):
+                out = await c.task.step(bot, tick, attention)
+            else:
+                out = await c.task.on_step(bot, tick, attention)
+        except Exception as e:
+            awareness.emit("task_exception", now=now, data={"mission_id": c.mission_id, "task_id": getattr(c.task, "task_id", "?"), "err": str(e)})
+            if self.log:
+                try:
+                    self.log.emit("task_exception", {"t": round(now, 2), "mission_id": c.mission_id, "err": str(e)})
+                except Exception:
+                    pass
+            return TaskResult.failed(reason="exception", retry_after_s=self.cfg.default_failure_cooldown_s)
+
+        if isinstance(out, bool):
+            return TaskResult.running(reason="did_any" if out else "idle")
+        if isinstance(out, TaskResult):
+            return out
+
+        awareness.emit("task_return_unknown", now=now, data={"mission_id": c.mission_id, "task_id": getattr(c.task, "task_id", "?"), "type": str(type(out))})
+        return TaskResult.running(reason="unknown_return")
+
+    # -----------------------
+    # Preemption
+    # -----------------------
+    def maybe_force_preempt(self, *, now: float, attention: Attention, awareness: Awareness) -> None:
+        threatened = bool(attention.combat.threatened)
+        urgency = int(attention.combat.defense_urgency)
+        if not threatened or urgency < self.cfg.threat_force_preempt_at:
+            return
+
+        for domain, c in list(self._active_by_domain.items()):
+            if domain == "DEFENSE":
+                continue
+            if c.is_non_preemptible(now):
+                continue
+            self._finish_mission(awareness, now=now, c=c, status="FAILED", reason="preempted_by_threat")
+
+    # -----------------------
+    # Mission lifecycle
+    # -----------------------
+    def _reap_commitments(self, *, now: float, awareness: Awareness) -> None:
+        for domain, c in list(self._active_by_domain.items()):
+            if c.is_expired(now):
+                self._finish_mission(awareness, now=now, c=c, status="DONE", reason="expired")
+
+    def _finish_mission(self, awareness: Awareness, *, now: float, c: Commitment, status: str, reason: str) -> None:
+        try:
+            self.body.release_owner(task_id=c.mission_id)
+        except Exception:
+            pass
+
+        self._awareness_end_mission(awareness, now=now, mission_id=c.mission_id, status=status, reason=reason)
+        self._active_by_domain.pop(c.domain, None)
+
+        awareness.emit("mission_ended", now=now, data={"mission_id": c.mission_id, "proposal_id": c.proposal_id, "domain": c.domain, "status": status, "reason": reason})
+        if self.log:
+            try:
+                self.log.emit("mission_ended", {"time": round(now, 2), "mission_id": c.mission_id, "domain": c.domain, "status": status, "reason": reason})
+            except Exception:
+                pass
+
+    def _awareness_start_mission(self, awareness: Awareness, *, now: float, c: Commitment) -> None:
+        awareness.mem.set(K("ops", "mission", c.mission_id, "status"), value="RUNNING", now=now, ttl=None)
+        awareness.mem.set(K("ops", "mission", c.mission_id, "domain"), value=c.domain, now=now, ttl=None)
+        awareness.mem.set(K("ops", "mission", c.mission_id, "proposal_id"), value=c.proposal_id, now=now, ttl=None)
+        awareness.mem.set(K("ops", "mission", c.mission_id, "started_at"), value=float(c.started_at), now=now, ttl=None)
+        awareness.mem.set(K("ops", "mission", c.mission_id, "expires_at"), value=float(c.expires_at), now=now, ttl=None)
+        awareness.mem.set(K("ops", "mission", c.mission_id, "non_preemptible_until"), value=float(c.non_preemptible_until), now=now, ttl=None)
+        awareness.mem.set(K("ops", "mission", c.mission_id, "assigned_tags"), value=list(c.assigned_tags), now=now, ttl=None)
+
+    def _awareness_end_mission(self, awareness: Awareness, *, now: float, mission_id: str, status: str, reason: str) -> None:
+        awareness.mem.set(K("ops", "mission", mission_id, "status"), value=str(status), now=now, ttl=None)
+        awareness.mem.set(K("ops", "mission", mission_id, "end_reason"), value=str(reason), now=now, ttl=None)
+        awareness.mem.set(K("ops", "mission", mission_id, "ended_at"), value=float(now), now=now, ttl=None)
+
+    # -----------------------
+    # Cooldown
+    # -----------------------
+    def _cooldown_key(self, proposal_id: str) -> Tuple[str, ...]:
+        return K("ops", "cooldown", proposal_id)
+
+    def _is_in_cooldown(self, awareness: Awareness, *, now: float, proposal_id: str) -> bool:
+        until = awareness.mem.get(self._cooldown_key(proposal_id), now=now, default=0.0)
+        try:
+            return float(until) > float(now)
+        except Exception:
+            return False
+
+    def _set_cooldown(self, awareness: Awareness, *, now: float, proposal_id: str, seconds: float, reason: str = "") -> None:
+        until = float(now) + float(seconds)
+        awareness.mem.set(self._cooldown_key(proposal_id), value=until, now=now, ttl=None)
+        if reason:
+            awareness.mem.set(K("ops", "cooldown_reason", proposal_id), value=str(reason), now=now, ttl=None)
+        awareness.emit("proposal_cooldown_set", now=now, data={"proposal_id": proposal_id, "until": round(until, 2), "reason": reason})
+```
+
+# bot/mind/self.py
+```python
+# bot/mind/self.py
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from sc2.data import Result
+
+from bot.devlog import DevLogger
+from bot.intel.threat_intel import Threat
+from bot.intel.economy_intel import EconomyIntelConfig, derive_economy_intel
+from bot.mind.attention import derive_attention
+from bot.mind.awareness import Awareness
+from bot.mind.body import UnitLeases  # Body
+from bot.mind.ego import Ego, EgoConfig
+from bot.tasks.base_task import TaskTick
+
+from bot.tasks.defend_task import Defend
+from bot.tasks.scout_task import Scout
+from bot.tasks.macro_task import MacroBio2BaseTick, MacroOpeningTick
+
+from bot.planners.defense_planner import DefensePlanner
+from bot.planners.intel_planner import IntelPlanner
+from bot.planners.macro_planner import MacroPlanner
+
+
+@dataclass
+class RuntimeApp:
+    """
+    Orquestrador único do bot.
+    - Não toma decisão de plano/fase aqui.
+    - Só chama derives (attention/intel) e roda o Ego.
+    """
+
+    log: DevLogger
+    awareness: Awareness
+    threat: Threat
+    body: UnitLeases
+    ego: Ego
+    economy_cfg: EconomyIntelConfig
+    debug: bool = True
+
+    @classmethod
+    def build(cls, *, log: DevLogger, debug: bool = True) -> "RuntimeApp":
+        awareness = Awareness()
+        threat = Threat(defend_radius=22.0, min_enemy=1)
+
+        body = UnitLeases(default_ttl=8.0)
+
+        ego = Ego(
+            body=body,
+            log=log,
+            cfg=EgoConfig(
+                one_commitment_per_domain=True,
+                threat_block_start_at=70,
+                threat_force_preempt_at=90,
+                non_preemptible_grace_s=2.5,
+                default_failure_cooldown_s=8.0,
+            ),
+        )
+
+        # ---- Tasks
+        defend_task = Defend(log=log, log_every_iters=11)
+
+        scout_task = Scout(
+            body=body,             # FIX: kw compat com assinatura atual da task
+            awareness=awareness,
+            log=log,
+            trigger_time=25.0,
+            log_every=6.0,
+            see_radius=14.0,
+        )
+
+        opening_macro_task = MacroOpeningTick(
+            log=log,
+            log_every_iters=22,
+            scv_cap=60,
+        )
+
+        macro_task = MacroBio2BaseTick(
+            log=log,
+            log_every_iters=22,
+            scv_cap=60,
+            target_bases=3,
+            backoff_urgency=60,
+        )
+
+        # ---- Planners
+        defense_planner = DefensePlanner(awareness=awareness, defend_task=defend_task)
+        intel_planner = IntelPlanner(awareness=awareness, log=log, scout_task=scout_task)
+        macro_planner = MacroPlanner(
+            opening_task=opening_macro_task,
+            macro_task=macro_task,
+            backoff_urgency=60,
+            opening_timeout_s=180.0,
+        )
+
+        ego.register_planners([defense_planner, intel_planner, macro_planner])
+
+        economy_cfg = EconomyIntelConfig(macro_profile="BIO_2BASE", target_bases=3)
+
+        return cls(
+            log=log,
+            awareness=awareness,
+            threat=threat,
+            body=body,
+            ego=ego,
+            economy_cfg=economy_cfg,
+            debug=debug,
+        )
+
+    async def on_start(self, bot) -> None:
+        map_name = bot.game_info.map_name
+        enemy = bot.enemy_race.name
+        fname = f"MyBot__{map_name}__vs__{enemy}__start.jsonl".replace(" ", "_")
+        self.log.set_file(fname)
+
+        self.log.emit("bot_init", {"strategy": "terran_builds.yml/Default"}, meta={"map": map_name})
+
+        if self.debug:
+            print(f"[on_start] devlog={self.log.log_dir}/{fname}")
+
+    async def on_step(self, bot, *, iteration: int) -> None:
+        now = float(getattr(bot, "time", 0.0))
+
+        # 1) Perception / attention (snapshot factual)
+        attention = derive_attention(bot, awareness=self.awareness, threat=self.threat)
+
+
+        # 3) Ego tick (admission + execution + feedback)
+        await self.ego.tick(
+            bot,
+            tick=TaskTick(iteration=iteration, time=now),
+            attention=attention,
+            awareness=self.awareness,
+        )
+
+        # 4) Snapshots (debug/telemetry)
+        if iteration % 44 == 0:
+            intel = self.awareness.intel_snapshot(now=now)
+            mem_intel = self.awareness.mem.snapshot(now=now, prefix=("intel",), max_age=600.0)
+            mem_plan = self.awareness.mem.snapshot(now=now, prefix=("plan",), max_age=None)
+            mem_ops = self.awareness.mem.snapshot(now=now, prefix=("ops",), max_age=None)
+
+            self.log.emit(
+                "awareness_snapshot",
+                {
+                    "time": round(now, 2),
+                    "attention": {
+                        "opening_done": attention.macro.opening_done,
+                        "threatened": attention.combat.threatened,
+                        "urgency": attention.combat.defense_urgency,
+                        "enemy_count_near_bases": attention.combat.enemy_count_near_bases,
+                        "orbital_ready_to_scan": attention.intel.orbital_ready_to_scan,
+                        "orbital_energy": round(attention.intel.orbital_energy, 1),
+                    },
+                    "plan": mem_plan,
+                    "intel": intel,
+                    "mem_intel": mem_intel,
+                    "ops": mem_ops,
+                    "events_tail": self.awareness.tail_events(6),
+                    "body": self.body.snapshot(now=now) if hasattr(self.body, "snapshot") else {},
+                },
+            )
+
+        if self.debug and iteration % 44 == 0:
+            intel = self.awareness.intel_snapshot(now=now)
+            plan = self.awareness.mem.snapshot(now=now, prefix=("plan",), max_age=None)
+            plan_macro = plan.get("plan/macro")
+            plan_phase = plan.get("plan/phase")
+
+            try:
+                su = int(getattr(bot, "supply_used", 0) or 0)
+                sc = int(getattr(bot, "supply_cap", 0) or 0)
+            except Exception:
+                su, sc = 0, 0
+
+            print(
+                f"[tick] iter={iteration} t={now:.1f} "
+                f"s={su}/{sc} "
+                f"opening_done={attention.macro.opening_done} "
+                f"threat={attention.combat.threatened} urg={attention.combat.defense_urgency} "
+                f"plan={plan_macro}:{plan_phase} "
+                f"intel(scv={intel['scv_dispatched']}/{intel['scv_arrived_main']}, scan={intel['scanned_enemy_main']})"
+            )
+
+    async def on_end(self, bot, *, game_result: Result) -> None:
+        self.log.emit("game_end", {"result": str(game_result)})
+```
+
+# bot/planners/defense_planner.py
+```python
+# bot/planners/defense_planner.py
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from bot.mind.attention import Attention
+from bot.mind.awareness import Awareness
+from bot.planners.proposals import Proposal
+from bot.tasks.defend_task import Defend
+
+
+@dataclass
+class DefensePlanner:
+    """
+    Planner reativo de defesa.
+    - Só propõe quando há ameaça.
+    - Score escala com urgência (Attention.defense_urgency).
+    - Não redefine Proposal/UnitRequirement (usa o contrato único em planners/proposals.py).
+    """
+    planner_id: str = "defense_planner"
+
+    awareness: Awareness = None  # injected
+    defend_task: Defend = None   # injected
+
+    def _pid_defend(self) -> str:
+        return f"{self.planner_id}:defend:bases"
+
+    def propose(self, bot, *, awareness: Awareness, attention: Attention) -> list[Proposal]:
+        """
+        v2 contract:
+          - Proposal(proposal_id, domain, score, task_factory, unit_requirements, .)
+        """
+        if (not bool(attention.combat.threatened)) or (not attention.combat.threat_pos):
+            return []
+
+        urg = int(getattr(attention.combat, "defense_urgency", 0))
+        # DEFENSE deve dominar quando houver ameaça: score alto e proporcional.
+        score = max(80, min(100, 60 + urg))
+
+        def _defend_factory(mission_id: str) -> Defend:
+            t = self.defend_task
+            try:
+                setattr(t, "mission_id", mission_id)
+            except Exception:
+                pass
+            return t
+
+        return [
+            Proposal(
+                proposal_id=self._pid_defend(),
+                domain="DEFENSE",
+                score=score,
+                task_factory=_defend_factory,
+                unit_requirements=[],   # MVP: Defend puxa “defenders” do bot; depois a gente amarra via Body.
+                lease_ttl=6.0,
+                cooldown_s=0.0,         # defesa não deve “cooldownar”
+                risk_level=0,
+                allow_preempt=True,
+            )
+        ]
+```
+
+# bot/planners/intel_planner.py
+```python
+# bot/planners/intel_planner.py
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Optional, Tuple
+
+from sc2.ids.unit_typeid import UnitTypeId as U
+from sc2.position import Point2
+
+from bot.devlog import DevLogger
+from bot.mind.attention import Attention
+from bot.mind.awareness import Awareness
+from bot.planners.proposals import Proposal, UnitRequirement
+from bot.tasks.scan_task import ScanAt
+from bot.tasks.scout_task import Scout
+
+
+@dataclass
+class IntelPlanner:
+    planner_id: str = "intel_planner"
+
+    awareness: Awareness = None  # injected
+    log: DevLogger = None  # injected
+    scout_task: Scout = None  # injected
+
+    def __post_init__(self) -> None:
+        self._scan_label: Optional[str] = None
+        self._scan_target: Optional[Point2] = None
+        self._scan_map_source: Optional[str] = None
+
+    def _choose_scan_target(self, bot) -> Tuple[Point2, str, str]:
+        # minimal for now: scan enemy main position from game_info
+        try:
+            enemy_main = bot.enemy_start_locations[0]
+            return enemy_main, "enemy_main", "enemy_start_locations"
+        except Exception:
+            return bot.game_info.map_center, "map_center", "fallback"
+
+    # -----------------------
+    # Proposal IDs
+    # -----------------------
+    def _pid_scout(self) -> str:
+        return f"{self.planner_id}:scout:scv_early"
+
+    def _pid_scan(self, label: str) -> str:
+        return f"{self.planner_id}:scan:{label}"
+
+    def propose(self, bot, *, awareness: Awareness, attention: Attention) -> list[Proposal]:
+        """
+        v2 contract:
+          - Proposal(proposal_id, domain, score, task_factory, unit_requirements, ...)
+        """
+        now = float(getattr(attention, "time", 0.0))
+        aw = awareness
+
+        proposals: list[Proposal] = []
+
+        # 1) SCV scout early (if not dispatched yet)
+        if not aw.intel_scv_dispatched(now=now):
+            def _scout_factory(mission_id: str) -> Scout:
+                t = self.scout_task
+                # compat: task ainda pode ignorar, mas fica disponível pra logs/ops
+                try:
+                    setattr(t, "mission_id", mission_id)
+                except Exception:
+                    pass
+                return t
+
+            proposals.append(
+                Proposal(
+                    proposal_id=self._pid_scout(),
+                    domain="INTEL",
+                    score=35,
+                    task_factory=_scout_factory,
+                    unit_requirements=[UnitRequirement(unit_type=U.SCV, count=1)],
+                    lease_ttl=14.0,
+                    cooldown_s=12.0,
+                    risk_level=0,
+                    allow_preempt=True,
+                )
+            )
+            return proposals
+
+        # 2) Scan when orbital is ready and we haven't scanned enemy main yet
+        if (not aw.intel_scanned_enemy_main(now=now)) and bool(attention.intel.orbital_ready_to_scan):
+            target, label, map_source = self._choose_scan_target(bot)
+
+            # store for stable proposal_id/reasoning
+            self._scan_label = label
+            self._scan_target = target
+            self._scan_map_source = map_source
+
+            def _scan_factory(mission_id: str) -> ScanAt:
+                # criar task fresca (scan tem estado próprio/cooldown interno)
+                t = ScanAt(
+                    awareness=aw,
+                    target=target,
+                    label=label,
+                    cooldown=20.0,
+                    log=self.log,
+                )
+                try:
+                    setattr(t, "mission_id", mission_id)
+                except Exception:
+                    pass
+                return t
+
+            proposals.append(
+                Proposal(
+                    proposal_id=self._pid_scan(label),
+                    domain="INTEL",
+                    score=60,
+                    task_factory=_scan_factory,
+                    unit_requirements=[],     # scan usa orbital; gate é attention.orbital_ready_to_scan
+                    lease_ttl=6.0,
+                    cooldown_s=10.0,
+                    risk_level=0,
+                    allow_preempt=True,
+                )
+            )
+
+        return proposals
+```
+
+# bot/planners/macro_planner.py
+```python
+# bot/planners/macro_planner.py
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from bot.mind.attention import Attention
+from bot.mind.awareness import Awareness
+from bot.planners.proposals import Proposal
+from bot.tasks.macro_task import MacroBio2BaseTick, MacroOpeningTick
+
+
+@dataclass
+class MacroPlanner:
+    """
+    Planner baseline:
+      - Enquanto opening do YAML não terminou: roda MacroOpeningTick (SCV-only).
+      - Se opening terminar OU estourar timeout: roda MacroBio2BaseTick (full macro).
+      - Sai do caminho quando o bot está sendo rushado (urgência alta).
+    """
+    planner_id: str = "macro_planner"
+
+    def __init__(
+        self,
+        *,
+        opening_task: MacroOpeningTick,
+        macro_task: MacroBio2BaseTick,
+        backoff_urgency: int = 60,
+        opening_timeout_s: float = 180.0,
+        score: int = 18,
+    ):
+        self.opening_task = opening_task
+        self.macro_task = macro_task
+        self.backoff_urgency = int(backoff_urgency)
+        self.opening_timeout_s = float(opening_timeout_s)
+        self.score = int(score)
+
+    def _pid_opening(self) -> str:
+        return f"{self.planner_id}:macro:opening_scv_only"
+
+    def _pid_macro(self) -> str:
+        return f"{self.planner_id}:macro:bio_2base"
+
+    def propose(self, bot, *, awareness: Awareness, attention: Attention) -> list[Proposal]:
+        # se ameaça relevante, deixa DEFENSE dominar
+        if bool(attention.combat.threatened) and int(attention.combat.defense_urgency) >= self.backoff_urgency:
+            return []
+
+        now = float(getattr(attention, "time", 0.0))
+
+        # Decide qual macro rodar (planner é dono da troca de fase)
+        if bool(attention.macro.opening_done) or (now >= self.opening_timeout_s):
+            reason = "opening_done" if attention.macro.opening_done else f"opening_timeout_skip t={round(now,1)}>= {round(self.opening_timeout_s,1)}"
+
+            def _macro_factory(mission_id: str) -> MacroBio2BaseTick:
+                t = self.macro_task
+                try:
+                    setattr(t, "mission_id", mission_id)
+                except Exception:
+                    pass
+                return t
+
+            return [
+                Proposal(
+                    proposal_id=self._pid_macro(),
+                    domain="MACRO",
+                    score=self.score,
+                    task_factory=_macro_factory,
+                    unit_requirements=[],
+                    lease_ttl=8.0,      # macro não precisa travar unidades por muito tempo
+                    cooldown_s=0.0,     # macro é baseline, não queremos cooldown
+                    risk_level=0,
+                    allow_preempt=True,
+                )
+            ]
+
+        def _opening_factory(mission_id: str) -> MacroOpeningTick:
+            t = self.opening_task
+            try:
+                setattr(t, "mission_id", mission_id)
+            except Exception:
+                pass
+            return t
+
+        return [
+            Proposal(
+                proposal_id=self._pid_opening(),
+                domain="MACRO",
+                score=self.score,
+                task_factory=_opening_factory,
+                unit_requirements=[],
+                lease_ttl=8.0,
+                cooldown_s=0.0,
+                risk_level=0,
+                allow_preempt=True,
+            )
+        ]
+```
+
+# bot/planners/proposals.py
+```python
+# bot/planners/proposals.py
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Callable, List, Optional
+
+from sc2.ids.unit_typeid import UnitTypeId
+
+
+@dataclass(frozen=True)
+class UnitRequirement:
+    unit_type: UnitTypeId
+    count: int
+
+
+@dataclass(frozen=True)
+class TaskSpec:
+    """
+    One atomic task inside a plan proposal.
+
+    - task_factory: builds the task object. Ego will bind mission_id + assigned_tags.
+    - unit_requirements: requirements local to this task (Ego will allocate a subset of tags).
+    - lease_ttl: optional override for this task's leases (defaults to proposal.lease_ttl).
+    """
+    task_id: str
+    task_factory: Callable[[str], object]
+    unit_requirements: List[UnitRequirement] = field(default_factory=list)
+    lease_ttl: Optional[float] = None
+
+
+@dataclass(frozen=True)
+class Proposal:
+    """
+    Plan proposal (NO legacy fallback).
+
+    A Proposal is a PLAN composed of N TaskSpecs.
+    Ego will:
+      - pick proposal
+      - create mission_id
+      - claim units per TaskSpec (atomic admission)
+      - build each task
+      - bind mission context to each task
+      - execute the plan every tick
+    """
+    proposal_id: str
+    domain: str
+    score: int
+
+    # Plan
+    tasks: List[TaskSpec] = field(default_factory=list)
+
+    # Control
+    lease_ttl: float = 30.0          # default lease TTL for tasks (can be overridden per TaskSpec)
+    cooldown_s: float = 10.0
+    risk_level: int = 1              # 0=low,1=med,2=high
+
+    # Policy
+    allow_preempt: bool = True
+
+    def __post_init__(self) -> None:
+        # Enforce "no fallback": a proposal must contain at least 1 TaskSpec
+        if not self.tasks:
+            raise ValueError(f"Proposal {self.proposal_id} must contain at least one TaskSpec")
+```
+
+# bot/tasks/__init__.py
+```python
+
+```
+
+# bot/tasks/base_task.py
+```python
+# bot/tasks/base.py
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any, Optional, Protocol, runtime_checkable
+
+from bot.mind.attention import Attention
+
+
+class TaskStatus(str, Enum):
+    """
+    Task lifecycle. Keep values stable because logs/debug will depend on this.
+    """
+    IDLE = "IDLE"
+    ACTIVE = "ACTIVE"
+    PAUSED = "PAUSED"
+    DONE = "DONE"
+    ABORTED = "ABORTED"
+
+
+@dataclass(frozen=True)
+class TaskTick:
+    iteration: int
+    time: float
+
+
+@dataclass(frozen=True)
+class TaskResult:
+    """
+    Unified execution feedback (task -> Ego).
+    Tasks SHOULD return this, but BaseTask supports legacy bool returns.
+
+    status:
+      - RUNNING: task continues as active mission
+      - DONE: task completed successfully (mission can end)
+      - FAILED: task failed (mission should end; Ego applies cooldown etc.)
+      - NOOP: task chose to do nothing this tick (still running)
+    """
+    status: str  # RUNNING | DONE | FAILED | NOOP
+    reason: str = ""
+    retry_after_s: float = 0.0
+    telemetry: Optional[dict] = None
+
+    @staticmethod
+    def running(reason: str = "", telemetry: Optional[dict] = None) -> "TaskResult":
+        return TaskResult(status="RUNNING", reason=str(reason), telemetry=telemetry)
+
+    @staticmethod
+    def done(reason: str = "", telemetry: Optional[dict] = None) -> "TaskResult":
+        return TaskResult(status="DONE", reason=str(reason), telemetry=telemetry)
+
+    @staticmethod
+    def failed(reason: str = "", retry_after_s: float = 8.0, telemetry: Optional[dict] = None) -> "TaskResult":
+        return TaskResult(status="FAILED", reason=str(reason), retry_after_s=float(retry_after_s), telemetry=telemetry)
+
+    @staticmethod
+    def noop(reason: str = "", telemetry: Optional[dict] = None) -> "TaskResult":
+        return TaskResult(status="NOOP", reason=str(reason), telemetry=telemetry)
+
+
+@runtime_checkable
+class Task(Protocol):
+    """
+    Contract required by Ego + planners.
+
+    Notes:
+    - domain is a string slot key (e.g. "DEFENSE", "INTEL")
+    """
+    task_id: str
+    domain: str
+    commitment: int  # how "expensive" / exclusive this task is (can be used later)
+
+    def status(self) -> TaskStatus: ...
+    def is_done(self) -> bool: ...
+
+    def evaluate(self, bot, attention: Attention) -> int: ...
+
+    async def step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult: ...
+
+    async def pause(self, bot, reason: str) -> None: ...
+    async def abort(self, bot, reason: str) -> None: ...
+
+
+@dataclass
+class BaseTask:
+    """
+    Convenience base class.
+
+    You implement on_step(); everything else is standard.
+    """
+    task_id: str
+    domain: str
+
+    commitment: int = 1
+
+    _status: TaskStatus = field(default=TaskStatus.IDLE, init=False)
+    _last_reason: str = field(default="", init=False)
+    _last_step_t: float = field(default=0.0, init=False)
+
+    # -----------------------
+    # Core contract
+    # -----------------------
+    def status(self) -> TaskStatus:
+        return self._status
+
+    def is_done(self) -> bool:
+        return self._status in (TaskStatus.DONE, TaskStatus.ABORTED)
+
+    def evaluate(self, bot, attention: Attention) -> int:
+        """
+        Optional: tasks can provide a default evaluation score.
+        Most scoring should stay in planners; this hook is for quick heuristics/tests.
+        """
+        return 0
+
+    async def step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult:
+        """
+        Standard wrapper:
+        - blocks stepping if DONE/ABORTED
+        - ensures ACTIVE state when running
+        - normalizes return type to TaskResult (supports legacy bool)
+        """
+        if self.is_done():
+            return TaskResult.noop("already_done")
+
+        if self._status == TaskStatus.IDLE:
+            self._status = TaskStatus.ACTIVE
+
+        self._last_step_t = float(tick.time)
+
+        out: Any = await self.on_step(bot, tick, attention)
+
+        # Normalize TaskResult
+        if isinstance(out, TaskResult):
+            return out
+
+        # Legacy support: bool return
+        if isinstance(out, bool):
+            return TaskResult.running("did_any" if out else "idle")
+
+        # Unknown return: treat as running but record
+        return TaskResult.running("unknown_return_type")
+
+    async def pause(self, bot, reason: str) -> None:
+        if self.is_done():
+            return
+        self._status = TaskStatus.PAUSED
+        self._last_reason = str(reason)
+
+    async def abort(self, bot, reason: str) -> None:
+        if self.is_done():
+            return
+        self._status = TaskStatus.ABORTED
+        self._last_reason = str(reason)
+
+    # -----------------------
+    # To implement
+    # -----------------------
+    async def on_step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult | bool:
+        """
+        Implement task logic.
+
+        Preferred: return TaskResult.
+        Legacy: return bool (True if issued commands).
+        """
+        raise NotImplementedError
+
+    # -----------------------
+    # Helpers (optional)
+    # -----------------------
+    def _done(self, reason: str = "") -> None:
+        self._status = TaskStatus.DONE
+        self._last_reason = str(reason)
+
+    def _active(self, reason: str = "") -> None:
+        self._status = TaskStatus.ACTIVE
+        if reason:
+            self._last_reason = str(reason)
+
+    def _paused(self, reason: str = "") -> None:
+        self._status = TaskStatus.PAUSED
+        if reason:
+            self._last_reason = str(reason)
+
+    def last_reason(self) -> str:
+        return self._last_reason
+
+    def last_step_time(self) -> float:
+        return float(self._last_step_t)
+```
+
+# bot/tasks/defend_task.py
+```python
+# bot/tasks/defend.py
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from sc2.ids.unit_typeid import UnitTypeId as U
+
+from bot.devlog import DevLogger
+from bot.mind.attention import Attention
+from bot.tasks.base_task import BaseTask, TaskTick
+
+
+@dataclass
+class Defend(BaseTask):
+    """
+    Defesa reativa das bases.
+
+    Contrato:
+      - Implementa Task via BaseTask (status(), pause(), abort(), etc).
+      - Consome budget quando emite comandos.
+    """
+
+    log: DevLogger | None = None
+    log_every_iters: int = 11
+
+    def __init__(self, *, log: DevLogger | None = None, log_every_iters: int = 11):
+        super().__init__(task_id="defend_bases", domain="DEFENSE", commitment=90)
+        self.log = log
+        self.log_every_iters = int(log_every_iters)
+
+    async def on_step(self, bot, tick: TaskTick, attention: Attention) -> bool:
+        if not attention.combat.threatened or not attention.combat.threat_pos:
+            self._paused("no_threat")
+            return False
+
+        defenders = bot.units.of_type(
+            {
+                U.MARINE,
+                U.MARAUDER,
+                U.SIEGETANK,
+                U.SIEGETANKSIEGED,
+                U.HELLION,
+                U.CYCLONE,
+                U.THOR,
+                U.THORAP,
+                U.MEDIVAC,
+            }
+        )
+        if defenders.amount == 0:
+            self._paused("no_defenders")
+            return False
+
+        local = defenders.closer_than(45, attention.combat.threat_pos)
+        if local.amount == 0:
+            local = defenders
+
+        medivacs = local(U.MEDIVAC)
+        army = local - medivacs
+
+        issued = False
+
+        for u in army:
+            if u.is_idle:
+                u.attack(attention.combat.threat_pos)
+                issued = True
+
+        for m in medivacs:
+            if m.is_idle:
+                m.move(attention.combat.threat_pos.towards(bot.start_location, 6))
+                issued = True
+
+        if issued:
+            self._active("defending")
+            if self.log and (tick.iteration % self.log_every_iters == 0):
+                self.log.emit(
+                    "defend_tick",
+                    {
+                        "iteration": int(tick.iteration),
+                        "time": round(float(getattr(bot, "time", 0.0)), 2),
+                        "enemy_count": int(attention.combat.enemy_count_near_bases),
+                        "urgency": int(attention.combat.defense_urgency),
+                        "pos": [round(attention.combat.threat_pos.x, 1), round(attention.combat.threat_pos.y, 1)],
+                    },
+                )
+        else:
+            self._active("defending_no_orders")
+
+        return bool(issued)
+```
+
+# bot/tasks/macro_task.py
+```python
+# bot/tasks/macro.py
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from sc2.ids.unit_typeid import UnitTypeId as U
+from sc2.ids.upgrade_id import UpgradeId as Up
+
+from bot.devlog import DevLogger
+from bot.mind.attention import Attention
+from bot.tasks.base_task import BaseTask, TaskTick
+
+
+@dataclass
+class MacroOpeningTick(BaseTask):
+    """
+    Opening macro minimalista:
+      - SCV contínuo até scv_cap
+      - Não mexe em tech/expand
+    Rodado pelo Planner enquanto o opening do YAML não finalizou.
+    """
+
+    log: DevLogger | None = None
+    log_every_iters: int = 22
+    scv_cap: int = 60
+
+    def __init__(
+        self,
+        *,
+        log: DevLogger | None = None,
+        log_every_iters: int = 22,
+        scv_cap: int = 60,
+    ):
+        super().__init__(task_id="macro_opening_scv_only", domain="MACRO", commitment=10)
+        self.log = log
+        self.log_every_iters = int(log_every_iters)
+        self.scv_cap = int(scv_cap)
+
+    def _workers(self, bot) -> int:
+        try:
+            return int(bot.workers.amount)
+        except Exception:
+            return 0
+
+    def _supply_left(self, bot) -> int:
+        try:
+            return int(getattr(bot, "supply_left", 0) or 0)
+        except Exception:
+            return 0
+
+    async def on_step(self, bot, tick: TaskTick, attention: Attention) -> bool:
+        try:
+            ths = bot.townhalls.ready
+        except Exception:
+            ths = None
+        if not ths or ths.amount == 0:
+            self._paused("no_townhalls")
+            return False
+
+        if self._supply_left(bot) <= 0:
+            self._paused("no_supply")
+            return False
+
+        if not bot.can_afford(U.SCV):
+            self._paused("cant_afford_scv")
+            return False
+
+        idle_ths = ths.idle
+        if idle_ths.amount == 0:
+            self._active("townhalls_busy")
+            return False
+
+        if self._workers(bot) >= self.scv_cap:
+            self._active("scv_cap")
+            return False
+
+        idle_ths.first.train(U.SCV)
+        self._active("training_scv_opening")
+        return True
+
+
+@dataclass
+class MacroBio2BaseTick(BaseTask):
+    """
+    BIO_2BASE Macro v0.1 (pós-opening):
+      - SCV contínuo (até cap simples).
+      - Barracks por base: 1->1, 2->3, 3->5.
+      - 1 TechLab total (prioriza), resto Reactor (best-effort; sem microgerenciar).
+      - Stim, 1 Factory, 1 Starport.
+      - Medivac até 2.
+      - Expande até 3 bases quando tiver grana e safe.
+      - Supply depot se estiver travando (se AutoSupply do Ares falhar).
+    """
+
+    log: DevLogger | None = None
+    log_every_iters: int = 22
+
+    scv_cap: int = 60
+    target_bases: int = 3
+
+    backoff_urgency: int = 60  # se threatened+urgência alta, não gasta em expand/tech
+
+    def __init__(
+        self,
+        *,
+        log: DevLogger | None = None,
+        log_every_iters: int = 22,
+        scv_cap: int = 60,
+        target_bases: int = 3,
+        backoff_urgency: int = 60,
+    ):
+        super().__init__(task_id="macro_bio_2base_v01", domain="MACRO", commitment=15)
+        self.log = log
+        self.log_every_iters = int(log_every_iters)
+        self.scv_cap = int(scv_cap)
+        self.target_bases = int(target_bases)
+        self.backoff_urgency = int(backoff_urgency)
+
+    # -----------------------
+    # Helpers
+    # -----------------------
+    def _count(self, bot, unit_type: U) -> int:
+        try:
+            return int(bot.structures(unit_type).ready.amount)
+        except Exception:
+            return 0
+
+    def _pending(self, bot, unit_type: U) -> int:
+        try:
+            return int(bot.already_pending(unit_type) or 0)
+        except Exception:
+            return 0
+
+    def _townhalls_ready(self, bot) -> int:
+        try:
+            return int(bot.townhalls.ready.amount)
+        except Exception:
+            return 0
+
+    def _workers(self, bot) -> int:
+        try:
+            return int(bot.workers.amount)
+        except Exception:
+            return 0
+
+    def _supply_left(self, bot) -> int:
+        try:
+            return int(getattr(bot, "supply_left", 0) or 0)
+        except Exception:
+            return 0
+
+    def _minerals(self, bot) -> int:
+        try:
+            return int(getattr(bot, "minerals", 0) or 0)
+        except Exception:
+            return 0
+
+    def _target_barracks(self, bases: int) -> int:
+        if bases <= 1:
+            return 1
+        if bases == 2:
+            return 3
+        return 5
+
+    async def _try_build(self, bot, unit_type: U, *, near_pos) -> bool:
+        try:
+            if not bot.can_afford(unit_type):
+                return False
+            ok = await bot.build(unit_type, near=near_pos)
+            return bool(ok)
+        except Exception:
+            return False
+
+    def _log_snapshot(self, bot, tick: TaskTick, attention: Attention, *, phase: str) -> None:
+        if not self.log:
+            return
+        if int(tick.iteration) % self.log_every_iters != 0:
+            return
+
+        bases = self._townhalls_ready(bot)
+        barracks = self._count(bot, U.BARRACKS)
+        factory = self._count(bot, U.FACTORY)
+        starport = self._count(bot, U.STARPORT)
+        workers = self._workers(bot)
+
+        try:
+            supply_used = int(getattr(bot, "supply_used", 0) or 0)
+            supply_cap = int(getattr(bot, "supply_cap", 0) or 0)
+        except Exception:
+            supply_used, supply_cap = 0, 0
+
+        self.log.emit(
+            "macro_bio_snapshot",
+            {
+                "iteration": int(tick.iteration),
+                "time": round(float(tick.time), 2),
+                "opening_done": bool(attention.macro.opening_done),
+                "phase": str(phase),
+                "bases": int(bases),
+                "workers": int(workers),
+                "barracks": int(barracks),
+                "factory": int(factory),
+                "starport": int(starport),
+                "supply": f"{supply_used}/{supply_cap}",
+                "supply_left": int(self._supply_left(bot)),
+                "minerals": int(self._minerals(bot)),
+                "threatened": bool(attention.combat.threatened),
+                "urgency": int(attention.combat.defense_urgency),
+            },
+        )
+
+    # -----------------------
+    # Main tick
+    # -----------------------
+    async def on_step(self, bot, tick: TaskTick, attention: Attention) -> bool:
+        try:
+            ths = bot.townhalls.ready
+        except Exception:
+            ths = None
+        if not ths or ths.amount == 0:
+            self._paused("no_townhalls")
+            return False
+
+        # segurança: esta task é "pós-opening"; o Planner deveria impedir.
+        if not attention.macro.opening_done:
+            self._paused("waiting_opening_done")
+            return False
+
+        under_heavy_threat = bool(attention.combat.threatened and int(attention.combat.defense_urgency) >= self.backoff_urgency)
+
+        bases = self._townhalls_ready(bot)
+        phase = "MIDGAME" if bases < self.target_bases else "LATEGAME"
+
+        did_any = False
+
+        # (0) Supply (best-effort)
+        supply_left = self._supply_left(bot)
+
+        # Se travou em supply, a prioridade é destravar.
+        # Mesmo em threat moderada, depot é barato e evita soft-lock.
+        if supply_left <= 0:
+            if self._pending(bot, U.SUPPLYDEPOT) == 0 and not under_heavy_threat:
+                try:
+                    near = ths.first.position
+                except Exception:
+                    near = bot.start_location
+                if await self._try_build(bot, U.SUPPLYDEPOT, near_pos=near):
+                    did_any = True
+                    self._active("build_depot_supply_block")
+                    self._log_snapshot(bot, tick, attention, phase=phase)
+                    return True  # emitiu comando, encerra tick
+            # Se não conseguiu construir, ainda registra bloqueio
+            self._active("supply_blocked")
+            self._log_snapshot(bot, tick, attention, phase=phase)
+            return False
+
+        # Preventivo: tenta depot antes de travar de vez
+        if supply_left < 3 and not under_heavy_threat:
+            if self._pending(bot, U.SUPPLYDEPOT) == 0:
+                try:
+                    near = ths.first.position
+                except Exception:
+                    near = bot.start_location
+                if await self._try_build(bot, U.SUPPLYDEPOT, near_pos=near):
+                    did_any = True
+                    self._active("build_depot")
+
+        # (1) SCVs (cap simples)
+        did_any = (await self._maybe_train_scv(bot)) or did_any
+
+        # (2) Barracks scaling
+        target_barracks = self._target_barracks(bases)
+        current_barracks = self._count(bot, U.BARRACKS)
+        pending_barracks = self._pending(bot, U.BARRACKS)
+
+        if not under_heavy_threat and (current_barracks + pending_barracks) < target_barracks:
+            try:
+                near = ths.first.position
+            except Exception:
+                near = bot.start_location
+            if await self._try_build(bot, U.BARRACKS, near_pos=near):
+                did_any = True
+                self._active("build_barracks")
+
+        # (3) Units: Marine contínuo
+        did_any = (self._train_from_barracks(bot) or did_any)
+
+        # (4) Tech path: TechLab -> Stim -> Factory -> Starport -> Medivac(<=2)
+        if not under_heavy_threat:
+            did_any = (self._ensure_barracks_techlab(bot) or did_any)
+            did_any = (self._ensure_stim(bot) or did_any)
+
+            if (self._count(bot, U.FACTORY) + self._pending(bot, U.FACTORY)) == 0:
+                try:
+                    near = ths.first.position
+                except Exception:
+                    near = bot.start_location
+                if await self._try_build(bot, U.FACTORY, near_pos=near):
+                    did_any = True
+                    self._active("build_factory")
+
+            if (self._count(bot, U.STARPORT) + self._pending(bot, U.STARPORT)) == 0:
+                try:
+                    near = ths.first.position
+                except Exception:
+                    near = bot.start_location
+                if await self._try_build(bot, U.STARPORT, near_pos=near):
+                    did_any = True
+                    self._active("build_starport")
+
+        did_any = (self._train_medivac_upto(bot, cap=2) or did_any)
+
+        # (5) Expand até target bases
+        if not under_heavy_threat and bases < self.target_bases:
+            if self._minerals(bot) >= 450 and self._workers(bot) >= (20 * bases):
+                try:
+                    ok = await bot.expand_now()
+                except Exception:
+                    ok = False
+                if ok:
+                    did_any = True
+                    self._active("expand_now")
+
+        if did_any:
+            self._active("macro_tick")
+        else:
+            self._active("macro_idle")
+
+        self._log_snapshot(bot, tick, attention, phase=phase)
+        return bool(did_any)
+
+    async def _maybe_train_scv(self, bot) -> bool:
+        if self._workers(bot) >= self.scv_cap:
+            return False
+
+        try:
+            ths = bot.townhalls.ready
+        except Exception:
+            return False
+        if ths.amount == 0:
+            return False
+
+        if self._supply_left(bot) <= 0:
+            return False
+
+        if not bot.can_afford(U.SCV):
+            return False
+
+        idle_ths = ths.idle
+        if idle_ths.amount == 0:
+            return False
+
+        idle_ths.first.train(U.SCV)
+        return True
+
+    def _train_from_barracks(self, bot) -> bool:
+        try:
+            rax = bot.structures(U.BARRACKS).ready
+        except Exception:
+            return False
+        if rax.amount == 0:
+            return False
+        if self._supply_left(bot) <= 0:
+            return False
+        if not bot.can_afford(U.MARINE):
+            return False
+
+        did = False
+        for b in rax.idle:
+            try:
+                b.train(U.MARINE)
+                did = True
+            except Exception:
+                continue
+        return did
+
+    def _ensure_barracks_techlab(self, bot) -> bool:
+        try:
+            techlabs = bot.structures(U.BARRACKSTECHLAB).ready
+            if techlabs.amount > 0:
+                return False
+        except Exception:
+            return False
+
+        try:
+            rax = bot.structures(U.BARRACKS).ready
+        except Exception:
+            return False
+        if rax.amount == 0:
+            return False
+
+        for b in rax:
+            try:
+                if b.is_idle and bot.can_afford(U.BARRACKSTECHLAB):
+                    b.build(U.BARRACKSTECHLAB)
+                    return True
+            except Exception:
+                continue
+        return False
+
+    def _ensure_stim(self, bot) -> bool:
+        try:
+            if bot.already_pending_upgrade(Up.STIMPACK):
+                return False
+        except Exception:
+            pass
+
+        try:
+            techlabs = bot.structures(U.BARRACKSTECHLAB).ready
+        except Exception:
+            return False
+        if techlabs.amount == 0:
+            return False
+
+        for tl in techlabs:
+            try:
+                if tl.is_idle:
+                    tl.research(Up.STIMPACK)
+                    return True
+            except Exception:
+                continue
+        return False
+
+    def _train_medivac_upto(self, bot, *, cap: int = 2) -> bool:
+        try:
+            medivacs = bot.units(U.MEDIVAC)
+            if int(medivacs.amount) >= int(cap):
+                return False
+        except Exception:
+            pass
+
+        try:
+            ports = bot.structures(U.STARPORT).ready
+        except Exception:
+            return False
+        if ports.amount == 0:
+            return False
+
+        if self._supply_left(bot) <= 0:
+            return False
+        if not bot.can_afford(U.MEDIVAC):
+            return False
+
+        did = False
+        for sp in ports.idle:
+            try:
+                sp.train(U.MEDIVAC)
+                did = True
+            except Exception:
+                continue
+        return did
+```
+
+# bot/tasks/scan_task.py
+```python
+# bot/tasks/scan.py
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Optional
+
+from sc2.ids.ability_id import AbilityId
+from sc2.ids.unit_typeid import UnitTypeId as U
+
+from bot.devlog import DevLogger
+from bot.mind.attention import Attention
+from bot.mind.awareness import Awareness
+from bot.tasks.base_task import BaseTask, TaskTick, TaskResult
+
+
+@dataclass
+class ScanAt(BaseTask):
+    awareness: Awareness = None
+    target = None
+    label: str = "unknown"
+    cooldown: float = 20.0
+    log: DevLogger | None = None
+
+    # injetado pelo planner/ego (compat)
+    mission_id: Optional[str] = None
+
+    def __init__(
+        self,
+        *,
+        awareness: Awareness,
+        target,
+        label: str,
+        cooldown: float = 20.0,
+        log: DevLogger | None = None,
+    ):
+        super().__init__(task_id="scan_at_once", domain="INTEL")
+        self.awareness = awareness
+        self.target = target
+        self.label = str(label)
+        self.cooldown = float(cooldown)
+        self.log = log
+        self.mission_id = None
+
+    async def on_step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult:
+        now = float(tick.time)
+
+        last = float(self.awareness.intel_last_scan_at(now=now))
+        if (now - last) < float(self.cooldown):
+            self._paused("scan_cooldown")
+            return TaskResult.noop("scan_cooldown")
+
+        try:
+            orbitals = bot.structures(U.ORBITALCOMMAND).ready
+        except Exception:
+            orbitals = None
+
+        if not orbitals or orbitals.amount == 0:
+            self._paused("no_orbital")
+            self.awareness.emit(
+                "scan_failed",
+                now=now,
+                data={"label": self.label, "reason": "no_orbital", "mission_id": self.mission_id or ""},
+            )
+            return TaskResult.failed("no_orbital", retry_after_s=12.0)
+
+        oc = orbitals.first
+
+        try:
+            energy = float(getattr(oc, "energy", 0.0) or 0.0)
+        except Exception:
+            energy = 0.0
+        if energy < 50.0:
+            self._paused("not_enough_energy")
+            return TaskResult.noop("not_enough_energy")
+
+        try:
+            oc(AbilityId.SCANNERSWEEP_SCAN, self.target)
+        except Exception as e:
+            self._paused("scan_command_failed")
+            self.awareness.emit(
+                "scan_failed",
+                now=now,
+                data={"label": self.label, "reason": "command_failed", "err": str(e), "mission_id": self.mission_id or ""},
+            )
+            return TaskResult.failed("scan_command_failed", retry_after_s=10.0)
+
+        self.awareness.mark_scan_enemy_main(now=now)
+        self.awareness.emit(
+            "scan_cast",
+            now=now,
+            data={"label": self.label, "mission_id": self.mission_id or ""},
+        )
+
+        if self.log:
+            self.log.emit("scan_cast", {"t": round(now, 2), "label": self.label, "mission_id": self.mission_id or ""})
+
+        self._done("scan_cast")
+        return TaskResult.done("scan_cast")
+```
+
+# bot/tasks/scout_task.py
+```python
+# bot/tasks/scout.py
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Optional, List
+
+from sc2.position import Point2
+
+from bot.devlog import DevLogger
+from bot.mind.attention import Attention
+from bot.mind.awareness import Awareness, K
+from bot.mind.body import UnitLeases  # Body
+from bot.tasks.base_task import BaseTask, TaskTick, TaskResult
+
+
+def _mission_assigned_tags(awareness: Awareness, *, mission_id: str, now: float) -> List[int]:
+    """
+    MVP: lê assigned_tags do fallback via Awareness.mem.
+    """
+    tags = awareness.mem.get(K("ops", "mission", mission_id, "assigned_tags"), now=now, default=[])
+    try:
+        return [int(x) for x in (tags or [])]
+    except Exception:
+        return []
+
+
+@dataclass
+class Scout(BaseTask):
+    body: UnitLeases = None
+    awareness: Awareness = None
+    log: DevLogger | None = None
+
+    trigger_time: float = 25.0
+    log_every: float = 6.0
+    see_radius: float = 14.0
+
+    # injetado pelo planner/ego
+    mission_id: Optional[str] = None
+
+    # estado interno mínimo
+    _scv_tag: Optional[int] = None
+    _target: Optional[Point2] = None
+    _last_log_t: float = 0.0
+
+    def __init__(
+        self,
+        *,
+        body=None,
+        awareness: Awareness,
+        log: DevLogger | None = None,
+        trigger_time: float = 25.0,
+        log_every: float = 6.0,
+        see_radius: float = 14.0,
+    ):
+        super().__init__(task_id="scout_scv", domain="INTEL")
+
+        # compat: aceita body= ou leases=
+        self.body = body
+        if self.body is None:
+            raise TypeError("Scout requires body= (or leases= for legacy wiring)")
+
+        self.awareness = awareness
+        self.log = log
+        self.trigger_time = float(trigger_time)
+        self.log_every = float(log_every)
+        self.see_radius = float(see_radius)
+
+        self.mission_id = None
+        self._scv_tag = None
+        self._target = None
+        self._last_log_t = 0.0
+
+    async def on_step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult:
+        now = float(tick.time)
+
+        if now < self.trigger_time:
+            self._paused("before_trigger_time")
+            return TaskResult.noop("before_trigger_time")
+
+        if not self.mission_id:
+            self._paused("no_mission_id")
+            self.awareness.emit("scout_failed", now=now, data={"reason": "no_mission_id"})
+            return TaskResult.failed("no_mission_id", retry_after_s=6.0)
+
+        if self._scv_tag is None:
+            tags = _mission_assigned_tags(self.awareness, mission_id=self.mission_id, now=now)
+            if not tags:
+                self._paused("no_assigned_unit")
+                self.awareness.emit(
+                    "scout_failed",
+                    now=now,
+                    data={"reason": "no_assigned_unit", "mission_id": self.mission_id},
+                )
+                return TaskResult.failed("no_assigned_unit", retry_after_s=8.0)
+
+            self._scv_tag = int(tags[0])
+
+            if not self.awareness.intel_scv_dispatched(now=now):
+                self.awareness.mark_scv_dispatched(now=now)
+
+            try:
+                self._target = bot.enemy_start_locations[0]
+            except Exception:
+                self._target = bot.game_info.map_center
+
+            if self.log:
+                self.log.emit(
+                    "scout_started",
+                    {"t": round(now, 2), "scv_tag": self._scv_tag, "mission_id": self.mission_id},
+                )
+            self.awareness.emit("scout_started", now=now, data={"scv_tag": self._scv_tag, "mission_id": self.mission_id})
+            self._active("scout_started")
+
+        scv = bot.units.find_by_tag(self._scv_tag)
+        if scv is None:
+            try:
+                self.body.release_owner(task_id=self.mission_id)
+            except Exception:
+                pass
+
+            self._done("unit_missing")
+            self.awareness.emit("scout_lost", now=now, data={"mission_id": self.mission_id})
+            return TaskResult.failed("unit_missing", retry_after_s=20.0)
+
+        try:
+            self.body.touch(task_id=self.mission_id, unit_tag=int(self._scv_tag), now=now)
+        except Exception:
+            pass
+
+        if self._target:
+            try:
+                # Prefer enqueuing command if bot.do exists
+                if hasattr(bot, "do"):
+                    bot.do(scv.move(self._target))
+                else:
+                    # fallback: direct call (may be ignored by engine in some setups)
+                    scv.move(self._target)
+            except Exception:
+                self._active("move_failed")
+                return TaskResult.running("move_failed_retry")
+
+        if self._target and scv.position.distance_to(self._target) <= self.see_radius:
+            if not self.awareness.intel_scv_arrived_main(now=now):
+                self.awareness.mark_scv_arrived_main(now=now)
+                if self.log:
+                    self.log.emit("scout_arrived_main", {"t": round(now, 2), "mission_id": self.mission_id})
+                self.awareness.emit("scout_arrived_main", now=now, data={"mission_id": self.mission_id})
+
+        if now - self._last_log_t >= self.log_every:
+            self._last_log_t = now
+            if self.log:
+                self.log.emit(
+                    "scout_status",
+                    {
+                        "t": round(now, 2),
+                        "mission_id": self.mission_id,
+                        "arrived": bool(self.awareness.intel_scv_arrived_main(now=now)),
+                    },
+                )
+
+        self._active("scouting")
+        return TaskResult.running("scouting")
+```
+
+===== terran_builds.yml (ROOT) =====
+
+# terran_builds.yml
+```yaml
+UseData: False
+BuildSelection: Cycle
+MinGamesWinrateBased: 3
+
+BuildChoices:
+  Protoss:
+    BotName: MyBot
+    Cycle:
+      - Default
+  Terran:
+    BotName: MyBot
+    Cycle:
+      - Default
+  Zerg:
+    BotName: MyBot
+    Cycle:
+      - Default
+  Random:
+    BotName: MyBot
+    Cycle:
+      - Default
+
+Builds:
+  Default:
+    ConstantWorkerProductionTill: 0
+    AutoSupplyAtSupply: 16
+    OpeningBuildOrder:
+      - 14 supply @ ramp
+      - 16 barracks @ ramp
+      - 16 gas
+      - 0 orbital
+      - 19 expand
+      - 19 supply @ ramp
+      - 20 marine *2
+      - 21 barracks reactor
+      - 21 factory
+      - 22 gas
+      - 23 starport
+      - 0 orbital
+```

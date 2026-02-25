@@ -1,11 +1,10 @@
-# bot/infra/unit_leases.py
+# bot/mind/body.py
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Dict, Optional, Set, List
 
 from ares.consts import UnitRole
-
 
 @dataclass
 class Lease:
@@ -17,6 +16,7 @@ class Lease:
 class UnitLeases:
     """
     Unit ownership with TTL and reverse index.
+    (isso é "corpo": recurso escasso + locks + validade)
     """
 
     def __init__(self, *, default_ttl: float = 8.0):
@@ -89,9 +89,7 @@ class UnitLeases:
         ttl: Optional[float] = None,
         force: bool = False,
     ) -> bool:
-        """
-        Convenience method (alias of claim) kept for compatibility with tasks.
-        """
+        """Alias mantido pra compat com tasks."""
         return self.claim(
             task_id=task_id,
             unit_tag=unit_tag,
@@ -123,3 +121,16 @@ class UnitLeases:
             "total_leases": len(self._leases),
             "by_owner": {owner: len(tags) for owner, tags in self._by_owner.items()},
         }
+    
+    # -----------------------
+    # Role mapping
+    # -----------------------
+    def _role_for_domain(self, domain: str) -> UnitRole:
+        d = domain.upper()
+        if d == "DEFENSE":
+            return UnitRole.DEFENDING
+        if d in ("HARASS", "DROP"):
+            return UnitRole.HARASSING
+        if d in ("SCOUT", "INTEL"):
+            return UnitRole.SCOUTING
+        return UnitRole.IDLE

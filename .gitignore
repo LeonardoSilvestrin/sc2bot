@@ -131,7 +131,7 @@ dmypy.json
 
 .idea
 
-_prompt/
+#_prompt/
 .vscode1/
 .vscode/
 logs/

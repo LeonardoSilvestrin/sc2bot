@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional, Protocol, runtime_checkable
+from typing import Any, Optional, Protocol, runtime_checkable
 
 from bot.mind.attention import Attention
 
@@ -25,6 +25,40 @@ class TaskTick:
     time: float
 
 
+@dataclass(frozen=True)
+class TaskResult:
+    """
+    Unified execution feedback (task -> Ego).
+    Tasks SHOULD return this, but BaseTask supports legacy bool returns.
+
+    status:
+      - RUNNING: task continues as active mission
+      - DONE: task completed successfully (mission can end)
+      - FAILED: task failed (mission should end; Ego applies cooldown etc.)
+      - NOOP: task chose to do nothing this tick (still running)
+    """
+    status: str  # RUNNING | DONE | FAILED | NOOP
+    reason: str = ""
+    retry_after_s: float = 0.0
+    telemetry: Optional[dict] = None
+
+    @staticmethod
+    def running(reason: str = "", telemetry: Optional[dict] = None) -> "TaskResult":
+        return TaskResult(status="RUNNING", reason=str(reason), telemetry=telemetry)
+
+    @staticmethod
+    def done(reason: str = "", telemetry: Optional[dict] = None) -> "TaskResult":
+        return TaskResult(status="DONE", reason=str(reason), telemetry=telemetry)
+
+    @staticmethod
+    def failed(reason: str = "", retry_after_s: float = 8.0, telemetry: Optional[dict] = None) -> "TaskResult":
+        return TaskResult(status="FAILED", reason=str(reason), retry_after_s=float(retry_after_s), telemetry=telemetry)
+
+    @staticmethod
+    def noop(reason: str = "", telemetry: Optional[dict] = None) -> "TaskResult":
+        return TaskResult(status="NOOP", reason=str(reason), telemetry=telemetry)
+
+
 @runtime_checkable
 class Task(Protocol):
     """
@@ -32,7 +66,6 @@ class Task(Protocol):
 
     Notes:
     - domain is a string slot key (e.g. "DEFENSE", "INTEL")
-    - step() returns True if the task consumed 1 unit of command budget
     """
     task_id: str
     domain: str
@@ -42,7 +75,8 @@ class Task(Protocol):
     def is_done(self) -> bool: ...
 
     def evaluate(self, bot, attention: Attention) -> int: ...
-    async def step(self, bot, tick: TaskTick, attention: Attention) -> bool: ...
+
+    async def step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult: ...
 
     async def pause(self, bot, reason: str) -> None: ...
     async def abort(self, bot, reason: str) -> None: ...
@@ -76,30 +110,37 @@ class BaseTask:
     def evaluate(self, bot, attention: Attention) -> int:
         """
         Optional: tasks can provide a default evaluation score.
-        Most of your scoring should stay in planners, but this hook is useful
-        for quick heuristics and testing.
+        Most scoring should stay in planners; this hook is for quick heuristics/tests.
         """
         return 0
 
-    async def step(self, bot, tick: TaskTick, attention: Attention) -> bool:
+    async def step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult:
         """
-        Standard wrapper: blocks stepping if DONE/ABORTED, and ensures
-        ACTIVE state when running.
+        Standard wrapper:
+        - blocks stepping if DONE/ABORTED
+        - ensures ACTIVE state when running
+        - normalizes return type to TaskResult (supports legacy bool)
         """
         if self.is_done():
-            return False
+            return TaskResult.noop("already_done")
 
-        # If task is paused, it still may run if Ego kept it active;
-        # treat pause as a state that on_step can honor, but don't force-run.
         if self._status == TaskStatus.IDLE:
             self._status = TaskStatus.ACTIVE
 
         self._last_step_t = float(tick.time)
-        used = await self.on_step(bot, tick, attention)
 
-        # If task reached terminal status inside on_step, fine.
-        # Otherwise keep it ACTIVE/PAUSED.
-        return bool(used)
+        out: Any = await self.on_step(bot, tick, attention)
+
+        # Normalize TaskResult
+        if isinstance(out, TaskResult):
+            return out
+
+        # Legacy support: bool return
+        if isinstance(out, bool):
+            return TaskResult.running("did_any" if out else "idle")
+
+        # Unknown return: treat as running but record
+        return TaskResult.running("unknown_return_type")
 
     async def pause(self, bot, reason: str) -> None:
         if self.is_done():
@@ -116,10 +157,12 @@ class BaseTask:
     # -----------------------
     # To implement
     # -----------------------
-    async def on_step(self, bot, tick: TaskTick, attention: Attention) -> bool:
+    async def on_step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult | bool:
         """
         Implement task logic.
-        Return True if you issued commands and want to consume 1 budget unit.
+
+        Preferred: return TaskResult.
+        Legacy: return bool (True if issued commands).
         """
         raise NotImplementedError
 

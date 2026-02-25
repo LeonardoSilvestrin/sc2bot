@@ -30,14 +30,10 @@ Builds:
       - 16 gas
       - 0 orbital
       - 19 expand
-      - 20 supply @ ramp
+      - 19 supply @ ramp
       - 20 marine *2
       - 21 barracks reactor
       - 21 factory
       - 22 gas
       - 23 starport
       - 0 orbital
-      - 1 medivac
-      - 1 siegetank
-      - 1 barracks
-      - 2 marine *6
