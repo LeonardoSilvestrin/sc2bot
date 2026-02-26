@@ -1,9 +1,10 @@
-# bot/tasks/base.py
+# bot/tasks/base_task.py
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Optional, Protocol, runtime_checkable
+from typing import Optional, Protocol, runtime_checkable
+import copy
 
 from bot.mind.attention import Attention
 
@@ -28,8 +29,7 @@ class TaskTick:
 @dataclass(frozen=True)
 class TaskResult:
     """
-    Unified execution feedback (task -> Ego).
-    Tasks SHOULD return this, but BaseTask supports legacy bool returns.
+    Execution feedback (task -> Ego). STRICT contract: tasks must return TaskResult.
 
     status:
       - RUNNING: task continues as active mission
@@ -51,7 +51,7 @@ class TaskResult:
         return TaskResult(status="DONE", reason=str(reason), telemetry=telemetry)
 
     @staticmethod
-    def failed(reason: str = "", retry_after_s: float = 8.0, telemetry: Optional[dict] = None) -> "TaskResult":
+    def failed(reason: str = "", retry_after_s: float = 0.0, telemetry: Optional[dict] = None) -> "TaskResult":
         return TaskResult(status="FAILED", reason=str(reason), retry_after_s=float(retry_after_s), telemetry=telemetry)
 
     @staticmethod
@@ -66,20 +66,22 @@ class Task(Protocol):
 
     Notes:
     - domain is a string slot key (e.g. "DEFENSE", "INTEL")
+    - step() returns TaskResult (STRICT)
     """
     task_id: str
     domain: str
-    commitment: int  # how "expensive" / exclusive this task is (can be used later)
+    commitment: int
 
     def status(self) -> TaskStatus: ...
     def is_done(self) -> bool: ...
-
     def evaluate(self, bot, attention: Attention) -> int: ...
-
+    def bind_mission(self, *, mission_id: str, assigned_tags: list[int]) -> None: ...
     async def step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult: ...
-
     async def pause(self, bot, reason: str) -> None: ...
     async def abort(self, bot, reason: str) -> None: ...
+    def last_reason(self) -> str: ...
+    def last_step_time(self) -> float: ...
+    def spawn(self) -> "BaseTask": ...
 
 
 @dataclass
@@ -87,13 +89,19 @@ class BaseTask:
     """
     Convenience base class.
 
-    You implement on_step(); everything else is standard.
+    Policy:
+      - NO legacy bool returns. on_step MUST return TaskResult.
+      - Mission binding is explicit via bind_mission(); no setattr fallbacks.
     """
     task_id: str
     domain: str
+    commitment: int  # NOTE: required (no default) to avoid dataclass field-order issues in subclasses
 
-    commitment: int = 1
+    # mission binding (set by Ego)
+    mission_id: Optional[str] = field(default=None, init=False)
+    assigned_tags: list[int] = field(default_factory=list, init=False)
 
+    # internal state
     _status: TaskStatus = field(default=TaskStatus.IDLE, init=False)
     _last_reason: str = field(default="", init=False)
     _last_step_t: float = field(default=0.0, init=False)
@@ -108,19 +116,15 @@ class BaseTask:
         return self._status in (TaskStatus.DONE, TaskStatus.ABORTED)
 
     def evaluate(self, bot, attention: Attention) -> int:
-        """
-        Optional: tasks can provide a default evaluation score.
-        Most scoring should stay in planners; this hook is for quick heuristics/tests.
-        """
         return 0
 
+    def bind_mission(self, *, mission_id: str, assigned_tags: list[int]) -> None:
+        if not isinstance(mission_id, str) or not mission_id:
+            raise ValueError("mission_id must be a non-empty string")
+        self.mission_id = mission_id
+        self.assigned_tags = [int(x) for x in (assigned_tags or [])]
+
     async def step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult:
-        """
-        Standard wrapper:
-        - blocks stepping if DONE/ABORTED
-        - ensures ACTIVE state when running
-        - normalizes return type to TaskResult (supports legacy bool)
-        """
         if self.is_done():
             return TaskResult.noop("already_done")
 
@@ -129,18 +133,12 @@ class BaseTask:
 
         self._last_step_t = float(tick.time)
 
-        out: Any = await self.on_step(bot, tick, attention)
+        out = await self.on_step(bot, tick, attention)
 
-        # Normalize TaskResult
-        if isinstance(out, TaskResult):
-            return out
+        if not isinstance(out, TaskResult):
+            raise TypeError(f"{self.__class__.__name__}.on_step must return TaskResult, got {type(out)!r}")
 
-        # Legacy support: bool return
-        if isinstance(out, bool):
-            return TaskResult.running("did_any" if out else "idle")
-
-        # Unknown return: treat as running but record
-        return TaskResult.running("unknown_return_type")
+        return out
 
     async def pause(self, bot, reason: str) -> None:
         if self.is_done():
@@ -154,16 +152,7 @@ class BaseTask:
         self._status = TaskStatus.ABORTED
         self._last_reason = str(reason)
 
-    # -----------------------
-    # To implement
-    # -----------------------
-    async def on_step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult | bool:
-        """
-        Implement task logic.
-
-        Preferred: return TaskResult.
-        Legacy: return bool (True if issued commands).
-        """
+    async def on_step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult:
         raise NotImplementedError
 
     # -----------------------
@@ -188,3 +177,16 @@ class BaseTask:
 
     def last_step_time(self) -> float:
         return float(self._last_step_t)
+
+    def spawn(self) -> "BaseTask":
+        """
+        Create a fresh instance of this task (for multiple missions using same script).
+        This is a deep copy + reset of lifecycle and mission binding.
+        """
+        t: BaseTask = copy.deepcopy(self)
+        t._status = TaskStatus.IDLE
+        t._last_reason = ""
+        t._last_step_t = 0.0
+        t.mission_id = None
+        t.assigned_tags = []
+        return t

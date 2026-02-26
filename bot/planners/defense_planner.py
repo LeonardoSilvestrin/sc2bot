@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 from bot.mind.attention import Attention
 from bot.mind.awareness import Awareness
-from bot.planners.proposals import Proposal
+from bot.planners.proposals import Proposal, TaskSpec
 from bot.tasks.defend_task import Defend
 
 
@@ -13,47 +13,34 @@ from bot.tasks.defend_task import Defend
 class DefensePlanner:
     """
     Planner reativo de defesa.
-    - Só propõe quando há ameaça.
-    - Score escala com urgência (Attention.defense_urgency).
-    - Não redefine Proposal/UnitRequirement (usa o contrato único em planners/proposals.py).
     """
     planner_id: str = "defense_planner"
-
-    awareness: Awareness = None  # injected
-    defend_task: Defend = None   # injected
+    defend_task: Defend = None  # template instance
 
     def _pid_defend(self) -> str:
         return f"{self.planner_id}:defend:bases"
 
     def propose(self, bot, *, awareness: Awareness, attention: Attention) -> list[Proposal]:
-        """
-        v2 contract:
-          - Proposal(proposal_id, domain, score, task_factory, unit_requirements, .)
-        """
         if (not bool(attention.combat.threatened)) or (not attention.combat.threat_pos):
             return []
 
-        urg = int(getattr(attention.combat, "defense_urgency", 0))
-        # DEFENSE deve dominar quando houver ameaça: score alto e proporcional.
+        urg = int(attention.combat.defense_urgency)
         score = max(80, min(100, 60 + urg))
 
-        def _defend_factory(mission_id: str) -> Defend:
-            t = self.defend_task
-            try:
-                setattr(t, "mission_id", mission_id)
-            except Exception:
-                pass
-            return t
+        if self.defend_task is None:
+            raise TypeError("DefensePlanner requires defend_task template instance")
+
+        def _factory(mission_id: str) -> Defend:
+            return self.defend_task.spawn()
 
         return [
             Proposal(
                 proposal_id=self._pid_defend(),
                 domain="DEFENSE",
                 score=score,
-                task_factory=_defend_factory,
-                unit_requirements=[],   # MVP: Defend puxa “defenders” do bot; depois a gente amarra via Body.
+                tasks=[TaskSpec(task_id="defend_bases", task_factory=_factory, unit_requirements=[])],
                 lease_ttl=6.0,
-                cooldown_s=0.0,         # defesa não deve “cooldownar”
+                cooldown_s=0.0,
                 risk_level=0,
                 allow_preempt=True,
             )

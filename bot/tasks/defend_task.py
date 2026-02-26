@@ -1,4 +1,4 @@
-# bot/tasks/defend.py
+# bot/tasks/defend_task.py
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -7,19 +7,14 @@ from sc2.ids.unit_typeid import UnitTypeId as U
 
 from bot.devlog import DevLogger
 from bot.mind.attention import Attention
-from bot.tasks.base_task import BaseTask, TaskTick
+from bot.tasks.base_task import BaseTask, TaskTick, TaskResult
 
 
 @dataclass
 class Defend(BaseTask):
     """
     Defesa reativa das bases.
-
-    Contrato:
-      - Implementa Task via BaseTask (status(), pause(), abort(), etc).
-      - Consome budget quando emite comandos.
     """
-
     log: DevLogger | None = None
     log_every_iters: int = 11
 
@@ -28,10 +23,10 @@ class Defend(BaseTask):
         self.log = log
         self.log_every_iters = int(log_every_iters)
 
-    async def on_step(self, bot, tick: TaskTick, attention: Attention) -> bool:
-        if not attention.combat.threatened or not attention.combat.threat_pos:
+    async def on_step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult:
+        if (not attention.combat.threatened) or (not attention.combat.threat_pos):
             self._paused("no_threat")
-            return False
+            return TaskResult.noop("no_threat")
 
         defenders = bot.units.of_type(
             {
@@ -48,7 +43,7 @@ class Defend(BaseTask):
         )
         if defenders.amount == 0:
             self._paused("no_defenders")
-            return False
+            return TaskResult.noop("no_defenders")
 
         local = defenders.closer_than(45, attention.combat.threat_pos)
         if local.amount == 0:
@@ -82,7 +77,7 @@ class Defend(BaseTask):
                         "pos": [round(attention.combat.threat_pos.x, 1), round(attention.combat.threat_pos.y, 1)],
                     },
                 )
+            return TaskResult.running("defending")
         else:
             self._active("defending_no_orders")
-
-        return bool(issued)
+            return TaskResult.noop("defending_no_orders")

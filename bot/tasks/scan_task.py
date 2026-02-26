@@ -1,8 +1,7 @@
-# bot/tasks/scan.py
+# bot/tasks/scan_task.py
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Optional
+from dataclasses import dataclass, field
 
 from sc2.ids.ability_id import AbilityId
 from sc2.ids.unit_typeid import UnitTypeId as U
@@ -15,84 +14,76 @@ from bot.tasks.base_task import BaseTask, TaskTick, TaskResult
 
 @dataclass
 class ScanAt(BaseTask):
-    awareness: Awareness = None
-    target = None
-    label: str = "unknown"
+    # required deps first (avoid dataclass non-default-after-default errors)
+    awareness: Awareness
+    target: object
+    label: str
+
+    # config
     cooldown: float = 20.0
     log: DevLogger | None = None
 
-    # injetado pelo planner/ego (compat)
-    mission_id: Optional[str] = None
+    # internal state
+    _last_scan_t: float = field(default=0.0, init=False)
 
-    def __init__(
-        self,
-        *,
-        awareness: Awareness,
-        target,
-        label: str,
-        cooldown: float = 20.0,
-        log: DevLogger | None = None,
-    ):
-        super().__init__(task_id="scan_at_once", domain="INTEL")
+    def __init__(self, *, awareness: Awareness, target, label: str, cooldown: float = 20.0, log: DevLogger | None = None):
+        super().__init__(task_id="scan_at", domain="INTEL", commitment=5)
         self.awareness = awareness
         self.target = target
         self.label = str(label)
         self.cooldown = float(cooldown)
         self.log = log
-        self.mission_id = None
+        self._last_scan_t = 0.0
+
+    def evaluate(self, bot, attention: Attention) -> int:
+        now = float(attention.time)
+
+        # if no orbital energy, don't propose high
+        if not bool(attention.intel.orbital_ready_to_scan):
+            return 0
+
+        # cooldown
+        if now - float(self._last_scan_t) < float(self.cooldown):
+            return 0
+
+        # if already scanned enemy main, reduce need
+        if self.label == "enemy_main" and self.awareness.intel_scanned_enemy_main(now=now):
+            return 0
+
+        return 40
 
     async def on_step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult:
         now = float(tick.time)
 
-        last = float(self.awareness.intel_last_scan_at(now=now))
-        if (now - last) < float(self.cooldown):
-            self._paused("scan_cooldown")
-            return TaskResult.noop("scan_cooldown")
+        if not bool(attention.intel.orbital_ready_to_scan):
+            self._paused("no_orbital_energy")
+            return TaskResult.noop("no_orbital_energy")
+
+        if now - float(self._last_scan_t) < float(self.cooldown):
+            self._paused("cooldown")
+            return TaskResult.noop("cooldown")
 
         try:
             orbitals = bot.structures(U.ORBITALCOMMAND).ready
+            if orbitals.amount == 0:
+                self._paused("no_orbital")
+                return TaskResult.noop("no_orbital")
+
+            oc = orbitals.first
+            target = self.target
+
+            oc(AbilityId.SCANNERSWEEP_SCAN, target)
+            self._last_scan_t = float(now)
+
+            if self.label == "enemy_main":
+                self.awareness.mark_scan_enemy_main(now=now)
+
+            if self.log:
+                self.log.emit("scan_cast", {"t": round(float(now), 2), "label": str(self.label)})
+
+            self._active("scan_cast")
+            return TaskResult.running("scan_cast")
+
         except Exception:
-            orbitals = None
-
-        if not orbitals or orbitals.amount == 0:
-            self._paused("no_orbital")
-            self.awareness.emit(
-                "scan_failed",
-                now=now,
-                data={"label": self.label, "reason": "no_orbital", "mission_id": self.mission_id or ""},
-            )
-            return TaskResult.failed("no_orbital", retry_after_s=12.0)
-
-        oc = orbitals.first
-
-        try:
-            energy = float(getattr(oc, "energy", 0.0) or 0.0)
-        except Exception:
-            energy = 0.0
-        if energy < 50.0:
-            self._paused("not_enough_energy")
-            return TaskResult.noop("not_enough_energy")
-
-        try:
-            oc(AbilityId.SCANNERSWEEP_SCAN, self.target)
-        except Exception as e:
-            self._paused("scan_command_failed")
-            self.awareness.emit(
-                "scan_failed",
-                now=now,
-                data={"label": self.label, "reason": "command_failed", "err": str(e), "mission_id": self.mission_id or ""},
-            )
-            return TaskResult.failed("scan_command_failed", retry_after_s=10.0)
-
-        self.awareness.mark_scan_enemy_main(now=now)
-        self.awareness.emit(
-            "scan_cast",
-            now=now,
-            data={"label": self.label, "mission_id": self.mission_id or ""},
-        )
-
-        if self.log:
-            self.log.emit("scan_cast", {"t": round(now, 2), "label": self.label, "mission_id": self.mission_id or ""})
-
-        self._done("scan_cast")
-        return TaskResult.done("scan_cast")
+            self._paused("scan_failed")
+            return TaskResult.failed("scan_failed", retry_after_s=6.0)

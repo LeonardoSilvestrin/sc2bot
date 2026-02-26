@@ -1,162 +1,159 @@
-# bot/tasks/scout.py
+# bot/tasks/scout_task.py
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Optional, List
+from dataclasses import dataclass, field
+from typing import Optional
 
 from sc2.position import Point2
 
 from bot.devlog import DevLogger
 from bot.mind.attention import Attention
-from bot.mind.awareness import Awareness, K
-from bot.mind.body import UnitLeases  # Body
+from bot.mind.awareness import Awareness
+from bot.mind.body import UnitLeases
 from bot.tasks.base_task import BaseTask, TaskTick, TaskResult
-
-
-def _mission_assigned_tags(awareness: Awareness, *, mission_id: str, now: float) -> List[int]:
-    """
-    MVP: lê assigned_tags do fallback via Awareness.mem.
-    """
-    tags = awareness.mem.get(K("ops", "mission", mission_id, "assigned_tags"), now=now, default=[])
-    try:
-        return [int(x) for x in (tags or [])]
-    except Exception:
-        return []
 
 
 @dataclass
 class Scout(BaseTask):
-    body: UnitLeases = None
-    awareness: Awareness = None
-    log: DevLogger | None = None
+    # required deps first (avoid dataclass non-default-after-default errors)
+    body: UnitLeases
+    awareness: Awareness
 
+    # config
+    log: DevLogger | None = None
     trigger_time: float = 25.0
     log_every: float = 6.0
     see_radius: float = 14.0
 
-    # injetado pelo planner/ego
-    mission_id: Optional[str] = None
-
-    # estado interno mínimo
-    _scv_tag: Optional[int] = None
-    _target: Optional[Point2] = None
-    _last_log_t: float = 0.0
+    # internal state (not part of __init__)
+    _scv_tag: Optional[int] = field(default=None, init=False)
+    _target: Optional[Point2] = field(default=None, init=False)
+    _last_log_t: float = field(default=0.0, init=False)
 
     def __init__(
         self,
         *,
-        body=None,
+        body: UnitLeases,
         awareness: Awareness,
         log: DevLogger | None = None,
         trigger_time: float = 25.0,
         log_every: float = 6.0,
         see_radius: float = 14.0,
     ):
-        super().__init__(task_id="scout_scv", domain="INTEL")
-
-        # compat: aceita body= ou leases=
+        super().__init__(task_id="scout_enemy_main", domain="INTEL", commitment=2)
         self.body = body
-        if self.body is None:
-            raise TypeError("Scout requires body= (or leases= for legacy wiring)")
-
         self.awareness = awareness
         self.log = log
         self.trigger_time = float(trigger_time)
         self.log_every = float(log_every)
         self.see_radius = float(see_radius)
 
-        self.mission_id = None
         self._scv_tag = None
         self._target = None
         self._last_log_t = 0.0
 
+    def evaluate(self, bot, attention: Attention) -> int:
+        now = float(attention.time)
+
+        # before trigger time: don't bother
+        if now < float(self.trigger_time):
+            return 0
+
+        # already have intel: no need
+        if self.awareness.intel_scv_arrived_main(now=now):
+            return 0
+
+        # opening can also be used as a mild incentive to scout early
+        opening = bool(attention.macro.opening_done)
+        return 55 if not opening else 35
+
+    def _log_tick(self, bot, *, now: float, reason: str) -> None:
+        if not self.log:
+            return
+        if now - float(self._last_log_t) < float(self.log_every):
+            return
+        self._last_log_t = float(now)
+        self.log.emit(
+            "scout_tick",
+            {
+                "t": round(float(now), 2),
+                "reason": str(reason),
+                "scv_tag": int(self._scv_tag or 0),
+                "arrived": bool(self.awareness.intel_scv_arrived_main(now=now)),
+                "dispatched": bool(self.awareness.intel_scv_dispatched(now=now)),
+            },
+        )
+
     async def on_step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult:
         now = float(tick.time)
 
-        if now < self.trigger_time:
-            self._paused("before_trigger_time")
-            return TaskResult.noop("before_trigger_time")
+        if now < float(self.trigger_time):
+            self._paused("too_early")
+            return TaskResult.noop("too_early")
 
-        if not self.mission_id:
-            self._paused("no_mission_id")
-            self.awareness.emit("scout_failed", now=now, data={"reason": "no_mission_id"})
-            return TaskResult.failed("no_mission_id", retry_after_s=6.0)
+        if self.awareness.intel_scv_arrived_main(now=now):
+            self._done("already_arrived")
+            return TaskResult.done("already_arrived")
 
-        if self._scv_tag is None:
-            tags = _mission_assigned_tags(self.awareness, mission_id=self.mission_id, now=now)
-            if not tags:
-                self._paused("no_assigned_unit")
-                self.awareness.emit(
-                    "scout_failed",
-                    now=now,
-                    data={"reason": "no_assigned_unit", "mission_id": self.mission_id},
-                )
-                return TaskResult.failed("no_assigned_unit", retry_after_s=8.0)
-
-            self._scv_tag = int(tags[0])
-
-            if not self.awareness.intel_scv_dispatched(now=now):
-                self.awareness.mark_scv_dispatched(now=now)
-
+        # determine target once
+        if self._target is None:
             try:
-                self._target = bot.enemy_start_locations[0]
+                target = bot.enemy_start_locations[0]
             except Exception:
-                self._target = bot.game_info.map_center
+                target = bot.game_info.map_center
+            self._target = target
 
-            if self.log:
-                self.log.emit(
-                    "scout_started",
-                    {"t": round(now, 2), "scv_tag": self._scv_tag, "mission_id": self.mission_id},
-                )
-            self.awareness.emit("scout_started", now=now, data={"scv_tag": self._scv_tag, "mission_id": self.mission_id})
-            self._active("scout_started")
+        # dispatch if needed
+        if not self.awareness.intel_scv_dispatched(now=now) or self._scv_tag is None:
+            try:
+                worker = bot.workers.closest_to(bot.start_location)
+            except Exception:
+                worker = None
 
+            if worker is None:
+                self._paused("no_worker")
+                return TaskResult.noop("no_worker")
+
+            # claim worker
+            ok = self.body.claim(
+                task_id=self.task_id,
+                unit_tag=int(worker.tag),
+                role=bot.mediator.get_role(tag=worker.tag),
+                now=now,
+                ttl=10.0,
+                force=False,
+            )
+            if not ok:
+                self._paused("worker_leased")
+                return TaskResult.noop("worker_leased")
+
+            self._scv_tag = int(worker.tag)
+            self.awareness.mark_scv_dispatched(now=now)
+            self._active("dispatch")
+            self._log_tick(bot, now=now, reason="dispatch")
+            return TaskResult.running("dispatch")
+
+        # move scv
         scv = bot.units.find_by_tag(self._scv_tag)
         if scv is None:
-            try:
-                self.body.release_owner(task_id=self.mission_id)
-            except Exception:
-                pass
+            self._paused("scv_lost")
+            self._scv_tag = None
+            return TaskResult.noop("scv_lost")
 
-            self._done("unit_missing")
-            self.awareness.emit("scout_lost", now=now, data={"mission_id": self.mission_id})
-            return TaskResult.failed("unit_missing", retry_after_s=20.0)
+        # keep lease alive
+        self.body.touch(task_id=self.task_id, unit_tag=int(scv.tag), now=now, ttl=10.0)
 
-        try:
-            self.body.touch(task_id=self.mission_id, unit_tag=int(self._scv_tag), now=now)
-        except Exception:
-            pass
-
-        if self._target:
-            try:
-                # Prefer enqueuing command if bot.do exists
-                if hasattr(bot, "do"):
-                    bot.do(scv.move(self._target))
-                else:
-                    # fallback: direct call (may be ignored by engine in some setups)
-                    scv.move(self._target)
-            except Exception:
-                self._active("move_failed")
-                return TaskResult.running("move_failed_retry")
-
-        if self._target and scv.position.distance_to(self._target) <= self.see_radius:
-            if not self.awareness.intel_scv_arrived_main(now=now):
+        if self._target is not None:
+            if scv.distance_to(self._target) <= float(self.see_radius):
                 self.awareness.mark_scv_arrived_main(now=now)
-                if self.log:
-                    self.log.emit("scout_arrived_main", {"t": round(now, 2), "mission_id": self.mission_id})
-                self.awareness.emit("scout_arrived_main", now=now, data={"mission_id": self.mission_id})
+                self._done("arrived_main")
+                self._log_tick(bot, now=now, reason="arrived_main")
+                return TaskResult.done("arrived_main")
 
-        if now - self._last_log_t >= self.log_every:
-            self._last_log_t = now
-            if self.log:
-                self.log.emit(
-                    "scout_status",
-                    {
-                        "t": round(now, 2),
-                        "mission_id": self.mission_id,
-                        "arrived": bool(self.awareness.intel_scv_arrived_main(now=now)),
-                    },
-                )
+            scv.move(self._target)
+            self._active("moving")
+            self._log_tick(bot, now=now, reason="moving")
+            return TaskResult.running("moving")
 
-        self._active("scouting")
-        return TaskResult.running("scouting")
+        self._paused("no_target")
+        return TaskResult.noop("no_target")
