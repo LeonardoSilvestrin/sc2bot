@@ -1,0 +1,111 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from ares.behaviors.macro.build_workers import BuildWorkers
+from ares.behaviors.macro.macro_plan import MacroPlan
+from ares.behaviors.macro.spawn_controller import SpawnController
+from sc2.ids.unit_typeid import UnitTypeId as U
+
+from bot.devlog import DevLogger
+from bot.mind.attention import Attention
+from bot.mind.awareness import Awareness, K
+from bot.tasks.base_task import BaseTask, TaskTick, TaskResult
+
+
+@dataclass
+class MacroProductionTick(BaseTask):
+    awareness: Awareness
+    log: DevLogger | None = None
+    scv_cap: int = 66
+    log_every_iters: int = 22
+
+    def __init__(
+        self,
+        *,
+        awareness: Awareness,
+        log: DevLogger | None = None,
+        scv_cap: int = 66,
+        log_every_iters: int = 22,
+    ):
+        super().__init__(task_id="macro_production", domain="MACRO_PRODUCTION", commitment=10)
+        self.awareness = awareness
+        self.log = log
+        self.scv_cap = int(scv_cap)
+        self.log_every_iters = int(log_every_iters)
+
+    @staticmethod
+    def _normalize(comp: dict[U, float]) -> dict[U, float]:
+        total = float(sum(float(v) for v in comp.values()))
+        if total <= 0.0:
+            return comp
+        return {k: float(v) / total for k, v in comp.items()}
+
+    def _desired_comp(self, now: float) -> dict[U, float]:
+        raw = self.awareness.mem.get(K("macro", "desired", "comp"), now=now, default=None)
+
+        comp: dict[U, float] = {}
+        if isinstance(raw, dict):
+            for k, v in raw.items():
+                if not isinstance(k, str):
+                    continue
+                try:
+                    uid = getattr(U, k)
+                except Exception:
+                    continue
+                try:
+                    fv = float(v)
+                except Exception:
+                    continue
+                if fv > 0:
+                    comp[uid] = fv
+
+        if not comp:
+            comp = {
+                U.MARINE: 0.60,
+                U.MARAUDER: 0.25,
+                U.MEDIVAC: 0.15,
+            }
+
+        return self._normalize(comp)
+
+    def _spawn_dict(self, now: float) -> dict[U, dict[str, float | int]]:
+        comp = self._desired_comp(now)
+        ordered = sorted(comp.items(), key=lambda kv: kv[1], reverse=True)
+        out: dict[U, dict[str, float | int]] = {}
+        for idx, (uid, proportion) in enumerate(ordered):
+            out[uid] = {"proportion": float(proportion), "priority": int(idx)}
+        return out
+
+    async def on_step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult:
+        if not isinstance(self.mission_id, str) or not self.mission_id:
+            return TaskResult.failed("unbound_mission")
+
+        now = float(tick.time)
+        spawn_dict = self._spawn_dict(now)
+
+        plan = MacroPlan()
+        plan.add(BuildWorkers(to_count=int(self.scv_cap)))
+        plan.add(
+            SpawnController(
+                army_composition_dict=spawn_dict,
+                freeflow_mode=bool(attention.economy.minerals >= 1200),
+                ignore_proportions_below_unit_count=8,
+                over_produce_on_low_tech=True,
+            )
+        )
+
+        bot.register_behavior(plan)
+
+        if self.log is not None and (int(tick.iteration) % self.log_every_iters == 0):
+            self.log.emit(
+                "macro_production",
+                {
+                    "iter": int(tick.iteration),
+                    "t": round(float(now), 2),
+                    "scv_cap": int(self.scv_cap),
+                    "units": [u.name for u in spawn_dict.keys()],
+                },
+            )
+
+        return TaskResult.running("production_plan_registered")

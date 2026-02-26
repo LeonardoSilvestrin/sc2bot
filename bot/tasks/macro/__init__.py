@@ -1,9 +1,11 @@
-from bot.tasks.macro.bio_standard import MacroAresBioStandardTick
 from bot.tasks.macro.opening import MacroOpeningTick
-from bot.tasks.macro.rush_defend import MacroAresRushDefenseTick
+from bot.tasks.macro.production_tick import MacroProductionTick
+from bot.tasks.macro.scv_housekeeping_task import ScvHousekeeping
+from bot.tasks.macro.spending_tick import MacroSpendingTick
 
 __all__ = [
     "MacroOpeningTick",
-    "MacroAresBioStandardTick",
-    "MacroAresRushDefenseTick",
+    "MacroProductionTick",
+    "MacroSpendingTick",
+    "ScvHousekeeping",
 ]

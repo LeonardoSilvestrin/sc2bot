@@ -36,6 +36,25 @@ class IntelSnapshot:
 class MacroSnapshot:
     opening_done: bool
 
+    minerals: int
+    vespene: int
+
+    workers_total: int
+    workers_idle: int
+
+    bases_total: int
+    bases_under_saturated: int
+    bases_over_saturated: int
+
+    prod_structures_total: int
+    prod_structures_idle: int
+    prod_structures_active: int
+
+    supply_used: int
+    supply_cap: int
+    supply_left: int
+    supply_blocked: bool
+
 
 @dataclass(frozen=True)
 class EnemyBuildSnapshot:

@@ -1,4 +1,6 @@
-# bot/tasks/scv_housekeeping_task.py
+# =============================================================================
+# bot/tasks/macro/scv_housekeeping_task.py  (MODIFIED: domain)
+# =============================================================================
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -29,7 +31,7 @@ class ScvHousekeeping(BaseTask):
     awareness: Awareness
 
     def __init__(self, *, awareness: Awareness):
-        super().__init__(task_id="scv_housekeeping", domain="MACRO", commitment=1)
+        super().__init__(task_id="scv_housekeeping", domain="MACRO_HOUSEKEEPING", commitment=1)
         self.awareness = awareness
 
     def evaluate(self, bot, attention: Attention) -> int:

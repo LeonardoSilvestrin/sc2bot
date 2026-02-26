@@ -8,6 +8,7 @@ from sc2.data import Result
 from bot.devlog import DevLogger
 from bot.sensors.threat_sensor import Threat
 from bot.intel.enemy_build_intel import EnemyBuildIntelConfig, derive_enemy_build_intel
+from bot.intel.my_army_composition_intel import MyArmyCompositionConfig, derive_my_army_composition_intel
 from bot.mind.attention import derive_attention
 from bot.mind.awareness import Awareness
 from bot.mind.body import UnitLeases
@@ -16,11 +17,14 @@ from bot.tasks.base_task import TaskTick
 
 from bot.tasks.defend_task import Defend
 from bot.tasks.scout_task import Scout
-from bot.tasks.macro import MacroAresBioStandardTick, MacroAresRushDefenseTick, MacroOpeningTick
+from bot.tasks.macro.opening import MacroOpeningTick
 
 from bot.planners.defense_planner import DefensePlanner
 from bot.planners.intel_planner import IntelPlanner
-from bot.planners.macro_planner import MacroPlanner
+
+from bot.planners.production_planner import ProductionPlanner
+from bot.planners.spending_planner import SpendingPlanner
+from bot.planners.housekeeping_planner import HousekeepingPlanner
 
 
 @dataclass
@@ -31,6 +35,7 @@ class RuntimeApp:
     body: UnitLeases
     ego: Ego
     enemy_build_cfg: EnemyBuildIntelConfig
+    my_comp_cfg: MyArmyCompositionConfig
     debug: bool = True
 
     @classmethod
@@ -43,7 +48,9 @@ class RuntimeApp:
             body=body,
             log=log,
             cfg=EgoConfig(
-                singleton_domains=frozenset({"MACRO"}),  # only one active MACRO mission at a time
+                # New singleton macro domains: allow spending+production+housekeeping concurrently,
+                # without changing Ego internals.
+                singleton_domains=frozenset({"MACRO_SPENDING", "MACRO_PRODUCTION", "MACRO_HOUSEKEEPING"}),
                 threat_block_start_at=70,
                 threat_force_preempt_at=90,
                 non_preemptible_grace_s=2.5,
@@ -61,34 +68,91 @@ class RuntimeApp:
             see_radius=14.0,
         )
 
+        # Opening remains a tiny SCV-only macro while BuildRunner/YML does the rest.
         opening_macro_task = MacroOpeningTick(log=log, log_every_iters=22, scv_cap=60)
-
-        bio_standard_task = MacroAresBioStandardTick(
-            log=log,
-            scv_cap=66,
-            target_bases=2,
-            log_every_iters=22,
-        )
-
-        rush_defense_task = MacroAresRushDefenseTick(
-            log=log,
-            scv_cap=40,
-            target_bases=1,
-            log_every_iters=22,
-        )
 
         defense_planner = DefensePlanner(defend_task=defend_task, log=log)
         intel_planner = IntelPlanner(awareness=awareness, log=log, scout_task=scout_task)
 
-        macro_planner = MacroPlanner(
-            opening_task=opening_macro_task,
-            bio_task=bio_standard_task,
-            rush_defense_task=rush_defense_task,
-            backoff_urgency=60,
+        spending_planner = SpendingPlanner(
+            target_bases_default=2,
+            flood_m=800,
+            flood_hi_m=1400,
+            flood_hold_s=12.0,
             log=log,
         )
 
-        ego.register_planners([defense_planner, intel_planner, macro_planner])
+        production_planner = ProductionPlanner(
+            scv_cap=66,
+            log=log,
+        )
+
+        housekeeping_planner = HousekeepingPlanner(
+            interval_s=35.0,
+            cooldown_s=6.0,
+            lease_ttl_s=12.0,
+            score=18,
+            log=log,
+        )
+
+        # Keep opening as a "pre-macro" handled by its own planner? (MVP: reuse ProductionPlanner gate.)
+        # For now: register opening via a tiny planner-inline shim inside runtime:
+        # We keep it as a planner to respect the architecture.
+        from bot.planners.proposals import Proposal, TaskSpec
+
+        @dataclass
+        class OpeningPlanner:
+            planner_id: str = "opening_planner"
+            score: int = 60
+            log: DevLogger | None = None
+            opening_task: MacroOpeningTick = None
+
+            def _pid(self) -> str:
+                return f"{self.planner_id}:macro_opening"
+
+            def propose(self, bot, *, awareness: Awareness, attention) -> list[Proposal]:
+                now = float(attention.time)
+                if bool(attention.macro.opening_done):
+                    return []
+                pid = self._pid()
+                if awareness.ops_proposal_running(proposal_id=pid, now=now):
+                    return []
+
+                def _factory(mission_id: str) -> MacroOpeningTick:
+                    return self.opening_task.spawn()
+
+                out = [
+                    Proposal(
+                        proposal_id=pid,
+                        domain="MACRO_PRODUCTION",  # opening shares the production lane
+                        score=int(self.score),
+                        tasks=[TaskSpec(task_id="macro_opening", task_factory=_factory, unit_requirements=[], lease_ttl=None)],
+                        lease_ttl=None,
+                        cooldown_s=0.0,
+                        risk_level=0,
+                        allow_preempt=True,
+                    )
+                ]
+                if self.log:
+                    self.log.emit(
+                        "planner_proposed",
+                        {"planner": self.planner_id, "count": len(out), "mode": "opening"},
+                        meta={"module": "planner", "component": f"planner.{self.planner_id}"},
+                    )
+                return out
+
+        opening_planner = OpeningPlanner(opening_task=opening_macro_task, log=log)
+
+        ego.register_planners(
+            [
+                defense_planner,
+                intel_planner,
+                opening_planner,
+                spending_planner,
+                production_planner,
+                housekeeping_planner,
+            ]
+        )
 
         return cls(
             log=log,
@@ -97,6 +161,7 @@ class RuntimeApp:
             body=body,
             ego=ego,
             enemy_build_cfg=EnemyBuildIntelConfig(),
+            my_comp_cfg=MyArmyCompositionConfig(),
             debug=bool(debug),
         )
 
@@ -119,6 +184,14 @@ class RuntimeApp:
             attention=attention,
             now=now,
             cfg=self.enemy_build_cfg,
+        )
+
+        # New: strategy reference (mode + proportions)
+        derive_my_army_composition_intel(
+            awareness=self.awareness,
+            attention=attention,
+            now=now,
+            cfg=self.my_comp_cfg,
         )
 
         tick = TaskTick(iteration=int(iteration), time=now)

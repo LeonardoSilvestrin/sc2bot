@@ -1,0 +1,141 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from ares.behaviors.macro.auto_supply import AutoSupply
+from ares.behaviors.macro.expansion_controller import ExpansionController
+from ares.behaviors.macro.gas_building_controller import GasBuildingController
+from ares.behaviors.macro.macro_plan import MacroPlan
+from ares.behaviors.macro.production_controller import ProductionController
+from sc2.ids.unit_typeid import UnitTypeId as U
+
+from bot.devlog import DevLogger
+from bot.mind.attention import Attention
+from bot.mind.awareness import Awareness, K
+from bot.tasks.base_task import BaseTask, TaskTick, TaskResult
+
+
+@dataclass
+class MacroSpendingTick(BaseTask):
+    awareness: Awareness
+    log: DevLogger | None = None
+    target_bases_default: int = 2
+    flood_m: int = 800
+    flood_hi_m: int = 1400
+    flood_hold_s: float = 12.0
+    log_every_iters: int = 22
+
+    def __init__(
+        self,
+        *,
+        awareness: Awareness,
+        log: DevLogger | None = None,
+        target_bases_default: int = 2,
+        flood_m: int = 800,
+        flood_hi_m: int = 1400,
+        flood_hold_s: float = 12.0,
+        log_every_iters: int = 22,
+    ):
+        super().__init__(task_id="macro_spending", domain="MACRO_SPENDING", commitment=10)
+        self.awareness = awareness
+        self.log = log
+        self.target_bases_default = int(target_bases_default)
+        self.flood_m = int(flood_m)
+        self.flood_hi_m = int(flood_hi_m)
+        self.flood_hold_s = float(flood_hold_s)
+        self.log_every_iters = int(log_every_iters)
+
+    @staticmethod
+    def _normalize(comp: dict[U, float]) -> dict[U, float]:
+        total = float(sum(float(v) for v in comp.values()))
+        if total <= 0.0:
+            return comp
+        return {k: float(v) / total for k, v in comp.items()}
+
+    def _desired_comp(self, now: float) -> dict[U, float]:
+        raw = self.awareness.mem.get(K("macro", "desired", "comp"), now=now, default=None)
+
+        comp: dict[U, float] = {}
+        if isinstance(raw, dict):
+            for k, v in raw.items():
+                if not isinstance(k, str):
+                    continue
+                try:
+                    uid = getattr(U, k)
+                except Exception:
+                    continue
+                try:
+                    fv = float(v)
+                except Exception:
+                    continue
+                if fv > 0:
+                    comp[uid] = fv
+
+        if not comp:
+            comp = {
+                U.MARINE: 0.60,
+                U.MARAUDER: 0.25,
+                U.MEDIVAC: 0.15,
+            }
+
+        return self._normalize(comp)
+
+    def _army_comp_for_controllers(self, now: float) -> dict[U, dict[str, float | int]]:
+        comp = self._desired_comp(now)
+        ordered = sorted(comp.items(), key=lambda kv: kv[1], reverse=True)
+        out: dict[U, dict[str, float | int]] = {}
+        for idx, (uid, proportion) in enumerate(ordered):
+            out[uid] = {"proportion": float(proportion), "priority": int(idx)}
+        return out
+
+    def _target_bases(self, *, attention: Attention, now: float) -> int:
+        minerals = int(attention.economy.minerals)
+
+        flood_until = float(self.awareness.mem.get(K("macro", "spending", "flood_until"), now=now, default=0.0) or 0.0)
+        if minerals >= self.flood_hi_m:
+            flood_until = now + float(self.flood_hold_s)
+            self.awareness.mem.set(K("macro", "spending", "flood_until"), value=float(flood_until), now=now, ttl=None)
+
+        flood_active = minerals >= self.flood_m or now < flood_until
+
+        target = int(self.target_bases_default)
+        if flood_active:
+            target += 1
+
+        return max(1, int(target))
+
+    async def on_step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult:
+        if not isinstance(self.mission_id, str) or not self.mission_id:
+            return TaskResult.failed("unbound_mission")
+
+        now = float(tick.time)
+        target_bases = self._target_bases(attention=attention, now=now)
+        gas_target = max(0, int(attention.macro.bases_total) * 2)
+        army_comp = self._army_comp_for_controllers(now)
+
+        plan = MacroPlan()
+        plan.add(AutoSupply(base_location=bot.start_location))
+        plan.add(GasBuildingController(to_count=int(gas_target)))
+        plan.add(ExpansionController(to_count=int(target_bases)))
+        plan.add(
+            ProductionController(
+                army_composition_dict=army_comp,
+                base_location=bot.start_location,
+            )
+        )
+
+        bot.register_behavior(plan)
+
+        if self.log is not None and (int(tick.iteration) % self.log_every_iters == 0):
+            self.log.emit(
+                "macro_spending",
+                {
+                    "iter": int(tick.iteration),
+                    "t": round(float(now), 2),
+                    "target_bases": int(target_bases),
+                    "gas_target": int(gas_target),
+                    "minerals": int(attention.economy.minerals),
+                },
+            )
+
+        return TaskResult.running("spending_plan_registered")
