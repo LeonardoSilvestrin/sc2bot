@@ -80,9 +80,6 @@ só então implementar evoluções
 │   └── workflows
 │       ├── build_windows_exe.yaml
 │       └── ladder_zip.yml
-├── .vscode0
-│   ├── launch.json
-│   └── settings.json
 ├── bot
 │   ├── ares_wrapper
 │   │   ├── __init__.py
@@ -1364,44 +1361,32 @@ class RuntimeApp:
 
         ego.register_planners([defense_planner, intel_planner, macro_planner])
 
-        economy_cfg = EconomyIntelConfig(macro_profile="BIO_2BASE", target_bases=3)
-
         return cls(
             log=log,
             awareness=awareness,
             threat=threat,
             body=body,
             ego=ego,
-            economy_cfg=economy_cfg,
-            debug=debug,
+            economy_cfg=EconomyIntelConfig(),
+            debug=bool(debug),
         )
-
-    async def on_start(self, bot) -> None:
-        map_name = bot.game_info.map_name
-        enemy = bot.enemy_race.name
-        fname = f"MyBot__{map_name}__vs__{enemy}__start.jsonl".replace(" ", "_")
-        self.log.set_file(fname)
-
-        self.log.emit("bot_init", {"strategy": "terran_builds.yml/Default"}, meta={"map": map_name})
-
-        if self.debug:
-            print(f"[on_start] devlog={self.log.log_dir}/{fname}")
 
     async def on_step(self, bot, *, iteration: int) -> None:
         now = float(getattr(bot, "time", 0.0))
 
         # 1) Perception / attention (snapshot factual)
-        attention = derive_attention(bot, awareness=self.awareness)
+        attention = derive_attention(bot, awareness=self.awareness, threat=self.threat)
 
-        # 2) Economy intel (snapshot factual)
-        attention = derive_economy_intel(bot, attention=attention, cfg=self.economy_cfg)
+        # 2) Economy intel (side-effect na Awareness; não sobrescreve attention)
+        derive_economy_intel(bot, awareness=self.awareness, attention=attention, now=now, cfg=self.economy_cfg)
 
         # 3) Ego (decide + executa)
         tick = TaskTick(iteration=int(iteration), time=now)
         await self.ego.tick(bot, tick=tick, attention=attention, awareness=self.awareness)
 
-    async def on_end(self, bot, result: Result) -> None:
-        self.log.emit("game_end", {"result": str(result)})
+    async def on_end(self, bot, game_result: Result) -> None:
+        if self.log:
+            self.log.emit("game_end", {"result": str(game_result)})
 ```
 
 # bot/planners/defense_planner.py
@@ -1819,8 +1804,7 @@ class TaskResult:
         return TaskResult(status="DONE", reason=str(reason), telemetry=telemetry)
 
     @staticmethod
-    def failed(*, reason: str, retry_after_s: float, telemetry: Optional[dict] = None) -> "TaskResult":
-        # NOTE: require explicit retry_after_s (no silent defaults)
+    def failed(reason: str = "", retry_after_s: float = 0.0, telemetry: Optional[dict] = None) -> "TaskResult":
         return TaskResult(status="FAILED", reason=str(reason), retry_after_s=float(retry_after_s), telemetry=telemetry)
 
     @staticmethod
@@ -1832,6 +1816,10 @@ class TaskResult:
 class Task(Protocol):
     """
     Contract required by Ego + planners.
+
+    Notes:
+    - domain is a string slot key (e.g. "DEFENSE", "INTEL")
+    - step() returns TaskResult (STRICT)
     """
     task_id: str
     domain: str
@@ -1839,15 +1827,14 @@ class Task(Protocol):
 
     def status(self) -> TaskStatus: ...
     def is_done(self) -> bool: ...
-
     def evaluate(self, bot, attention: Attention) -> int: ...
-
-    async def step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult: ...
-
     def bind_mission(self, *, mission_id: str, assigned_tags: list[int]) -> None: ...
-
+    async def step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult: ...
     async def pause(self, bot, reason: str) -> None: ...
     async def abort(self, bot, reason: str) -> None: ...
+    def last_reason(self) -> str: ...
+    def last_step_time(self) -> float: ...
+    def spawn(self) -> "BaseTask": ...
 
 
 @dataclass
@@ -1861,7 +1848,7 @@ class BaseTask:
     """
     task_id: str
     domain: str
-    commitment: int = 1
+    commitment: int  # NOTE: required (no default) to avoid dataclass field-order issues in subclasses
 
     # mission binding (set by Ego)
     mission_id: Optional[str] = field(default=None, init=False)
@@ -2204,7 +2191,7 @@ class MacroBio2BaseTick(BaseTask):
 # bot/tasks/scan_task.py
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from sc2.ids.ability_id import AbilityId
 from sc2.ids.unit_typeid import UnitTypeId as U
@@ -2217,13 +2204,17 @@ from bot.tasks.base_task import BaseTask, TaskTick, TaskResult
 
 @dataclass
 class ScanAt(BaseTask):
+    # required deps first (avoid dataclass non-default-after-default errors)
     awareness: Awareness
     target: object
     label: str
+
+    # config
     cooldown: float = 20.0
     log: DevLogger | None = None
 
-    _last_scan_t: float = 0.0
+    # internal state
+    _last_scan_t: float = field(default=0.0, init=False)
 
     def __init__(self, *, awareness: Awareness, target, label: str, cooldown: float = 20.0, log: DevLogger | None = None):
         super().__init__(task_id="scan_at", domain="INTEL", commitment=5)
@@ -2234,35 +2225,58 @@ class ScanAt(BaseTask):
         self.log = log
         self._last_scan_t = 0.0
 
+    def evaluate(self, bot, attention: Attention) -> int:
+        now = float(attention.time)
+
+        # if no orbital energy, don't propose high
+        if not bool(attention.intel.orbital_ready_to_scan):
+            return 0
+
+        # cooldown
+        if now - float(self._last_scan_t) < float(self.cooldown):
+            return 0
+
+        # if already scanned enemy main, reduce need
+        if self.label == "enemy_main" and self.awareness.intel_scanned_enemy_main(now=now):
+            return 0
+
+        return 40
+
     async def on_step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult:
         now = float(tick.time)
 
-        if now - self._last_scan_t < self.cooldown:
+        if not bool(attention.intel.orbital_ready_to_scan):
+            self._paused("no_orbital_energy")
+            return TaskResult.noop("no_orbital_energy")
+
+        if now - float(self._last_scan_t) < float(self.cooldown):
             self._paused("cooldown")
             return TaskResult.noop("cooldown")
 
-        if not bool(attention.intel.orbital_ready_to_scan):
-            self._paused("orbital_not_ready")
-            return TaskResult.noop("orbital_not_ready")
+        try:
+            orbitals = bot.structures(U.ORBITALCOMMAND).ready
+            if orbitals.amount == 0:
+                self._paused("no_orbital")
+                return TaskResult.noop("no_orbital")
 
-        orbitals = bot.structures(U.ORBITALCOMMAND).ready
-        if orbitals.amount == 0:
-            return TaskResult.failed(reason="no_orbital", retry_after_s=20.0)
+            oc = orbitals.first
+            target = self.target
 
-        oc = orbitals.first
-        if float(oc.energy) < 50.0:
-            return TaskResult.noop("low_energy")
+            oc(AbilityId.SCANNERSWEEP_SCAN, target)
+            self._last_scan_t = float(now)
 
-        oc(AbilityId.SCANNERSWEEP_SCAN, self.target)
-        self._last_scan_t = now
-        self._active("scan_issued")
+            if self.label == "enemy_main":
+                self.awareness.mark_scan_enemy_main(now=now)
 
-        self.awareness.emit("scan_issued", now=now, data={"label": self.label, "pos": [float(self.target.x), float(self.target.y)]})
-        if self.log:
-            self.log.emit("scan_issued", {"t": round(now, 2), "label": self.label, "x": round(float(self.target.x), 1), "y": round(float(self.target.y), 1)})
+            if self.log:
+                self.log.emit("scan_cast", {"t": round(float(now), 2), "label": str(self.label)})
 
-        self._done("scan_done")
-        return TaskResult.done("scan_done") 
+            self._active("scan_cast")
+            return TaskResult.running("scan_cast")
+
+        except Exception:
+            self._paused("scan_failed")
+            return TaskResult.failed("scan_failed", retry_after_s=6.0)
 ```
 
 # bot/tasks/scout_task.py
@@ -2270,7 +2284,7 @@ class ScanAt(BaseTask):
 # bot/tasks/scout_task.py
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 from sc2.position import Point2
@@ -2284,17 +2298,20 @@ from bot.tasks.base_task import BaseTask, TaskTick, TaskResult
 
 @dataclass
 class Scout(BaseTask):
-    log: DevLogger | None = None
+    # required deps first (avoid dataclass non-default-after-default errors)
+    body: UnitLeases
+    awareness: Awareness
 
+    # config
+    log: DevLogger | None = None
     trigger_time: float = 25.0
     log_every: float = 6.0
     see_radius: float = 14.0
 
-    _scv_tag: Optional[int] = None
-    _target: Optional[Point2] = None
-    _last_log_t: float = 0.0
-    body: UnitLeases
-    awareness: Awareness
+    # internal state (not part of __init__)
+    _scv_tag: Optional[int] = field(default=None, init=False)
+    _target: Optional[Point2] = field(default=None, init=False)
+    _last_log_t: float = field(default=0.0, init=False)
 
     def __init__(
         self,
@@ -2306,7 +2323,7 @@ class Scout(BaseTask):
         log_every: float = 6.0,
         see_radius: float = 14.0,
     ):
-        super().__init__(task_id="scout_scv", domain="INTEL", commitment=4)
+        super().__init__(task_id="scout_enemy_main", domain="INTEL", commitment=2)
         self.body = body
         self.awareness = awareness
         self.log = log
@@ -2318,51 +2335,111 @@ class Scout(BaseTask):
         self._target = None
         self._last_log_t = 0.0
 
+    def evaluate(self, bot, attention: Attention) -> int:
+        now = float(attention.time)
+
+        # before trigger time: don't bother
+        if now < float(self.trigger_time):
+            return 0
+
+        # already have intel: no need
+        if self.awareness.intel_scv_arrived_main(now=now):
+            return 0
+
+        # opening can also be used as a mild incentive to scout early
+        opening = bool(attention.macro.opening_done)
+        return 55 if not opening else 35
+
+    def _log_tick(self, bot, *, now: float, reason: str) -> None:
+        if not self.log:
+            return
+        if now - float(self._last_log_t) < float(self.log_every):
+            return
+        self._last_log_t = float(now)
+        self.log.emit(
+            "scout_tick",
+            {
+                "t": round(float(now), 2),
+                "reason": str(reason),
+                "scv_tag": int(self._scv_tag or 0),
+                "arrived": bool(self.awareness.intel_scv_arrived_main(now=now)),
+                "dispatched": bool(self.awareness.intel_scv_dispatched(now=now)),
+            },
+        )
+
     async def on_step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult:
         now = float(tick.time)
 
-        if now < self.trigger_time:
-            self._paused("before_trigger_time")
-            return TaskResult.noop("before_trigger_time")
+        if now < float(self.trigger_time):
+            self._paused("too_early")
+            return TaskResult.noop("too_early")
 
-        if not self.mission_id:
-            return TaskResult.failed(reason="unbound_mission", retry_after_s=0.0)
+        if self.awareness.intel_scv_arrived_main(now=now):
+            self._done("already_arrived")
+            return TaskResult.done("already_arrived")
 
-        if self._scv_tag is None:
-            if not self.assigned_tags:
-                return TaskResult.failed(reason="no_assigned_unit", retry_after_s=8.0)
+        # determine target once
+        if self._target is None:
+            try:
+                target = bot.enemy_start_locations[0]
+            except Exception:
+                target = bot.game_info.map_center
+            self._target = target
 
-            self._scv_tag = int(self.assigned_tags[0])
-            self._target = bot.enemy_start_locations[0]
+        # dispatch if needed
+        if not self.awareness.intel_scv_dispatched(now=now) or self._scv_tag is None:
+            try:
+                worker = bot.workers.closest_to(bot.start_location)
+            except Exception:
+                worker = None
 
-            if self.log:
-                self.log.emit("scout_started", {"t": round(now, 2), "scv_tag": self._scv_tag, "mission_id": self.mission_id})
-            self.awareness.emit("scout_started", now=now, data={"scv_tag": self._scv_tag, "mission_id": self.mission_id})
-            self._active("scout_started")
+            if worker is None:
+                self._paused("no_worker")
+                return TaskResult.noop("no_worker")
 
+            # claim worker
+            ok = self.body.claim(
+                task_id=self.task_id,
+                unit_tag=int(worker.tag),
+                role=bot.mediator.get_role(tag=worker.tag),
+                now=now,
+                ttl=10.0,
+                force=False,
+            )
+            if not ok:
+                self._paused("worker_leased")
+                return TaskResult.noop("worker_leased")
+
+            self._scv_tag = int(worker.tag)
+            self.awareness.mark_scv_dispatched(now=now)
+            self._active("dispatch")
+            self._log_tick(bot, now=now, reason="dispatch")
+            return TaskResult.running("dispatch")
+
+        # move scv
         scv = bot.units.find_by_tag(self._scv_tag)
         if scv is None:
-            self._done("unit_missing")
-            return TaskResult.failed(reason="unit_missing", retry_after_s=20.0)
+            self._paused("scv_lost")
+            self._scv_tag = None
+            return TaskResult.noop("scv_lost")
 
-        self.body.touch(task_id=self.mission_id, unit_tag=int(self._scv_tag), now=now)
+        # keep lease alive
+        self.body.touch(task_id=self.task_id, unit_tag=int(scv.tag), now=now, ttl=10.0)
 
-        scv.move(self._target)
-
-        if scv.position.distance_to(self._target) <= self.see_radius:
-            if not self.awareness.intel_scv_arrived_main(now=now):
+        if self._target is not None:
+            if scv.distance_to(self._target) <= float(self.see_radius):
                 self.awareness.mark_scv_arrived_main(now=now)
-                if self.log:
-                    self.log.emit("scout_arrived_main", {"t": round(now, 2), "mission_id": self.mission_id})
-                self.awareness.emit("scout_arrived_main", now=now, data={"mission_id": self.mission_id})
+                self._done("arrived_main")
+                self._log_tick(bot, now=now, reason="arrived_main")
+                return TaskResult.done("arrived_main")
 
-        if now - self._last_log_t >= self.log_every:
-            self._last_log_t = now
-            if self.log:
-                self.log.emit("scout_status", {"t": round(now, 2), "mission_id": self.mission_id, "arrived": bool(self.awareness.intel_scv_arrived_main(now=now))})
+            scv.move(self._target)
+            self._active("moving")
+            self._log_tick(bot, now=now, reason="moving")
+            return TaskResult.running("moving")
 
-        self._active("scouting")
-        return TaskResult.running("scouting")
+        self._paused("no_target")
+        return TaskResult.noop("no_target")
 ```
 
 ===== terran_builds.yml (ROOT) =====
