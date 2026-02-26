@@ -1,5 +1,5 @@
 ===== EXPORT META =====
-generated_at_utc: 2026-02-26T06:36:09.544738+00:00
+generated_at_utc: 2026-02-26T18:48:41.264811+00:00
 repo_root: C:\Users\Asus\Documents\projetos\sc2bot\ares\ares-sc2-bot-template
 hardcoded_bot_policy:
 - bot/ares_wrapper: FULL
@@ -59,6 +59,7 @@ Se uma pasta estiver em structure-only, use os caminhos listados para pedir apen
 |       |-- build_windows_exe.yaml
 |       `-- ladder_zip.yml
 |-- _docs
+|   `-- attention_awareness.md
 |-- _prompt
 |   |-- export_prompt_root.py
 |   |-- root.txt
@@ -84,6 +85,7 @@ Se uma pasta estiver em structure-only, use os caminhos listados para pedir apen
 |   |   `-- proposals.py
 |   |-- sensors
 |   |   |-- __init__.py
+|   |   |-- combat_sensor.py
 |   |   |-- economy_sensor.py
 |   |   |-- enemy_build_sensor.py
 |   |   |-- macro_sensor.py
@@ -98,19 +100,41 @@ Se uma pasta estiver em structure-only, use os caminhos listados para pedir apen
 |   |   |   |-- ares_plan.py
 |   |   |   |-- bio_standard.py
 |   |   |   |-- macro_task.py
-|   |   |   `-- opening.py
+|   |   |   |-- opening.py
+|   |   |   `-- scv_housekeeping_task.py
 |   |   |-- __init__.py
 |   |   |-- base_task.py
 |   |   |-- defend_task.py
+|   |   |-- reaper_scout_task.py
 |   |   |-- scan_task.py
 |   |   `-- scout_task.py
 |   |-- __init__.py
 |   |-- devlog.py
 |   `-- main.py
 |-- logs
-|   |-- devlog_20260226_061140.jsonl
-|   |-- devlog_20260226_062812.jsonl
-|   `-- devlog_20260226_063404.jsonl
+|   |-- devlog_20260226_080832
+|   |   |-- components
+|   |   |   |-- attention.jsonl
+|   |   |   |-- awareness.jsonl
+|   |   |   |-- defense.jsonl
+|   |   |   |-- ego.jsonl
+|   |   |   |-- intel.jsonl
+|   |   |   |-- planner.defense_planner.jsonl
+|   |   |   |-- planner.intel_planner.jsonl
+|   |   |   |-- planner.macro_planner.jsonl
+|   |   |   `-- runtime.jsonl
+|   |   |-- ticks
+|   |   |   |-- attention.jsonl
+|   |   |   |-- defense.jsonl
+|   |   |   `-- intel.jsonl
+|   |   |-- attention.jsonl
+|   |   |-- awareness.jsonl
+|   |   |-- defense.jsonl
+|   |   |-- ego.jsonl
+|   |   |-- intel.jsonl
+|   |   |-- planner.jsonl
+|   |   `-- runtime.jsonl
+|   `-- devlog_20260226_080832.jsonl
 |-- scripts
 |   |-- create_ladder_zip.py
 |   |-- create_pyinstaller_exe.py
@@ -138,7 +162,7 @@ Se uma pasta estiver em structure-only, use os caminhos listados para pedir apen
 ```
 # bot/devlog.py
 ```python
-#bot/devlog.py
+# bot/devlog.py
 from __future__ import annotations
 
 import json
@@ -151,13 +175,18 @@ from typing import Any, Dict, Optional
 @dataclass
 class DevLogger:
     """
-    Logger JSONL simples (1 evento por linha).
-    Objetivo: você conseguir auditar decisões ("flags") pós-partida.
+    JSONL logger (1 evento por linha).
+
+    Estrutura de saida:
+    - consolidado: logs/<filename>
+    - por modulo: logs/<run_stem>/<module>.jsonl
+    - ticks por modulo: logs/<run_stem>/ticks/<module>.jsonl
     """
 
     log_dir: str = "logs"
     filename: Optional[str] = None
     enabled: bool = True
+    split_by_module: bool = True
 
     def _ensure_dir(self) -> None:
         os.makedirs(self.log_dir, exist_ok=True)
@@ -165,24 +194,94 @@ class DevLogger:
     def set_file(self, filename: str) -> None:
         self.filename = filename
 
-    def emit(self, event: str, payload: Optional[Dict[str, Any]] = None, *, meta: Optional[Dict[str, Any]] = None) -> None:
+    @staticmethod
+    def _module_from_event(event: str, meta: Optional[Dict[str, Any]] = None) -> str:
+        if isinstance(meta, dict):
+            mod = meta.get("module")
+            if isinstance(mod, str) and mod.strip():
+                return mod.strip().lower()
+
+        ev = str(event or "").strip().lower()
+        if ev.startswith("macro_"):
+            return "macro"
+        if ev.startswith("defend_"):
+            return "defense"
+        if ev.startswith("reaper_") or ev.startswith("scout_") or ev.startswith("scan_") or ev.startswith("intel_"):
+            return "intel"
+        if ev.startswith("mission_"):
+            return "ego"
+        if ev.startswith("runtime_") or ev.startswith("game_"):
+            return "runtime"
+        return "misc"
+
+    @staticmethod
+    def _component_from_event(event: str, meta: Optional[Dict[str, Any]] = None) -> str:
+        if isinstance(meta, dict):
+            comp = meta.get("component")
+            if isinstance(comp, str) and comp.strip():
+                return comp.strip().lower()
+        return DevLogger._module_from_event(event, meta)
+
+    @staticmethod
+    def _safe_stem(filename: str) -> str:
+        stem, _ = os.path.splitext(str(filename))
+        return stem or "devlog"
+
+    @staticmethod
+    def _write_jsonl(path: str, row: Dict[str, Any]) -> None:
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+    def emit(
+        self,
+        event: str,
+        payload: Optional[Dict[str, Any]] = None,
+        *,
+        meta: Optional[Dict[str, Any]] = None,
+    ) -> None:
         if not self.enabled:
             return
         if not self.filename:
-            # Se esquecer de setar, não explode o jogo.
+            # Se esquecer de setar, nao explode o jogo.
             return
 
         self._ensure_dir()
+
+        module = self._module_from_event(event, meta)
+        component = self._component_from_event(event, meta)
         row = {
             "ts_utc": datetime.now(timezone.utc).isoformat(),
             "event": event,
+            "module": module,
+            "component": component,
             "payload": payload or {},
             "meta": meta or {},
         }
-        path = os.path.join(self.log_dir, self.filename)
+
+        consolidated_path = os.path.join(self.log_dir, self.filename)
         try:
-            with open(path, "a", encoding="utf-8") as f:
-                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+            # backward-compatible consolidated log
+            self._write_jsonl(consolidated_path, row)
+
+            if self.split_by_module:
+                run_stem = self._safe_stem(self.filename)
+                split_dir = os.path.join(self.log_dir, run_stem)
+                os.makedirs(split_dir, exist_ok=True)
+
+                module_path = os.path.join(split_dir, f"{module}.jsonl")
+                self._write_jsonl(module_path, row)
+
+                components_dir = os.path.join(split_dir, "components")
+                os.makedirs(components_dir, exist_ok=True)
+                safe_component = component.replace("/", "_").replace("\\", "_").replace(":", "_")
+                component_path = os.path.join(components_dir, f"{safe_component}.jsonl")
+                self._write_jsonl(component_path, row)
+
+                if str(event).lower().endswith("_tick"):
+                    ticks_dir = os.path.join(split_dir, "ticks")
+                    os.makedirs(ticks_dir, exist_ok=True)
+                    ticks_path = os.path.join(ticks_dir, f"{module}.jsonl")
+                    self._write_jsonl(ticks_path, row)
         except Exception:
             # logging nunca pode matar o bot
             pass
@@ -479,7 +578,7 @@ from typing import Optional
 from sc2.position import Point2
 
 from bot.mind.awareness import Awareness
-from bot.sensors.threat_sensor import Threat, ThreatReport
+from bot.sensors.threat_sensor import Threat
 
 
 @dataclass(frozen=True)
@@ -577,7 +676,7 @@ class Attention:
     time: float = 0.0
 
 
-def derive_attention(bot, *, awareness: Awareness, threat: Threat) -> Attention:
+def derive_attention(bot, *, awareness: Awareness, threat: Threat, log=None) -> Attention:
     """
     Derive tick snapshot from sensors.
     Rule: no side-effects.
@@ -587,27 +686,20 @@ def derive_attention(bot, *, awareness: Awareness, threat: Threat) -> Attention:
         (sensors reference snapshot dataclasses from this module).
     """
     from bot.sensors.economy_sensor import derive_economy_snapshot
+    from bot.sensors.combat_sensor import derive_combat_snapshot
     from bot.sensors.enemy_build_sensor import derive_enemy_build_sensor
     from bot.sensors.macro_sensor import derive_macro_snapshot
     from bot.sensors.orbital_sensor import derive_orbital_snapshot
 
     now = float(getattr(bot, "time", 0.0) or 0.0)
 
-    thr: ThreatReport = threat.evaluate(bot)
-
     economy = derive_economy_snapshot(bot)
+    combat = derive_combat_snapshot(bot, threat=threat)
     intel = derive_orbital_snapshot(bot)
     macro = derive_macro_snapshot(bot)
     enemy_build = derive_enemy_build_sensor(bot)
 
-    combat = CombatSnapshot(
-        threatened=bool(thr.threatened),
-        defense_urgency=int(thr.urgency),
-        threat_pos=thr.threat_pos,
-        enemy_count_near_bases=int(thr.enemy_count),
-    )
-
-    return Attention(
+    out = Attention(
         economy=economy,
         combat=combat,
         intel=intel,
@@ -615,6 +707,21 @@ def derive_attention(bot, *, awareness: Awareness, threat: Threat) -> Attention:
         enemy_build=enemy_build,
         time=float(now),
     )
+    if log is not None:
+        log.emit(
+            "attention_tick",
+            {
+                "t": round(float(now), 2),
+                "threatened": bool(combat.threatened),
+                "defense_urgency": int(combat.defense_urgency),
+                "minerals": int(economy.minerals),
+                "gas": int(economy.gas),
+                "supply_left": int(economy.supply_left),
+                "opening_done": bool(macro.opening_done),
+            },
+            meta={"module": "attention", "component": "attention"},
+        )
+    return out
 ```
 # bot/mind/awareness.py
 ```python
@@ -657,7 +764,6 @@ class MemoryStore:
             return default
         age = float(now) - float(f.t)
         if age < 0:
-            # clock skew / weirdness: treat as fresh
             age = 0.0
         if max_age is not None and age > float(max_age):
             return default
@@ -685,10 +791,6 @@ class MemoryStore:
         return self._facts.keys()
 
     def snapshot(self, *, now: float, prefix: Optional[Key] = None, max_age: Optional[float] = None) -> Dict[str, Any]:
-        """
-        Returns a JSON-friendly dict of { "a:b:c": {value,t,age,ttl,confidence} }
-        filtered by optional prefix and optional max_age.
-        """
         out: Dict[str, Any] = {}
         for k, f in self._facts.items():
             if prefix is not None and k[: len(prefix)] != prefix:
@@ -715,21 +817,12 @@ def K(*parts: str) -> Key:
 
 @dataclass
 class Awareness:
-    """
-    Persistent world memory.
-    - Use mem for generic facts (keyed, timestamped, TTL-aware)
-    - Keep only a few structured helpers where it buys clarity/perf.
-    """
-
     mem: MemoryStore = field(default_factory=MemoryStore)
+    log: Any = None
 
-    # ring buffer style event log (debug/audit)
     _events: List[Dict[str, Any]] = field(default_factory=list)
     _events_cap: int = 200
 
-    # -----------------------
-    # Logging / events
-    # -----------------------
     def emit(self, name: str, *, now: float, data: Optional[Dict[str, Any]] = None) -> None:
         evt = {"t": round(float(now), 2), "name": str(name)}
         if data:
@@ -737,26 +830,22 @@ class Awareness:
         self._events.append(evt)
         if len(self._events) > self._events_cap:
             self._events = self._events[-self._events_cap :]
+        if self.log is not None:
+            self.log.emit(
+                "awareness_event",
+                {"t": round(float(now), 2), "name": str(name), "data": data or {}},
+                meta={"module": "awareness", "component": "awareness"},
+            )
 
     def tail_events(self, n: int = 10) -> List[Dict[str, Any]]:
         if n <= 0:
             return []
         return self._events[-n:]
 
-    # -----------------------
-    # Ops / mission helpers
-    # -----------------------
     def ops_proposal_running(self, *, proposal_id: str, now: float) -> bool:
-        """
-        Returns True if there is an active mission with this proposal_id and status == RUNNING.
-
-        This is intentionally implemented without extra indexes: we scan mem facts
-        looking for ops:mission:<id>:proposal_id facts, then check status.
-        """
         if not isinstance(proposal_id, str) or not proposal_id:
             raise ValueError("proposal_id must be a non-empty string")
 
-        # Find missions that match this proposal_id
         for k, f in self.mem._facts.items():
             if len(k) < 4:
                 continue
@@ -776,13 +865,17 @@ class Awareness:
 
     # -----------------------
     # Convenience “intel” API
-    # (minimal wrappers so the rest of the bot stays clean)
     # -----------------------
     _K_SCV_DISPATCHED = K("intel", "scv", "dispatched")
     _K_SCV_ARRIVED_MAIN = K("intel", "scv", "arrived_main")
     _K_SCAN_ENEMY_MAIN = K("intel", "scan", "enemy_main")
     _K_LAST_SCV_DISPATCH_AT = K("intel", "scv", "last_dispatch_at")
     _K_LAST_SCAN_AT = K("intel", "scan", "last_scan_at")
+
+    # New: reaper scout bookkeeping
+    _K_REAPER_SCOUT_DISPATCHED = K("intel", "reaper", "scout", "dispatched")
+    _K_LAST_REAPER_SCOUT_AT = K("intel", "reaper", "scout", "last_dispatch_at")
+    _K_REAPER_SCOUT_LAST_DONE_AT = K("intel", "reaper", "scout", "last_done_at")
 
     def intel_scv_dispatched(self, *, now: float) -> bool:
         return bool(self.mem.get(self._K_SCV_DISPATCHED, now=now, default=False))
@@ -809,6 +902,23 @@ class Awareness:
     def mark_scanned_enemy_main(self, *, now: float) -> None:
         self.mem.set(self._K_SCAN_ENEMY_MAIN, value=True, now=now, ttl=None)
         self.mem.set(self._K_LAST_SCAN_AT, value=float(now), now=now, ttl=None)
+
+    # Reaper scout markers
+    def intel_reaper_scout_dispatched(self, *, now: float) -> bool:
+        return bool(self.mem.get(self._K_REAPER_SCOUT_DISPATCHED, now=now, default=False))
+
+    def intel_last_reaper_scout_dispatch_at(self, *, now: float) -> float:
+        return float(self.mem.get(self._K_LAST_REAPER_SCOUT_AT, now=now, default=0.0))
+
+    def intel_last_reaper_scout_done_at(self, *, now: float) -> float:
+        return float(self.mem.get(self._K_REAPER_SCOUT_LAST_DONE_AT, now=now, default=0.0))
+
+    def mark_reaper_scout_dispatched(self, *, now: float) -> None:
+        self.mem.set(self._K_REAPER_SCOUT_DISPATCHED, value=True, now=now, ttl=None)
+        self.mem.set(self._K_LAST_REAPER_SCOUT_AT, value=float(now), now=now, ttl=None)
+
+    def mark_reaper_scout_done(self, *, now: float) -> None:
+        self.mem.set(self._K_REAPER_SCOUT_LAST_DONE_AT, value=float(now), now=now, ttl=None)
 ```
 # bot/mind/body.py
 ```python
@@ -1330,7 +1440,7 @@ class RuntimeApp:
 
     @classmethod
     def build(cls, *, log: DevLogger, debug: bool = True) -> "RuntimeApp":
-        awareness = Awareness()
+        awareness = Awareness(log=log)
         threat = Threat(defend_radius=22.0, min_enemy=1)
         body = UnitLeases(default_ttl=8.0)
 
@@ -1372,7 +1482,7 @@ class RuntimeApp:
             log_every_iters=22,
         )
 
-        defense_planner = DefensePlanner(defend_task=defend_task)
+        defense_planner = DefensePlanner(defend_task=defend_task, log=log)
         intel_planner = IntelPlanner(awareness=awareness, log=log, scout_task=scout_task)
 
         macro_planner = MacroPlanner(
@@ -1380,6 +1490,7 @@ class RuntimeApp:
             bio_task=bio_standard_task,
             rush_defense_task=rush_defense_task,
             backoff_urgency=60,
+            log=log,
         )
 
         ego.register_planners([defense_planner, intel_planner, macro_planner])
@@ -1405,7 +1516,7 @@ class RuntimeApp:
     async def on_step(self, bot, *, iteration: int) -> None:
         now = float(getattr(bot, "time", 0.0))
 
-        attention = derive_attention(bot, awareness=self.awareness, threat=self.threat)
+        attention = derive_attention(bot, awareness=self.awareness, threat=self.threat, log=self.log)
 
         derive_enemy_build_intel(
             bot,
@@ -1430,6 +1541,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from bot.devlog import DevLogger
 from bot.mind.attention import Attention
 from bot.mind.awareness import Awareness
 from bot.planners.proposals import Proposal, TaskSpec
@@ -1443,6 +1555,7 @@ class DefensePlanner:
     """
     planner_id: str = "defense_planner"
     defend_task: Defend = None  # template instance
+    log: DevLogger | None = None
 
     def _pid_defend(self) -> str:
         return f"{self.planner_id}:defend:bases"
@@ -1460,7 +1573,7 @@ class DefensePlanner:
         def _factory(mission_id: str) -> Defend:
             return self.defend_task.spawn()
 
-        return [
+        out = [
             Proposal(
                 proposal_id=self._pid_defend(),
                 domain="DEFENSE",
@@ -1472,6 +1585,13 @@ class DefensePlanner:
                 allow_preempt=True,
             )
         ]
+        if self.log is not None:
+            self.log.emit(
+                "planner_proposed",
+                {"planner": self.planner_id, "count": len(out), "score": int(score)},
+                meta={"module": "planner", "component": f"planner.{self.planner_id}"},
+            )
+        return out
 ```
 # bot/planners/intel_planner.py
 ```python
@@ -1479,16 +1599,19 @@ class DefensePlanner:
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pickle import FALSE
+from typing import Optional, Tuple
 
 from sc2.ids.unit_typeid import UnitTypeId as U
 from sc2.position import Point2
 
 from bot.devlog import DevLogger
 from bot.mind.attention import Attention
-from bot.mind.awareness import Awareness
+from bot.mind.awareness import Awareness, K
 from bot.planners.proposals import Proposal, TaskSpec, UnitRequirement
 from bot.tasks.scan_task import ScanAt
 from bot.tasks.scout_task import Scout
+from bot.tasks.reaper_scout_task import ReaperScout, ReaperScoutObjective
 
 
 @dataclass
@@ -1497,19 +1620,68 @@ class IntelPlanner:
 
     awareness: Awareness = None  # injected
     log: DevLogger | None = None
-    scout_task: Scout = None  # template instance
-    scout_min_dispatch_interval_s: float = 120.0
+
+    # SCV re-scout (optional; early SCV scout is YAML now)
+    scout_task: Scout | None = None
+    scout_min_dispatch_interval_s: float = 75.0
     scout_lease_ttl_s: float = 120.0
 
-    def _pid_scout(self) -> str:
-        return f"{self.planner_id}:scout:scv_early"
+    # Reaper scout
+    reaper_scout_interval_early_s: float = 35.0
+    reaper_scout_interval_mid_s: float = 70.0
+    reaper_scout_lease_ttl_s: float = 90.0
+
+    confidence_min: float = 0.70
+    confidence_rescout_below: float = 0.65
+
+    def _pid_scv_rescout(self) -> str:
+        return f"{self.planner_id}:scout:scv_rescout"
+
+    def _pid_reaper_scout(self) -> str:
+        return f"{self.planner_id}:scout:reaper"
 
     def _pid_scan(self, label: str) -> str:
         return f"{self.planner_id}:scan:{label}"
 
     def _enemy_main(self, bot) -> Point2:
-        # strict: no fallbacks here; if engine doesn't provide, crash to expose wiring bug
         return bot.enemy_start_locations[0]
+
+    def _opening_state(self, *, awareness: Awareness, now: float) -> Tuple[Optional[str], float, float, Optional[float], dict]:
+        first_seen_t = awareness.mem.get(K("enemy", "opening", "first_seen_t"), now=now, default=None)
+        last_update_t = awareness.mem.get(K("enemy", "opening", "last_update_t"), now=now, default=None)
+
+        kind = awareness.mem.get(K("enemy", "opening", "kind"), now=now, default=None)
+        conf = awareness.mem.get(K("enemy", "opening", "confidence"), now=now, default=0.0)
+        signals = awareness.mem.get(K("enemy", "opening", "signals"), now=now, default={}) or {}
+
+        try:
+            conf_f = float(conf)
+        except Exception:
+            conf_f = 0.0
+
+        age_s = 9999.0
+        if last_update_t is not None:
+            try:
+                age_s = max(0.0, float(now) - float(last_update_t))
+            except Exception:
+                age_s = 9999.0
+
+        kind_s = str(kind) if kind is not None else None
+        fst = float(first_seen_t) if first_seen_t is not None else None
+        return kind_s, conf_f, float(age_s), fst, dict(signals)
+
+    def _reaper_objective(self, *, kind: Optional[str], conf: float, signals: dict, now: float) -> ReaperScoutObjective:
+        """
+        Pick ONE discriminative objective.
+        Keep it simple; we can add proxy sweeps later.
+        """
+        nat_on_ground = bool(signals.get("natural_on_ground", False))
+        if float(now) <= 210.0 and not nat_on_ground:
+            return ReaperScoutObjective.CONFIRM_NATURAL
+        if kind == "AGGRESSIVE" and conf >= 0.70:
+            # in aggressive case, just peek main/ramp quickly
+            return ReaperScoutObjective.CONFIRM_MAIN_RAMP
+        return ReaperScoutObjective.CONFIRM_NATURAL
 
     def propose(self, bot, *, awareness: Awareness, attention: Attention) -> list[Proposal]:
         now = float(attention.time)
@@ -1517,46 +1689,121 @@ class IntelPlanner:
 
         if self.awareness is None:
             raise TypeError("IntelPlanner requires awareness injected")
-        if self.scout_task is None:
-            raise TypeError("IntelPlanner requires scout_task template instance")
 
-        # 1) SCV scout early (planner decides WHEN; task must not time-gate)
-        pid = self._pid_scout()
+        # -------------------------
+        # 0) SCV re-scout (optional)
+        # -------------------------
+        if False and (self.scout_task is not None):
+            pid = self._pid_scv_rescout()
+            # never donate SCV under pressure
+            if not bool(attention.combat.threatened):
+                kind, conf, age_s, first_seen_t, signals = self._opening_state(awareness=awareness, now=now)
 
-        # only start after trigger time (decision is planner-only)
-        if now >= float(getattr(self.scout_task, "trigger_time", 0.0)):
-            # stop forever once we got the success signal
-            if not awareness.intel_scv_arrived_main(now=now):
-                # avoid burning multiple SCVs too early
-                last_dispatch = awareness.intel_last_scv_dispatch_at(now=now)
-                if last_dispatch > 0.0 and (now - float(last_dispatch)) < float(self.scout_min_dispatch_interval_s):
-                    return proposals
-                # don't spam: if there's already a RUNNING mission for this proposal_id, do nothing
-                if not awareness.ops_proposal_running(proposal_id=pid, now=now):
+                need_scv = False
+                if first_seen_t is None and now >= 75.0:
+                    need_scv = True
+                elif kind is None and now >= 75.0:
+                    need_scv = True
+                elif conf < float(self.confidence_rescout_below) and now >= 75.0:
+                    need_scv = True
 
-                    def _scout_factory(mission_id: str) -> Scout:
-                        return self.scout_task.spawn()
+                if need_scv:
+                    last_dispatch = awareness.intel_last_scv_dispatch_at(now=now)
+                    if last_dispatch <= 0.0 or (now - float(last_dispatch)) >= float(self.scout_min_dispatch_interval_s):
+                        if not awareness.ops_proposal_running(proposal_id=pid, now=now):
 
-                    proposals.append(
-                        Proposal(
-                            proposal_id=pid,
-                            domain="INTEL",
-                            score=35,
-                            tasks=[
-                                TaskSpec(
-                                    task_id="scout_scv",
-                                    task_factory=_scout_factory,
-                                    unit_requirements=[UnitRequirement(unit_type=U.SCV, count=1)],
+                            def _scv_factory(mission_id: str) -> Scout:
+                                return self.scout_task.spawn()
+
+                            proposals.append(
+                                Proposal(
+                                    proposal_id=pid,
+                                    domain="INTEL",
+                                    score=33,
+                                    tasks=[
+                                        TaskSpec(
+                                            task_id="scout_scv",
+                                            task_factory=_scv_factory,
+                                            unit_requirements=[UnitRequirement(unit_type=U.SCV, count=1)],
+                                        )
+                                    ],
+                                    lease_ttl=float(self.scout_lease_ttl_s),
+                                    cooldown_s=8.0,
+                                    risk_level=1,
+                                    allow_preempt=True,
                                 )
-                            ],
-                            lease_ttl=float(self.scout_lease_ttl_s),
-                            cooldown_s=8.0,
-                            risk_level=1,
-                            allow_preempt=True,
-                        )
-                    )
+                            )
 
+        # -------------------------
+        # 1) Reaper scout controller
+        # -------------------------
+        # Only if we have a reaper ready
+        reapers_ready = int(attention.economy.units_ready.get(U.REAPER, 0) or 0)
+        if reapers_ready >= 1:
+            pid = self._pid_reaper_scout()
+
+            # don't send reaper scout if home is on fire
+            if not bool(attention.combat.threatened):
+                kind, conf, age_s, first_seen_t, signals = self._opening_state(awareness=awareness, now=now)
+
+                # staleness window: tighter early, looser mid
+                refresh = float(self.reaper_scout_interval_early_s) if now <= 240.0 else float(self.reaper_scout_interval_mid_s)
+
+                need_reaper = False
+                if first_seen_t is None and now >= 75.0:
+                    need_reaper = True
+                elif kind is None and now >= 75.0:
+                    need_reaper = True
+                elif conf < float(self.confidence_min):
+                    need_reaper = True
+                elif age_s >= refresh:
+                    need_reaper = True
+
+                # anti-spam using awareness timestamp
+                last_rep = awareness.intel_last_reaper_scout_dispatch_at(now=now)
+                if need_reaper and (last_rep <= 0.0 or (now - float(last_rep)) >= refresh):
+                    if not awareness.ops_proposal_running(proposal_id=pid, now=now):
+                        obj = self._reaper_objective(kind=kind, conf=conf, signals=signals, now=now)
+
+                        def _reaper_factory(mission_id: str) -> ReaperScout:
+                            return ReaperScout(awareness=awareness, log=self.log, objective=obj)
+
+                        proposals.append(
+                            Proposal(
+                                proposal_id=pid,
+                                domain="INTEL",
+                                score=52 if conf < 0.65 else 42,
+                                tasks=[
+                                    TaskSpec(
+                                        task_id="reaper_scout",
+                                        task_factory=_reaper_factory,
+                                        unit_requirements=[UnitRequirement(unit_type=U.REAPER, count=1)],
+                                    )
+                                ],
+                                lease_ttl=float(self.reaper_scout_lease_ttl_s),
+                                cooldown_s=6.0,
+                                risk_level=1,
+                                allow_preempt=True,
+                            )
+                        )
+
+                        if self.log:
+                            self.log.emit(
+                                "intel_reaper_scout_proposed",
+                                {
+                                    "t": round(float(now), 2),
+                                    "proposal_id": pid,
+                                    "objective": str(obj.value),
+                                    "kind": str(kind),
+                                    "confidence": float(conf),
+                                    "age_s": float(age_s),
+                                },
+                                meta={"module": "planner", "component": f"planner.{self.planner_id}"},
+                            )
+
+        # -------------------------
         # 2) Scan when threatened and orbital ready
+        # -------------------------
         if bool(attention.combat.threatened) and bool(attention.intel.orbital_ready_to_scan):
             target = self._enemy_main(bot)
             label = "enemy_main"
@@ -1581,21 +1828,20 @@ class IntelPlanner:
 ```
 # bot/planners/macro_planner.py
 ```python
-# =========================
-# FILE: bot/planners/macro_planner.py
-# =========================
 from __future__ import annotations
 
 from dataclasses import dataclass
 
+from bot.devlog import DevLogger
 from bot.mind.attention import Attention
-from bot.mind.awareness import Awareness
+from bot.mind.awareness import Awareness, K
 from bot.planners.proposals import Proposal, TaskSpec
 from bot.tasks.macro import (
     MacroAresBioStandardTick as MacroBio2BaseTick,
     MacroAresRushDefenseTick as MacroRushDefenseTick,
     MacroOpeningTick,
 )
+from bot.tasks.macro.scv_housekeeping_task import ScvHousekeeping
 
 
 @dataclass
@@ -1603,6 +1849,13 @@ class MacroPlanner:
     planner_id: str = "macro_planner"
     score: int = 50
     backoff_urgency: int = 85
+
+    # NEW: SCV housekeeping as a micro-task
+    housekeeping_interval_s: float = 35.0
+    housekeeping_cooldown_s: float = 6.0
+    housekeeping_lease_ttl_s: float = 12.0
+    housekeeping_score: int = 18
+    log: DevLogger | None = None
 
     opening_task: MacroOpeningTick = None        # injected template
     bio_task: MacroBio2BaseTick = None           # injected template
@@ -1617,9 +1870,20 @@ class MacroPlanner:
     def _pid_rush_def(self) -> str:
         return f"{self.planner_id}:macro_rush_defense"
 
+    def _pid_housekeeping(self) -> str:
+        return f"{self.planner_id}:scv_housekeeping"
+
     def _want_rush_defense(self, *, awareness: Awareness, attention: Attention) -> bool:
-        # keep your logic; placeholder strictness: must exist in your code
         return bool(attention.combat.threatened) and int(attention.combat.defense_urgency) >= 70
+
+    def _housekeeping_due(self, *, awareness: Awareness, now: float) -> bool:
+        last = awareness.mem.get(K("macro", "scv", "housekeeping", "last_done_at"), now=now, default=None)
+        if last is None:
+            return True
+        try:
+            return (float(now) - float(last)) >= float(self.housekeeping_interval_s)
+        except Exception:
+            return True
 
     def propose(self, bot, *, awareness: Awareness, attention: Attention) -> list[Proposal]:
         now = float(attention.time)
@@ -1627,60 +1891,103 @@ class MacroPlanner:
         if self.opening_task is None or self.bio_task is None or self.rush_defense_task is None:
             raise TypeError("MacroPlanner requires opening_task, bio_task, rush_defense_task")
 
-        # global backoff (you had this)
+        # global backoff
         if bool(attention.combat.threatened) and int(attention.combat.defense_urgency) >= int(self.backoff_urgency):
             return []
+
+        proposals: list[Proposal] = []
+
+        # 0) SCV housekeeping micro-task (almost always acceptable; tiny cost)
+        hk_pid = self._pid_housekeeping()
+        if self._housekeeping_due(awareness=awareness, now=now):
+            if not awareness.ops_proposal_running(proposal_id=hk_pid, now=now):
+
+                def _hk_factory(mission_id: str) -> ScvHousekeeping:
+                    return ScvHousekeeping(awareness=awareness)
+
+                proposals.append(
+                    Proposal(
+                        proposal_id=hk_pid,
+                        domain="MACRO",
+                        score=int(self.housekeeping_score),
+                        tasks=[
+                            TaskSpec(
+                                task_id="scv_housekeeping",
+                                task_factory=_hk_factory,
+                                unit_requirements=[],
+                            )
+                        ],
+                        lease_ttl=float(self.housekeeping_lease_ttl_s),
+                        cooldown_s=float(self.housekeeping_cooldown_s),
+                        risk_level=0,
+                        allow_preempt=True,
+                    )
+                )
 
         opening_done = bool(attention.macro.opening_done)
         want_rush = self._want_rush_defense(awareness=awareness, attention=attention)
 
-        # OPENING (non-expiring; ends when task ends OR preempted by another macro mode)
+        # OPENING
         if not opening_done:
             pid = self._pid_opening()
 
             def _factory(mission_id: str) -> MacroOpeningTick:
                 return self.opening_task.spawn()
 
-            return [
+            proposals.append(
                 Proposal(
                     proposal_id=pid,
                     domain="MACRO",
                     score=int(self.score),
                     tasks=[TaskSpec(task_id="macro_opening", task_factory=_factory, unit_requirements=[], lease_ttl=None)],
-                    lease_ttl=None,     # IMPORTANT: no autonomous death
+                    lease_ttl=None,
                     cooldown_s=0.0,
                     risk_level=0,
                     allow_preempt=True,
                 )
-            ]
+            )
+            if self.log is not None:
+                self.log.emit(
+                    "planner_proposed",
+                    {"planner": self.planner_id, "count": len(proposals), "mode": "opening"},
+                    meta={"module": "planner", "component": f"planner.{self.planner_id}"},
+                )
+            return proposals
 
-        # RUSH DEFENSE macro (also non-expiring; ends/preempted explicitly)
+        # RUSH DEFENSE
         if want_rush:
             pid = self._pid_rush_def()
 
             def _factory(mission_id: str) -> MacroRushDefenseTick:
                 return self.rush_defense_task.spawn()
 
-            return [
+            proposals.append(
                 Proposal(
                     proposal_id=pid,
                     domain="MACRO",
-                    score=int(self.score) + 20,  # higher than normal to ensure selection
+                    score=int(self.score) + 20,
                     tasks=[TaskSpec(task_id="macro_rush_defense", task_factory=_factory, unit_requirements=[], lease_ttl=None)],
                     lease_ttl=None,
                     cooldown_s=0.0,
                     risk_level=1,
                     allow_preempt=True,
                 )
-            ]
+            )
+            if self.log is not None:
+                self.log.emit(
+                    "planner_proposed",
+                    {"planner": self.planner_id, "count": len(proposals), "mode": "rush_defense"},
+                    meta={"module": "planner", "component": f"planner.{self.planner_id}"},
+                )
+            return proposals
 
-        # NORMAL macro (bio 2base)
+        # NORMAL macro
         pid = self._pid_bio()
 
         def _factory(mission_id: str) -> MacroBio2BaseTick:
             return self.bio_task.spawn()
 
-        return [
+        proposals.append(
             Proposal(
                 proposal_id=pid,
                 domain="MACRO",
@@ -1691,7 +1998,15 @@ class MacroPlanner:
                 risk_level=0,
                 allow_preempt=True,
             )
-        ]
+        )
+
+        if self.log is not None:
+            self.log.emit(
+                "planner_proposed",
+                {"planner": self.planner_id, "count": len(proposals), "mode": "bio"},
+                meta={"module": "planner", "component": f"planner.{self.planner_id}"},
+            )
+        return proposals
 ```
 # bot/planners/proposals.py
 ```python
@@ -1818,6 +2133,29 @@ class Proposal:
 ## bot/sensors (full)
 # bot/sensors/__init__.py
 ```python
+
+```
+# bot/sensors/combat_sensor.py
+```python
+# bot/sensors/combat_sensor.py
+from __future__ import annotations
+
+from bot.mind.attention import CombatSnapshot
+from bot.sensors.threat_sensor import Threat
+
+
+def derive_combat_snapshot(bot, *, threat: Threat) -> CombatSnapshot:
+    """
+    Combat snapshot from threat evaluation.
+    Rule: no side-effects.
+    """
+    thr = threat.evaluate(bot)
+    return CombatSnapshot(
+        threatened=bool(thr.threatened),
+        defense_urgency=int(thr.urgency),
+        threat_pos=thr.threat_pos,
+        enemy_count_near_bases=int(thr.enemy_count),
+    )
 
 ```
 # bot/sensors/economy_sensor.py
@@ -2464,6 +2802,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict
 
+from ares.behaviors.macro.auto_supply import AutoSupply
+from ares.behaviors.macro.build_workers import BuildWorkers
+from ares.behaviors.macro.expansion_controller import ExpansionController
+from ares.behaviors.macro.gas_building_controller import GasBuildingController
+from ares.behaviors.macro.macro_plan import MacroPlan
+from ares.behaviors.macro.production_controller import ProductionController
+from ares.behaviors.macro.spawn_controller import SpawnController
 from sc2.ids.unit_typeid import UnitTypeId as U
 
 from bot.devlog import DevLogger
@@ -2503,20 +2848,10 @@ class MacroAresBioStandardTick(BaseTask):
         }
 
     async def on_step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult:
-        from ares.behaviors.macro import (
-            AutoSupply,
-            BuildWorkers,
-            ExpansionController,
-            GasBuildingController,
-            MacroPlan,
-            ProductionController,
-            SpawnController,
-        )
-
         plan = MacroPlan()
         plan.add(AutoSupply(base_location=bot.start_location))
         plan.add(BuildWorkers(to_count=int(self.scv_cap)))
-        plan.add(GasBuildingController())
+        plan.add(GasBuildingController(to_count=max(0, int(len(bot.townhalls)) * 2)))
         plan.add(ExpansionController(to_base_count=int(self.target_bases)))
         plan.add(ProductionController())
         plan.add(SpawnController(army_composition_dict=self._army_comp()))
@@ -2533,6 +2868,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict
 
+from ares.behaviors.macro.auto_supply import AutoSupply
+from ares.behaviors.macro.build_workers import BuildWorkers
+from ares.behaviors.macro.expansion_controller import ExpansionController
+from ares.behaviors.macro.gas_building_controller import GasBuildingController
+from ares.behaviors.macro.macro_plan import MacroPlan
+from ares.behaviors.macro.production_controller import ProductionController
+from ares.behaviors.macro.spawn_controller import SpawnController
 from sc2.ids.unit_typeid import UnitTypeId as U
 
 from bot.devlog import DevLogger
@@ -2639,23 +2981,12 @@ class MacroAresBioStandardTick(BaseTask):
         }
 
     async def on_step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult:
-        # Ares imports are strict (no fallback/compat layers)
-        from ares.behaviors.macro import (
-            AutoSupply,
-            BuildWorkers,
-            ExpansionController,
-            GasBuildingController,
-            MacroPlan,
-            ProductionController,
-            SpawnController,
-        )
-
         plan = MacroPlan()
 
         # Priority order matters: MacroPlan executes behaviors sequentially and stops after a successful one.
         plan.add(AutoSupply(base_location=bot.start_location))
         plan.add(BuildWorkers(to_count=int(self.scv_cap)))
-        plan.add(GasBuildingController())  # lets Ares decide sensible refinery timing
+        plan.add(GasBuildingController(to_count=max(0, int(len(bot.townhalls)) * 2)))
         plan.add(ExpansionController(to_base_count=int(self.target_bases)))
         plan.add(ProductionController())
         plan.add(SpawnController(army_composition_dict=self._army_comp()))
@@ -2693,15 +3024,6 @@ class MacroAresRushDefenseTick(BaseTask):
         }
 
     async def on_step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult:
-        from ares.behaviors.macro import (
-            AutoSupply,
-            BuildWorkers,
-            ExpansionController,
-            MacroPlan,
-            ProductionController,
-            SpawnController,
-        )
-
         plan = MacroPlan()
         plan.add(AutoSupply(base_location=bot.start_location))
         plan.add(BuildWorkers(to_count=int(self.scv_cap)))
@@ -2799,6 +3121,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict
 
+from ares.behaviors.macro.auto_supply import AutoSupply
+from ares.behaviors.macro.build_workers import BuildWorkers
+from ares.behaviors.macro.expansion_controller import ExpansionController
+from ares.behaviors.macro.macro_plan import MacroPlan
+from ares.behaviors.macro.production_controller import ProductionController
+from ares.behaviors.macro.spawn_controller import SpawnController
 from sc2.ids.unit_typeid import UnitTypeId as U
 
 from bot.devlog import DevLogger
@@ -2834,15 +3162,6 @@ class MacroAresRushDefenseTick(BaseTask):
         return {U.MARINE: 14}
 
     async def on_step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult:
-        from ares.behaviors.macro import (
-            AutoSupply,
-            BuildWorkers,
-            ExpansionController,
-            MacroPlan,
-            ProductionController,
-            SpawnController,
-        )
-
         plan = MacroPlan()
         plan.add(AutoSupply(base_location=bot.start_location))
         plan.add(BuildWorkers(to_count=int(self.scv_cap)))
@@ -2853,6 +3172,365 @@ class MacroAresRushDefenseTick(BaseTask):
         register_macro_plan(bot, plan, log=self.log, tick=tick, label="RUSH_DEFENSE", log_every_iters=self.log_every_iters)
         self._active("ares_macro_rush_defense")
         return TaskResult.running("ares_macro_rush_defense")
+```
+# bot/tasks/macro/scv_housekeeping_task.py
+```python
+# bot/tasks/scv_housekeeping_task.py
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from ares.behaviors.macro import Mining
+from ares.consts import UnitRole
+from sc2.ids.unit_typeid import UnitTypeId as U
+
+from bot.mind.attention import Attention
+from bot.mind.awareness import Awareness, K
+from bot.tasks.base_task import BaseTask, TaskTick, TaskResult
+
+
+@dataclass
+class ScvHousekeeping(BaseTask):
+    """
+    Light-weight SCV housekeeping.
+    - Planner decides WHEN to run (interval / sensors later).
+    - Task decides HOW with assigned SCV(s).
+    - Must be safe, fast, and idempotent.
+
+    Policy:
+      1) Gas first: keep 3 workers per refinery.
+      2) Minerals main: keep up to 16 mineral workers in main.
+      3) Overflow: send remaining mineral workers to natural.
+    """
+
+    awareness: Awareness
+
+    def __init__(self, *, awareness: Awareness):
+        super().__init__(task_id="scv_housekeeping", domain="MACRO", commitment=1)
+        self.awareness = awareness
+
+    def evaluate(self, bot, attention: Attention) -> int:
+        return 10
+
+    def _pick_main_and_nat(self, bot):
+        ready_ths = bot.townhalls.ready
+        if ready_ths.amount == 0:
+            return None, None
+
+        main = ready_ths.closest_to(bot.start_location)
+        if ready_ths.amount < 2:
+            return main, None
+
+        nat_pos = bot.mediator.get_own_nat
+        nat = ready_ths.closest_to(nat_pos)
+        if nat.tag == main.tag:
+            return main, None
+        return main, nat
+
+    @staticmethod
+    def _assign_worker_to_mineral(worker, mineral_fields) -> None:
+        if mineral_fields.amount == 0:
+            return
+        worker.gather(mineral_fields.closest_to(worker))
+
+    def _rebalance_workers(self, bot) -> tuple[int, int]:
+        workers = bot.mediator.get_units_from_role(role=UnitRole.GATHERING, unit_type=U.SCV)
+        if workers.amount == 0:
+            return 0, 0
+
+        main, nat = self._pick_main_and_nat(bot)
+        if main is None:
+            return 0, 0
+
+        # Let Ares handle gas saturation first.
+        bot.register_behavior(Mining(workers_per_gas=3, long_distance_mine=False))
+
+        worker_to_gas = bot.mediator.get_worker_to_vespene_dict
+        worker_to_th = bot.mediator.get_worker_tag_to_townhall_tag
+
+        mineral_workers = [w for w in workers if int(w.tag) not in worker_to_gas]
+
+        main_tag = int(main.tag)
+        main_mineral_workers = [w for w in mineral_workers if int(worker_to_th.get(int(w.tag), -1)) == main_tag]
+
+        if nat is None:
+            return len(main_mineral_workers), 0
+
+        nat_tag = int(nat.tag)
+        nat_mineral_workers = [w for w in mineral_workers if int(worker_to_th.get(int(w.tag), -1)) == nat_tag]
+        other_mineral_workers = [
+            w for w in mineral_workers
+            if int(worker_to_th.get(int(w.tag), -1)) not in {main_tag, nat_tag}
+        ]
+
+        main_mfs = bot.mineral_field.closer_than(10.0, main.position)
+        nat_mfs = bot.mineral_field.closer_than(10.0, nat.position)
+
+        desired_main = 16
+        current_main = len(main_mineral_workers)
+
+        moved = 0
+
+        if current_main < desired_main:
+            need = desired_main - current_main
+            donors = sorted(nat_mineral_workers + other_mineral_workers, key=lambda w: w.distance_to(main))
+            for worker in donors[:need]:
+                self._assign_worker_to_mineral(worker, main_mfs)
+                moved += 1
+        elif current_main > desired_main:
+            excess = current_main - desired_main
+            donors = sorted(main_mineral_workers, key=lambda w: w.distance_to(nat), reverse=True)
+            for worker in donors[:excess]:
+                self._assign_worker_to_mineral(worker, nat_mfs)
+                moved += 1
+
+        return current_main, moved
+
+    async def on_step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult:
+        now = float(tick.time)
+
+        if not isinstance(self.mission_id, str) or not self.mission_id:
+            return TaskResult.failed("unbound_mission")
+        if not isinstance(self.assigned_tags, list):
+            return TaskResult.failed("assigned_tags_must_be_list")
+
+        main_mineral_workers, moved = self._rebalance_workers(bot)
+
+        # Mark last done time (planner uses it as interval gate).
+        self.awareness.mem.set(K("macro", "scv", "housekeeping", "last_done_at"), value=float(now), now=now, ttl=None)
+
+        self._done("housekeeping_done")
+        return TaskResult.done(
+            "housekeeping_done",
+            telemetry={"main_mineral_workers": int(main_mineral_workers), "moved": int(moved)},
+        )
+```
+# bot/tasks/reaper_scout_task.py
+```python
+# bot/tasks/reaper_scout_task.py
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Optional, Any
+
+from sc2.ids.unit_typeid import UnitTypeId as U
+from sc2.position import Point2
+
+from bot.devlog import DevLogger
+from bot.mind.attention import Attention
+from bot.mind.awareness import Awareness
+from bot.tasks.base_task import BaseTask, TaskTick, TaskResult
+
+
+class ReaperScoutObjective(str, Enum):
+    CONFIRM_NATURAL = "CONFIRM_NATURAL"
+    CONFIRM_MAIN_RAMP = "CONFIRM_MAIN_RAMP"
+    CONFIRM_MAIN = "CONFIRM_MAIN"
+    MAP_CENTER = "MAP_CENTER"
+    RETURN_HOME = "RETURN_HOME"
+
+
+def _coerce_objective(obj: Any) -> ReaperScoutObjective:
+    """
+    Accept:
+      - ReaperScoutObjective enum
+      - raw value string: "CONFIRM_NATURAL"
+      - qualified string: "ReaperScoutObjective.CONFIRM_NATURAL" (from str(enum))
+    """
+    if isinstance(obj, ReaperScoutObjective):
+        return obj
+
+    if isinstance(obj, str):
+        s = obj.strip()
+        # handle "ReaperScoutObjective.CONFIRM_NATURAL"
+        if "." in s and s.startswith("ReaperScoutObjective."):
+            s = s.split(".", 1)[1].strip()
+
+        # prefer value lookup (Enum is str-based, so constructor matches values)
+        try:
+            return ReaperScoutObjective(s)
+        except Exception:
+            # also allow name lookup (in case caller passes "CONFIRM_NATURAL" as name)
+            try:
+                return ReaperScoutObjective[s]
+            except Exception as e:
+                raise ValueError(f"{obj!r} is not a valid ReaperScoutObjective") from e
+
+    raise TypeError(f"objective must be ReaperScoutObjective or str, got {type(obj)}")
+
+
+@dataclass
+class ReaperScout(BaseTask):
+    awareness: Awareness
+    log: DevLogger | None = None
+
+    objective: ReaperScoutObjective = ReaperScoutObjective.CONFIRM_NATURAL
+
+    log_every: float = 6.0
+    retreat_hp_frac: float = 0.40
+    avoid_enemy_near_bases: int = 6
+    arrive_radius_main: float = 4.5
+    arrive_radius_nat: float = 7.0
+
+    _last_log_t: float = field(default=0.0, init=False)
+    _phase: int = field(default=0, init=False)
+
+    def __init__(
+        self,
+        *,
+        awareness: Awareness,
+        log: DevLogger | None = None,
+        objective: ReaperScoutObjective | str = ReaperScoutObjective.CONFIRM_NATURAL,
+        log_every: float = 6.0,
+        retreat_hp_frac: float = 0.40,
+        arrive_radius_main: float = 4.5,
+        arrive_radius_nat: float = 7.0,
+    ):
+        super().__init__(task_id="reaper_scout", domain="INTEL", commitment=7)
+        self.awareness = awareness
+        self.log = log
+
+        # FIX: robust enum coercion
+        self.objective = _coerce_objective(objective)
+
+        self.log_every = float(log_every)
+        self.retreat_hp_frac = float(retreat_hp_frac)
+        self.arrive_radius_main = float(arrive_radius_main)
+        self.arrive_radius_nat = float(arrive_radius_nat)
+        self._last_log_t = 0.0
+        self._phase = 0
+
+    def evaluate(self, bot, attention: Attention) -> int:
+        return 25
+
+    def _enemy_main(self, bot) -> Point2:
+        return bot.enemy_start_locations[0]
+
+    def _enemy_natural(self, bot) -> Point2:
+        enemy_main = self._enemy_main(bot)
+        exps = list(getattr(bot, "expansion_locations_list", []) or [])
+        if not exps:
+            raise RuntimeError("expansion_locations_list unavailable for enemy natural computation")
+        exps_sorted = sorted(exps, key=lambda p: p.distance_to(enemy_main))
+        if len(exps_sorted) < 2:
+            return exps_sorted[0]
+        return exps_sorted[1]
+
+    def _map_center(self, bot) -> Point2:
+        gi = getattr(bot, "game_info", None)
+        if gi is None:
+            raise RuntimeError("game_info unavailable for map center")
+        return gi.map_center
+
+    def _log_tick(self, *, now: float, reason: str, tag: int, pos: Point2) -> None:
+        if not self.log:
+            return
+        if (now - float(self._last_log_t)) < float(self.log_every):
+            return
+        self._last_log_t = float(now)
+        self.log.emit(
+            "reaper_scout_tick",
+            {
+                "t": round(float(now), 2),
+                "mission_id": str(self.mission_id or ""),
+                "tag": int(tag),
+                "objective": str(self.objective.value),
+                "phase": int(self._phase),
+                "reason": str(reason),
+                "pos": [round(float(pos.x), 1), round(float(pos.y), 1)],
+            },
+        )
+
+    async def on_step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult:
+        now = float(tick.time)
+
+        if not isinstance(self.mission_id, str) or not self.mission_id:
+            return TaskResult.failed("unbound_mission")
+
+        if not isinstance(self.assigned_tags, list) or len(self.assigned_tags) != 1:
+            return TaskResult.failed("expected_exactly_1_assigned_tag")
+
+        tag = int(self.assigned_tags[0])
+        unit = bot.units.find_by_tag(tag)
+        if unit is None:
+            return TaskResult.failed("assigned_unit_missing")
+
+        if unit.type_id != U.REAPER:
+            return TaskResult.failed("assigned_unit_not_reaper")
+
+        if bool(attention.combat.threatened) and int(attention.combat.enemy_count_near_bases) >= int(self.avoid_enemy_near_bases):
+            unit.move(bot.start_location)
+            self._active("retreat_home_under_threat")
+            self._log_tick(now=now, reason="home_under_threat", tag=tag, pos=unit.position)
+            return TaskResult.running("retreat_home_under_threat")
+
+        hp_frac = float(unit.health_percentage) if hasattr(unit, "health_percentage") else 1.0
+        if hp_frac <= float(self.retreat_hp_frac):
+            unit.move(bot.start_location)
+            self._active("retreat_low_hp")
+            self._log_tick(now=now, reason="low_hp", tag=tag, pos=unit.position)
+            return TaskResult.running("retreat_low_hp")
+
+        if not self.awareness.intel_reaper_scout_dispatched(now=now):
+            self.awareness.mark_reaper_scout_dispatched(now=now)
+
+        if self.objective == ReaperScoutObjective.CONFIRM_NATURAL:
+            nat = self._enemy_natural(bot)
+            if self._phase == 0:
+                if unit.distance_to(nat) <= float(self.arrive_radius_nat):
+                    self._phase = 1
+                else:
+                    unit.move(nat)
+                    self._active("move_enemy_natural")
+                    self._log_tick(now=now, reason="to_natural", tag=tag, pos=unit.position)
+                    return TaskResult.running("move_enemy_natural")
+
+            main = self._enemy_main(bot)
+            if unit.distance_to(main) <= float(self.arrive_radius_main):
+                self.awareness.mark_reaper_scout_done(now=now)
+                self._done("confirmed_natural_then_peeked_main")
+                return TaskResult.done("confirmed_natural_then_peeked_main")
+
+            unit.move(main)
+            self._active("peek_enemy_main")
+            self._log_tick(now=now, reason="peek_main", tag=tag, pos=unit.position)
+            return TaskResult.running("peek_enemy_main")
+
+        if self.objective == ReaperScoutObjective.CONFIRM_MAIN_RAMP:
+            target = self._enemy_main(bot)
+            if unit.distance_to(target) <= float(self.arrive_radius_main):
+                self.awareness.mark_reaper_scout_done(now=now)
+                self._done("peeked_enemy_main")
+                return TaskResult.done("peeked_enemy_main")
+
+            unit.move(target)
+            self._active("move_enemy_main")
+            self._log_tick(now=now, reason="to_main", tag=tag, pos=unit.position)
+            return TaskResult.running("move_enemy_main")
+
+        if self.objective == ReaperScoutObjective.MAP_CENTER:
+            mc = self._map_center(bot)
+            unit.move(mc)
+            self._active("move_map_center")
+            self._log_tick(now=now, reason="to_center", tag=tag, pos=unit.position)
+            self.awareness.mark_reaper_scout_done(now=now)
+            self._done("moved_map_center")
+            return TaskResult.done("moved_map_center")
+
+        if self.objective == ReaperScoutObjective.RETURN_HOME:
+            unit.move(bot.start_location)
+            self._active("return_home")
+            self._log_tick(now=now, reason="return", tag=tag, pos=unit.position)
+            self.awareness.mark_reaper_scout_done(now=now)
+            self._done("returned_home")
+            return TaskResult.done("returned_home")
+
+        mc = self._map_center(bot)
+        unit.move(mc)
+        self._active("move_map_center_default")
+        self._log_tick(now=now, reason="default_center", tag=tag, pos=unit.position)
+        return TaskResult.running("move_map_center_default")
 ```
 # bot/tasks/scan_task.py
 ```python
@@ -3109,23 +3787,23 @@ BuildChoices:
 
 Builds:
   Default:
-    # Do not set AutoSupplyAtSupply to 0, or it may place depots in bad spots.
-    # Enable it only after the basic wall is in place.
     AutoSupplyAtSupply: 20
     ConstantWorkerProductionTill: 32
     OpeningBuildOrder:
       - 14 supply @ ramp
+      - 12 worker_scout:
+          [enemy_spawn, enemy_nat, enemy_ramp, map_center]
       - 16 barracks @ ramp
       - 16 gas
       - 0 orbital
-      # Second wall depot (prevents autosupply from breaking the wall-off)
-      - 19 supply @ ramp
+      - 19 reaper
       - 19 expand
+      - 19 supply @ ramp
       - 21 factory
       - 21 barracksreactor
       - 21 gas
       - 21 starport
-      - 21 addonswap starport barracksreactor
+      - 21 addonswap factory barracksreactor
       - 23 marine *4
 
   DefensiveOpening:
@@ -3135,8 +3813,9 @@ Builds:
       - 14 supply @ ramp
       - 16 barracks @ ramp
       - 16 gas
-      - 0 orbital
       - 19 supply @ ramp
+      - 19 reaper
+      - 0 orbital
       - 20 marine *3
       - 21 factory
       - 21 gas
@@ -3674,41 +4353,3 @@ Registrar:
 6. Production refinement
 7. Adaptação estatística
 ```
-
-===== LOG SUMMARY =====
-file: devlog_20260226_063404.jsonl
-events_total: 26
-top_events:
-- scout_tick: 16
-- mission_started: 4
-- scout_success: 2
-- mission_ended: 2
-- runtime_start: 1
-- game_end: 1
-recent_events:
-- 2026-02-26T06:34:04.727808+00:00 runtime_start {}
-- 2026-02-26T06:34:04.768826+00:00 mission_started {'time': 0.0, 'mission_id': 'macro_planner:macro_opening:0', 'proposal_id': 'macro_planner:macro_opening', 'domain': 'MACRO', 'tags': 0, 'ttl': None}
-- 2026-02-26T06:34:15.661268+00:00 mission_started {'time': 25.0, 'mission_id': 'intel_planner:scout:scv_early:25000', 'proposal_id': 'intel_planner:scout:scv_early', 'domain': 'INTEL', 'tags': 1, 'ttl': 120.0}
-- 2026-02-26T06:34:15.664021+00:00 scout_tick {'t': 25.0, 'mission_id': 'intel_planner:scout:scv_early:25000', 'tag': 4347396097, 'reason': 'moving', 'dist': 145.73}
-- 2026-02-26T06:34:18.221090+00:00 scout_tick {'t': 31.07, 'mission_id': 'intel_planner:scout:scv_early:25000', 'tag': 4347396097, 'reason': 'moving', 'dist': 125.55}
-- 2026-02-26T06:34:20.891414+00:00 scout_tick {'t': 37.14, 'mission_id': 'intel_planner:scout:scv_early:25000', 'tag': 4347396097, 'reason': 'moving', 'dist': 107.05}
-- 2026-02-26T06:34:23.185776+00:00 scout_tick {'t': 43.21, 'mission_id': 'intel_planner:scout:scv_early:25000', 'tag': 4347396097, 'reason': 'moving', 'dist': 83.18}
-- 2026-02-26T06:34:25.605216+00:00 scout_tick {'t': 49.29, 'mission_id': 'intel_planner:scout:scv_early:25000', 'tag': 4347396097, 'reason': 'moving', 'dist': 59.56}
-- 2026-02-26T06:34:28.183833+00:00 scout_tick {'t': 55.36, 'mission_id': 'intel_planner:scout:scv_early:25000', 'tag': 4347396097, 'reason': 'moving', 'dist': 40.24}
-- 2026-02-26T06:34:30.822641+00:00 scout_tick {'t': 61.43, 'mission_id': 'intel_planner:scout:scv_early:25000', 'tag': 4347396097, 'reason': 'moving', 'dist': 21.65}
-- 2026-02-26T06:34:31.856088+00:00 scout_success {'t': 63.66, 'mission_id': 'intel_planner:scout:scv_early:25000', 'tag': 4347396097, 'dist': 13.76}
-- 2026-02-26T06:34:31.857085+00:00 mission_ended {'time': 63.66, 'mission_id': 'intel_planner:scout:scv_early:25000', 'proposal_id': 'intel_planner:scout:scv_early', 'domain': 'INTEL', 'status': 'DONE', 'reason': 'arrived_enemy_main'}
-- 2026-02-26T06:34:31.901622+00:00 mission_started {'time': 63.75, 'mission_id': 'intel_planner:scout:scv_early:63750', 'proposal_id': 'intel_planner:scout:scv_early', 'domain': 'INTEL', 'tags': 1, 'ttl': 120.0}
-- 2026-02-26T06:34:31.902586+00:00 scout_tick {'t': 63.75, 'mission_id': 'intel_planner:scout:scv_early:63750', 'tag': 4342939649, 'reason': 'moving', 'dist': 144.93}
-- 2026-02-26T06:34:34.578337+00:00 scout_tick {'t': 69.82, 'mission_id': 'intel_planner:scout:scv_early:63750', 'tag': 4342939649, 'reason': 'moving', 'dist': 124.45}
-- 2026-02-26T06:34:37.643580+00:00 scout_tick {'t': 75.89, 'mission_id': 'intel_planner:scout:scv_early:63750', 'tag': 4342939649, 'reason': 'moving', 'dist': 110.05}
-- 2026-02-26T06:34:40.264683+00:00 scout_tick {'t': 81.96, 'mission_id': 'intel_planner:scout:scv_early:63750', 'tag': 4342939649, 'reason': 'moving', 'dist': 86.18}
-- 2026-02-26T06:34:42.831345+00:00 scout_tick {'t': 88.04, 'mission_id': 'intel_planner:scout:scv_early:63750', 'tag': 4342939649, 'reason': 'moving', 'dist': 62.52}
-- 2026-02-26T06:34:45.532735+00:00 scout_tick {'t': 94.11, 'mission_id': 'intel_planner:scout:scv_early:63750', 'tag': 4342939649, 'reason': 'moving', 'dist': 42.22}
-- 2026-02-26T06:34:48.287890+00:00 scout_tick {'t': 100.18, 'mission_id': 'intel_planner:scout:scv_early:63750', 'tag': 4342939649, 'reason': 'moving', 'dist': 24.57}
-- 2026-02-26T06:34:49.657977+00:00 scout_success {'t': 103.12, 'mission_id': 'intel_planner:scout:scv_early:63750', 'tag': 4342939649, 'dist': 13.95}
-- 2026-02-26T06:34:49.659481+00:00 mission_ended {'time': 103.12, 'mission_id': 'intel_planner:scout:scv_early:63750', 'proposal_id': 'intel_planner:scout:scv_early', 'domain': 'INTEL', 'status': 'DONE', 'reason': 'arrived_enemy_main'}
-- 2026-02-26T06:34:49.695561+00:00 mission_started {'time': 103.21, 'mission_id': 'intel_planner:scout:scv_early:103214', 'proposal_id': 'intel_planner:scout:scv_early', 'domain': 'INTEL', 'tags': 1, 'ttl': 120.0}
-- 2026-02-26T06:34:49.696596+00:00 scout_tick {'t': 103.21, 'mission_id': 'intel_planner:scout:scv_early:103214', 'tag': 4348968961, 'reason': 'moving', 'dist': 144.93}
-- 2026-02-26T06:34:52.454194+00:00 scout_tick {'t': 109.29, 'mission_id': 'intel_planner:scout:scv_early:103214', 'tag': 4348968961, 'reason': 'moving', 'dist': 124.53}
-- 2026-02-26T06:34:52.487823+00:00 game_end {'result': 'Result.Defeat'}
