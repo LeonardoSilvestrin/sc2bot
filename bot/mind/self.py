@@ -10,12 +10,13 @@ from bot.intel.threat_intel import Threat
 from bot.intel.economy_intel import EconomyIntelConfig, derive_economy_intel
 from bot.mind.attention import derive_attention
 from bot.mind.awareness import Awareness
-from bot.mind.body import UnitLeases  # Body
+from bot.mind.body import UnitLeases
 from bot.mind.ego import Ego, EgoConfig
 from bot.tasks.base_task import TaskTick
 
 from bot.tasks.defend_task import Defend
 from bot.tasks.scout_task import Scout
+from bot.tasks.scan_task import ScanAt
 from bot.tasks.macro_task import MacroBio2BaseTick, MacroOpeningTick
 
 from bot.planners.defense_planner import DefensePlanner
@@ -27,8 +28,12 @@ from bot.planners.macro_planner import MacroPlanner
 class RuntimeApp:
     """
     Orquestrador único do bot.
-    - Não toma decisão de plano/fase aqui.
-    - Só chama derives (attention/intel) e roda o Ego.
+
+    Responsabilidades:
+      - Derivar Attention (snapshot factual do tick)
+      - Atualizar Awareness (economy intel, etc.)
+      - Rodar Ego (decisão + execução)
+      - Lifecycle hooks (on_start / on_end)
     """
 
     log: DevLogger
@@ -38,6 +43,10 @@ class RuntimeApp:
     ego: Ego
     economy_cfg: EconomyIntelConfig
     debug: bool = True
+
+    # ------------------------------------------------------------------
+    # Factory
+    # ------------------------------------------------------------------
 
     @classmethod
     def build(cls, *, log: DevLogger, debug: bool = True) -> "RuntimeApp":
@@ -58,16 +67,28 @@ class RuntimeApp:
             ),
         )
 
-        # ---- Tasks (template instances)
-        defend_task = Defend(log=log, log_every_iters=11)
+        # ---------------- Tasks (templates) ----------------
+
+        defend_task = Defend(
+            log=log,
+            log_every_iters=11,
+        )
 
         scout_task = Scout(
-            body=body,
             awareness=awareness,
             log=log,
             trigger_time=25.0,
             log_every=6.0,
             see_radius=14.0,
+        )
+
+        # exemplo de scan task (enemy main)
+        scan_enemy_main = ScanAt(
+            awareness=awareness,
+            target=None,          # planner decide target dinamicamente
+            label="enemy_main",
+            cooldown=20.0,
+            log=log,
         )
 
         opening_macro_task = MacroOpeningTick(
@@ -84,9 +105,16 @@ class RuntimeApp:
             backoff_urgency=60,
         )
 
-        # ---- Planners
+        # ---------------- Planners ----------------
+
         defense_planner = DefensePlanner(defend_task=defend_task)
-        intel_planner = IntelPlanner(awareness=awareness, log=log, scout_task=scout_task)
+
+        intel_planner = IntelPlanner(
+            awareness=awareness,
+            log=log,
+            scout_task=scout_task,
+        )
+
         macro_planner = MacroPlanner(
             opening_task=opening_macro_task,
             macro_task=macro_task,
@@ -94,7 +122,11 @@ class RuntimeApp:
             opening_timeout_s=180.0,
         )
 
-        ego.register_planners([defense_planner, intel_planner, macro_planner])
+        ego.register_planners([
+            defense_planner,
+            intel_planner,
+            macro_planner,
+        ])
 
         return cls(
             log=log,
@@ -106,18 +138,55 @@ class RuntimeApp:
             debug=bool(debug),
         )
 
+    # ------------------------------------------------------------------
+    # Lifecycle hooks
+    # ------------------------------------------------------------------
+
+    async def on_start(self, bot) -> None:
+        """
+        Chamado por MyBot.on_start().
+        Apenas inicializações leves.
+        """
+        try:
+            self.body.reset()
+        except Exception:
+            # se UnitLeases ainda não tiver reset, ignora
+            pass
+
+        if self.log:
+            self.log.emit("runtime_start", {})
+
     async def on_step(self, bot, *, iteration: int) -> None:
         now = float(getattr(bot, "time", 0.0))
 
-        # 1) Perception / attention (snapshot factual)
-        attention = derive_attention(bot, awareness=self.awareness, threat=self.threat)
+        # 1) Perception → Attention (snapshot imutável)
+        attention = derive_attention(
+            bot,
+            awareness=self.awareness,
+            threat=self.threat,
+        )
 
-        # 2) Economy intel (side-effect na Awareness; não sobrescreve attention)
-        derive_economy_intel(bot, awareness=self.awareness, attention=attention, now=now, cfg=self.economy_cfg)
+        # 2) Economy intel → side-effect na Awareness
+        derive_economy_intel(
+            bot,
+            awareness=self.awareness,
+            attention=attention,
+            now=now,
+            cfg=self.economy_cfg,
+        )
 
-        # 3) Ego (decide + executa)
-        tick = TaskTick(iteration=int(iteration), time=now)
-        await self.ego.tick(bot, tick=tick, attention=attention, awareness=self.awareness)
+        # 3) Ego → decide + executa
+        tick = TaskTick(
+            iteration=int(iteration),
+            time=now,
+        )
+
+        await self.ego.tick(
+            bot,
+            tick=tick,
+            attention=attention,
+            awareness=self.awareness,
+        )
 
     async def on_end(self, bot, game_result: Result) -> None:
         if self.log:

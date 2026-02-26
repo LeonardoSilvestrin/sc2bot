@@ -209,6 +209,24 @@ class Ego:
 
         return True, selected, ""
 
+    def _touch_leases_for_commitment(self, *, now: float, c: Commitment) -> None:
+        """
+        Keep unit leases alive while the mission is active.
+
+        Contract:
+          - Leases are owned by mission_id (not task_id).
+          - Tasks should NOT claim/touch leases directly for correctness and testability.
+        """
+        if not c.assigned_tags:
+            return
+        remaining = float(c.expires_at) - float(now)
+        if remaining <= 0.0:
+            return
+        # renew leases just long enough to survive until mission expiry
+        ttl = max(0.25, min(8.0, remaining))
+        for tag in c.assigned_tags:
+            self.body.touch(task_id=c.mission_id, unit_tag=int(tag), now=now, ttl=ttl)
+
     async def _execute(self, bot, *, tick: TaskTick, attention: Attention, awareness: Awareness) -> None:
         now = float(tick.time)
 
@@ -216,6 +234,9 @@ class Ego:
             if c.is_expired(now):
                 self._finish_mission(awareness, now=now, c=c, status="DONE", reason="expired")
                 continue
+
+            # keep leases alive
+            self._touch_leases_for_commitment(now=now, c=c)
 
             res = await c.task.step(bot, tick, attention)
 
