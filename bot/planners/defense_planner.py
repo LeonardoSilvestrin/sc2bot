@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from bot.devlog import DevLogger
 from bot.mind.attention import Attention
 from bot.mind.awareness import Awareness
 from bot.planners.proposals import Proposal, TaskSpec
@@ -16,6 +17,7 @@ class DefensePlanner:
     """
     planner_id: str = "defense_planner"
     defend_task: Defend = None  # template instance
+    log: DevLogger | None = None
 
     def _pid_defend(self) -> str:
         return f"{self.planner_id}:defend:bases"
@@ -33,7 +35,7 @@ class DefensePlanner:
         def _factory(mission_id: str) -> Defend:
             return self.defend_task.spawn()
 
-        return [
+        out = [
             Proposal(
                 proposal_id=self._pid_defend(),
                 domain="DEFENSE",
@@ -45,3 +47,10 @@ class DefensePlanner:
                 allow_preempt=True,
             )
         ]
+        if self.log is not None:
+            self.log.emit(
+                "planner_proposed",
+                {"planner": self.planner_id, "count": len(out), "score": int(score)},
+                meta={"module": "planner", "component": f"planner.{self.planner_id}"},
+            )
+        return out

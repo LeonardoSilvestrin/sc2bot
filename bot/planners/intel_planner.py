@@ -201,6 +201,7 @@ class IntelPlanner:
                                     "confidence": float(conf),
                                     "age_s": float(age_s),
                                 },
+                                meta={"module": "planner", "component": f"planner.{self.planner_id}"},
                             )
 
         # -------------------------

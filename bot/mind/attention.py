@@ -105,7 +105,7 @@ class Attention:
     time: float = 0.0
 
 
-def derive_attention(bot, *, awareness: Awareness, threat: Threat) -> Attention:
+def derive_attention(bot, *, awareness: Awareness, threat: Threat, log=None) -> Attention:
     """
     Derive tick snapshot from sensors.
     Rule: no side-effects.
@@ -128,7 +128,7 @@ def derive_attention(bot, *, awareness: Awareness, threat: Threat) -> Attention:
     macro = derive_macro_snapshot(bot)
     enemy_build = derive_enemy_build_sensor(bot)
 
-    return Attention(
+    out = Attention(
         economy=economy,
         combat=combat,
         intel=intel,
@@ -136,3 +136,18 @@ def derive_attention(bot, *, awareness: Awareness, threat: Threat) -> Attention:
         enemy_build=enemy_build,
         time=float(now),
     )
+    if log is not None:
+        log.emit(
+            "attention_tick",
+            {
+                "t": round(float(now), 2),
+                "threatened": bool(combat.threatened),
+                "defense_urgency": int(combat.defense_urgency),
+                "minerals": int(economy.minerals),
+                "gas": int(economy.gas),
+                "supply_left": int(economy.supply_left),
+                "opening_done": bool(macro.opening_done),
+            },
+            meta={"module": "attention", "component": "attention"},
+        )
+    return out

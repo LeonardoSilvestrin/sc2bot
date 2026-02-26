@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from bot.devlog import DevLogger
 from bot.mind.attention import Attention
 from bot.mind.awareness import Awareness, K
 from bot.planners.proposals import Proposal, TaskSpec
@@ -24,6 +25,7 @@ class MacroPlanner:
     housekeeping_cooldown_s: float = 6.0
     housekeeping_lease_ttl_s: float = 12.0
     housekeeping_score: int = 18
+    log: DevLogger | None = None
 
     opening_task: MacroOpeningTick = None        # injected template
     bio_task: MacroBio2BaseTick = None           # injected template
@@ -114,6 +116,12 @@ class MacroPlanner:
                     allow_preempt=True,
                 )
             )
+            if self.log is not None:
+                self.log.emit(
+                    "planner_proposed",
+                    {"planner": self.planner_id, "count": len(proposals), "mode": "opening"},
+                    meta={"module": "planner", "component": f"planner.{self.planner_id}"},
+                )
             return proposals
 
         # RUSH DEFENSE
@@ -135,6 +143,12 @@ class MacroPlanner:
                     allow_preempt=True,
                 )
             )
+            if self.log is not None:
+                self.log.emit(
+                    "planner_proposed",
+                    {"planner": self.planner_id, "count": len(proposals), "mode": "rush_defense"},
+                    meta={"module": "planner", "component": f"planner.{self.planner_id}"},
+                )
             return proposals
 
         # NORMAL macro
@@ -156,4 +170,10 @@ class MacroPlanner:
             )
         )
 
+        if self.log is not None:
+            self.log.emit(
+                "planner_proposed",
+                {"planner": self.planner_id, "count": len(proposals), "mode": "bio"},
+                meta={"module": "planner", "component": f"planner.{self.planner_id}"},
+            )
         return proposals

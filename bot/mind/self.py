@@ -35,7 +35,7 @@ class RuntimeApp:
 
     @classmethod
     def build(cls, *, log: DevLogger, debug: bool = True) -> "RuntimeApp":
-        awareness = Awareness()
+        awareness = Awareness(log=log)
         threat = Threat(defend_radius=22.0, min_enemy=1)
         body = UnitLeases(default_ttl=8.0)
 
@@ -77,7 +77,7 @@ class RuntimeApp:
             log_every_iters=22,
         )
 
-        defense_planner = DefensePlanner(defend_task=defend_task)
+        defense_planner = DefensePlanner(defend_task=defend_task, log=log)
         intel_planner = IntelPlanner(awareness=awareness, log=log, scout_task=scout_task)
 
         macro_planner = MacroPlanner(
@@ -85,6 +85,7 @@ class RuntimeApp:
             bio_task=bio_standard_task,
             rush_defense_task=rush_defense_task,
             backoff_urgency=60,
+            log=log,
         )
 
         ego.register_planners([defense_planner, intel_planner, macro_planner])
@@ -110,7 +111,7 @@ class RuntimeApp:
     async def on_step(self, bot, *, iteration: int) -> None:
         now = float(getattr(bot, "time", 0.0))
 
-        attention = derive_attention(bot, awareness=self.awareness, threat=self.threat)
+        attention = derive_attention(bot, awareness=self.awareness, threat=self.threat, log=self.log)
 
         derive_enemy_build_intel(
             bot,

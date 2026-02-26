@@ -91,6 +91,7 @@ def K(*parts: str) -> Key:
 @dataclass
 class Awareness:
     mem: MemoryStore = field(default_factory=MemoryStore)
+    log: Any = None
 
     _events: List[Dict[str, Any]] = field(default_factory=list)
     _events_cap: int = 200
@@ -102,6 +103,12 @@ class Awareness:
         self._events.append(evt)
         if len(self._events) > self._events_cap:
             self._events = self._events[-self._events_cap :]
+        if self.log is not None:
+            self.log.emit(
+                "awareness_event",
+                {"t": round(float(now), 2), "name": str(name), "data": data or {}},
+                meta={"module": "awareness", "component": "awareness"},
+            )
 
     def tail_events(self, n: int = 10) -> List[Dict[str, Any]]:
         if n <= 0:
