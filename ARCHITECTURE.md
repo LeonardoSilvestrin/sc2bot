@@ -1,380 +1,372 @@
-# ARES STRATEGIC ARCHITECTURE
+# ARQUITETURA v2 (Runtime Real)
 
-## 1. Visão Geral
+## 1. Objetivo
 
-Esta arquitetura define uma camada estratégica acima do Ares.
+Este documento define a arquitetura oficial do bot com base no codigo atual.
 
-Objetivos:
+Modelo oficial:
 
-- Separar decisão de execução
-- Permitir preempção limpa (ex: cancelar drop para defender)
-- Manter macro estável sob pressão
-- Ser auditável via logs
-- Escalar para adaptação estatística futura
-- Não reinventar funcionalidades já fornecidas pelo Ares
+`Sensor -> Attention -> Intel -> Awareness -> Planner -> Ego -> Task -> Ares/python-sc2`
 
-Ares continua responsável por:
-- Pathfinding
-- Unit control básico
-- Worker selection
-- Build order execution
-- Placement
-- Squad system
+Objetivos praticos:
 
-Nossa arquitetura controla:
-- Decisão estratégica
-- Prioridades
-- Seleção de missões
-- Preempção
-- Orquestração de domínios
+- Separar fatos do tick (`Attention`) de memoria e inferencia (`Awareness`).
+- Manter um orquestrador unico de missoes (`Ego`) com contratos estaveis.
+- Garantir ownership explicito de unidades (`UnitLeases`).
+- Manter o sistema auditavel por eventos e logs (`DevLogger`).
+
+Este documento foca exclusivamente no modelo operacional vigente no codigo atual.
 
 ---
 
-## 2. Princípios Fundamentais
+## 2. Principios Arquiteturais
 
-1. Policy calcula. Não executa.
-2. Director orquestra. Não microgerencia.
-3. Mission executa com lifecycle formal.
-4. Coordinator arbitra conflitos.
-5. Macro é serviço contínuo, não entra em leilão.
-6. Ownership de unidades é explícito via roles.
-7. Toda missão possui abort protocol.
-8. Toda decisão relevante é logável.
-
----
-
-## 3. Componentes do Sistema
-
-### 3.1 Policies (Avaliação Pura)
-
-Características:
-- Stateless ou quase.
-- Não emitem comandos.
-- Produzem sinais derivados do estado.
-
-Principais Policies:
-
-#### ThreatPolicy
-Produz:
-- ThreatZones
-- ThreatIntent (harass / push / all-in)
-- DefenseUrgency (por base)
-
-#### StrategicPolicy
-Produz:
-- StrategicState (AHEAD / EVEN / BEHIND)
-- Confidence
-
-#### BudgetPolicy
-Produz:
-- ScanBudget
-- HarassBudget
-- RiskTolerance
+1. `Sensors` leem estado do jogo e nao emitem comandos.
+2. `Attention` e um snapshot imutavel por tick.
+3. `Intel` transforma sinais em cren�as e grava em `Awareness`.
+4. `Planners` prop�em candidatos de missao (`Proposal`) e nao executam micro.
+5. `Ego` e o unico arbitro de admissao, cooldown, preempcao e leases.
+6. `Tasks` sao a unica camada que comanda unidades/estruturas.
+7. Ownership de unidade e explicito por `mission_id` e `UnitRole`.
+8. Toda decisao operacional relevante deve ser observavel em log/evento.
 
 ---
 
-### 3.2 Directors (Orquestradores Stateful)
+## 3. Topologia do Sistema (real)
 
-Características:
-- Mantêm estado local
-- Propõem missões candidatas
-- Aplicam cooldowns
-- Não definem modo global
+### 3.1 Entradas principais
 
-Domínios:
+- [`run.py`](run.py): inicializacao do bot e partida local/ladder.
+- [`bot/main.py`](bot/main.py): integra `MyBot(AresBot)` com `RuntimeApp`.
+- [`bot/mind/self.py`](bot/mind/self.py): composicao da runtime e loop por tick.
 
-#### StrategyDirector
-- Define modo atual
-- Define pesos por domínio
-- Define budgets
-- Define política de preempção
+### 3.2 Componentes centrais
 
-Não cria missões diretamente.
+- `Sensors`: em `bot/sensors/*`
+- `Attention`: [`bot/mind/attention.py`](bot/mind/attention.py)
+- `Intel`: `bot/intel/*` (atual: enemy opening inference)
+- `Awareness`: [`bot/mind/awareness.py`](bot/mind/awareness.py)
+- `Planners`: `bot/planners/*`
+- `Ego`: [`bot/mind/ego.py`](bot/mind/ego.py)
+- `Tasks`: `bot/tasks/*`
+- `Body/Leases`: [`bot/mind/body.py`](bot/mind/body.py)
 
-#### DefenseDirector
-Propõe:
-- HoldBaseMission
-- StaticDefenseMission
-- PullWorkersEmergencyMission
+### 3.3 Pipeline canonico
 
-#### IntelDirector
-Propõe:
-- WorkerScoutMission
-- TacticalScanMission
-- SpotterMission
-
-#### MapControlDirector
-Propõe:
-- ScreenLaneMission
-- CreepDenyMission
-- ExpansionCheckMission
-
-#### HarassDirector
-Propõe:
-- DropMission
-- RunbyMission
-- MultiProngMission (futuro)
-
-#### ProductionDirector
-Não usa missões.
-Produz:
-- ProductionGoals
-- CompositionTargets
-- TransitionRequests
+1. Sensors derivam snapshot do tick.
+2. Snapshot e consolidado em `Attention`.
+3. Intel le `Attention` e atualiza `Awareness` (stateful).
+4. Planners leem `Attention + Awareness` e retornam `Proposal`.
+5. Ego valida/ordena/admite propostas.
+6. Ego executa tasks ativas e fecha missoes quando necessario.
+7. Tasks enviam comandos via Ares/python-sc2.
 
 ---
 
-### 3.3 Coordinator
+## 4. Fluxo por Tick (sequencia oficial)
 
-Responsável por:
+Sequencia implementada em [`RuntimeApp.on_step`](bot/mind/self.py):
 
-1. Receber missões candidatas
-2. Aplicar pesos definidos pelo StrategyDirector
-3. Selecionar missões ativas
-4. Resolver conflitos de unidades (roles)
-5. Aplicar preempção
-6. Garantir mínimos globais
+1. `attention = derive_attention(...)`
+2. `derive_enemy_build_intel(..., attention=attention, awareness=awareness, ...)`
+3. `await ego.tick(..., tick=TaskTick, attention=attention, awareness=awareness)`
 
-Não decide estratégia.
-Não executa micro.
+Dentro de `Ego.tick`:
 
----
+1. `body.reap(...)` + reap de commitments expirados.
+2. coleta de propostas de todos os planners.
+3. `prop.validate()` para cada proposta.
+4. ordenacao por `score` decrescente.
+5. admissao (`_admit`) com regras de cooldown, singleton domain e threat gate.
+6. execucao (`_execute`) das missoes ativas e transicao por `TaskResult`.
 
-## 4. Mission Model
+Eventos emitidos durante o fluxo:
 
-### 4.1 Estrutura
-
-Toda missão possui:
-
-- mission_id
-- domain
-- priority_base
-- commitment_level (LOW / MED / HIGH)
-- required_roles
-- timeout
-- cooldown
-- pause_capable
-- abort_protocol
-- report_schema
+- `attention_tick`
+- `planner_proposed` (quando planner loga)
+- `mission_started`
+- `mission_step`
+- `mission_ended`
 
 ---
 
-### 4.2 Lifecycle
+## 5. Contratos por Camada
 
-Estados:
+## 5.1 Sensors
 
-- PLANNING
-- ACTIVE
-- PAUSED
-- ABORTING
-- DONE
+Responsabilidade:
 
----
+- Derivar fatos do estado atual do jogo.
 
-### 4.3 Commitment Levels
+Permitido:
 
-LOW:
-- Scout
-- Map control
-Sempre preemptável.
+- Ler estado do bot/engine.
 
-MED:
-- Harass em trânsito
-Preemptável dependendo da urgência.
+Proibido:
 
-HIGH:
-- Engage ativo
-- All-in commit
-Abortável apenas sob urgência crítica.
+- Escrever em `Awareness`.
+- Emitir comandos de unidade.
 
----
+Exemplos:
 
-### 4.4 Abort Protocol
+- `derive_economy_snapshot`
+- `derive_combat_snapshot`
+- `derive_enemy_build_sensor`
+- `derive_macro_snapshot`
+- `derive_orbital_snapshot`
 
-Toda missão deve definir:
+## 5.2 Attention
 
-- Como liberar roles
-- Como dissolver squad
-- Para onde redirecionar unidades
-- Como reportar motivo de término
+Responsabilidade:
 
----
+- Representar snapshot imutavel por tick.
 
-### 4.5 Mission Report
+Contrato:
 
-Toda missão gera:
+- Sem side-effects.
+- Sem memoria historica.
+- Campos estaveis usados por planners/tasks.
 
-- start_time
-- end_time
-- outcome (success / abort / timeout)
-- resources_used
-- units_lost
-- damage_done
-- intel_gained
+Tipos principais:
 
-Permite adaptação futura.
+- `EconomySnapshot`
+- `CombatSnapshot`
+- `IntelSnapshot`
+- `MacroSnapshot`
+- `EnemyBuildSnapshot`
+- `Attention`
 
----
+## 5.3 Intel
 
-## 5. State Global (Blackboard + Signals)
+Responsabilidade:
 
-### 5.1 IntelState
+- Converter fatos de `Attention` em cren�as stateful em `Awareness`.
 
-- LastKnownEnemyArmyPosition
-- KnownEnemyTechFlags
-- KnownEnemyBases
-- Staleness
-- Confidence
+Permitido:
 
----
+- Escrever chaves em `Awareness.mem` com TTL quando fizer sentido.
 
-### 5.2 ThreatZones
+Proibido:
 
-Para cada base/região:
+- Comandar unidades.
 
-- enemy_count
-- enemy_power_estimate
-- severity_score
+Exemplo atual:
 
----
+- [`derive_enemy_build_intel`](bot/intel/enemy_build_intel.py): classifica abertura inimiga (`GREEDY/NORMAL/AGGRESSIVE`) e grava sinais em `Awareness`.
 
-### 5.3 DefenseUrgency
+## 5.4 Awareness
 
-Para cada base:
+Responsabilidade:
 
-- severity (0–100)
-- time_to_impact
-- threat_type
-- confidence
+- Blackboard de estado entre ticks.
 
----
+Contrato:
 
-### 5.4 StrategicState
+- Chaves namespaceadas via `K(...)`.
+- Suporte a `ttl`, `age`, `staleness`.
+- API de eventos (`emit`, `tail_events`).
 
-- AHEAD
-- EVEN
-- BEHIND
-- confidence
+Regra:
 
----
+- `Awareness` nao executa comandos; apenas estado e eventos.
 
-## 6. Modos Globais
+## 5.5 Planners
 
-### OPENING
-- BuildRunner dominante
-- Defense médio
-- Harass baixo
+Responsabilidade:
 
-### SAFE_MACRO
-- Growth ativo
-- MapControl médio
-- Harass moderado
+- Gerar `Proposal` com score e `TaskSpec`.
 
-### PRESSURE
-- Harass alto
-- MapControl alto
-- Defense médio
+Entrada:
 
-### DEFEND
-- Defense alto
-- Harass baixo
-- MapControl reduzido
+- `Attention` + `Awareness`.
 
-### EMERGENCY_DEFENSE
-- Defense máximo
-- Harass pausado
-- MapControl mínimo
-- Preempção agressiva
+Saida:
 
-### CLOSE_OUT (futuro)
-- Negar bases
-- Conter inimigo
-- Finalizar jogo
+- `list[Proposal]`.
 
-Cada modo define:
-- Pesos por domínio
-- Budgets
-- Política de preempção
+Proibido:
+
+- Comandar unidades diretamente.
+
+Planners atuais:
+
+- `DefensePlanner`
+- `IntelPlanner`
+- `MacroPlanner`
+
+## 5.6 Ego
+
+Responsabilidade:
+
+- Arbitragem central de operacoes.
+
+Funcoes:
+
+- aplicar cooldown de proposta
+- bloquear dominios nao defensivos sob alta ameaca
+- garantir singleton por dominio configurado
+- selecionar/claim de unidades por requisito
+- bind de missao em task
+- lifecycle de missao + persistencia em `Awareness`
+
+`Ego` e o unico dono do ciclo de admissao/execucao/encerramento de missao.
+
+## 5.7 Tasks
+
+Responsabilidade:
+
+- Execucao concreta no jogo.
+
+Contrato:
+
+- `on_step` retorna obrigatoriamente `TaskResult`.
+- Estados efetivos: `RUNNING`, `DONE`, `FAILED`, `NOOP`.
+- `bind_mission(...)` e obrigatorio antes de executar.
+
+Somente tasks podem enviar comandos para jogo (`attack`, `move`, `train`, `register_behavior`, etc.).
 
 ---
 
-## 7. Macro Model
+## 6. Modelo de Missao Atual
 
-Macro é contínua e dividida em camadas.
+Definicoes em [`bot/planners/proposals.py`](bot/planners/proposals.py):
 
-### Vital Loop (sempre ativo)
-- Supply safety
-- Worker mínimo
-- Estruturas essenciais
+- `UnitRequirement(unit_type, count)`
+- `TaskSpec(task_id, task_factory, unit_requirements, lease_ttl)`
+- `Proposal(proposal_id, domain, score, tasks[1], lease_ttl, cooldown_s, risk_level, allow_preempt)`
 
-### Growth Loop
-- Expandir
-- Saturar
-- Upgrades
+Observacoes:
 
-### Greed Loop
-- Expansão agressiva
-- Tech pesado
+- `Proposal.tasks` contem exatamente 1 `TaskSpec` no modelo atual.
+- `task_factory` recebe `mission_id`.
 
-Modos podem desabilitar Growth/Greed.
-Vital nunca é totalmente desativado.
+## 6.1 Admissao de missao
 
----
+Durante `_admit`, `Ego`:
 
-## 8. Preempção
+1. ignora proposta em cooldown
+2. ignora proposta ja em execucao
+3. aplica threat gate (`domain != DEFENSE` sob urgencia alta)
+4. aplica preempcao para dominios singleton
+5. seleciona e claima unidades (se houver requisitos)
+6. instancia task, faz bind de missao e registra commitment
 
-### Soft Preempt
-- Pausa missão
-- Reavalia quando urgência cair
+## 6.2 Execucao e encerramento
 
-### Hard Preempt
-- Aborta missão
-- Libera roles
-- Ativa defesa
+Durante `_execute`, `Ego`:
 
-### Sem Preempção
-- Defesa local suficiente disponível
+- encerra expiradas (`reason=expired`)
+- executa `task.step(...)`
+- em `FAILED`: aplica cooldown e encerra
+- em `DONE`: encerra
+- em `RUNNING/NOOP`: mantem ativa e registra `mission_step`
 
----
+## 6.3 Leases e ownership
 
-## 9. Integração com Ares
+`UnitLeases` garante exclusividade por `mission_id` com TTL:
 
-Não reimplementar:
+- `claim(...)`
+- `touch(...)`
+- `release_mission(...)`
+- mapeamento de `domain -> UnitRole`
 
-- Pathfinding
-- Worker selection
-- Unit grouping
-- Build order logic
-- Placement
+Invariante:
 
-Missões devem:
-
-- Usar UnitRole para ownership
-- Usar squads do Ares
-- Usar mediator
-- Usar BuildRunner
+- unidade claimada nao pode ser usada por outra missao sem release/expiracao.
 
 ---
 
-## 10. Logging Obrigatório
+## 7. Estado e Memoria (`Awareness.mem`)
 
-Registrar:
+Catalogo detalhado: [`_docs/attention_awareness.md`](_docs/attention_awareness.md).
 
-- Modo atual
-- DefenseUrgency
-- Top mission candidates (score)
-- Missões selecionadas
-- Preempções
-- Motivo de término de missão
+Resumo de namespaces:
+
+- `ops:*`: estado de missoes e cooldowns
+- `intel:*`: bookkeeping de scout/scan
+- `enemy:*`: inferencia de abertura inimiga
+- `macro:*`: housekeeping e controles auxiliares
+
+Politica de TTL/staleness:
+
+- fatos inferidos com meia-vida curta usam `ttl` (ex.: enemy opening confidence)
+- bookkeeping estrutural usa `ttl=None`
+- consumidores devem considerar staleness (`age`, `is_stale`, `max_age`) quando relevante
 
 ---
 
-## 11. Ordem Recomendada de Implementação
+## 8. Observabilidade e Debug
 
-1. MissionRegistry + Coordinator + DefenseUrgency
-2. DefenseDirector MVP
-3. IntelDirector MVP
-4. MapControlDirector MVP
-5. HarassDirector MVP
-6. Production refinement
-7. Adaptação estatística
+Implementacao principal em [`bot/devlog.py`](bot/devlog.py).
+
+Formato:
+
+- JSONL consolidado por run
+- JSONL por modulo (`attention`, `planner`, `ego`, `runtime`, etc.)
+- JSONL por componente
+- trilhas de tick por modulo para eventos `*_tick`
+
+Eventos-chave para diagnostico:
+
+- Churn de missao: `mission_started`/`mission_ended`
+- Cooldown e falhas: `mission_ended` com `status=FAILED` + reason
+- Pressao de combate: `attention_tick` (`threatened`, `defense_urgency`)
+- Decisao de planner: `planner_proposed` e eventos especificos de planner
+
+Fluxo minimo de triagem:
+
+1. validar `attention_tick` para contexto do jogo
+2. validar `planner_proposed` para candidatas
+3. validar `mission_started`/`mission_ended` para churn/preempcao
+4. validar eventos de task (`*_tick`, success/fail)
+
+---
+
+## 9. Invariantes Operacionais
+
+1. `Attention` nao persiste estado entre ticks.
+2. `Intel` nao emite comandos de unidade.
+3. `Planners` nao executam micro.
+4. `Ego` decide admissao e ownership.
+5. `Task` retorna `TaskResult` valido em todo `on_step`.
+6. `Awareness` registra inicio/fim de toda missao admitida.
+7. Leases de unidades devem ser liberados no fim de missao.
+
+---
+
+## 10. Limites Atuais (MVP) e Roadmap
+
+Limites atuais:
+
+- Enemy build intel ainda heuristico (regras fixas, sem aprendizado online).
+- Ausencia de dominios completos de `Harass` e `MapControl` no runtime atual.
+- Parte da macro ainda sensivel a churn de missao em cenarios especificos.
+- Cobertura de testes focada no framework; modulo `bot` ainda precisa ampliar testes.
+
+Roadmap sugerido:
+
+1. Estabilizar lifecycle de missoes longas (reduzir churn em defesa/macro/scan).
+2. Consolidar dominio de manutencao separado de macro principal.
+3. Adicionar planners/tasks de `Harass` e `MapControl` com contratos iguais.
+4. Introduzir KPIs de runtime (uptime por missao, preempcao por dominio, taxa de falha).
+5. Expandir testes de `bot` para contracts de Ego/Planner/Task.
+
+---
+
+## 11. Mapa de Arquivos de Referencia
+
+- [`bot/mind/self.py`](bot/mind/self.py)
+- [`bot/mind/attention.py`](bot/mind/attention.py)
+- [`bot/mind/awareness.py`](bot/mind/awareness.py)
+- [`bot/intel/enemy_build_intel.py`](bot/intel/enemy_build_intel.py)
+- [`bot/mind/ego.py`](bot/mind/ego.py)
+- [`bot/mind/body.py`](bot/mind/body.py)
+- [`bot/planners/proposals.py`](bot/planners/proposals.py)
+- [`_docs/attention_awareness.md`](_docs/attention_awareness.md)
+
+---
+
+## 12. Status do Documento
+
+Este arquivo substitui o modelo legado como referencia oficial.
+Atualizacoes futuras devem acompanhar mudancas em contratos de `Attention/Awareness/Intel/Planner/Ego/Task`.
