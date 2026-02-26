@@ -2,14 +2,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional, Tuple
-from collections import Counter
+from typing import Optional
 
-from sc2.ids.unit_typeid import UnitTypeId as U
 from sc2.position import Point2
 
-from bot.intel.threat_intel import Threat, ThreatReport
 from bot.mind.awareness import Awareness
+from bot.sensors.threat_sensor import Threat
 
 
 @dataclass(frozen=True)
@@ -40,105 +38,101 @@ class MacroSnapshot:
 
 
 @dataclass(frozen=True)
+class EnemyBuildSnapshot:
+    """
+    Tick facts only.
+
+    Backwards-compatible fields:
+      - enemy_units: counts of enemy units currently visible anywhere
+      - enemy_structures: counts of enemy structures currently visible anywhere
+
+    Extended fields (MVP for scouting + completion state):
+      - enemy_main_pos: engine-provided enemy main (strict: enemy_start_locations[0])
+      - enemy_natural_pos: inferred from expansion locations (2nd closest to enemy main)
+      - enemy_units_main: counts of enemy units visible within main_radius of enemy_main_pos
+      - enemy_structures_main: counts of enemy structures visible within main_radius of enemy_main_pos
+
+      - enemy_structures_progress:
+          per-structure-type stats of build_progress for currently visible enemy structures, e.g.
+          {
+            UnitTypeId.SPAWNINGPOOL: {
+              "count": 1,
+              "ready": 0,
+              "incomplete": 1,
+              "min": 0.42,
+              "max": 0.42,
+              "avg": 0.42,
+            },
+            ...
+          }
+
+      - enemy_natural_on_ground:
+          True if a visible enemy townhall is on/near the enemy natural location.
+      - enemy_natural_townhall_progress:
+          max build_progress among visible townhalls near natural (None if not seen)
+      - enemy_natural_townhall_type:
+          type_id of the most-progressed townhall near natural (None if not seen)
+    """
+    enemy_units: dict
+    enemy_structures: dict
+
+    enemy_main_pos: Optional[Point2] = None
+    enemy_natural_pos: Optional[Point2] = None
+
+    enemy_units_main: dict = None
+    enemy_structures_main: dict = None
+
+    enemy_structures_progress: dict = None
+
+    enemy_natural_on_ground: bool = False
+    enemy_natural_townhall_progress: Optional[float] = None
+    enemy_natural_townhall_type: Optional[object] = None  # UnitTypeId, but keep loose to avoid typing friction
+
+
+@dataclass(frozen=True)
 class Attention:
     """
     Tick snapshot (read-only).
     - immutable
     - derived each tick
-    - history belongs in Awareness
+    - history/inference belongs in Awareness
     """
     economy: EconomySnapshot
     combat: CombatSnapshot
     intel: IntelSnapshot
     macro: MacroSnapshot
+    enemy_build: EnemyBuildSnapshot
     time: float = 0.0
-
-
-def _orbital_scan_status(bot) -> Tuple[bool, float]:
-    try:
-        orbitals = bot.structures(U.ORBITALCOMMAND).ready
-        if orbitals.amount == 0:
-            return False, 0.0
-        oc = orbitals.first
-        energy = float(getattr(oc, "energy", 0.0) or 0.0)
-        return (energy >= 50.0), energy
-    except Exception:
-        return False, 0.0
-
-
-def _opening_done(bot) -> bool:
-    # (1) Ares build order runner
-    bor = getattr(bot, "build_order_runner", None)
-    if bor is not None:
-        try:
-            if bool(getattr(bor, "build_completed", False)):
-                return True
-        except Exception:
-            pass
-
-    # time fallback
-    try:
-        now = float(getattr(bot, "time", 0.0) or 0.0)
-    except Exception:
-        now = 0.0
-
-    # (2) Milestones
-    try:
-        if bot.structures(U.FACTORY).ready.amount > 0:
-            return True
-        if bot.structures(U.STARPORT).ready.amount > 0:
-            return True
-        if bot.townhalls.ready.amount >= 2:
-            return True
-    except Exception:
-        pass
-
-    # (3) Hard fallback
-    return now >= 180.0
 
 
 def derive_attention(bot, *, awareness: Awareness, threat: Threat) -> Attention:
     """
-    Derive tick snapshot.
+    Derive tick snapshot from sensors.
     Rule: no side-effects.
+
+    Note:
+      - imports for sensors are local to avoid circular imports
+        (sensors reference snapshot dataclasses from this module).
     """
-    thr: ThreatReport = threat.evaluate(bot)
-    orbital_ready, orbital_energy = _orbital_scan_status(bot)
+    from bot.sensors.economy_sensor import derive_economy_snapshot
+    from bot.sensors.combat_sensor import derive_combat_snapshot
+    from bot.sensors.enemy_build_sensor import derive_enemy_build_sensor
+    from bot.sensors.macro_sensor import derive_macro_snapshot
+    from bot.sensors.orbital_sensor import derive_orbital_snapshot
 
-    units_ready = Counter()
-    try:
-        for u in bot.units.ready:
-            units_ready[u.type_id] += 1
-    except Exception:
-        pass
+    now = float(getattr(bot, "time", 0.0) or 0.0)
 
-    economy = EconomySnapshot(
-        units_ready=dict(units_ready),
-        supply_left=int(getattr(bot, "supply_left", 0) or 0),
-        minerals=int(getattr(bot, "minerals", 0) or 0),
-        gas=int(getattr(bot, "vespene", 0) or 0),
-    )
-
-    combat = CombatSnapshot(
-        threatened=bool(thr.threatened),
-        defense_urgency=int(thr.urgency),
-        threat_pos=thr.threat_pos,
-        enemy_count_near_bases=int(thr.enemy_count),
-    )
-
-    intel = IntelSnapshot(
-        orbital_ready_to_scan=bool(orbital_ready),
-        orbital_energy=float(orbital_energy),
-    )
-
-    macro = MacroSnapshot(
-        opening_done=bool(_opening_done(bot)),
-    )
+    economy = derive_economy_snapshot(bot)
+    combat = derive_combat_snapshot(bot, threat=threat)
+    intel = derive_orbital_snapshot(bot)
+    macro = derive_macro_snapshot(bot)
+    enemy_build = derive_enemy_build_sensor(bot)
 
     return Attention(
         economy=economy,
         combat=combat,
         intel=intel,
         macro=macro,
-        time=float(getattr(bot, "time", 0.0)),
+        enemy_build=enemy_build,
+        time=float(now),
     )

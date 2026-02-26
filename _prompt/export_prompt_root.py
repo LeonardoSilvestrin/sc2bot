@@ -1,12 +1,30 @@
-# _prompt/export_repo_dump.py
+﻿# _prompt/export_prompt_root.py
 from __future__ import annotations
 
 import argparse
-import os
+import json
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Set, Tuple
+from typing import Dict, List, Set, Tuple
 
-DEFAULT_EXCLUDE_DIRS = {
+# -----------------------------------------------------------------------------
+# Hardcoded bot export policy (edit this block)
+# True  => include full file content for this folder
+# False => include only folder/file structure (no file content)
+# -----------------------------------------------------------------------------
+BOT_FOLDER_POLICY: Dict[str, bool] = {
+    "bot/ares_wrapper": True,
+    "bot/intel": True,
+    "bot/mind": True,
+    "bot/planners": True,
+    "bot/sensors": True,
+    "bot/tasks": True,
+}
+
+# top-level files directly under bot/ (e.g. bot/main.py, bot/devlog.py)
+BOT_TOP_LEVEL_FILES_FULL: bool = True
+
+DEFAULT_EXCLUDE_DIRS: Set[str] = {
     ".git",
     ".venv",
     "venv",
@@ -18,125 +36,178 @@ DEFAULT_EXCLUDE_DIRS = {
     "dist",
     "build",
     ".idea",
-    ".vscode",  # normalmente não interessa no dump
+    ".vscode",
     ".vscode1",
     "ares-sc2",
-    "_prompt",  # evita se auto-dumpar por acidente
+    "data",
 }
 
+ROOT_FILES: List[str] = [
+    "terran_builds.yml",
+    "config.yml",
+    "run.py",
+    "ARCHITECTURE.md",
+]
 
+
+# -----------------------------------------------------------------------------
+# Helpers
+# -----------------------------------------------------------------------------
 def normalize_rel(path: Path, root: Path) -> str:
     return str(path.relative_to(root)).replace("\\", "/")
 
 
-def should_exclude_dir(dir_name: str, exclude_dirs: Set[str]) -> bool:
-    return dir_name in exclude_dirs
+def parse_csv(value: str) -> List[str]:
+    return [x.strip() for x in value.split(",") if x.strip()]
+
+
+def resolve_repo_root(cli_root: str | None) -> Path:
+    if cli_root:
+        return Path(cli_root).resolve()
+    return Path(__file__).resolve().parent.parent
+
+
+def is_excluded(path: Path, *, root: Path, exclude_dirs: Set[str]) -> bool:
+    try:
+        rel_parts = path.relative_to(root).parts
+    except ValueError:
+        return True
+    return any(part in exclude_dirs for part in rel_parts)
 
 
 def read_text_file(path: Path) -> str:
-    # tenta UTF-8; se quebrar, cai para cp1252 (Windows), sem explodir
-    try:
-        return path.read_text(encoding="utf-8")
-    except UnicodeDecodeError:
-        return path.read_text(encoding="cp1252", errors="replace")
+    for enc in ("utf-8-sig", "utf-8", "cp1252", "latin-1"):
+        try:
+            return path.read_text(encoding=enc)
+        except UnicodeDecodeError:
+            continue
+    return path.read_text(encoding="utf-8", errors="replace")
 
 
-def resolve_repo_root(default_from_script: bool = True, cli_root: str | None = None) -> Path:
-    """
-    Resolve a raiz do repo.
-    - Se --root for passado, usa ele.
-    - Caso contrário, assume que este script está em <repo>/_prompt/ e retorna .. (um nível acima).
-    """
-    if cli_root:
-        return Path(cli_root).resolve()
-
-    if not default_from_script:
-        return Path(".").resolve()
-
-    script_dir = Path(__file__).resolve().parent
-    return script_dir.parent.resolve()
+def code_lang_for(path: Path) -> str:
+    ext = path.suffix.lower()
+    if ext == ".py":
+        return "python"
+    if ext in {".yml", ".yaml"}:
+        return "yaml"
+    if ext == ".md":
+        return "markdown"
+    return ""
 
 
-def build_tree(root: Path, exclude_dirs: Set[str]) -> str:
-    """
-    Produz uma árvore no estilo:
-    .
-    ├── bot
-    │   ├── main.py
-    │   └── ...
-    └── terran_builds.yml
-    """
-    entries: List[Tuple[Path, bool]] = []
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirpath_p = Path(dirpath)
-
-        # filtra dirs in-place para o os.walk não descer nelas
-        dirnames[:] = sorted([d for d in dirnames if not should_exclude_dir(d, exclude_dirs)])
-        filenames[:] = sorted(filenames)
-
-        for d in dirnames:
-            entries.append((dirpath_p / d, True))
-        for f in filenames:
-            entries.append((dirpath_p / f, False))
-
-    entries.sort(key=lambda x: (normalize_rel(x[0], root), 0 if x[1] else 1))
-
-    rel_items = [(Path(normalize_rel(p, root)), is_dir) for p, is_dir in entries]
-
-    # parent_dir -> [(name, is_dir)]
-    children: dict[Path, List[Tuple[str, bool]]] = {Path("."): []}
-
-    for rel_path, is_dir in rel_items:
-        parent = rel_path.parent if rel_path.parent != Path("") else Path(".")
-        children.setdefault(parent, [])
-        if is_dir:
-            children.setdefault(rel_path, [])
-        children[parent].append((rel_path.name, is_dir))
-
-    # Remove duplicatas e ordena filhos (dirs primeiro, depois files)
-    for parent in list(children.keys()):
-        uniq: dict[Tuple[str, bool], Tuple[str, bool]] = {}
-        for name, is_dir in children[parent]:
-            uniq[(name, is_dir)] = (name, is_dir)
-        kids = list(uniq.values())
-        kids.sort(key=lambda x: (0 if x[1] else 1, x[0].lower()))
-        children[parent] = kids
-
+def build_tree(root: Path, *, exclude_dirs: Set[str], max_depth: int) -> str:
     lines: List[str] = ["."]
-    # DFS com prefixos
-    def render_dir(dir_rel: Path, prefix: str) -> None:
-        kids = children.get(dir_rel, [])
-        for i, (name, is_dir) in enumerate(kids):
-            is_last = i == len(kids) - 1
-            branch = "└── " if is_last else "├── "
-            lines.append(prefix + branch + name)
-            if is_dir:
-                next_prefix = prefix + ("    " if is_last else "│   ")
-                render_dir(dir_rel / name, next_prefix)
 
-    render_dir(Path("."), "")
+    def children_of(dir_path: Path) -> List[Path]:
+        kids = [
+            p
+            for p in dir_path.iterdir()
+            if p.name not in exclude_dirs and not (p.name.startswith("export_root_dump") and p.suffix == ".txt")
+        ]
+        kids.sort(key=lambda p: (0 if p.is_dir() else 1, p.name.lower()))
+        return kids
+
+    def walk(dir_path: Path, prefix: str, depth: int) -> None:
+        if depth > max_depth:
+            return
+        kids = children_of(dir_path)
+        for i, child in enumerate(kids):
+            last = i == len(kids) - 1
+            branch = "`-- " if last else "|-- "
+            lines.append(prefix + branch + child.name)
+            if child.is_dir() and depth < max_depth:
+                next_prefix = prefix + ("    " if last else "|   ")
+                walk(child, next_prefix, depth + 1)
+
+    walk(root, "", 1)
     return "\n".join(lines) + "\n"
 
 
-def gather_bot_py_files(root: Path) -> List[Path]:
-    bot_dir = root / "bot"
-    if not bot_dir.exists() or not bot_dir.is_dir():
-        return []
-    return sorted([p for p in bot_dir.rglob("*.py") if p.is_file()], key=lambda p: str(p).lower())
-
-
-def read_root_prompt_text(script_dir: Path) -> str:
-    """
-    Lê <script_dir>/root.txt e devolve o conteúdo.
-    Se não existir, devolve string vazia (sem explodir).
-    """
-    root_txt = script_dir / "root.txt"
-    if not root_txt.exists():
+def read_root_prompt_text(repo_root: Path) -> str:
+    p = repo_root / "_prompt" / "root.txt"
+    if not p.exists():
         return ""
-    txt = read_text_file(root_txt)
-    if txt and not txt.endswith("\n"):
-        txt += "\n"
-    return txt
+    txt = read_text_file(p)
+    return txt if txt.endswith("\n") else txt + "\n"
+
+
+def summarize_latest_devlog(repo_root: Path, *, max_events: int) -> str:
+    logs_dir = repo_root / "logs"
+    if not logs_dir.exists():
+        return "(logs/ not found)\n"
+
+    candidates = sorted(
+        [p for p in logs_dir.glob("devlog_*.jsonl") if p.is_file()],
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    if not candidates:
+        return "(no devlog_*.jsonl found)\n"
+
+    target = candidates[0]
+    rows: List[dict] = []
+    for line in target.read_text(encoding="utf-8", errors="replace").splitlines():
+        if not line.strip():
+            continue
+        try:
+            rows.append(json.loads(line))
+        except Exception:
+            continue
+
+    from collections import Counter
+
+    c = Counter(r.get("event") for r in rows)
+    lines = [
+        f"file: {target.name}",
+        f"events_total: {len(rows)}",
+        "top_events:",
+    ]
+    for name, count in c.most_common(12):
+        lines.append(f"- {name}: {count}")
+
+    lines.append("recent_events:")
+    for r in rows[-max_events:]:
+        lines.append(f"- {r.get('ts_utc', '')} {r.get('event', '')} {r.get('payload', {})}")
+
+    return "\n".join(lines) + "\n"
+
+
+def gather_python_files_under(root: Path, folder_rel: str, *, exclude_dirs: Set[str]) -> List[Path]:
+    folder = (root / folder_rel).resolve()
+    if not folder.exists() or not folder.is_dir():
+        return []
+    files = [p for p in folder.rglob("*.py") if p.is_file()]
+    files = [p for p in files if not is_excluded(p, root=root, exclude_dirs=exclude_dirs)]
+    files.sort(key=lambda p: normalize_rel(p, root).lower())
+    return files
+
+
+def gather_bot_top_level_py(root: Path, *, exclude_dirs: Set[str]) -> List[Path]:
+    bot = root / "bot"
+    if not bot.exists() or not bot.is_dir():
+        return []
+    files = [p for p in bot.glob("*.py") if p.is_file()]
+    files = [p for p in files if not is_excluded(p, root=root, exclude_dirs=exclude_dirs)]
+    files.sort(key=lambda p: normalize_rel(p, root).lower())
+    return files
+
+
+def render_file_block(path: Path, *, root: Path) -> str:
+    rel = normalize_rel(path, root)
+    text = read_text_file(path)
+    if not text.endswith("\n"):
+        text += "\n"
+    return f"# {rel}\n```{code_lang_for(path)}\n{text}```\n"
+
+
+def render_structure_only(folder_rel: str, files: List[Path], *, root: Path) -> str:
+    lines = [f"## {folder_rel} (structure-only)"]
+    if not files:
+        lines.append("(no .py files found)")
+    else:
+        for p in files:
+            lines.append(f"- {normalize_rel(p, root)}")
+    return "\n".join(lines) + "\n\n"
 
 
 def write_dump(
@@ -144,54 +215,71 @@ def write_dump(
     repo_root: Path,
     out_path: Path,
     exclude_dirs: Set[str],
-    include_tree: bool,
-    include_bot: bool,
-    include_terran_builds: bool,
     include_root_prompt: bool,
-    script_dir: Path,
+    include_tree: bool,
+    tree_max_depth: int,
+    include_root_files: bool,
+    include_log_summary: bool,
+    log_events: int,
 ) -> None:
     parts: List[str] = []
 
+    parts.append("===== EXPORT META =====\n")
+    parts.append(f"generated_at_utc: {datetime.now(timezone.utc).isoformat()}\n")
+    parts.append(f"repo_root: {repo_root}\n")
+    parts.append("hardcoded_bot_policy:\n")
+    for folder, full in BOT_FOLDER_POLICY.items():
+        parts.append(f"- {folder}: {'FULL' if full else 'STRUCTURE_ONLY'}\n")
+    parts.append(f"- bot/<top-level *.py>: {'FULL' if BOT_TOP_LEVEL_FILES_FULL else 'STRUCTURE_ONLY'}\n")
+    parts.append("\n")
+
     if include_root_prompt:
-        root_prompt = read_root_prompt_text(script_dir)
+        root_prompt = read_root_prompt_text(repo_root)
         if root_prompt:
+            parts.append("===== ROOT PROMPT =====\n")
             parts.append(root_prompt)
-            # separador leve pra não grudar com o dump
-            if not root_prompt.endswith("\n\n"):
-                parts.append("\n")
+            parts.append("\n")
 
     if include_tree:
         parts.append("===== PROJECT TREE =====\n")
-        parts.append(build_tree(repo_root, exclude_dirs))
+        parts.append(build_tree(repo_root, exclude_dirs=exclude_dirs, max_depth=tree_max_depth))
         parts.append("\n")
 
-    if include_bot:
-        py_files = gather_bot_py_files(repo_root)
-        parts.append("===== bot/*.py (FULL CONTENT) =====\n")
-        if not py_files:
-            parts.append("(nenhum arquivo .py encontrado em bot/)\n\n")
-        else:
-            for f in py_files:
-                rel = normalize_rel(f, repo_root)
-                parts.append(f"\n# {rel}\n")
-                parts.append("```python\n")
-                parts.append(read_text_file(f))
-                if not parts[-1].endswith("\n"):
-                    parts.append("\n")
-                parts.append("```\n")
+    parts.append("===== BOT SNAPSHOT =====\n")
 
-    if include_terran_builds:
-        tb = repo_root / "terran_builds.yml"
-        parts.append("\n===== terran_builds.yml (ROOT) =====\n")
-        if not tb.exists():
-            parts.append("(arquivo terran_builds.yml não encontrado na raiz)\n")
+    # top-level bot files
+    top_level_files = gather_bot_top_level_py(repo_root, exclude_dirs=exclude_dirs)
+    if BOT_TOP_LEVEL_FILES_FULL:
+        parts.append("## bot/<top-level *.py> (full)\n")
+        for p in top_level_files:
+            parts.append(render_file_block(p, root=repo_root))
+    else:
+        parts.append(render_structure_only("bot/<top-level *.py>", top_level_files, root=repo_root))
+
+    # configured bot folders
+    for folder_rel, include_full in BOT_FOLDER_POLICY.items():
+        files = gather_python_files_under(repo_root, folder_rel, exclude_dirs=exclude_dirs)
+        if include_full:
+            parts.append(f"## {folder_rel} (full)\n")
+            for p in files:
+                parts.append(render_file_block(p, root=repo_root))
         else:
-            parts.append(f"\n# {normalize_rel(tb, repo_root)}\n")
-            parts.append("```yaml\n")
-            parts.append(read_text_file(tb))
-            if not parts[-1].endswith("\n"):
-                parts.append("\n")
-            parts.append("```\n")
+            parts.append(render_structure_only(folder_rel, files, root=repo_root))
+
+    if include_root_files:
+        parts.append("\n===== ROOT CONFIGS =====\n")
+        for rel in ROOT_FILES:
+            p = (repo_root / rel).resolve()
+            if not p.exists() or not p.is_file():
+                parts.append(f"# {rel}\n(not found)\n\n")
+                continue
+            if is_excluded(p, root=repo_root, exclude_dirs=exclude_dirs):
+                continue
+            parts.append(render_file_block(p, root=repo_root))
+
+    if include_log_summary:
+        parts.append("\n===== LOG SUMMARY =====\n")
+        parts.append(summarize_latest_devlog(repo_root, max_events=log_events))
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text("".join(parts), encoding="utf-8")
@@ -199,61 +287,42 @@ def write_dump(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description=(
-            "Exporta árvore do repo + conteúdo de bot/*.py + terran_builds.yml para um TXT. "
-            "Opcionalmente prefixa com _prompt/root.txt."
-        )
+        description="Exporta contexto para revisao por outro agente (hardcoded bot folders, sem truncamento)."
     )
-    parser.add_argument(
-        "--root",
-        type=str,
-        default=None,
-        help="Caminho da raiz do repo. Se omitido, assume que este script está em <repo>/_prompt/ e usa ..",
-    )
-    parser.add_argument(
-        "--out",
-        type=str,
-        default="export_root_dump.txt",
-        help="Arquivo de saída. Se relativo, é relativo à raiz do repo (default: export_root_dump.txt).",
-    )
-    parser.add_argument(
-        "--exclude-dirs",
-        type=str,
-        default=",".join(sorted(DEFAULT_EXCLUDE_DIRS)),
-        help="Lista separada por vírgula de diretórios a excluir da árvore.",
-    )
-    parser.add_argument("--no-root-prompt", action="store_true", help="Não incluir _prompt/root.txt no início.")
-    parser.add_argument("--no-tree", action="store_true", help="Não incluir árvore de diretórios.")
-    parser.add_argument("--no-bot", action="store_true", help="Não incluir conteúdo de bot/*.py.")
-    parser.add_argument("--no-terran-builds", action="store_true", help="Não incluir terran_builds.yml.")
+    parser.add_argument("--root", type=str, default=None)
+    parser.add_argument("--out", type=str, default="export_root_dump.txt")
+    parser.add_argument("--exclude-dirs", type=str, default=",".join(sorted(DEFAULT_EXCLUDE_DIRS)))
+    parser.add_argument("--tree-max-depth", type=int, default=7)
+    parser.add_argument("--log-events", type=int, default=50)
+
+    parser.add_argument("--no-root-prompt", action="store_true")
+    parser.add_argument("--no-tree", action="store_true")
+    parser.add_argument("--no-root-files", action="store_true")
+    parser.add_argument("--log-summary", action="store_true")
 
     args = parser.parse_args()
 
-    script_dir = Path(__file__).resolve().parent
-    repo_root = resolve_repo_root(default_from_script=True, cli_root=args.root)
+    repo_root = resolve_repo_root(args.root)
 
-    # se --out for relativo, grava na raiz do repo
-    out_path = repo_root / "_prompt" / args.out
-
+    out_path = Path(args.out)
     if not out_path.is_absolute():
-        out_path = (repo_root / out_path).resolve()
-    else:
-        out_path = out_path.resolve()
+        out_path = (repo_root / "_prompt" / out_path).resolve()
 
-    exclude_dirs = {d.strip() for d in args.exclude_dirs.split(",") if d.strip()}
+    exclude_dirs = set(parse_csv(args.exclude_dirs))
 
     write_dump(
         repo_root=repo_root,
         out_path=out_path,
         exclude_dirs=exclude_dirs,
-        include_tree=not args.no_tree,
-        include_bot=not args.no_bot,
-        include_terran_builds=not args.no_terran_builds,
         include_root_prompt=not args.no_root_prompt,
-        script_dir=script_dir,
+        include_tree=not args.no_tree,
+        tree_max_depth=max(1, int(args.tree_max_depth)),
+        include_root_files=not args.no_root_files,
+        include_log_summary=bool(args.log_summary),
+        log_events=max(1, int(args.log_events)),
     )
 
-    print(f"OK: dump gerado em: {out_path}")
+    print(f"OK: dump generated at {out_path}")
 
 
 if __name__ == "__main__":

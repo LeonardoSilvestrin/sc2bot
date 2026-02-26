@@ -6,8 +6,8 @@ from dataclasses import dataclass
 from sc2.data import Result
 
 from bot.devlog import DevLogger
-from bot.intel.threat_intel import Threat
-from bot.intel.economy_intel import EconomyIntelConfig, derive_economy_intel
+from bot.sensors.threat_sensor import Threat
+from bot.intel.enemy_build_intel import EnemyBuildIntelConfig, derive_enemy_build_intel
 from bot.mind.attention import derive_attention
 from bot.mind.awareness import Awareness
 from bot.mind.body import UnitLeases
@@ -16,8 +16,7 @@ from bot.tasks.base_task import TaskTick
 
 from bot.tasks.defend_task import Defend
 from bot.tasks.scout_task import Scout
-from bot.tasks.scan_task import ScanAt
-from bot.tasks.macro_task import MacroBio2BaseTick, MacroOpeningTick
+from bot.tasks.macro import MacroAresBioStandardTick, MacroAresRushDefenseTick, MacroOpeningTick
 
 from bot.planners.defense_planner import DefensePlanner
 from bot.planners.intel_planner import IntelPlanner
@@ -26,40 +25,25 @@ from bot.planners.macro_planner import MacroPlanner
 
 @dataclass
 class RuntimeApp:
-    """
-    Orquestrador único do bot.
-
-    Responsabilidades:
-      - Derivar Attention (snapshot factual do tick)
-      - Atualizar Awareness (economy intel, etc.)
-      - Rodar Ego (decisão + execução)
-      - Lifecycle hooks (on_start / on_end)
-    """
-
     log: DevLogger
     awareness: Awareness
     threat: Threat
     body: UnitLeases
     ego: Ego
-    economy_cfg: EconomyIntelConfig
+    enemy_build_cfg: EnemyBuildIntelConfig
     debug: bool = True
-
-    # ------------------------------------------------------------------
-    # Factory
-    # ------------------------------------------------------------------
 
     @classmethod
     def build(cls, *, log: DevLogger, debug: bool = True) -> "RuntimeApp":
         awareness = Awareness()
         threat = Threat(defend_radius=22.0, min_enemy=1)
-
         body = UnitLeases(default_ttl=8.0)
 
         ego = Ego(
             body=body,
             log=log,
             cfg=EgoConfig(
-                one_commitment_per_domain=False,
+                singleton_domains=frozenset({"MACRO"}),  # only one active MACRO mission at a time
                 threat_block_start_at=70,
                 threat_force_preempt_at=90,
                 non_preemptible_grace_s=2.5,
@@ -67,12 +51,7 @@ class RuntimeApp:
             ),
         )
 
-        # ---------------- Tasks (templates) ----------------
-
-        defend_task = Defend(
-            log=log,
-            log_every_iters=11,
-        )
+        defend_task = Defend(log=log, log_every_iters=11)
 
         scout_task = Scout(
             awareness=awareness,
@@ -82,51 +61,33 @@ class RuntimeApp:
             see_radius=14.0,
         )
 
-        # exemplo de scan task (enemy main)
-        scan_enemy_main = ScanAt(
-            awareness=awareness,
-            target=None,          # planner decide target dinamicamente
-            label="enemy_main",
-            cooldown=20.0,
-            log=log,
-        )
+        opening_macro_task = MacroOpeningTick(log=log, log_every_iters=22, scv_cap=60)
 
-        opening_macro_task = MacroOpeningTick(
+        bio_standard_task = MacroAresBioStandardTick(
             log=log,
+            scv_cap=66,
+            target_bases=2,
             log_every_iters=22,
-            scv_cap=60,
         )
 
-        macro_task = MacroBio2BaseTick(
+        rush_defense_task = MacroAresRushDefenseTick(
             log=log,
+            scv_cap=40,
+            target_bases=1,
             log_every_iters=22,
-            scv_cap=60,
-            target_bases=3,
-            backoff_urgency=60,
         )
-
-        # ---------------- Planners ----------------
 
         defense_planner = DefensePlanner(defend_task=defend_task)
-
-        intel_planner = IntelPlanner(
-            awareness=awareness,
-            log=log,
-            scout_task=scout_task,
-        )
+        intel_planner = IntelPlanner(awareness=awareness, log=log, scout_task=scout_task)
 
         macro_planner = MacroPlanner(
             opening_task=opening_macro_task,
-            macro_task=macro_task,
+            bio_task=bio_standard_task,
+            rush_defense_task=rush_defense_task,
             backoff_urgency=60,
-            opening_timeout_s=180.0,
         )
 
-        ego.register_planners([
-            defense_planner,
-            intel_planner,
-            macro_planner,
-        ])
+        ego.register_planners([defense_planner, intel_planner, macro_planner])
 
         return cls(
             log=log,
@@ -134,59 +95,33 @@ class RuntimeApp:
             threat=threat,
             body=body,
             ego=ego,
-            economy_cfg=EconomyIntelConfig(),
+            enemy_build_cfg=EnemyBuildIntelConfig(),
             debug=bool(debug),
         )
 
-    # ------------------------------------------------------------------
-    # Lifecycle hooks
-    # ------------------------------------------------------------------
-
     async def on_start(self, bot) -> None:
-        """
-        Chamado por MyBot.on_start().
-        Apenas inicializações leves.
-        """
         try:
             self.body.reset()
         except Exception:
-            # se UnitLeases ainda não tiver reset, ignora
             pass
-
         if self.log:
             self.log.emit("runtime_start", {})
 
     async def on_step(self, bot, *, iteration: int) -> None:
         now = float(getattr(bot, "time", 0.0))
 
-        # 1) Perception → Attention (snapshot imutável)
-        attention = derive_attention(
-            bot,
-            awareness=self.awareness,
-            threat=self.threat,
-        )
+        attention = derive_attention(bot, awareness=self.awareness, threat=self.threat)
 
-        # 2) Economy intel → side-effect na Awareness
-        derive_economy_intel(
+        derive_enemy_build_intel(
             bot,
             awareness=self.awareness,
             attention=attention,
             now=now,
-            cfg=self.economy_cfg,
+            cfg=self.enemy_build_cfg,
         )
 
-        # 3) Ego → decide + executa
-        tick = TaskTick(
-            iteration=int(iteration),
-            time=now,
-        )
-
-        await self.ego.tick(
-            bot,
-            tick=tick,
-            attention=attention,
-            awareness=self.awareness,
-        )
+        tick = TaskTick(iteration=int(iteration), time=now)
+        await self.ego.tick(bot, tick=tick, attention=attention, awareness=self.awareness)
 
     async def on_end(self, bot, game_result: Result) -> None:
         if self.log:

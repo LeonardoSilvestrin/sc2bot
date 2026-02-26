@@ -2,9 +2,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional
 
-from sc2.position import Point2
+from sc2.ids.unit_typeid import UnitTypeId as U
 
 from bot.devlog import DevLogger
 from bot.mind.attention import Attention
@@ -15,20 +14,26 @@ from bot.tasks.base_task import BaseTask, TaskTick, TaskResult
 @dataclass
 class Scout(BaseTask):
     """
-    SCV scout to enemy main.
+    Single SCV scout to enemy main.
 
-    Contract (new architecture):
-      - Ego assigns units via leases and passes them through assigned_tags.
-      - Task MUST NOT claim/touch leases directly.
-      - Task MUST use assigned_tags as the only unit source.
+    IMPORTANT POLICY:
+      - This task MUST NOT decide if it's "time" to start scouting.
+        That decision belongs to the planner.
+      - This task MUST ONLY use the unit(s) assigned by Ego via bind_mission().
+        Never request/select a new worker by itself (otherwise you end up with ALL SCVs scouting).
     """
+
+    # required deps first (avoid dataclass non-default-after-default errors)
     awareness: Awareness
+
+    # config
     log: DevLogger | None = None
-    trigger_time: float = 25.0
+    trigger_time: float = 25.0  # kept for planner to read; task does NOT gate on it
     log_every: float = 6.0
     see_radius: float = 14.0
+    arrived_ttl: float = 120.0
 
-    _target: Optional[Point2] = field(default=None, init=False)
+    # internal state
     _last_log_t: float = field(default=0.0, init=False)
 
     def __init__(
@@ -39,82 +44,93 @@ class Scout(BaseTask):
         trigger_time: float = 25.0,
         log_every: float = 6.0,
         see_radius: float = 14.0,
+        arrived_ttl: float = 120.0,
     ):
-        super().__init__(task_id="scout_enemy_main", domain="INTEL", commitment=2)
+        super().__init__(task_id="scout_scv", domain="INTEL", commitment=3)
         self.awareness = awareness
         self.log = log
         self.trigger_time = float(trigger_time)
         self.log_every = float(log_every)
         self.see_radius = float(see_radius)
-
-        self._target = None
+        self.arrived_ttl = float(arrived_ttl)
         self._last_log_t = 0.0
 
     def evaluate(self, bot, attention: Attention) -> int:
         now = float(attention.time)
 
-        if now < float(self.trigger_time):
-            return 0
-
+        # If already succeeded, this task is not needed.
         if self.awareness.intel_scv_arrived_main(now=now):
             return 0
 
-        opening = bool(attention.macro.opening_done)
-        return 55 if not opening else 35
+        # Don't time-gate here; planner decides. Keep a modest baseline.
+        return 20
 
-    def _log_tick(self, *, now: float, reason: str, scv_tag: int) -> None:
+    def _log_tick(self, *, now: float, reason: str, tag: int, dist: float) -> None:
         if not self.log:
             return
-        if now - float(self._last_log_t) < float(self.log_every):
+        if (now - float(self._last_log_t)) < float(self.log_every):
             return
         self._last_log_t = float(now)
         self.log.emit(
             "scout_tick",
             {
                 "t": round(float(now), 2),
+                "mission_id": str(self.mission_id or ""),
+                "tag": int(tag),
                 "reason": str(reason),
-                "scv_tag": int(scv_tag),
-                "arrived": bool(self.awareness.intel_scv_arrived_main(now=now)),
-                "dispatched": bool(self.awareness.intel_scv_dispatched(now=now)),
+                "dist": round(float(dist), 2),
             },
         )
 
     async def on_step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult:
         now = float(tick.time)
 
-        if now < float(self.trigger_time):
-            self._paused("too_early")
-            return TaskResult.noop("too_early")
+        if not isinstance(self.mission_id, str) or not self.mission_id:
+            return TaskResult.failed("unbound_mission")
 
-        if self.awareness.intel_scv_arrived_main(now=now):
-            self._done("already_arrived")
-            return TaskResult.done("already_arrived")
+        if not isinstance(self.assigned_tags, list) or len(self.assigned_tags) != 1:
+            return TaskResult.failed("expected_exactly_1_assigned_tag")
 
-        if not self.assigned_tags:
-            # Strict: planner asked for SCV; Ego should have assigned it. If not, it's a wiring bug.
-            return TaskResult.failed("no_assigned_scv", retry_after_s=2.0)
+        tag = int(self.assigned_tags[0])
 
-        scv_tag = int(self.assigned_tags[0])
-        scv = bot.units.find_by_tag(scv_tag)
-        if scv is None:
-            self._paused("scv_lost")
-            return TaskResult.noop("scv_lost")
-
-        # determine target once (STRICT)
-        if self._target is None:
-            self._target = bot.enemy_start_locations[0]
-
-        # mark dispatched once (for planner gating / audit)
+        # mark dispatch the first time the mission actually runs
         if not self.awareness.intel_scv_dispatched(now=now):
             self.awareness.mark_scv_dispatched(now=now)
 
-        if scv.distance_to(self._target) <= float(self.see_radius):
-            self.awareness.mark_scv_arrived_main(now=now)
-            self._done("arrived_main")
-            self._log_tick(now=now, reason="arrived_main", scv_tag=scv_tag)
-            return TaskResult.done("arrived_main")
+        # Fetch the assigned SCV (do NOT request/select a new one)
+        scv = bot.units.find_by_tag(tag)
+        if scv is None:
+            return TaskResult.failed("assigned_unit_missing")
 
-        scv.move(self._target)
-        self._active("moving")
-        self._log_tick(now=now, reason="moving", scv_tag=scv_tag)
-        return TaskResult.running("moving")
+        if scv.type_id != U.SCV:
+            return TaskResult.failed("assigned_unit_not_scv")
+
+        target = bot.enemy_start_locations[0]  # strict: engine must provide
+        dist = float(scv.distance_to(target))
+
+        # success condition: got close enough to enemy main
+        if dist <= float(self.see_radius):
+            self.awareness.mark_scv_arrived_main(now=now, ttl=self.arrived_ttl)
+            # release the worker back to economy after scout success
+            if bot.mineral_field.amount > 0:
+                scv.gather(bot.mineral_field.closest_to(bot.start_location))
+            else:
+                scv.move(bot.start_location)
+            if self.log:
+                self.log.emit(
+                    "scout_success",
+                    {
+                        "t": round(float(now), 2),
+                        "mission_id": str(self.mission_id),
+                        "tag": int(tag),
+                        "dist": round(float(dist), 2),
+                    },
+                )
+            self._done("arrived_enemy_main")
+            return TaskResult.done("arrived_enemy_main")
+
+        # otherwise keep moving
+        scv.move(target)
+        self._active("moving_to_enemy_main")
+        self._log_tick(now=now, reason="moving", tag=tag, dist=dist)
+        return TaskResult.running("moving_to_enemy_main")

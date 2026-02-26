@@ -1,4 +1,4 @@
-# bot/planners/proposals.py
+﻿# bot/planners/proposals.py
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -27,11 +27,11 @@ class TaskSpec:
     """
     One atomic task inside a proposal.
 
-    Contract (strict):
-      - task_id: non-empty string
-      - task_factory: callable(mission_id: str) -> task instance
-      - unit_requirements: list[UnitRequirement]
+    lease_ttl:
+      - None => no time-based mission expiry
+      - float => mission expires when ttl elapses
     """
+
     task_id: str
     task_factory: Callable[[str], object]
     unit_requirements: List[UnitRequirement] = field(default_factory=list)
@@ -43,7 +43,6 @@ class TaskSpec:
         if not callable(self.task_factory):
             raise TypeError("TaskSpec.task_factory must be callable")
 
-        # Ensure task_factory signature is (mission_id: str) (or compatible)
         try:
             sig = inspect.signature(self.task_factory)
         except (TypeError, ValueError) as e:
@@ -67,20 +66,13 @@ class TaskSpec:
 
 @dataclass(frozen=True)
 class Proposal:
-    """
-    Admission request from a Planner to Ego.
-
-    Current policy:
-      - A Proposal contains EXACTLY ONE TaskSpec (single-task-per-proposal).
-      - No fallbacks / compat layers. Validation is strict; invalid proposals crash fast.
-    """
     proposal_id: str
     domain: str
     score: int
 
     tasks: List[TaskSpec] = field(default_factory=list)
 
-    lease_ttl: float = 30.0
+    lease_ttl: Optional[float] = 30.0
     cooldown_s: float = 10.0
     risk_level: int = 1
     allow_preempt: bool = True
@@ -97,17 +89,18 @@ class Proposal:
             raise TypeError("Proposal.score must be int")
 
         if not isinstance(self.tasks, list) or len(self.tasks) != 1:
-            raise ValueError("Proposal.tasks must contain exactly 1 TaskSpec (single-task-per-proposal)")
+            raise ValueError("Proposal.tasks must contain exactly 1 TaskSpec")
 
         t0 = self.tasks[0]
         if not isinstance(t0, TaskSpec):
             raise TypeError(f"Proposal.tasks[0] must be TaskSpec, got {type(t0)!r}")
         t0.validate()
 
-        if not isinstance(self.lease_ttl, (int, float)):
-            raise TypeError("Proposal.lease_ttl must be a number")
-        if float(self.lease_ttl) <= 0.0:
-            raise ValueError("Proposal.lease_ttl must be > 0")
+        if self.lease_ttl is not None:
+            if not isinstance(self.lease_ttl, (int, float)):
+                raise TypeError("Proposal.lease_ttl must be a number or None")
+            if float(self.lease_ttl) <= 0.0:
+                raise ValueError("Proposal.lease_ttl must be > 0 when provided")
 
         if not isinstance(self.cooldown_s, (int, float)):
             raise TypeError("Proposal.cooldown_s must be a number")
@@ -123,5 +116,4 @@ class Proposal:
             raise TypeError("Proposal.allow_preempt must be bool")
 
     def task(self) -> TaskSpec:
-        # validated in __post_init__
         return self.tasks[0]

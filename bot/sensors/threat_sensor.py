@@ -1,4 +1,4 @@
-#bot/inteligence/threat.py
+# bot/sensors/threat_sensor.py
 from __future__ import annotations
 
 from dataclasses import dataclass

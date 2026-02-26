@@ -1,39 +1,55 @@
-UseData: False
+﻿UseData: False
 BuildSelection: Cycle
 MinGamesWinrateBased: 3
 
 BuildChoices:
   Protoss:
     BotName: MyBot
-    Cycle:
-      - Default
+    Cycle: [Default]
   Terran:
     BotName: MyBot
-    Cycle:
-      - Default
+    Cycle: [Default]
   Zerg:
     BotName: MyBot
-    Cycle:
-      - Default
+    Cycle: [Default]
   Random:
     BotName: MyBot
-    Cycle:
-      - Default
+    Cycle: [Default]
 
 Builds:
   Default:
-    ConstantWorkerProductionTill: 0
-    AutoSupplyAtSupply: 16
+    AutoSupplyAtSupply: 20
+    ConstantWorkerProductionTill: 32
+    OpeningBuildOrder:
+      - 14 supply @ ramp
+      - 12 worker_scout:
+          [enemy_spawn, enemy_nat, enemy_ramp, map_center]
+      - 16 barracks @ ramp
+      - 16 gas
+      - 0 orbital
+      - 19 reaper
+      - 19 expand
+      - 19 supply @ ramp
+      - 21 factory
+      - 21 barracksreactor
+      - 21 gas
+      - 21 starport
+      - 21 addonswap factory barracksreactor
+      - 23 marine *4
+
+  DefensiveOpening:
+    AutoSupplyAtSupply: 20
+    ConstantWorkerProductionTill: 28
     OpeningBuildOrder:
       - 14 supply @ ramp
       - 16 barracks @ ramp
       - 16 gas
-      - 0 orbital
-      - 19 expand
       - 19 supply @ ramp
-      - 20 marine *2
-      - 21 barracks reactor
-      - 21 factory
-      - 22 gas
-      - 23 starport
+      - 19 reaper
       - 0 orbital
+      - 20 marine *3
+      - 21 factory
+      - 21 gas
+      - 21 starport
+      - 23 marine *4
+

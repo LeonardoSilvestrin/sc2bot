@@ -76,7 +76,7 @@ class ScanAt(BaseTask):
             self._last_scan_t = float(now)
 
             if self.label == "enemy_main":
-                self.awareness.mark_scan_enemy_main(now=now)
+                self.awareness.mark_scanned_enemy_main(now=now)
 
             if self.log:
                 self.log.emit("scan_cast", {"t": round(float(now), 2), "label": str(self.label)})

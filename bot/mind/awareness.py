@@ -7,30 +7,17 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 Key = Tuple[str, ...]
 
-@dataclass
-class MissionState:
-    mission_id: str
-    domain: str
-    started_at: float
-    expires_at: float
-    assigned_tags: list[int]
-    non_preemptible_until: float
-    status: str  # RUNNING / DONE / FAILED
-    
+
 @dataclass(frozen=True)
 class Fact:
     value: Any
     t: float
     confidence: float = 1.0
-    ttl: Optional[float] = None  # seconds; None = never expires
+    ttl: Optional[float] = None
 
 
 @dataclass
 class MemoryStore:
-    """
-    Keyed memory with timestamped facts + optional TTL.
-    Designed for fast per-tick usage (dict lookups), not analytics.
-    """
     _facts: Dict[Key, Fact] = field(default_factory=dict)
 
     def set(
@@ -50,7 +37,6 @@ class MemoryStore:
             return default
         age = float(now) - float(f.t)
         if age < 0:
-            # clock skew / weirdness: treat as fresh
             age = 0.0
         if max_age is not None and age > float(max_age):
             return default
@@ -78,10 +64,6 @@ class MemoryStore:
         return self._facts.keys()
 
     def snapshot(self, *, now: float, prefix: Optional[Key] = None, max_age: Optional[float] = None) -> Dict[str, Any]:
-        """
-        Returns a JSON-friendly dict of { "a:b:c": {value,t,age,ttl,confidence} }
-        filtered by optional prefix and optional max_age.
-        """
         out: Dict[str, Any] = {}
         for k, f in self._facts.items():
             if prefix is not None and k[: len(prefix)] != prefix:
@@ -108,20 +90,11 @@ def K(*parts: str) -> Key:
 
 @dataclass
 class Awareness:
-    """
-    Persistent world memory.
-    - Use mem for generic facts (keyed, timestamped, TTL-aware)
-    - Keep only a few structured helpers where it buys clarity/perf.
-    """
     mem: MemoryStore = field(default_factory=MemoryStore)
 
-    # ring buffer style event log (debug/audit)
     _events: List[Dict[str, Any]] = field(default_factory=list)
     _events_cap: int = 200
 
-    # -----------------------
-    # Logging / events
-    # -----------------------
     def emit(self, name: str, *, now: float, data: Optional[Dict[str, Any]] = None) -> None:
         evt = {"t": round(float(now), 2), "name": str(name)}
         if data:
@@ -135,15 +108,40 @@ class Awareness:
             return []
         return self._events[-n:]
 
+    def ops_proposal_running(self, *, proposal_id: str, now: float) -> bool:
+        if not isinstance(proposal_id, str) or not proposal_id:
+            raise ValueError("proposal_id must be a non-empty string")
+
+        for k, f in self.mem._facts.items():
+            if len(k) < 4:
+                continue
+            if k[0] != "ops" or k[1] != "mission":
+                continue
+            if k[-1] != "proposal_id":
+                continue
+            if f.value != proposal_id:
+                continue
+
+            mission_id = k[2]
+            st = str(self.mem.get(K("ops", "mission", mission_id, "status"), now=now, default=""))
+            if st == "RUNNING":
+                return True
+
+        return False
+
     # -----------------------
     # Convenience “intel” API
-    # (minimal wrappers so the rest of the bot stays clean)
     # -----------------------
     _K_SCV_DISPATCHED = K("intel", "scv", "dispatched")
     _K_SCV_ARRIVED_MAIN = K("intel", "scv", "arrived_main")
     _K_SCAN_ENEMY_MAIN = K("intel", "scan", "enemy_main")
     _K_LAST_SCV_DISPATCH_AT = K("intel", "scv", "last_dispatch_at")
     _K_LAST_SCAN_AT = K("intel", "scan", "last_scan_at")
+
+    # New: reaper scout bookkeeping
+    _K_REAPER_SCOUT_DISPATCHED = K("intel", "reaper", "scout", "dispatched")
+    _K_LAST_REAPER_SCOUT_AT = K("intel", "reaper", "scout", "last_dispatch_at")
+    _K_REAPER_SCOUT_LAST_DONE_AT = K("intel", "reaper", "scout", "last_done_at")
 
     def intel_scv_dispatched(self, *, now: float) -> bool:
         return bool(self.mem.get(self._K_SCV_DISPATCHED, now=now, default=False))
@@ -163,34 +161,27 @@ class Awareness:
     def mark_scv_dispatched(self, *, now: float) -> None:
         self.mem.set(self._K_SCV_DISPATCHED, value=True, now=now, ttl=None)
         self.mem.set(self._K_LAST_SCV_DISPATCH_AT, value=float(now), now=now, ttl=None)
-        self.emit("intel_scv_dispatched", now=now)
 
-    def mark_scv_arrived_main(self, *, now: float) -> None:
-        self.mem.set(self._K_SCV_ARRIVED_MAIN, value=True, now=now, ttl=None)
-        self.emit("intel_scv_arrived_main", now=now)
+    def mark_scv_arrived_main(self, *, now: float, ttl: Optional[float] = None) -> None:
+        self.mem.set(self._K_SCV_ARRIVED_MAIN, value=True, now=now, ttl=ttl)
 
-    def mark_scan_enemy_main(self, *, now: float) -> None:
+    def mark_scanned_enemy_main(self, *, now: float) -> None:
         self.mem.set(self._K_SCAN_ENEMY_MAIN, value=True, now=now, ttl=None)
         self.mem.set(self._K_LAST_SCAN_AT, value=float(now), now=now, ttl=None)
-        self.emit("intel_scan_enemy_main", now=now)
 
-    def intel_snapshot(self, *, now: float) -> Dict[str, Any]:
-        return {
-            "scv_dispatched": self.intel_scv_dispatched(now=now),
-            "scv_arrived_main": self.intel_scv_arrived_main(now=now),
-            "scanned_enemy_main": self.intel_scanned_enemy_main(now=now),
-            "last_scv_dispatch_at": round(self.intel_last_scv_dispatch_at(now=now), 2),
-            "last_scan_at": round(self.intel_last_scan_at(now=now), 2),
-        }
-    
-    _missions: Dict[str, MissionState] = field(default_factory=dict)
+    # Reaper scout markers
+    def intel_reaper_scout_dispatched(self, *, now: float) -> bool:
+        return bool(self.mem.get(self._K_REAPER_SCOUT_DISPATCHED, now=now, default=False))
 
-    def start_mission(self, mission: MissionState):
-        self._missions[mission.mission_id] = mission
+    def intel_last_reaper_scout_dispatch_at(self, *, now: float) -> float:
+        return float(self.mem.get(self._K_LAST_REAPER_SCOUT_AT, now=now, default=0.0))
 
-    def end_mission(self, mission_id: str):
-        if mission_id in self._missions:
-            self._missions[mission_id].status = "DONE"
+    def intel_last_reaper_scout_done_at(self, *, now: float) -> float:
+        return float(self.mem.get(self._K_REAPER_SCOUT_LAST_DONE_AT, now=now, default=0.0))
 
-    def active_missions(self) -> Dict[str, MissionState]:
-        return self._missions
+    def mark_reaper_scout_dispatched(self, *, now: float) -> None:
+        self.mem.set(self._K_REAPER_SCOUT_DISPATCHED, value=True, now=now, ttl=None)
+        self.mem.set(self._K_LAST_REAPER_SCOUT_AT, value=float(now), now=now, ttl=None)
+
+    def mark_reaper_scout_done(self, *, now: float) -> None:
+        self.mem.set(self._K_REAPER_SCOUT_LAST_DONE_AT, value=float(now), now=now, ttl=None)

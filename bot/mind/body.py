@@ -1,14 +1,15 @@
-# bot/mind/body.py
+﻿# bot/mind/body.py
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Optional, Set, List
+from typing import Dict, List, Optional, Set
 
 from ares.consts import UnitRole
 
+
 @dataclass
 class Lease:
-    owner: str          # task_id
+    owner: str  # mission_id
     role: UnitRole
     expires_at: float
 
@@ -16,13 +17,16 @@ class Lease:
 class UnitLeases:
     """
     Unit ownership with TTL and reverse index.
-    (isso é "corpo": recurso escasso + locks + validade)
     """
 
     def __init__(self, *, default_ttl: float = 8.0):
         self.default_ttl = float(default_ttl)
-        self._leases: Dict[int, Lease] = {}          # unit_tag -> Lease
-        self._by_owner: Dict[str, Set[int]] = {}     # task_id -> {unit_tag}
+        self._leases: Dict[int, Lease] = {}      # unit_tag -> Lease
+        self._by_owner: Dict[str, Set[int]] = {} # mission_id -> {unit_tag}
+
+    def reset(self) -> None:
+        self._leases.clear()
+        self._by_owner.clear()
 
     def reap(self, *, now: float) -> None:
         expired: List[int] = [tag for tag, lease in self._leases.items() if lease.expires_at <= now]
@@ -89,7 +93,6 @@ class UnitLeases:
         ttl: Optional[float] = None,
         force: bool = False,
     ) -> bool:
-        """Alias mantido pra compat com tasks."""
         return self.claim(
             task_id=task_id,
             unit_tag=unit_tag,
@@ -115,13 +118,16 @@ class UnitLeases:
         for tag in tags:
             self._remove_tag(tag)
 
+    def release_mission(self, *, mission_id: str) -> None:
+        self.release_owner(task_id=mission_id)
+
     def snapshot(self, *, now: float) -> dict:
         self.reap(now=now)
         return {
             "total_leases": len(self._leases),
             "by_owner": {owner: len(tags) for owner, tags in self._by_owner.items()},
         }
-    
+
     # -----------------------
     # Role mapping
     # -----------------------

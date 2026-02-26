@@ -1,0 +1,32 @@
+# bot/sensors/orbital_sensor.py
+from __future__ import annotations
+
+from typing import Tuple
+
+from sc2.ids.unit_typeid import UnitTypeId as U
+
+from bot.mind.attention import IntelSnapshot
+
+
+def _orbital_scan_status(bot) -> Tuple[bool, float]:
+    """
+    Returns (ready_to_scan, energy).
+    Rule: no side-effects.
+    """
+    try:
+        orbitals = bot.structures(U.ORBITALCOMMAND).ready
+        if orbitals.amount == 0:
+            return False, 0.0
+        oc = orbitals.first
+        energy = float(getattr(oc, "energy", 0.0) or 0.0)
+        return (energy >= 50.0), energy
+    except Exception:
+        return False, 0.0
+
+
+def derive_orbital_snapshot(bot) -> IntelSnapshot:
+    ready, energy = _orbital_scan_status(bot)
+    return IntelSnapshot(
+        orbital_ready_to_scan=bool(ready),
+        orbital_energy=float(energy),
+    )

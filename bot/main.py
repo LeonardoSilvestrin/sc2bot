@@ -27,6 +27,12 @@ class MyBot(AresBot):
 
     async def on_start(self) -> None:
         await super().on_start()
+
+        # ensure DevLogger has a filename; otherwise emit() is a no-op
+        if self.log and not getattr(self.log, "filename", None):
+            from datetime import datetime, timezone
+            self.log.set_file(f"devlog_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.jsonl")
+
         await self.rt.on_start(self)
 
     async def on_step(self, iteration: int) -> None:
