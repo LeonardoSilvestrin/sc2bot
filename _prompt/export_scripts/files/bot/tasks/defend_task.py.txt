@@ -1,4 +1,6 @@
 # bot/tasks/defend_task.py
+
+# bot/tasks/defend_task.py
 from __future__ import annotations
 
 from dataclasses import dataclass

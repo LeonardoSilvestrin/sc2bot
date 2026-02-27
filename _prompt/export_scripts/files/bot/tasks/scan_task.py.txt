@@ -1,0 +1,91 @@
+# bot/tasks/scan_task.py
+
+# bot/tasks/scan_task.py
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+from sc2.ids.ability_id import AbilityId
+from sc2.ids.unit_typeid import UnitTypeId as U
+
+from bot.devlog import DevLogger
+from bot.mind.attention import Attention
+from bot.mind.awareness import Awareness
+from bot.tasks.base_task import BaseTask, TaskTick, TaskResult
+
+
+@dataclass
+class ScanAt(BaseTask):
+    # required deps first (avoid dataclass non-default-after-default errors)
+    awareness: Awareness
+    target: object
+    label: str
+
+    # config
+    cooldown: float = 20.0
+    log: DevLogger | None = None
+
+    # internal state
+    _last_scan_t: float = field(default=0.0, init=False)
+
+    def __init__(self, *, awareness: Awareness, target, label: str, cooldown: float = 20.0, log: DevLogger | None = None):
+        super().__init__(task_id="scan_at", domain="INTEL", commitment=5)
+        self.awareness = awareness
+        self.target = target
+        self.label = str(label)
+        self.cooldown = float(cooldown)
+        self.log = log
+        self._last_scan_t = 0.0
+
+    def evaluate(self, bot, attention: Attention) -> int:
+        now = float(attention.time)
+
+        # if no orbital energy, don't propose high
+        if not bool(attention.intel.orbital_ready_to_scan):
+            return 0
+
+        # cooldown
+        if now - float(self._last_scan_t) < float(self.cooldown):
+            return 0
+
+        # if already scanned enemy main, reduce need
+        if self.label == "enemy_main" and self.awareness.intel_scanned_enemy_main(now=now):
+            return 0
+
+        return 40
+
+    async def on_step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult:
+        now = float(tick.time)
+
+        if not bool(attention.intel.orbital_ready_to_scan):
+            self._paused("no_orbital_energy")
+            return TaskResult.noop("no_orbital_energy")
+
+        if now - float(self._last_scan_t) < float(self.cooldown):
+            self._paused("cooldown")
+            return TaskResult.noop("cooldown")
+
+        try:
+            orbitals = bot.structures(U.ORBITALCOMMAND).ready
+            if orbitals.amount == 0:
+                self._paused("no_orbital")
+                return TaskResult.noop("no_orbital")
+
+            oc = orbitals.first
+            target = self.target
+
+            oc(AbilityId.SCANNERSWEEP_SCAN, target)
+            self._last_scan_t = float(now)
+
+            if self.label == "enemy_main":
+                self.awareness.mark_scanned_enemy_main(now=now)
+
+            if self.log:
+                self.log.emit("scan_cast", {"t": round(float(now), 2), "label": str(self.label)})
+
+            self._active("scan_cast")
+            return TaskResult.running("scan_cast")
+
+        except Exception:
+            self._paused("scan_failed")
+            return TaskResult.failed("scan_failed", retry_after_s=6.0)

@@ -1,4 +1,6 @@
 # bot/planners/intel_planner.py
+
+# bot/planners/intel_planner.py
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -13,6 +15,7 @@ from bot.mind.attention import Attention
 from bot.mind.awareness import Awareness, K
 from bot.planners.proposals import Proposal, TaskSpec, UnitRequirement
 from bot.tasks.scan_task import ScanAt
+from bot.tasks.scout_task import Scout
 from bot.tasks.reaper_scout_task import ReaperScout, ReaperScoutObjective
 
 
@@ -23,12 +26,21 @@ class IntelPlanner:
     awareness: Awareness = None  # injected
     log: DevLogger | None = None
 
+    # SCV re-scout (optional; early SCV scout is YAML now)
+    scout_task: Scout | None = None
+    scout_min_dispatch_interval_s: float = 75.0
+    scout_lease_ttl_s: float = 120.0
+
     # Reaper scout
     reaper_scout_interval_early_s: float = 35.0
     reaper_scout_interval_mid_s: float = 70.0
     reaper_scout_lease_ttl_s: float = 90.0
 
     confidence_min: float = 0.70
+    confidence_rescout_below: float = 0.65
+
+    def _pid_scv_rescout(self) -> str:
+        return f"{self.planner_id}:scout:scv_rescout"
 
     def _pid_reaper_scout(self) -> str:
         return f"{self.planner_id}:scout:reaper"
@@ -84,7 +96,51 @@ class IntelPlanner:
             raise TypeError("IntelPlanner requires awareness injected")
 
         # -------------------------
-        # 0) Reaper scout controller
+        # 0) SCV re-scout (optional)
+        # -------------------------
+        if False and (self.scout_task is not None):
+            pid = self._pid_scv_rescout()
+            # never donate SCV under pressure
+            if not bool(attention.combat.threatened):
+                kind, conf, age_s, first_seen_t, signals = self._opening_state(awareness=awareness, now=now)
+
+                need_scv = False
+                if first_seen_t is None and now >= 75.0:
+                    need_scv = True
+                elif kind is None and now >= 75.0:
+                    need_scv = True
+                elif conf < float(self.confidence_rescout_below) and now >= 75.0:
+                    need_scv = True
+
+                if need_scv:
+                    last_dispatch = awareness.intel_last_scv_dispatch_at(now=now)
+                    if last_dispatch <= 0.0 or (now - float(last_dispatch)) >= float(self.scout_min_dispatch_interval_s):
+                        if not awareness.ops_proposal_running(proposal_id=pid, now=now):
+
+                            def _scv_factory(mission_id: str) -> Scout:
+                                return self.scout_task.spawn()
+
+                            proposals.append(
+                                Proposal(
+                                    proposal_id=pid,
+                                    domain="INTEL",
+                                    score=33,
+                                    tasks=[
+                                        TaskSpec(
+                                            task_id="scout_scv",
+                                            task_factory=_scv_factory,
+                                            unit_requirements=[UnitRequirement(unit_type=U.SCV, count=1)],
+                                        )
+                                    ],
+                                    lease_ttl=float(self.scout_lease_ttl_s),
+                                    cooldown_s=8.0,
+                                    risk_level=1,
+                                    allow_preempt=True,
+                                )
+                            )
+
+        # -------------------------
+        # 1) Reaper scout controller
         # -------------------------
         # Only if we have a reaper ready
         reapers_ready = int(attention.economy.units_ready.get(U.REAPER, 0) or 0)
@@ -151,7 +207,7 @@ class IntelPlanner:
                             )
 
         # -------------------------
-        # 1) Scan when threatened and orbital ready
+        # 2) Scan when threatened and orbital ready
         # -------------------------
         if bool(attention.combat.threatened) and bool(attention.intel.orbital_ready_to_scan):
             target = self._enemy_main(bot)

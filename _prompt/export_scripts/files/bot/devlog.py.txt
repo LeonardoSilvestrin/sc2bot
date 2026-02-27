@@ -1,4 +1,6 @@
 # bot/devlog.py
+
+# bot/devlog.py
 from __future__ import annotations
 
 import json
@@ -23,10 +25,6 @@ class DevLogger:
     filename: Optional[str] = None
     enabled: bool = True
     split_by_module: bool = True
-    write_consolidated: bool = False
-    write_module_files: bool = False
-    write_component_files: bool = True
-    write_tick_files: bool = False
 
     def _ensure_dir(self) -> None:
         os.makedirs(self.log_dir, exist_ok=True)
@@ -100,26 +98,24 @@ class DevLogger:
 
         consolidated_path = os.path.join(self.log_dir, self.filename)
         try:
-            if self.write_consolidated:
-                self._write_jsonl(consolidated_path, row)
+            # backward-compatible consolidated log
+            self._write_jsonl(consolidated_path, row)
 
             if self.split_by_module:
                 run_stem = self._safe_stem(self.filename)
                 split_dir = os.path.join(self.log_dir, run_stem)
                 os.makedirs(split_dir, exist_ok=True)
 
-                if self.write_module_files:
-                    module_path = os.path.join(split_dir, f"{module}.jsonl")
-                    self._write_jsonl(module_path, row)
+                module_path = os.path.join(split_dir, f"{module}.jsonl")
+                self._write_jsonl(module_path, row)
 
-                if self.write_component_files:
-                    components_dir = os.path.join(split_dir, "components")
-                    os.makedirs(components_dir, exist_ok=True)
-                    safe_component = component.replace("/", "_").replace("\\", "_").replace(":", "_")
-                    component_path = os.path.join(components_dir, f"{safe_component}.jsonl")
-                    self._write_jsonl(component_path, row)
+                components_dir = os.path.join(split_dir, "components")
+                os.makedirs(components_dir, exist_ok=True)
+                safe_component = component.replace("/", "_").replace("\\", "_").replace(":", "_")
+                component_path = os.path.join(components_dir, f"{safe_component}.jsonl")
+                self._write_jsonl(component_path, row)
 
-                if self.write_tick_files and str(event).lower().endswith("_tick"):
+                if str(event).lower().endswith("_tick"):
                     ticks_dir = os.path.join(split_dir, "ticks")
                     os.makedirs(ticks_dir, exist_ok=True)
                     ticks_path = os.path.join(ticks_dir, f"{module}.jsonl")

@@ -1,0 +1,50 @@
+EXPORT META
+generated_at_utc: 2026-02-27T02:25:55.641416+00:00
+repo_root: C:\Users\Asus\Documents\projetos\sc2bot\ares\ares-sc2-bot-template
+files_total: 44
+
+FILES
+- bot/__init__.py -> files/bot/__init__.py.txt
+- bot/devlog.py -> files/bot/devlog.py.txt
+- bot/main.py -> files/bot/main.py.txt
+- bot/ares_wrapper/__init__.py -> files/bot/ares_wrapper/__init__.py.txt
+- bot/ares_wrapper/map.py -> files/bot/ares_wrapper/map.py.txt
+- bot/ares_wrapper/roles.py -> files/bot/ares_wrapper/roles.py.txt
+- bot/intel/enemy_build_intel.py -> files/bot/intel/enemy_build_intel.py.txt
+- bot/intel/my_army_composition_intel.py -> files/bot/intel/my_army_composition_intel.py.txt
+- bot/mind/__init__.py -> files/bot/mind/__init__.py.txt
+- bot/mind/attention.py -> files/bot/mind/attention.py.txt
+- bot/mind/awareness.py -> files/bot/mind/awareness.py.txt
+- bot/mind/body.py -> files/bot/mind/body.py.txt
+- bot/mind/ego.py -> files/bot/mind/ego.py.txt
+- bot/mind/self.py -> files/bot/mind/self.py.txt
+- bot/planners/defense_planner.py -> files/bot/planners/defense_planner.py.txt
+- bot/planners/depot_control_planner.py -> files/bot/planners/depot_control_planner.py.txt
+- bot/planners/housekeeping_planner.py -> files/bot/planners/housekeeping_planner.py.txt
+- bot/planners/intel_planner.py -> files/bot/planners/intel_planner.py.txt
+- bot/planners/production_planner.py -> files/bot/planners/production_planner.py.txt
+- bot/planners/proposals.py -> files/bot/planners/proposals.py.txt
+- bot/planners/spending_planner.py -> files/bot/planners/spending_planner.py.txt
+- bot/sensors/__init__.py -> files/bot/sensors/__init__.py.txt
+- bot/sensors/combat_sensor.py -> files/bot/sensors/combat_sensor.py.txt
+- bot/sensors/economy_sensor.py -> files/bot/sensors/economy_sensor.py.txt
+- bot/sensors/enemy_build_sensor.py -> files/bot/sensors/enemy_build_sensor.py.txt
+- bot/sensors/macro_sensor.py -> files/bot/sensors/macro_sensor.py.txt
+- bot/sensors/orbital_sensor.py -> files/bot/sensors/orbital_sensor.py.txt
+- bot/sensors/threat_sensor.py -> files/bot/sensors/threat_sensor.py.txt
+- bot/tasks/__init__.py -> files/bot/tasks/__init__.py.txt
+- bot/tasks/base_task.py -> files/bot/tasks/base_task.py.txt
+- bot/tasks/control_depots_task.py -> files/bot/tasks/control_depots_task.py.txt
+- bot/tasks/defend_task.py -> files/bot/tasks/defend_task.py.txt
+- bot/tasks/macro/__init__.py -> files/bot/tasks/macro/__init__.py.txt
+- bot/tasks/macro/macro_task.py -> files/bot/tasks/macro/macro_task.py.txt
+- bot/tasks/macro/opening.py -> files/bot/tasks/macro/opening.py.txt
+- bot/tasks/macro/production_tick.py -> files/bot/tasks/macro/production_tick.py.txt
+- bot/tasks/macro/scv_housekeeping_task.py -> files/bot/tasks/macro/scv_housekeeping_task.py.txt
+- bot/tasks/macro/spending_tick.py -> files/bot/tasks/macro/spending_tick.py.txt
+- bot/tasks/reaper_scout_task.py -> files/bot/tasks/reaper_scout_task.py.txt
+- bot/tasks/scan_task.py -> files/bot/tasks/scan_task.py.txt
+- bot/tasks/scout_task.py -> files/bot/tasks/scout_task.py.txt
+- terran_builds.yml -> files/terran_builds.yml.txt
+- run.py -> files/run.py.txt
+- ARCHITECTURE.md -> files/ARCHITECTURE.md.txt

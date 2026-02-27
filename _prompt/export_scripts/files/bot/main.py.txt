@@ -1,4 +1,6 @@
 # bot/main.py
+
+# bot/main.py
 from __future__ import annotations
 
 from typing import Optional
@@ -17,14 +19,7 @@ class MyBot(AresBot):
         self.debug = debug
 
         # logger pode ficar aqui (infra), mas runtime decide como usar
-        self.log = DevLogger(
-            enabled=True,
-            split_by_module=True,
-            write_consolidated=False,
-            write_module_files=False,
-            write_component_files=True,
-            write_tick_files=False,
-        )
+        self.log = DevLogger(enabled=True)
 
         # wrapper do engine (opcional ficar aqui; pode migrar pro runtime depois)
         self.ares = AresWrapper(self)

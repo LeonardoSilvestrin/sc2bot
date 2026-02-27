@@ -1,0 +1,29 @@
+# bot/ares_wrapper/__init__.py
+
+#bot/ares_wrapper/__init__.py
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from bot.ares_wrapper.map import Map
+from bot.ares_wrapper.roles import Roles
+
+
+@dataclass(frozen=True)
+class AresWrapper:
+    """
+    Camada de adaptação ao Ares/python-sc2.
+
+    Regra:
+      - Pode chamar bot.mediator, bot.game_info, etc.
+      - NÃO contém decisão estratégica e NÃO contém state machine de missão.
+    """
+    bot: object
+
+    @property
+    def roles(self) -> Roles:
+        return Roles(self.bot)
+
+    @property
+    def map(self) -> Map:
+        return Map(self.bot)

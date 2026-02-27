@@ -1,8 +1,8 @@
 ===== EXPORT META =====
-generated_at_utc: 2026-02-26T18:48:41.264811+00:00
+generated_at_utc: 2026-02-27T01:50:48.990809+00:00
 repo_root: C:\Users\Asus\Documents\projetos\sc2bot\ares\ares-sc2-bot-template
 hardcoded_bot_policy:
-- bot/ares_wrapper: FULL
+- bot/ares_wrapper: STRUCTURE_ONLY
 - bot/intel: FULL
 - bot/mind: FULL
 - bot/planners: FULL
@@ -13,6 +13,12 @@ hardcoded_bot_policy:
 ===== ROOT PROMPT =====
 Voce e meu parceiro tecnico para evoluir um bot de StarCraft II em Python.
 Vou enviar um dump do repositorio gerado por _prompt/export_prompt_root.py.
+
+CONTEXTO ATUAL (NOMES VALIDOS)
+- Planners ativos: defense_planner, intel_planner, spending_planner, production_planner, housekeeping_planner, depot_control_planner.
+- Tasks macro ativas: spending_tick, production_tick, scv_housekeeping_task.
+- Task separada de wall/depot: control_depots_task.
+- Legacy removido: macro_planner monolitico nao e referencia de verdade.
 
 PRIORIDADES
 1. Consistencia de contrato (Task, Planner, Proposal, Ego, Body, Awareness, Attention, Self)
@@ -31,7 +37,7 @@ MODO DE RESPOSTA
 Se eu nao indicar modo, use [PATCH].
 
 ENTREGA
-- Em [FILE] e [MULTI], cada .py deve começar com comentario de caminho.
+- Em [FILE] e [MULTI], cada .py deve comecar com comentario de caminho.
   Exemplo: # bot/mind/ego.py
 
 COMPORTAMENTO ESPERADO DO AGENTE
@@ -70,7 +76,8 @@ Se uma pasta estiver em structure-only, use os caminhos listados para pedir apen
 |   |   |-- map.py
 |   |   `-- roles.py
 |   |-- intel
-|   |   `-- enemy_build_intel.py
+|   |   |-- enemy_build_intel.py
+|   |   `-- my_army_composition_intel.py
 |   |-- mind
 |   |   |-- __init__.py
 |   |   |-- attention.py
@@ -80,9 +87,12 @@ Se uma pasta estiver em structure-only, use os caminhos listados para pedir apen
 |   |   `-- self.py
 |   |-- planners
 |   |   |-- defense_planner.py
+|   |   |-- depot_control_planner.py
+|   |   |-- housekeeping_planner.py
 |   |   |-- intel_planner.py
-|   |   |-- macro_planner.py
-|   |   `-- proposals.py
+|   |   |-- production_planner.py
+|   |   |-- proposals.py
+|   |   `-- spending_planner.py
 |   |-- sensors
 |   |   |-- __init__.py
 |   |   |-- combat_sensor.py
@@ -93,17 +103,15 @@ Se uma pasta estiver em structure-only, use os caminhos listados para pedir apen
 |   |   `-- threat_sensor.py
 |   |-- tasks
 |   |   |-- macro
-|   |   |   |-- rush_defend
-|   |   |   |   |-- __init__.py
-|   |   |   |   `-- rush_defense.py
 |   |   |   |-- __init__.py
-|   |   |   |-- ares_plan.py
-|   |   |   |-- bio_standard.py
 |   |   |   |-- macro_task.py
 |   |   |   |-- opening.py
-|   |   |   `-- scv_housekeeping_task.py
+|   |   |   |-- production_tick.py
+|   |   |   |-- scv_housekeeping_task.py
+|   |   |   `-- spending_tick.py
 |   |   |-- __init__.py
 |   |   |-- base_task.py
+|   |   |-- control_depots_task.py
 |   |   |-- defend_task.py
 |   |   |-- reaper_scout_task.py
 |   |   |-- scan_task.py
@@ -112,16 +120,23 @@ Se uma pasta estiver em structure-only, use os caminhos listados para pedir apen
 |   |-- devlog.py
 |   `-- main.py
 |-- logs
-|   |-- devlog_20260226_080832
+|   |-- devlog_20260227_014303
 |   |   |-- components
+|   |   |   |-- attention.full.jsonl
 |   |   |   |-- attention.jsonl
+|   |   |   |-- awareness.full.jsonl
 |   |   |   |-- awareness.jsonl
+|   |   |   |-- build_order.runner.jsonl
 |   |   |   |-- defense.jsonl
 |   |   |   |-- ego.jsonl
 |   |   |   |-- intel.jsonl
+|   |   |   |-- macro.jsonl
 |   |   |   |-- planner.defense_planner.jsonl
+|   |   |   |-- planner.depot_control_planner.jsonl
+|   |   |   |-- planner.housekeeping_planner.jsonl
 |   |   |   |-- planner.intel_planner.jsonl
-|   |   |   |-- planner.macro_planner.jsonl
+|   |   |   |-- planner.production_planner.jsonl
+|   |   |   |-- planner.spending_planner.jsonl
 |   |   |   `-- runtime.jsonl
 |   |   |-- ticks
 |   |   |   |-- attention.jsonl
@@ -132,9 +147,10 @@ Se uma pasta estiver em structure-only, use os caminhos listados para pedir apen
 |   |   |-- defense.jsonl
 |   |   |-- ego.jsonl
 |   |   |-- intel.jsonl
+|   |   |-- macro.jsonl
 |   |   |-- planner.jsonl
 |   |   `-- runtime.jsonl
-|   `-- devlog_20260226_080832.jsonl
+|   `-- devlog_20260227_014303.jsonl
 |-- scripts
 |   |-- create_ladder_zip.py
 |   |-- create_pyinstaller_exe.py
@@ -333,93 +349,11 @@ class MyBot(AresBot):
         await super().on_end(game_result)
         await self.rt.on_end(self, game_result=game_result)
 ```
-## bot/ares_wrapper (full)
-# bot/ares_wrapper/__init__.py
-```python
-#bot/ares_wrapper/__init__.py
-from __future__ import annotations
+## bot/ares_wrapper (structure-only)
+- bot/ares_wrapper/__init__.py
+- bot/ares_wrapper/map.py
+- bot/ares_wrapper/roles.py
 
-from dataclasses import dataclass
-
-from bot.ares_wrapper.map import Map
-from bot.ares_wrapper.roles import Roles
-
-
-@dataclass(frozen=True)
-class AresWrapper:
-    """
-    Camada de adaptação ao Ares/python-sc2.
-
-    Regra:
-      - Pode chamar bot.mediator, bot.game_info, etc.
-      - NÃO contém decisão estratégica e NÃO contém state machine de missão.
-    """
-    bot: object
-
-    @property
-    def roles(self) -> Roles:
-        return Roles(self.bot)
-
-    @property
-    def map(self) -> Map:
-        return Map(self.bot)
-```
-# bot/ares_wrapper/map.py
-```python
-# bot/ares_wrapper/map.py
-from __future__ import annotations
-
-from dataclasses import dataclass
-from typing import Literal, Tuple
-
-from sc2.position import Point2
-
-
-EnemyMainSource = Literal["ENEMY_START"]
-
-
-@dataclass(frozen=True)
-class Map:
-    bot: object
-
-    def enemy_main(self) -> Tuple[Point2, EnemyMainSource]:
-        """
-        Strict contract: no fallbacks.
-        If the engine cannot provide enemy_start_locations, crash to expose wiring issues.
-        """
-        locs = getattr(self.bot, "enemy_start_locations", None)
-        if not locs or len(locs) == 0:
-            raise RuntimeError("Map.enemy_main() requires bot.enemy_start_locations[0]")
-        return locs[0], "ENEMY_START"
-```
-# bot/ares_wrapper/roles.py
-```python
-#bot/ares_wrapper/roles.py
-from __future__ import annotations
-
-from dataclasses import dataclass
-
-from ares.consts import UnitRole
-from sc2.ids.unit_typeid import UnitTypeId as U
-from sc2.position import Point2
-from sc2.unit import Unit
-
-
-@dataclass(frozen=True)
-class Roles:
-    bot: object  # AresBot / BotAI
-
-    def assign(self, *, unit: Unit, role: UnitRole, remove_from_squad: bool = True) -> None:
-        self.bot.mediator.assign_role(tag=unit.tag, role=role, remove_from_squad=remove_from_squad)
-
-    def get_scout_workers(self):
-        return self.bot.mediator.get_units_from_role(role=UnitRole.BUILD_RUNNER_SCOUT, unit_type=U.SCV)
-
-    def request_worker_scout(self, *, target_position: Point2) -> Unit:
-        worker: Unit = self.bot.mediator.select_worker(target_position=target_position)
-        self.assign(unit=worker, role=UnitRole.BUILD_RUNNER_SCOUT, remove_from_squad=True)
-        return worker
-```
 ## bot/intel (full)
 # bot/intel/enemy_build_intel.py
 ```python
@@ -562,6 +496,119 @@ def derive_enemy_build_intel(
     awareness.mem.set(K("enemy", "opening", "signals"), value=signals, now=now, ttl=float(cfg.ttl_s))
     awareness.mem.set(K("enemy", "opening", "last_update_t"), value=float(now), now=now, ttl=None)
 ```
+# bot/intel/my_army_composition_intel.py
+```python
+# =============================================================================
+# bot/intel/my_army_composition_intel.py  (NEW)
+# =============================================================================
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Dict
+
+from bot.mind.awareness import Awareness, K
+from bot.mind.attention import Attention
+
+
+@dataclass(frozen=True)
+class MyArmyCompositionConfig:
+    """
+    Strategy-level macro reference:
+      - desired mode (discrete)
+      - desired comp (ratios)
+    This is NOT production/spending. It's the setpoint.
+
+    Keep TTL short: consumers should treat it as "recent intent".
+    """
+    ttl_s: float = 25.0
+    min_confidence: float = 0.55
+
+    # Default comps (ratios sum ~= 1.0)
+    comp_defensive: Dict[str, float] = None
+    comp_standard: Dict[str, float] = None
+    comp_punish: Dict[str, float] = None
+
+    def __post_init__(self):
+        object.__setattr__(
+            self,
+            "comp_defensive",
+            self.comp_defensive
+            or {
+                "MARINE": 0.75,
+                "MARAUDER": 0.20,
+                "MEDIVAC": 0.05,
+            },
+        )
+        object.__setattr__(
+            self,
+            "comp_standard",
+            self.comp_standard
+            or {
+                "MARINE": 0.60,
+                "MARAUDER": 0.25,
+                "MEDIVAC": 0.15,
+            },
+        )
+        object.__setattr__(
+            self,
+            "comp_punish",
+            self.comp_punish
+            or {
+                "MARINE": 0.65,
+                "MARAUDER": 0.15,
+                "MEDIVAC": 0.20,
+            },
+        )
+
+
+def _normalize(comp: Dict[str, float]) -> Dict[str, float]:
+    try:
+        total = float(sum(float(v) for v in comp.values()))
+    except Exception:
+        return dict(comp)
+    if total <= 0:
+        return dict(comp)
+    return {str(k): float(v) / total for k, v in comp.items()}
+
+
+def derive_my_army_composition_intel(
+    *,
+    awareness: Awareness,
+    attention: Attention,
+    now: float,
+    cfg: MyArmyCompositionConfig = MyArmyCompositionConfig(),
+) -> None:
+    """
+    Reads enemy opening belief from Awareness, emits desired mode+comp into Awareness.
+
+    Writes:
+      - macro:desired:mode
+      - macro:desired:comp
+      - macro:desired:last_update_t
+    """
+    enemy_kind = awareness.mem.get(K("enemy", "opening", "kind"), now=now, default="NORMAL")
+    conf = awareness.mem.get(K("enemy", "opening", "confidence"), now=now, default=0.0)
+
+    mode = "STANDARD"
+    if float(conf) >= float(cfg.min_confidence):
+        if str(enemy_kind) == "AGGRESSIVE":
+            mode = "DEFENSIVE"
+        elif str(enemy_kind) == "GREEDY":
+            mode = "PUNISH"
+        else:
+            mode = "STANDARD"
+
+    if mode == "DEFENSIVE":
+        comp = _normalize(dict(cfg.comp_defensive))
+    elif mode == "PUNISH":
+        comp = _normalize(dict(cfg.comp_punish))
+    else:
+        comp = _normalize(dict(cfg.comp_standard))
+
+    awareness.mem.set(K("macro", "desired", "mode"), value=str(mode), now=now, ttl=float(cfg.ttl_s))
+    awareness.mem.set(K("macro", "desired", "comp"), value=dict(comp), now=now, ttl=float(cfg.ttl_s))
+    awareness.mem.set(K("macro", "desired", "last_update_t"), value=float(now), now=now, ttl=None)
+```
 ## bot/mind (full)
 # bot/mind/__init__.py
 ```python
@@ -606,6 +653,25 @@ class IntelSnapshot:
 @dataclass(frozen=True)
 class MacroSnapshot:
     opening_done: bool
+
+    minerals: int
+    vespene: int
+
+    workers_total: int
+    workers_idle: int
+
+    bases_total: int
+    bases_under_saturated: int
+    bases_over_saturated: int
+
+    prod_structures_total: int
+    prod_structures_idle: int
+    prod_structures_active: int
+
+    supply_used: int
+    supply_cap: int
+    supply_left: int
+    supply_blocked: bool
 
 
 @dataclass(frozen=True)
@@ -1254,11 +1320,12 @@ class Ego:
                 self._finish_mission(awareness, now=now, c=c, status="DONE", reason=res.reason)
                 continue
 
-            awareness.emit(
-                "mission_step",
-                now=now,
-                data={"mission_id": c.mission_id, "domain": c.domain, "status": res.status, "reason": res.reason},
-            )
+            if self._should_emit_mission_step(awareness, now=now, c=c, status=res.status):
+                awareness.emit(
+                    "mission_step",
+                    now=now,
+                    data={"mission_id": c.mission_id, "domain": c.domain, "status": res.status, "reason": res.reason},
+                )
 
     def _reap_commitments(self, *, now: float, awareness: Awareness) -> None:
         for mission_id, c in list(self._active.items()):
@@ -1400,19 +1467,33 @@ class Ego:
         awareness.mem.set(K("ops", "mission", mission_id, "status"), value=str(status), now=now, ttl=None)
         awareness.mem.set(K("ops", "mission", mission_id, "reason"), value=str(reason), now=now, ttl=None)
         awareness.mem.set(K("ops", "mission", mission_id, "ended_at"), value=float(now), now=now, ttl=None)
+
+    def _should_emit_mission_step(self, awareness: Awareness, *, now: float, c: Commitment, status: str) -> bool:
+        # Always emit stateful transitions; throttle repetitive NOOP spam.
+        if str(status) != "NOOP":
+            return True
+        key = K("ops", "mission", c.mission_id, "last_noop_emit_at")
+        last = awareness.mem.get(key, now=now, default=None)
+        if last is None or (float(now) - float(last)) >= 5.0:
+            awareness.mem.set(key, value=float(now), now=now, ttl=None)
+            return True
+        return False
 ```
 # bot/mind/self.py
 ```python
 # bot/mind/self.py
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, is_dataclass
+from enum import Enum
+from typing import Any
 
 from sc2.data import Result
 
 from bot.devlog import DevLogger
 from bot.sensors.threat_sensor import Threat
 from bot.intel.enemy_build_intel import EnemyBuildIntelConfig, derive_enemy_build_intel
+from bot.intel.my_army_composition_intel import MyArmyCompositionConfig, derive_my_army_composition_intel
 from bot.mind.attention import derive_attention
 from bot.mind.awareness import Awareness
 from bot.mind.body import UnitLeases
@@ -1421,11 +1502,43 @@ from bot.tasks.base_task import TaskTick
 
 from bot.tasks.defend_task import Defend
 from bot.tasks.scout_task import Scout
-from bot.tasks.macro import MacroAresBioStandardTick, MacroAresRushDefenseTick, MacroOpeningTick
+from bot.tasks.macro.opening import MacroOpeningTick
 
 from bot.planners.defense_planner import DefensePlanner
 from bot.planners.intel_planner import IntelPlanner
-from bot.planners.macro_planner import MacroPlanner
+
+from bot.planners.production_planner import ProductionPlanner
+from bot.planners.spending_planner import SpendingPlanner
+from bot.planners.housekeeping_planner import HousekeepingPlanner
+from bot.planners.depot_control_planner import DepotControlPlanner
+
+
+def _jsonable(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+
+    if isinstance(value, Enum):
+        return str(value.name)
+
+    if is_dataclass(value):
+        return _jsonable(asdict(value))
+
+    if isinstance(value, dict):
+        out: dict[str, Any] = {}
+        for k, v in value.items():
+            out[str(k)] = _jsonable(v)
+        return out
+
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [_jsonable(v) for v in value]
+
+    if hasattr(value, "x") and hasattr(value, "y"):
+        try:
+            return {"x": float(getattr(value, "x")), "y": float(getattr(value, "y"))}
+        except Exception:
+            return str(value)
+
+    return str(value)
 
 
 @dataclass
@@ -1436,7 +1549,14 @@ class RuntimeApp:
     body: UnitLeases
     ego: Ego
     enemy_build_cfg: EnemyBuildIntelConfig
+    my_comp_cfg: MyArmyCompositionConfig
     debug: bool = True
+    attention_full_every_iters: int = 25
+    awareness_full_every_iters: int = 50
+    bo_diag_every_iters: int = 25
+    bo_stall_warn_s: float = 25.0
+    _bo_last_step_idx: int = -1
+    _bo_last_step_t: float = 0.0
 
     @classmethod
     def build(cls, *, log: DevLogger, debug: bool = True) -> "RuntimeApp":
@@ -1448,7 +1568,9 @@ class RuntimeApp:
             body=body,
             log=log,
             cfg=EgoConfig(
-                singleton_domains=frozenset({"MACRO"}),  # only one active MACRO mission at a time
+                # New singleton macro domains: allow spending+production+housekeeping concurrently,
+                # without changing Ego internals.
+                singleton_domains=frozenset({"MACRO_SPENDING", "MACRO_PRODUCTION", "MACRO_HOUSEKEEPING", "MACRO_DEPOT_CONTROL"}),
                 threat_block_start_at=70,
                 threat_force_preempt_at=90,
                 non_preemptible_grace_s=2.5,
@@ -1466,34 +1588,102 @@ class RuntimeApp:
             see_radius=14.0,
         )
 
+        # Opening remains a tiny SCV-only macro while BuildRunner/YML does the rest.
         opening_macro_task = MacroOpeningTick(log=log, log_every_iters=22, scv_cap=60)
-
-        bio_standard_task = MacroAresBioStandardTick(
-            log=log,
-            scv_cap=66,
-            target_bases=2,
-            log_every_iters=22,
-        )
-
-        rush_defense_task = MacroAresRushDefenseTick(
-            log=log,
-            scv_cap=40,
-            target_bases=1,
-            log_every_iters=22,
-        )
 
         defense_planner = DefensePlanner(defend_task=defend_task, log=log)
         intel_planner = IntelPlanner(awareness=awareness, log=log, scout_task=scout_task)
 
-        macro_planner = MacroPlanner(
-            opening_task=opening_macro_task,
-            bio_task=bio_standard_task,
-            rush_defense_task=rush_defense_task,
-            backoff_urgency=60,
+        spending_planner = SpendingPlanner(
+            target_bases_default=2,
+            flood_m=800,
+            flood_hi_m=1400,
+            flood_hold_s=12.0,
             log=log,
         )
 
-        ego.register_planners([defense_planner, intel_planner, macro_planner])
+        production_planner = ProductionPlanner(
+            scv_cap=66,
+            log=log,
+        )
+
+        housekeeping_planner = HousekeepingPlanner(
+            interval_s=35.0,
+            cooldown_s=6.0,
+            lease_ttl_s=12.0,
+            score=18,
+            log=log,
+        )
+
+        depot_control_planner = DepotControlPlanner(
+            interval_s=1.5,
+            cooldown_s=0.0,
+            score=24,
+            log=log,
+        )
+
+        # Keep opening as a "pre-macro" handled by its own planner? (MVP: reuse ProductionPlanner gate.)
+        # For now: register opening via a tiny planner-inline shim inside runtime:
+        # We keep it as a planner to respect the architecture.
+        from bot.planners.proposals import Proposal, TaskSpec
+
+        @dataclass
+        class OpeningPlanner:
+            planner_id: str = "opening_planner"
+            score: int = 60
+            log: DevLogger | None = None
+            opening_task: MacroOpeningTick = None
+
+            def _pid(self) -> str:
+                return f"{self.planner_id}:macro_opening"
+
+            def propose(self, bot, *, awareness: Awareness, attention) -> list[Proposal]:
+                now = float(attention.time)
+                # If BuildOrderRunner exists, let it own opening execution.
+                if getattr(bot, "build_order_runner", None) is not None:
+                    return []
+                if bool(attention.macro.opening_done):
+                    return []
+                pid = self._pid()
+                if awareness.ops_proposal_running(proposal_id=pid, now=now):
+                    return []
+
+                def _factory(mission_id: str) -> MacroOpeningTick:
+                    return self.opening_task.spawn()
+
+                out = [
+                    Proposal(
+                        proposal_id=pid,
+                        domain="MACRO_PRODUCTION",  # opening shares the production lane
+                        score=int(self.score),
+                        tasks=[TaskSpec(task_id="macro_opening", task_factory=_factory, unit_requirements=[], lease_ttl=None)],
+                        lease_ttl=None,
+                        cooldown_s=0.0,
+                        risk_level=0,
+                        allow_preempt=True,
+                    )
+                ]
+                if self.log:
+                    self.log.emit(
+                        "planner_proposed",
+                        {"planner": self.planner_id, "count": len(out), "mode": "opening"},
+                        meta={"module": "planner", "component": f"planner.{self.planner_id}"},
+                    )
+                return out
+
+        opening_planner = OpeningPlanner(opening_task=opening_macro_task, log=log)
+
+        ego.register_planners(
+            [
+                defense_planner,
+                intel_planner,
+                opening_planner,
+                spending_planner,
+                production_planner,
+                housekeeping_planner,
+                depot_control_planner,
+            ]
+        )
 
         return cls(
             log=log,
@@ -1502,6 +1692,7 @@ class RuntimeApp:
             body=body,
             ego=ego,
             enemy_build_cfg=EnemyBuildIntelConfig(),
+            my_comp_cfg=MyArmyCompositionConfig(),
             debug=bool(debug),
         )
 
@@ -1526,12 +1717,132 @@ class RuntimeApp:
             cfg=self.enemy_build_cfg,
         )
 
+        # New: strategy reference (mode + proportions)
+        derive_my_army_composition_intel(
+            awareness=self.awareness,
+            attention=attention,
+            now=now,
+            cfg=self.my_comp_cfg,
+        )
+
+        self._emit_build_order_diagnostics(bot, now=now, iteration=int(iteration))
+
+        if self.log:
+            if int(iteration) % max(1, int(self.attention_full_every_iters)) == 0:
+                self.log.emit(
+                    "attention_full",
+                    _jsonable(attention),
+                    meta={"module": "attention", "component": "attention.full"},
+                )
+            if int(iteration) % max(1, int(self.awareness_full_every_iters)) == 0:
+                self.log.emit(
+                    "awareness_full",
+                    {
+                        "mem": _jsonable(self.awareness.mem.snapshot(now=now)),
+                        "events_tail": _jsonable(self.awareness.tail_events(80)),
+                    },
+                    meta={"module": "awareness", "component": "awareness.full"},
+                )
+
         tick = TaskTick(iteration=int(iteration), time=now)
         await self.ego.tick(bot, tick=tick, attention=attention, awareness=self.awareness)
 
     async def on_end(self, bot, game_result: Result) -> None:
         if self.log:
             self.log.emit("game_end", {"result": str(game_result)})
+
+    def _emit_build_order_diagnostics(self, bot, *, now: float, iteration: int) -> None:
+        if self.log is None:
+            return
+
+        bor = getattr(bot, "build_order_runner", None)
+        if bor is None:
+            return
+
+        build_order = list(getattr(bor, "build_order", []) or [])
+        total_steps = len(build_order)
+        step_idx = int(getattr(bor, "build_step", 0) or 0)
+        temp_step_idx = int(getattr(bor, "_temporary_build_step", -1) or -1)
+        build_completed = bool(getattr(bor, "build_completed", False))
+        chosen_opening = str(getattr(bor, "chosen_opening", ""))
+        current_step_started = bool(getattr(bor, "current_step_started", False))
+        current_step_complete = bool(getattr(bor, "current_step_complete", False))
+
+        if step_idx != self._bo_last_step_idx:
+            self._bo_last_step_idx = int(step_idx)
+            self._bo_last_step_t = float(now)
+        stall_s = max(0.0, float(now) - float(self._bo_last_step_t))
+
+        command_name = ""
+        start_at_supply = None
+        target = None
+        start_condition_ok = None
+        end_condition_ok = None
+
+        if 0 <= step_idx < total_steps:
+            step = build_order[step_idx]
+            command_name = getattr(step.command, "name", str(step.command))
+            start_at_supply = int(getattr(step, "start_at_supply", 0) or 0)
+            target = _jsonable(getattr(step, "target", None))
+            try:
+                start_condition_ok = bool(step.start_condition())
+            except Exception as e:
+                start_condition_ok = f"error:{type(e).__name__}"
+            try:
+                end_condition_ok = bool(step.end_condition())
+            except Exception as e:
+                end_condition_ok = f"error:{type(e).__name__}"
+
+        if int(iteration) % max(1, int(self.bo_diag_every_iters)) == 0:
+            self.log.emit(
+                "build_order_status",
+                {
+                    "iter": int(iteration),
+                    "t": round(float(now), 2),
+                    "chosen_opening": chosen_opening,
+                    "build_completed": bool(build_completed),
+                    "step_idx": int(step_idx),
+                    "total_steps": int(total_steps),
+                    "temp_step_idx": int(temp_step_idx),
+                    "current_step_started": bool(current_step_started),
+                    "current_step_complete": bool(current_step_complete),
+                    "command": command_name,
+                    "start_at_supply": start_at_supply,
+                    "target": target,
+                    "start_condition_ok": start_condition_ok,
+                    "end_condition_ok": end_condition_ok,
+                    "supply_used": float(getattr(bot, "supply_used", 0.0) or 0.0),
+                    "minerals": int(getattr(bot, "minerals", 0) or 0),
+                    "vespene": int(getattr(bot, "vespene", 0) or 0),
+                    "stall_s_on_step": round(float(stall_s), 2),
+                },
+                meta={"module": "macro", "component": "build_order.runner"},
+            )
+
+        if (
+            not build_completed
+            and total_steps > 0
+            and stall_s >= float(self.bo_stall_warn_s)
+            and int(iteration) % max(1, int(self.bo_diag_every_iters)) == 0
+        ):
+            self.log.emit(
+                "build_order_stall",
+                {
+                    "iter": int(iteration),
+                    "t": round(float(now), 2),
+                    "chosen_opening": chosen_opening,
+                    "step_idx": int(step_idx),
+                    "total_steps": int(total_steps),
+                    "command": command_name,
+                    "start_at_supply": start_at_supply,
+                    "start_condition_ok": start_condition_ok,
+                    "end_condition_ok": end_condition_ok,
+                    "current_step_started": bool(current_step_started),
+                    "current_step_complete": bool(current_step_complete),
+                    "stall_s_on_step": round(float(stall_s), 2),
+                },
+                meta={"module": "macro", "component": "build_order.runner"},
+            )
 ```
 ## bot/planners (full)
 # bot/planners/defense_planner.py
@@ -1564,6 +1875,13 @@ class DefensePlanner:
         if (not bool(attention.combat.threatened)) or (not attention.combat.threat_pos):
             return []
 
+        now = float(attention.time)
+        pid = self._pid_defend()
+
+        # Avoid planner/log spam while an equal DEFENSE mission is already running.
+        if awareness.ops_proposal_running(proposal_id=pid, now=now):
+            return []
+
         urg = int(attention.combat.defense_urgency)
         score = max(80, min(100, 60 + urg))
 
@@ -1575,7 +1893,7 @@ class DefensePlanner:
 
         out = [
             Proposal(
-                proposal_id=self._pid_defend(),
+                proposal_id=pid,
                 domain="DEFENSE",
                 score=score,
                 tasks=[TaskSpec(task_id="defend_bases", task_factory=_factory, unit_requirements=[])],
@@ -1589,6 +1907,151 @@ class DefensePlanner:
             self.log.emit(
                 "planner_proposed",
                 {"planner": self.planner_id, "count": len(out), "score": int(score)},
+                meta={"module": "planner", "component": f"planner.{self.planner_id}"},
+            )
+        return out
+```
+# bot/planners/depot_control_planner.py
+```python
+# bot/planners/depot_control_planner.py
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from bot.devlog import DevLogger
+from bot.mind.attention import Attention
+from bot.mind.awareness import Awareness, K
+from bot.planners.proposals import Proposal, TaskSpec
+from bot.tasks.control_depots_task import ControlDepots
+
+
+@dataclass
+class DepotControlPlanner:
+    """
+    Periodic proposer for wall-depot control.
+    """
+
+    planner_id: str = "depot_control_planner"
+    interval_s: float = 1.5
+    cooldown_s: float = 0.0
+    score: int = 24
+    log: DevLogger | None = None
+
+    def _pid(self) -> str:
+        return f"{self.planner_id}:control_depots"
+
+    def _due(self, *, awareness: Awareness, now: float) -> bool:
+        last = awareness.mem.get(K("macro", "wall", "depot_control", "last_done_at"), now=now, default=None)
+        if last is None:
+            return True
+        try:
+            return (float(now) - float(last)) >= float(self.interval_s)
+        except Exception:
+            return True
+
+    def propose(self, bot, *, awareness: Awareness, attention: Attention) -> list[Proposal]:
+        now = float(attention.time)
+        pid = self._pid()
+
+        if not self._due(awareness=awareness, now=now):
+            return []
+        if awareness.ops_proposal_running(proposal_id=pid, now=now):
+            return []
+
+        def _factory(mission_id: str) -> ControlDepots:
+            return ControlDepots(awareness=awareness)
+
+        out = [
+            Proposal(
+                proposal_id=pid,
+                domain="MACRO_DEPOT_CONTROL",
+                score=int(self.score),
+                tasks=[TaskSpec(task_id="control_depots", task_factory=_factory, unit_requirements=[])],
+                lease_ttl=None,
+                cooldown_s=float(self.cooldown_s),
+                risk_level=0,
+                allow_preempt=True,
+            )
+        ]
+
+        if self.log is not None:
+            self.log.emit(
+                "planner_proposed",
+                {"planner": self.planner_id, "count": len(out)},
+                meta={"module": "planner", "component": f"planner.{self.planner_id}"},
+            )
+
+        return out
+```
+# bot/planners/housekeeping_planner.py
+```python
+# =============================================================================
+# bot/planners/housekeeping_planner.py  (NEW)
+# =============================================================================
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from bot.devlog import DevLogger
+from bot.mind.attention import Attention
+from bot.mind.awareness import Awareness, K
+from bot.planners.proposals import Proposal, TaskSpec
+from bot.tasks.macro.scv_housekeeping_task import ScvHousekeeping
+
+
+@dataclass
+class HousekeepingPlanner:
+    """
+    Low-cost periodic housekeeping (SCV rebalance, etc.).
+    """
+    planner_id: str = "housekeeping_planner"
+    interval_s: float = 35.0
+    cooldown_s: float = 6.0
+    lease_ttl_s: float = 12.0
+    score: int = 18
+    log: DevLogger | None = None
+
+    def _pid_housekeeping(self) -> str:
+        return f"{self.planner_id}:scv_housekeeping"
+
+    def _due(self, *, awareness: Awareness, now: float) -> bool:
+        last = awareness.mem.get(K("macro", "scv", "housekeeping", "last_done_at"), now=now, default=None)
+        if last is None:
+            return True
+        try:
+            return (float(now) - float(last)) >= float(self.interval_s)
+        except Exception:
+            return True
+
+    def propose(self, bot, *, awareness: Awareness, attention: Attention) -> list[Proposal]:
+        now = float(attention.time)
+        pid = self._pid_housekeeping()
+
+        if not self._due(awareness=awareness, now=now):
+            return []
+        if awareness.ops_proposal_running(proposal_id=pid, now=now):
+            return []
+
+        def _hk_factory(mission_id: str) -> ScvHousekeeping:
+            return ScvHousekeeping(awareness=awareness)
+
+        out = [
+            Proposal(
+                proposal_id=pid,
+                domain="MACRO_HOUSEKEEPING",
+                score=int(self.score),
+                tasks=[TaskSpec(task_id="scv_housekeeping", task_factory=_hk_factory, unit_requirements=[])],
+                lease_ttl=float(self.lease_ttl_s),
+                cooldown_s=float(self.cooldown_s),
+                risk_level=0,
+                allow_preempt=True,
+            )
+        ]
+
+        if self.log is not None:
+            self.log.emit(
+                "planner_proposed",
+                {"planner": self.planner_id, "count": len(out)},
                 meta={"module": "planner", "component": f"planner.{self.planner_id}"},
             )
         return out
@@ -1826,187 +2289,72 @@ class IntelPlanner:
 
         return proposals
 ```
-# bot/planners/macro_planner.py
+# bot/planners/production_planner.py
 ```python
+# =============================================================================
+# bot/planners/production_planner.py  (NEW)
+# =============================================================================
 from __future__ import annotations
 
 from dataclasses import dataclass
 
 from bot.devlog import DevLogger
 from bot.mind.attention import Attention
-from bot.mind.awareness import Awareness, K
+from bot.mind.awareness import Awareness
 from bot.planners.proposals import Proposal, TaskSpec
-from bot.tasks.macro import (
-    MacroAresBioStandardTick as MacroBio2BaseTick,
-    MacroAresRushDefenseTick as MacroRushDefenseTick,
-    MacroOpeningTick,
-)
-from bot.tasks.macro.scv_housekeeping_task import ScvHousekeeping
+from bot.tasks.macro.production_tick import MacroProductionTick
 
 
 @dataclass
-class MacroPlanner:
-    planner_id: str = "macro_planner"
-    score: int = 50
-    backoff_urgency: int = 85
-
-    # NEW: SCV housekeeping as a micro-task
-    housekeeping_interval_s: float = 35.0
-    housekeeping_cooldown_s: float = 6.0
-    housekeeping_lease_ttl_s: float = 12.0
-    housekeeping_score: int = 18
+class ProductionPlanner:
+    """
+    Always-on production loop (singleton by domain).
+    Runs only after opening is done (BuildRunner/yml done).
+    """
+    planner_id: str = "production_planner"
+    score: int = 55
     log: DevLogger | None = None
 
-    opening_task: MacroOpeningTick = None        # injected template
-    bio_task: MacroBio2BaseTick = None           # injected template
-    rush_defense_task: MacroRushDefenseTick = None  # injected template
+    scv_cap: int = 66
+    log_every_iters: int = 22
 
-    def _pid_opening(self) -> str:
-        return f"{self.planner_id}:macro_opening"
-
-    def _pid_bio(self) -> str:
-        return f"{self.planner_id}:macro_bio_2base"
-
-    def _pid_rush_def(self) -> str:
-        return f"{self.planner_id}:macro_rush_defense"
-
-    def _pid_housekeeping(self) -> str:
-        return f"{self.planner_id}:scv_housekeeping"
-
-    def _want_rush_defense(self, *, awareness: Awareness, attention: Attention) -> bool:
-        return bool(attention.combat.threatened) and int(attention.combat.defense_urgency) >= 70
-
-    def _housekeeping_due(self, *, awareness: Awareness, now: float) -> bool:
-        last = awareness.mem.get(K("macro", "scv", "housekeeping", "last_done_at"), now=now, default=None)
-        if last is None:
-            return True
-        try:
-            return (float(now) - float(last)) >= float(self.housekeeping_interval_s)
-        except Exception:
-            return True
+    def _pid(self) -> str:
+        return f"{self.planner_id}:macro_production"
 
     def propose(self, bot, *, awareness: Awareness, attention: Attention) -> list[Proposal]:
         now = float(attention.time)
 
-        if self.opening_task is None or self.bio_task is None or self.rush_defense_task is None:
-            raise TypeError("MacroPlanner requires opening_task, bio_task, rush_defense_task")
-
-        # global backoff
-        if bool(attention.combat.threatened) and int(attention.combat.defense_urgency) >= int(self.backoff_urgency):
+        # Respect your current opening gate: don't run production loop until opening_done.
+        if not bool(attention.macro.opening_done):
             return []
 
-        proposals: list[Proposal] = []
+        pid = self._pid()
+        if awareness.ops_proposal_running(proposal_id=pid, now=now):
+            return []
 
-        # 0) SCV housekeeping micro-task (almost always acceptable; tiny cost)
-        hk_pid = self._pid_housekeeping()
-        if self._housekeeping_due(awareness=awareness, now=now):
-            if not awareness.ops_proposal_running(proposal_id=hk_pid, now=now):
+        def _factory(mission_id: str) -> MacroProductionTick:
+            return MacroProductionTick(awareness=awareness, log=self.log, scv_cap=int(self.scv_cap), log_every_iters=int(self.log_every_iters))
 
-                def _hk_factory(mission_id: str) -> ScvHousekeeping:
-                    return ScvHousekeeping(awareness=awareness)
-
-                proposals.append(
-                    Proposal(
-                        proposal_id=hk_pid,
-                        domain="MACRO",
-                        score=int(self.housekeeping_score),
-                        tasks=[
-                            TaskSpec(
-                                task_id="scv_housekeeping",
-                                task_factory=_hk_factory,
-                                unit_requirements=[],
-                            )
-                        ],
-                        lease_ttl=float(self.housekeeping_lease_ttl_s),
-                        cooldown_s=float(self.housekeeping_cooldown_s),
-                        risk_level=0,
-                        allow_preempt=True,
-                    )
-                )
-
-        opening_done = bool(attention.macro.opening_done)
-        want_rush = self._want_rush_defense(awareness=awareness, attention=attention)
-
-        # OPENING
-        if not opening_done:
-            pid = self._pid_opening()
-
-            def _factory(mission_id: str) -> MacroOpeningTick:
-                return self.opening_task.spawn()
-
-            proposals.append(
-                Proposal(
-                    proposal_id=pid,
-                    domain="MACRO",
-                    score=int(self.score),
-                    tasks=[TaskSpec(task_id="macro_opening", task_factory=_factory, unit_requirements=[], lease_ttl=None)],
-                    lease_ttl=None,
-                    cooldown_s=0.0,
-                    risk_level=0,
-                    allow_preempt=True,
-                )
-            )
-            if self.log is not None:
-                self.log.emit(
-                    "planner_proposed",
-                    {"planner": self.planner_id, "count": len(proposals), "mode": "opening"},
-                    meta={"module": "planner", "component": f"planner.{self.planner_id}"},
-                )
-            return proposals
-
-        # RUSH DEFENSE
-        if want_rush:
-            pid = self._pid_rush_def()
-
-            def _factory(mission_id: str) -> MacroRushDefenseTick:
-                return self.rush_defense_task.spawn()
-
-            proposals.append(
-                Proposal(
-                    proposal_id=pid,
-                    domain="MACRO",
-                    score=int(self.score) + 20,
-                    tasks=[TaskSpec(task_id="macro_rush_defense", task_factory=_factory, unit_requirements=[], lease_ttl=None)],
-                    lease_ttl=None,
-                    cooldown_s=0.0,
-                    risk_level=1,
-                    allow_preempt=True,
-                )
-            )
-            if self.log is not None:
-                self.log.emit(
-                    "planner_proposed",
-                    {"planner": self.planner_id, "count": len(proposals), "mode": "rush_defense"},
-                    meta={"module": "planner", "component": f"planner.{self.planner_id}"},
-                )
-            return proposals
-
-        # NORMAL macro
-        pid = self._pid_bio()
-
-        def _factory(mission_id: str) -> MacroBio2BaseTick:
-            return self.bio_task.spawn()
-
-        proposals.append(
+        out = [
             Proposal(
                 proposal_id=pid,
-                domain="MACRO",
+                domain="MACRO_PRODUCTION",
                 score=int(self.score),
-                tasks=[TaskSpec(task_id="macro_bio_2base", task_factory=_factory, unit_requirements=[], lease_ttl=None)],
+                tasks=[TaskSpec(task_id="macro_production", task_factory=_factory, unit_requirements=[])],
                 lease_ttl=None,
                 cooldown_s=0.0,
                 risk_level=0,
                 allow_preempt=True,
             )
-        )
+        ]
 
         if self.log is not None:
             self.log.emit(
                 "planner_proposed",
-                {"planner": self.planner_id, "count": len(proposals), "mode": "bio"},
+                {"planner": self.planner_id, "count": len(out), "mode": "production"},
                 meta={"module": "planner", "component": f"planner.{self.planner_id}"},
             )
-        return proposals
+        return out
 ```
 # bot/planners/proposals.py
 ```python
@@ -2129,6 +2477,88 @@ class Proposal:
 
     def task(self) -> TaskSpec:
         return self.tasks[0]
+```
+# bot/planners/spending_planner.py
+```python
+# =============================================================================
+# bot/planners/spending_planner.py  (NEW)
+# =============================================================================
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from bot.devlog import DevLogger
+from bot.mind.attention import Attention
+from bot.mind.awareness import Awareness
+from bot.planners.proposals import Proposal, TaskSpec
+from bot.tasks.macro.spending_tick import MacroSpendingTick
+
+
+@dataclass
+class SpendingPlanner:
+    """
+    Structural spending loop (singleton by domain).
+    Runs only after opening is done.
+    """
+    planner_id: str = "spending_planner"
+    score: int = 45
+    log: DevLogger | None = None
+
+    target_bases_default: int = 2
+    flood_m: int = 800
+    flood_hi_m: int = 1400
+    flood_hold_s: float = 12.0
+
+    log_every_iters: int = 22
+
+    def _pid(self) -> str:
+        return f"{self.planner_id}:macro_spending"
+
+    def propose(self, bot, *, awareness: Awareness, attention: Attention) -> list[Proposal]:
+        now = float(attention.time)
+
+        bor = getattr(bot, "build_order_runner", None)
+        if bor is not None and not bool(getattr(bor, "build_completed", False)):
+            return []
+
+        if not bool(attention.macro.opening_done):
+            return []
+
+        pid = self._pid()
+        if awareness.ops_proposal_running(proposal_id=pid, now=now):
+            return []
+
+        def _factory(mission_id: str) -> MacroSpendingTick:
+            return MacroSpendingTick(
+                awareness=awareness,
+                log=self.log,
+                target_bases_default=int(self.target_bases_default),
+                flood_m=int(self.flood_m),
+                flood_hi_m=int(self.flood_hi_m),
+                flood_hold_s=float(self.flood_hold_s),
+                log_every_iters=int(self.log_every_iters),
+            )
+
+        out = [
+            Proposal(
+                proposal_id=pid,
+                domain="MACRO_SPENDING",
+                score=int(self.score),
+                tasks=[TaskSpec(task_id="macro_spending", task_factory=_factory, unit_requirements=[])],
+                lease_ttl=None,
+                cooldown_s=0.0,
+                risk_level=0,
+                allow_preempt=True,
+            )
+        ]
+
+        if self.log is not None:
+            self.log.emit(
+                "planner_proposed",
+                {"planner": self.planner_id, "count": len(out), "mode": "spending"},
+                meta={"module": "planner", "component": f"planner.{self.planner_id}"},
+            )
+        return out
 ```
 ## bot/sensors (full)
 # bot/sensors/__init__.py
@@ -2351,20 +2781,13 @@ def derive_enemy_build_sensor(bot) -> EnemyBuildSnapshot:
 # bot/sensors/macro_sensor.py
 from __future__ import annotations
 
+from sc2.ids.unit_typeid import UnitTypeId
 from bot.mind.attention import MacroSnapshot
 
 
 def _opening_done(bot) -> bool:
-    """
-    Opening state estimation.
-    Rule: no side-effects.
-
-    Strict mode:
-      - Opening ends only when Ares BuildRunner reports build_completed.
-    """
     bor = getattr(bot, "build_order_runner", None)
     if bor is None:
-        # bootstrap guard: runner not ready yet this tick
         return False
     if not hasattr(bor, "build_completed"):
         raise AttributeError("Macro sensor requires build_order_runner.build_completed")
@@ -2372,8 +2795,90 @@ def _opening_done(bot) -> bool:
     return bool(bor.build_completed)
 
 
+def _get_bases(bot):
+    # Terran bases: CommandCenter, OrbitalCommand, PlanetaryFortress
+    base_types = {
+        UnitTypeId.COMMANDCENTER,
+        UnitTypeId.ORBITALCOMMAND,
+        UnitTypeId.PLANETARYFORTRESS,
+    }
+    return bot.townhalls.filter(lambda u: u.type_id in base_types)
+
+
+def _get_production_structures(bot):
+    # Terran production
+    prod_types = {
+        UnitTypeId.BARRACKS,
+        UnitTypeId.FACTORY,
+        UnitTypeId.STARPORT,
+    }
+    return bot.structures.filter(lambda u: u.type_id in prod_types and u.is_ready)
+
+
 def derive_macro_snapshot(bot) -> MacroSnapshot:
-    return MacroSnapshot(opening_done=bool(_opening_done(bot)))
+
+    # --- Economy ---
+    minerals = int(bot.minerals)
+    vespene = int(bot.vespene)
+
+    workers = bot.workers
+    workers_total = workers.amount
+    workers_idle = workers.idle.amount
+
+    # --- Bases / Saturation ---
+    bases = _get_bases(bot)
+    bases_total = bases.amount
+
+    bases_under = 0
+    bases_over = 0
+
+    for base in bases:
+        assigned = base.assigned_harvesters
+        ideal = base.ideal_harvesters
+
+        if ideal == 0:
+            continue
+
+        if assigned < ideal:
+            bases_under += 1
+        elif assigned > ideal:
+            bases_over += 1
+
+    # --- Production structures ---
+    prod_structs = _get_production_structures(bot)
+    prod_structures_total = prod_structs.amount
+
+    prod_structures_idle = prod_structs.idle.amount
+    prod_structures_active = prod_structures_total - prod_structures_idle
+
+    # --- Supply ---
+    supply_used = bot.supply_used
+    supply_cap = bot.supply_cap
+    supply_left = supply_cap - supply_used
+    supply_blocked = supply_left <= 0
+
+    return MacroSnapshot(
+        opening_done=bool(_opening_done(bot)),
+
+        minerals=minerals,
+        vespene=vespene,
+
+        workers_total=workers_total,
+        workers_idle=workers_idle,
+
+        bases_total=bases_total,
+        bases_under_saturated=bases_under,
+        bases_over_saturated=bases_over,
+
+        prod_structures_total=prod_structures_total,
+        prod_structures_idle=prod_structures_idle,
+        prod_structures_active=prod_structures_active,
+
+        supply_used=supply_used,
+        supply_cap=supply_cap,
+        supply_left=supply_left,
+        supply_blocked=supply_blocked,
+    )
 ```
 # bot/sensors/orbital_sensor.py
 ```python
@@ -2674,6 +3179,67 @@ class BaseTask:
         t.assigned_tags = []
         return t
 ```
+# bot/tasks/control_depots_task.py
+```python
+# bot/tasks/control_depots_task.py
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from sc2.ids.ability_id import AbilityId
+from sc2.ids.unit_typeid import UnitTypeId as U
+
+from bot.mind.attention import Attention
+from bot.mind.awareness import Awareness, K
+from bot.tasks.base_task import BaseTask, TaskTick, TaskResult
+
+
+@dataclass
+class ControlDepots(BaseTask):
+    """
+    Global wall-depot control with no unit leases.
+    Raises on nearby threat, lowers otherwise.
+    """
+
+    awareness: Awareness
+
+    def __init__(self, *, awareness: Awareness):
+        super().__init__(task_id="control_depots", domain="MACRO_DEPOT_CONTROL", commitment=0)
+        self.awareness = awareness
+
+    async def on_step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult:
+        now = float(tick.time)
+        threatened = bool(attention.combat.threatened) and bool(attention.combat.threat_pos)
+
+        issued = 0
+        action = "none"
+
+        if threatened:
+            lowered = bot.structures.of_type({U.SUPPLYDEPOTLOWERED}).ready
+            for depot in lowered:
+                depot(AbilityId.MORPH_SUPPLYDEPOT_RAISE)
+                issued += 1
+            action = "raise"
+        else:
+            raised = bot.structures.of_type({U.SUPPLYDEPOT}).ready
+            for depot in raised:
+                depot(AbilityId.MORPH_SUPPLYDEPOT_LOWER)
+                issued += 1
+            action = "lower"
+
+        self.awareness.mem.set(K("macro", "wall", "depot_control", "last_done_at"), value=now, now=now, ttl=None)
+        self.awareness.mem.set(K("macro", "wall", "depot_control", "last_action"), value=action, now=now, ttl=None)
+
+        self._done("depots_controlled")
+        return TaskResult.done(
+            "depots_controlled",
+            telemetry={
+                "threatened": bool(threatened),
+                "action": str(action),
+                "orders": int(issued),
+            },
+        )
+```
 # bot/tasks/defend_task.py
 ```python
 # bot/tasks/defend_task.py
@@ -2762,103 +3328,17 @@ class Defend(BaseTask):
 ```
 # bot/tasks/macro/__init__.py
 ```python
-from bot.tasks.macro.bio_standard import MacroAresBioStandardTick
 from bot.tasks.macro.opening import MacroOpeningTick
-from bot.tasks.macro.rush_defend import MacroAresRushDefenseTick
+from bot.tasks.macro.production_tick import MacroProductionTick
+from bot.tasks.macro.scv_housekeeping_task import ScvHousekeeping
+from bot.tasks.macro.spending_tick import MacroSpendingTick
 
 __all__ = [
     "MacroOpeningTick",
-    "MacroAresBioStandardTick",
-    "MacroAresRushDefenseTick",
+    "MacroProductionTick",
+    "MacroSpendingTick",
+    "ScvHousekeeping",
 ]
-```
-# bot/tasks/macro/ares_plan.py
-```python
-# bot/tasks/macro/ares_plan.py
-from __future__ import annotations
-
-from bot.devlog import DevLogger
-from bot.tasks.base_task import TaskTick
-
-
-def register_macro_plan(bot, plan, *, log: DevLogger | None, tick: TaskTick, label: str, log_every_iters: int = 22) -> None:
-    """
-    Strict: requires AresBot.register_behavior to exist.
-    This helper stays inside tasks layer; planners/ego remain unaware of Ares internals.
-    """
-    bot.register_behavior(plan)
-
-    if log and (int(tick.iteration) % int(log_every_iters) == 0):
-        log.emit(
-            "macro_ares_plan",
-            {"iter": int(tick.iteration), "t": round(float(tick.time), 2), "label": str(label)},
-        )
-```
-# bot/tasks/macro/bio_standard.py
-```python
-# bot/tasks/macro/bio_standard.py
-from __future__ import annotations
-
-from dataclasses import dataclass
-from typing import Dict
-
-from ares.behaviors.macro.auto_supply import AutoSupply
-from ares.behaviors.macro.build_workers import BuildWorkers
-from ares.behaviors.macro.expansion_controller import ExpansionController
-from ares.behaviors.macro.gas_building_controller import GasBuildingController
-from ares.behaviors.macro.macro_plan import MacroPlan
-from ares.behaviors.macro.production_controller import ProductionController
-from ares.behaviors.macro.spawn_controller import SpawnController
-from sc2.ids.unit_typeid import UnitTypeId as U
-
-from bot.devlog import DevLogger
-from bot.mind.attention import Attention
-from bot.tasks.base_task import BaseTask, TaskTick, TaskResult
-from bot.tasks.macro.ares_plan import register_macro_plan
-
-
-@dataclass
-class MacroAresBioStandardTick(BaseTask):
-    """
-    Standard macro (BIO-ish) using Ares MacroPlan behaviors.
-
-    Goal: "never stalls" macro:
-      - autosupply
-      - continuous workers (to scv_cap)
-      - expand to target_bases
-      - basic production + spawn loop
-    """
-    log: DevLogger | None = None
-    scv_cap: int = 66
-    target_bases: int = 2
-    log_every_iters: int = 22
-
-    def __init__(self, *, log: DevLogger | None = None, scv_cap: int = 66, target_bases: int = 2, log_every_iters: int = 22):
-        super().__init__(task_id="macro_ares_bio_standard", domain="MACRO", commitment=15)
-        self.log = log
-        self.scv_cap = int(scv_cap)
-        self.target_bases = int(target_bases)
-        self.log_every_iters = int(log_every_iters)
-
-    def _army_comp(self) -> Dict[U, int]:
-        # Weights (not caps). Keep simple & robust.
-        return {
-            U.MARINE: 10,
-            U.MEDIVAC: 2,
-        }
-
-    async def on_step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult:
-        plan = MacroPlan()
-        plan.add(AutoSupply(base_location=bot.start_location))
-        plan.add(BuildWorkers(to_count=int(self.scv_cap)))
-        plan.add(GasBuildingController(to_count=max(0, int(len(bot.townhalls)) * 2)))
-        plan.add(ExpansionController(to_base_count=int(self.target_bases)))
-        plan.add(ProductionController())
-        plan.add(SpawnController(army_composition_dict=self._army_comp()))
-
-        register_macro_plan(bot, plan, log=self.log, tick=tick, label="BIO_STANDARD", log_every_iters=self.log_every_iters)
-        self._active("ares_macro_standard")
-        return TaskResult.running("ares_macro_standard")
 ```
 # bot/tasks/macro/macro_task.py
 ```python
@@ -3104,83 +3584,129 @@ class MacroOpeningTick(BaseTask):
 
         return TaskResult.running("train_scv")
 ```
-# bot/tasks/macro/rush_defend/__init__.py
+# bot/tasks/macro/production_tick.py
 ```python
-# bot/tasks/macro/rush_defend/__init__.py
-from __future__ import annotations
-
-from bot.tasks.macro.rush_defend.rush_defense import MacroAresRushDefenseTick
-
-__all__ = ["MacroAresRushDefenseTick"]
-```
-# bot/tasks/macro/rush_defend/rush_defense.py
-```python
-# bot/tasks/macro/rush_defend/rush_defense.py
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict
 
-from ares.behaviors.macro.auto_supply import AutoSupply
 from ares.behaviors.macro.build_workers import BuildWorkers
-from ares.behaviors.macro.expansion_controller import ExpansionController
 from ares.behaviors.macro.macro_plan import MacroPlan
-from ares.behaviors.macro.production_controller import ProductionController
 from ares.behaviors.macro.spawn_controller import SpawnController
 from sc2.ids.unit_typeid import UnitTypeId as U
 
 from bot.devlog import DevLogger
 from bot.mind.attention import Attention
+from bot.mind.awareness import Awareness, K
 from bot.tasks.base_task import BaseTask, TaskTick, TaskResult
-from bot.tasks.macro.ares_plan import register_macro_plan
 
 
 @dataclass
-class MacroAresRushDefenseTick(BaseTask):
-    """
-    Rush-defense macro using Ares MacroPlan behaviors.
-
-    Philosophy:
-      - DO NOT expand
-      - Keep workers going (but lower cap)
-      - Spend on immediate army
-      - Keep supply safe
-    """
+class MacroProductionTick(BaseTask):
+    awareness: Awareness
     log: DevLogger | None = None
-    scv_cap: int = 40
-    target_bases: int = 1
+    scv_cap: int = 66
     log_every_iters: int = 22
 
-    def __init__(self, *, log: DevLogger | None = None, scv_cap: int = 40, target_bases: int = 1, log_every_iters: int = 22):
-        super().__init__(task_id="macro_ares_rush_defense", domain="MACRO", commitment=20)
+    def __init__(
+        self,
+        *,
+        awareness: Awareness,
+        log: DevLogger | None = None,
+        scv_cap: int = 66,
+        log_every_iters: int = 22,
+    ):
+        super().__init__(task_id="macro_production", domain="MACRO_PRODUCTION", commitment=10)
+        self.awareness = awareness
         self.log = log
         self.scv_cap = int(scv_cap)
-        self.target_bases = int(target_bases)
         self.log_every_iters = int(log_every_iters)
 
-    def _army_comp(self) -> Dict[U, int]:
-        return {U.MARINE: 14}
+    @staticmethod
+    def _normalize(comp: dict[U, float]) -> dict[U, float]:
+        total = float(sum(float(v) for v in comp.values()))
+        if total <= 0.0:
+            return comp
+        return {k: float(v) / total for k, v in comp.items()}
+
+    def _desired_comp(self, now: float) -> dict[U, float]:
+        raw = self.awareness.mem.get(K("macro", "desired", "comp"), now=now, default=None)
+
+        comp: dict[U, float] = {}
+        if isinstance(raw, dict):
+            for k, v in raw.items():
+                if not isinstance(k, str):
+                    continue
+                try:
+                    uid = getattr(U, k)
+                except Exception:
+                    continue
+                try:
+                    fv = float(v)
+                except Exception:
+                    continue
+                if fv > 0:
+                    comp[uid] = fv
+
+        if not comp:
+            comp = {
+                U.MARINE: 0.60,
+                U.MARAUDER: 0.25,
+                U.MEDIVAC: 0.15,
+            }
+
+        return self._normalize(comp)
+
+    def _spawn_dict(self, now: float) -> dict[U, dict[str, float | int]]:
+        comp = self._desired_comp(now)
+        ordered = sorted(comp.items(), key=lambda kv: kv[1], reverse=True)
+        out: dict[U, dict[str, float | int]] = {}
+        for idx, (uid, proportion) in enumerate(ordered):
+            out[uid] = {"proportion": float(proportion), "priority": int(idx)}
+        return out
 
     async def on_step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult:
-        plan = MacroPlan()
-        plan.add(AutoSupply(base_location=bot.start_location))
-        plan.add(BuildWorkers(to_count=int(self.scv_cap)))
-        plan.add(ExpansionController(to_base_count=int(self.target_bases)))  # locks at 1
-        plan.add(ProductionController())
-        plan.add(SpawnController(army_composition_dict=self._army_comp()))
+        if not isinstance(self.mission_id, str) or not self.mission_id:
+            return TaskResult.failed("unbound_mission")
 
-        register_macro_plan(bot, plan, log=self.log, tick=tick, label="RUSH_DEFENSE", log_every_iters=self.log_every_iters)
-        self._active("ares_macro_rush_defense")
-        return TaskResult.running("ares_macro_rush_defense")
+        now = float(tick.time)
+        spawn_dict = self._spawn_dict(now)
+
+        plan = MacroPlan()
+        plan.add(BuildWorkers(to_count=int(self.scv_cap)))
+        plan.add(
+            SpawnController(
+                army_composition_dict=spawn_dict,
+                freeflow_mode=bool(attention.economy.minerals >= 1200),
+                ignore_proportions_below_unit_count=8,
+                over_produce_on_low_tech=True,
+            )
+        )
+
+        bot.register_behavior(plan)
+
+        if self.log is not None and (int(tick.iteration) % self.log_every_iters == 0):
+            self.log.emit(
+                "macro_production",
+                {
+                    "iter": int(tick.iteration),
+                    "t": round(float(now), 2),
+                    "scv_cap": int(self.scv_cap),
+                    "units": [u.name for u in spawn_dict.keys()],
+                },
+            )
+
+        return TaskResult.running("production_plan_registered")
 ```
 # bot/tasks/macro/scv_housekeeping_task.py
 ```python
-# bot/tasks/scv_housekeeping_task.py
+# =============================================================================
+# bot/tasks/macro/scv_housekeeping_task.py  (MODIFIED: domain)
+# =============================================================================
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from ares.behaviors.macro import Mining
 from ares.consts import UnitRole
 from sc2.ids.unit_typeid import UnitTypeId as U
 
@@ -3204,28 +3730,18 @@ class ScvHousekeeping(BaseTask):
     """
 
     awareness: Awareness
+    max_reassign_per_run: int = 4
+    mineral_balance_margin: int = 1
 
     def __init__(self, *, awareness: Awareness):
-        super().__init__(task_id="scv_housekeeping", domain="MACRO", commitment=1)
+        # Global housekeeping task: no unit leases are required.
+        super().__init__(task_id="scv_housekeeping", domain="MACRO_HOUSEKEEPING", commitment=0)
         self.awareness = awareness
+        self.max_reassign_per_run = 4
+        self.mineral_balance_margin = 1
 
     def evaluate(self, bot, attention: Attention) -> int:
         return 10
-
-    def _pick_main_and_nat(self, bot):
-        ready_ths = bot.townhalls.ready
-        if ready_ths.amount == 0:
-            return None, None
-
-        main = ready_ths.closest_to(bot.start_location)
-        if ready_ths.amount < 2:
-            return main, None
-
-        nat_pos = bot.mediator.get_own_nat
-        nat = ready_ths.closest_to(nat_pos)
-        if nat.tag == main.tag:
-            return main, None
-        return main, nat
 
     @staticmethod
     def _assign_worker_to_mineral(worker, mineral_fields) -> None:
@@ -3233,68 +3749,177 @@ class ScvHousekeeping(BaseTask):
             return
         worker.gather(mineral_fields.closest_to(worker))
 
-    def _rebalance_workers(self, bot) -> tuple[int, int]:
+    def _reserved_running_tags(self, now: float) -> set[int]:
+        """
+        Tags currently assigned to RUNNING missions in Ego/Awareness.
+        Housekeeping must not retask these workers.
+        """
+        out: set[int] = set()
+        try:
+            facts = self.awareness.mem._facts.items()
+        except Exception:
+            return out
+
+        for k, _f in facts:
+            if len(k) < 4:
+                continue
+            if k[0] != "ops" or k[1] != "mission" or k[-1] != "status":
+                continue
+            mission_id = k[2]
+            st = str(self.awareness.mem.get(K("ops", "mission", mission_id, "status"), now=now, default=""))
+            if st != "RUNNING":
+                continue
+            tags = self.awareness.mem.get(K("ops", "mission", mission_id, "assigned_tags"), now=now, default=[])
+            if not isinstance(tags, list):
+                continue
+            for t in tags:
+                try:
+                    out.add(int(t))
+                except Exception:
+                    pass
+        return out
+
+    def _rebalance_workers(self, bot, *, now: float) -> tuple[int, int, int, int]:
         workers = bot.mediator.get_units_from_role(role=UnitRole.GATHERING, unit_type=U.SCV)
         if workers.amount == 0:
-            return 0, 0
+            return 0, 0, 0, 0
 
-        main, nat = self._pick_main_and_nat(bot)
-        if main is None:
-            return 0, 0
+        townhalls = bot.townhalls.ready
+        if townhalls.amount == 0:
+            return 0, 0, 0, 0
 
-        # Let Ares handle gas saturation first.
-        bot.register_behavior(Mining(workers_per_gas=3, long_distance_mine=False))
+        reserved_tags = self._reserved_running_tags(now)
+        try:
+            bo_scouts = bot.mediator.get_units_from_role(role=UnitRole.BUILD_RUNNER_SCOUT, unit_type=U.SCV)
+            reserved_tags.update(int(u.tag) for u in bo_scouts)
+        except Exception:
+            pass
 
         worker_to_gas = bot.mediator.get_worker_to_vespene_dict
         worker_to_th = bot.mediator.get_worker_tag_to_townhall_tag
 
-        mineral_workers = [w for w in workers if int(w.tag) not in worker_to_gas]
+        own_bases = list(townhalls)
 
-        main_tag = int(main.tag)
-        main_mineral_workers = [w for w in mineral_workers if int(worker_to_th.get(int(w.tag), -1)) == main_tag]
+        def _is_local_worker(worker) -> bool:
+            # Do not retask distant workers (typically scouting/pathing units).
+            if not own_bases:
+                return True
+            try:
+                nearest = min(float(worker.distance_to(th.position)) for th in own_bases)
+                return nearest <= 18.0
+            except Exception:
+                return True
 
-        if nat is None:
-            return len(main_mineral_workers), 0
-
-        nat_tag = int(nat.tag)
-        nat_mineral_workers = [w for w in mineral_workers if int(worker_to_th.get(int(w.tag), -1)) == nat_tag]
-        other_mineral_workers = [
-            w for w in mineral_workers
-            if int(worker_to_th.get(int(w.tag), -1)) not in {main_tag, nat_tag}
+        mineral_workers = [
+            w for w in workers
+            if int(w.tag) not in worker_to_gas
+            and int(w.tag) not in reserved_tags
+            and _is_local_worker(w)
         ]
+        if not mineral_workers:
+            return 0, 0, 0, len(reserved_tags)
 
-        main_mfs = bot.mineral_field.closer_than(10.0, main.position)
-        nat_mfs = bot.mineral_field.closer_than(10.0, nat.position)
+        moved_tags: set[int] = set()
+        moved_to_gas = 0
+        remaining_budget = int(self.max_reassign_per_run)
 
-        desired_main = 16
-        current_main = len(main_mineral_workers)
+        # 1) Gas saturation first.
+        gas_deficit = 0
+        gas_buildings = [g for g in bot.gas_buildings if g.is_ready]
+        for gas in gas_buildings:
+            assigned = int(getattr(gas, "assigned_harvesters", 0) or 0)
+            ideal = int(getattr(gas, "ideal_harvesters", 0) or 0)
+            if ideal <= 0:
+                continue
+            need = max(0, ideal - assigned)
+            gas_deficit += int(need)
+            if need <= 0 or remaining_budget <= 0:
+                continue
 
-        moved = 0
+            donors = sorted(
+                [w for w in mineral_workers if int(w.tag) not in moved_tags],
+                key=lambda w: w.distance_to(gas),
+            )
+            for worker in donors:
+                if need <= 0 or remaining_budget <= 0:
+                    break
+                wtag = int(worker.tag)
+                worker.gather(gas)
+                moved_tags.add(wtag)
+                moved_to_gas += 1
+                remaining_budget -= 1
+                need -= 1
 
-        if current_main < desired_main:
-            need = desired_main - current_main
-            donors = sorted(nat_mineral_workers + other_mineral_workers, key=lambda w: w.distance_to(main))
-            for worker in donors[:need]:
-                self._assign_worker_to_mineral(worker, main_mfs)
-                moved += 1
-        elif current_main > desired_main:
-            excess = current_main - desired_main
-            donors = sorted(main_mineral_workers, key=lambda w: w.distance_to(nat), reverse=True)
-            for worker in donors[:excess]:
-                self._assign_worker_to_mineral(worker, nat_mfs)
-                moved += 1
+        # If we used the whole budget on gas, stop here.
+        if remaining_budget <= 0:
+            return gas_deficit, moved_to_gas, 0, len(reserved_tags)
 
-        return current_main, moved
+        # Mineral-only target per base. Keep conservative to avoid large swings.
+        desired_per_base = 16
+
+        deficits: list[tuple[object, int]] = []
+        surplus_by_base: dict[int, list] = {}
+        total_deficit = 0
+
+        for th in townhalls:
+            th_tag = int(th.tag)
+            base_min_workers = [
+                w for w in mineral_workers
+                if int(worker_to_th.get(int(w.tag), -1)) == th_tag and int(w.tag) not in moved_tags
+            ]
+            count = len(base_min_workers)
+            if count < (desired_per_base - int(self.mineral_balance_margin)):
+                need = desired_per_base - count
+                deficits.append((th, need))
+                total_deficit += need
+            elif count > (desired_per_base + int(self.mineral_balance_margin)):
+                excess = count - desired_per_base
+                # Prefer moving farthest workers first when base is over target.
+                surplus_by_base[th_tag] = sorted(
+                    base_min_workers, key=lambda w: w.distance_to(th.position), reverse=True
+                )[:excess]
+
+        if not deficits:
+            return gas_deficit, moved_to_gas, 0, len(reserved_tags)
+
+        # Only pull from truly oversaturated bases; never drain balanced bases.
+        donors_primary = []
+        for items in surplus_by_base.values():
+            donors_primary.extend(items)
+        if not donors_primary:
+            return gas_deficit, moved_to_gas, total_deficit, len(reserved_tags)
+
+        moved_to_minerals = 0
+
+        for th, need in deficits:
+            if moved_to_minerals >= remaining_budget:
+                break
+            mineral_fields = bot.mineral_field.closer_than(10.0, th.position)
+            if mineral_fields.amount == 0:
+                continue
+
+            need_left = int(need)
+            primary_sorted = sorted(
+                [w for w in donors_primary if int(w.tag) not in moved_tags],
+                key=lambda w: w.distance_to(th),
+            )
+            for worker in primary_sorted:
+                if need_left <= 0:
+                    break
+                if moved_to_minerals >= remaining_budget:
+                    break
+                wtag = int(worker.tag)
+                self._assign_worker_to_mineral(worker, mineral_fields)
+                moved_tags.add(wtag)
+                moved_to_minerals += 1
+                need_left -= 1
+
+        return gas_deficit, moved_to_gas, total_deficit, len(reserved_tags)
 
     async def on_step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult:
         now = float(tick.time)
 
-        if not isinstance(self.mission_id, str) or not self.mission_id:
-            return TaskResult.failed("unbound_mission")
-        if not isinstance(self.assigned_tags, list):
-            return TaskResult.failed("assigned_tags_must_be_list")
-
-        main_mineral_workers, moved = self._rebalance_workers(bot)
+        gas_deficit, moved_to_gas, mineral_deficit, reserved = self._rebalance_workers(bot, now=now)
 
         # Mark last done time (planner uses it as interval gate).
         self.awareness.mem.set(K("macro", "scv", "housekeeping", "last_done_at"), value=float(now), now=now, ttl=None)
@@ -3302,8 +3927,161 @@ class ScvHousekeeping(BaseTask):
         self._done("housekeeping_done")
         return TaskResult.done(
             "housekeeping_done",
-            telemetry={"main_mineral_workers": int(main_mineral_workers), "moved": int(moved)},
+            telemetry={
+                "gas_deficit": int(gas_deficit),
+                "moved_to_gas": int(moved_to_gas),
+                "mineral_deficit": int(mineral_deficit),
+                "reserved_tags": int(reserved),
+            },
         )
+```
+# bot/tasks/macro/spending_tick.py
+```python
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from ares.behaviors.macro.auto_supply import AutoSupply
+from ares.behaviors.macro.expansion_controller import ExpansionController
+from ares.behaviors.macro.gas_building_controller import GasBuildingController
+from ares.behaviors.macro.macro_plan import MacroPlan
+from ares.behaviors.macro.production_controller import ProductionController
+from sc2.ids.unit_typeid import UnitTypeId as U
+
+from bot.devlog import DevLogger
+from bot.mind.attention import Attention
+from bot.mind.awareness import Awareness, K
+from bot.tasks.base_task import BaseTask, TaskTick, TaskResult
+
+
+@dataclass
+class MacroSpendingTick(BaseTask):
+    awareness: Awareness
+    log: DevLogger | None = None
+    target_bases_default: int = 2
+    flood_m: int = 800
+    flood_hi_m: int = 1400
+    flood_hold_s: float = 12.0
+    log_every_iters: int = 22
+
+    def __init__(
+        self,
+        *,
+        awareness: Awareness,
+        log: DevLogger | None = None,
+        target_bases_default: int = 2,
+        flood_m: int = 800,
+        flood_hi_m: int = 1400,
+        flood_hold_s: float = 12.0,
+        log_every_iters: int = 22,
+    ):
+        super().__init__(task_id="macro_spending", domain="MACRO_SPENDING", commitment=10)
+        self.awareness = awareness
+        self.log = log
+        self.target_bases_default = int(target_bases_default)
+        self.flood_m = int(flood_m)
+        self.flood_hi_m = int(flood_hi_m)
+        self.flood_hold_s = float(flood_hold_s)
+        self.log_every_iters = int(log_every_iters)
+
+    @staticmethod
+    def _normalize(comp: dict[U, float]) -> dict[U, float]:
+        total = float(sum(float(v) for v in comp.values()))
+        if total <= 0.0:
+            return comp
+        return {k: float(v) / total for k, v in comp.items()}
+
+    def _desired_comp(self, now: float) -> dict[U, float]:
+        raw = self.awareness.mem.get(K("macro", "desired", "comp"), now=now, default=None)
+
+        comp: dict[U, float] = {}
+        if isinstance(raw, dict):
+            for k, v in raw.items():
+                if not isinstance(k, str):
+                    continue
+                try:
+                    uid = getattr(U, k)
+                except Exception:
+                    continue
+                try:
+                    fv = float(v)
+                except Exception:
+                    continue
+                if fv > 0:
+                    comp[uid] = fv
+
+        if not comp:
+            comp = {
+                U.MARINE: 0.60,
+                U.MARAUDER: 0.25,
+                U.MEDIVAC: 0.15,
+            }
+
+        return self._normalize(comp)
+
+    def _army_comp_for_controllers(self, now: float) -> dict[U, dict[str, float | int]]:
+        comp = self._desired_comp(now)
+        ordered = sorted(comp.items(), key=lambda kv: kv[1], reverse=True)
+        out: dict[U, dict[str, float | int]] = {}
+        for idx, (uid, proportion) in enumerate(ordered):
+            out[uid] = {"proportion": float(proportion), "priority": int(idx)}
+        return out
+
+    def _target_bases(self, *, attention: Attention, now: float) -> int:
+        minerals = int(attention.economy.minerals)
+
+        flood_until = float(self.awareness.mem.get(K("macro", "spending", "flood_until"), now=now, default=0.0) or 0.0)
+        if minerals >= self.flood_hi_m:
+            flood_until = now + float(self.flood_hold_s)
+            self.awareness.mem.set(K("macro", "spending", "flood_until"), value=float(flood_until), now=now, ttl=None)
+
+        flood_active = minerals >= self.flood_m or now < flood_until
+
+        target = int(self.target_bases_default)
+        if flood_active:
+            target += 1
+
+        return max(1, int(target))
+
+    async def on_step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult:
+        if not isinstance(self.mission_id, str) or not self.mission_id:
+            return TaskResult.failed("unbound_mission")
+
+        bor = getattr(bot, "build_order_runner", None)
+        if bor is not None and not bool(getattr(bor, "build_completed", False)):
+            return TaskResult.noop("build_order_active")
+
+        now = float(tick.time)
+        target_bases = self._target_bases(attention=attention, now=now)
+        gas_target = max(0, int(attention.macro.bases_total) * 2)
+        army_comp = self._army_comp_for_controllers(now)
+
+        plan = MacroPlan()
+        plan.add(AutoSupply(base_location=bot.start_location))
+        plan.add(GasBuildingController(to_count=int(gas_target)))
+        plan.add(ExpansionController(to_count=int(target_bases)))
+        plan.add(
+            ProductionController(
+                army_composition_dict=army_comp,
+                base_location=bot.start_location,
+            )
+        )
+
+        bot.register_behavior(plan)
+
+        if self.log is not None and (int(tick.iteration) % self.log_every_iters == 0):
+            self.log.emit(
+                "macro_spending",
+                {
+                    "iter": int(tick.iteration),
+                    "t": round(float(now), 2),
+                    "target_bases": int(target_bases),
+                    "gas_target": int(gas_target),
+                    "minerals": int(attention.economy.minerals),
+                },
+            )
+
+        return TaskResult.running("spending_plan_registered")
 ```
 # bot/tasks/reaper_scout_task.py
 ```python
@@ -3787,7 +4565,7 @@ BuildChoices:
 
 Builds:
   Default:
-    AutoSupplyAtSupply: 20
+    AutoSupplyAtSupply: 25
     ConstantWorkerProductionTill: 32
     OpeningBuildOrder:
       - 14 supply @ ramp
@@ -3804,10 +4582,10 @@ Builds:
       - 21 gas
       - 21 starport
       - 21 addonswap factory barracksreactor
-      - 23 marine *4
+      - 23 hellion *4
 
   DefensiveOpening:
-    AutoSupplyAtSupply: 20
+    AutoSupplyAtSupply: 30
     ConstantWorkerProductionTill: 28
     OpeningBuildOrder:
       - 14 supply @ ramp
@@ -3972,384 +4750,376 @@ if __name__ == "__main__":
 ```
 # ARCHITECTURE.md
 ```markdown
-# ARES STRATEGIC ARCHITECTURE
+# ARQUITETURA v2 (Runtime Real)
 
-## 1. Visão Geral
+## 1. Objetivo
 
-Esta arquitetura define uma camada estratégica acima do Ares.
+Este documento define a arquitetura oficial do bot com base no codigo atual.
 
-Objetivos:
+Modelo oficial:
 
-- Separar decisão de execução
-- Permitir preempção limpa (ex: cancelar drop para defender)
-- Manter macro estável sob pressão
-- Ser auditável via logs
-- Escalar para adaptação estatística futura
-- Não reinventar funcionalidades já fornecidas pelo Ares
+`Sensor -> Attention -> Intel -> Awareness -> Planner -> Ego -> Task -> Ares/python-sc2`
 
-Ares continua responsável por:
-- Pathfinding
-- Unit control básico
-- Worker selection
-- Build order execution
-- Placement
-- Squad system
+Objetivos praticos:
 
-Nossa arquitetura controla:
-- Decisão estratégica
-- Prioridades
-- Seleção de missões
-- Preempção
-- Orquestração de domínios
+- Separar fatos do tick (`Attention`) de memoria e inferencia (`Awareness`).
+- Manter um orquestrador unico de missoes (`Ego`) com contratos estaveis.
+- Garantir ownership explicito de unidades (`UnitLeases`).
+- Manter o sistema auditavel por eventos e logs (`DevLogger`).
+
+Este documento foca exclusivamente no modelo operacional vigente no codigo atual.
 
 ---
 
-## 2. Princípios Fundamentais
+## 2. Principios Arquiteturais
 
-1. Policy calcula. Não executa.
-2. Director orquestra. Não microgerencia.
-3. Mission executa com lifecycle formal.
-4. Coordinator arbitra conflitos.
-5. Macro é serviço contínuo, não entra em leilão.
-6. Ownership de unidades é explícito via roles.
-7. Toda missão possui abort protocol.
-8. Toda decisão relevante é logável.
-
----
-
-## 3. Componentes do Sistema
-
-### 3.1 Policies (Avaliação Pura)
-
-Características:
-- Stateless ou quase.
-- Não emitem comandos.
-- Produzem sinais derivados do estado.
-
-Principais Policies:
-
-#### ThreatPolicy
-Produz:
-- ThreatZones
-- ThreatIntent (harass / push / all-in)
-- DefenseUrgency (por base)
-
-#### StrategicPolicy
-Produz:
-- StrategicState (AHEAD / EVEN / BEHIND)
-- Confidence
-
-#### BudgetPolicy
-Produz:
-- ScanBudget
-- HarassBudget
-- RiskTolerance
+1. `Sensors` leem estado do jogo e nao emitem comandos.
+2. `Attention` e um snapshot imutavel por tick.
+3. `Intel` transforma sinais em crenças e grava em `Awareness`.
+4. `Planners` propõem candidatos de missao (`Proposal`) e nao executam micro.
+5. `Ego` e o unico arbitro de admissao, cooldown, preempcao e leases.
+6. `Tasks` sao a unica camada que comanda unidades/estruturas.
+7. Ownership de unidade e explicito por `mission_id` e `UnitRole`.
+8. Toda decisao operacional relevante deve ser observavel em log/evento.
 
 ---
 
-### 3.2 Directors (Orquestradores Stateful)
+## 3. Topologia do Sistema (real)
 
-Características:
-- Mantêm estado local
-- Propõem missões candidatas
-- Aplicam cooldowns
-- Não definem modo global
+### 3.1 Entradas principais
 
-Domínios:
+- [`run.py`](run.py): inicializacao do bot e partida local/ladder.
+- [`bot/main.py`](bot/main.py): integra `MyBot(AresBot)` com `RuntimeApp`.
+- [`bot/mind/self.py`](bot/mind/self.py): composicao da runtime e loop por tick.
 
-#### StrategyDirector
-- Define modo atual
-- Define pesos por domínio
-- Define budgets
-- Define política de preempção
+### 3.2 Componentes centrais
 
-Não cria missões diretamente.
+- `Sensors`: em `bot/sensors/*`
+- `Attention`: [`bot/mind/attention.py`](bot/mind/attention.py)
+- `Intel`: `bot/intel/*` (atual: enemy opening inference)
+- `Awareness`: [`bot/mind/awareness.py`](bot/mind/awareness.py)
+- `Planners`: `bot/planners/*`
+- `Ego`: [`bot/mind/ego.py`](bot/mind/ego.py)
+- `Tasks`: `bot/tasks/*`
+- `Body/Leases`: [`bot/mind/body.py`](bot/mind/body.py)
 
-#### DefenseDirector
-Propõe:
-- HoldBaseMission
-- StaticDefenseMission
-- PullWorkersEmergencyMission
+### 3.3 Pipeline canonico
 
-#### IntelDirector
-Propõe:
-- WorkerScoutMission
-- TacticalScanMission
-- SpotterMission
-
-#### MapControlDirector
-Propõe:
-- ScreenLaneMission
-- CreepDenyMission
-- ExpansionCheckMission
-
-#### HarassDirector
-Propõe:
-- DropMission
-- RunbyMission
-- MultiProngMission (futuro)
-
-#### ProductionDirector
-Não usa missões.
-Produz:
-- ProductionGoals
-- CompositionTargets
-- TransitionRequests
+1. Sensors derivam snapshot do tick.
+2. Snapshot e consolidado em `Attention`.
+3. Intel le `Attention` e atualiza `Awareness` (stateful).
+4. Planners leem `Attention + Awareness` e retornam `Proposal`.
+5. Ego valida/ordena/admite propostas.
+6. Ego executa tasks ativas e fecha missoes quando necessario.
+7. Tasks enviam comandos via Ares/python-sc2.
 
 ---
 
-### 3.3 Coordinator
+## 4. Fluxo por Tick (sequencia oficial)
 
-Responsável por:
+Sequencia implementada em [`RuntimeApp.on_step`](bot/mind/self.py):
 
-1. Receber missões candidatas
-2. Aplicar pesos definidos pelo StrategyDirector
-3. Selecionar missões ativas
-4. Resolver conflitos de unidades (roles)
-5. Aplicar preempção
-6. Garantir mínimos globais
+1. `attention = derive_attention(...)`
+2. `derive_enemy_build_intel(..., attention=attention, awareness=awareness, ...)`
+3. `await ego.tick(..., tick=TaskTick, attention=attention, awareness=awareness)`
 
-Não decide estratégia.
-Não executa micro.
+Dentro de `Ego.tick`:
 
----
+1. `body.reap(...)` + reap de commitments expirados.
+2. coleta de propostas de todos os planners.
+3. `prop.validate()` para cada proposta.
+4. ordenacao por `score` decrescente.
+5. admissao (`_admit`) com regras de cooldown, singleton domain e threat gate.
+6. execucao (`_execute`) das missoes ativas e transicao por `TaskResult`.
 
-## 4. Mission Model
+Eventos emitidos durante o fluxo:
 
-### 4.1 Estrutura
-
-Toda missão possui:
-
-- mission_id
-- domain
-- priority_base
-- commitment_level (LOW / MED / HIGH)
-- required_roles
-- timeout
-- cooldown
-- pause_capable
-- abort_protocol
-- report_schema
+- `attention_tick`
+- `planner_proposed` (quando planner loga)
+- `mission_started`
+- `mission_step`
+- `mission_ended`
 
 ---
 
-### 4.2 Lifecycle
+## 5. Contratos por Camada
 
-Estados:
+## 5.1 Sensors
 
-- PLANNING
-- ACTIVE
-- PAUSED
-- ABORTING
-- DONE
+Responsabilidade:
 
----
+- Derivar fatos do estado atual do jogo.
 
-### 4.3 Commitment Levels
+Permitido:
 
-LOW:
-- Scout
-- Map control
-Sempre preemptável.
+- Ler estado do bot/engine.
 
-MED:
-- Harass em trânsito
-Preemptável dependendo da urgência.
+Proibido:
 
-HIGH:
-- Engage ativo
-- All-in commit
-Abortável apenas sob urgência crítica.
+- Escrever em `Awareness`.
+- Emitir comandos de unidade.
 
----
+Exemplos:
 
-### 4.4 Abort Protocol
+- `derive_economy_snapshot`
+- `derive_combat_snapshot`
+- `derive_enemy_build_sensor`
+- `derive_macro_snapshot`
+- `derive_orbital_snapshot`
 
-Toda missão deve definir:
+## 5.2 Attention
 
-- Como liberar roles
-- Como dissolver squad
-- Para onde redirecionar unidades
-- Como reportar motivo de término
+Responsabilidade:
 
----
+- Representar snapshot imutavel por tick.
 
-### 4.5 Mission Report
+Contrato:
 
-Toda missão gera:
+- Sem side-effects.
+- Sem memoria historica.
+- Campos estaveis usados por planners/tasks.
 
-- start_time
-- end_time
-- outcome (success / abort / timeout)
-- resources_used
-- units_lost
-- damage_done
-- intel_gained
+Tipos principais:
 
-Permite adaptação futura.
+- `EconomySnapshot`
+- `CombatSnapshot`
+- `IntelSnapshot`
+- `MacroSnapshot`
+- `EnemyBuildSnapshot`
+- `Attention`
 
----
+## 5.3 Intel
 
-## 5. State Global (Blackboard + Signals)
+Responsabilidade:
 
-### 5.1 IntelState
+- Converter fatos de `Attention` em crenças stateful em `Awareness`.
 
-- LastKnownEnemyArmyPosition
-- KnownEnemyTechFlags
-- KnownEnemyBases
-- Staleness
-- Confidence
+Permitido:
 
----
+- Escrever chaves em `Awareness.mem` com TTL quando fizer sentido.
 
-### 5.2 ThreatZones
+Proibido:
 
-Para cada base/região:
+- Comandar unidades.
 
-- enemy_count
-- enemy_power_estimate
-- severity_score
+Exemplo atual:
 
----
+- [`derive_enemy_build_intel`](bot/intel/enemy_build_intel.py): classifica abertura inimiga (`GREEDY/NORMAL/AGGRESSIVE`) e grava sinais em `Awareness`.
 
-### 5.3 DefenseUrgency
+## 5.4 Awareness
 
-Para cada base:
+Responsabilidade:
 
-- severity (0–100)
-- time_to_impact
-- threat_type
-- confidence
+- Blackboard de estado entre ticks.
 
----
+Contrato:
 
-### 5.4 StrategicState
+- Chaves namespaceadas via `K(...)`.
+- Suporte a `ttl`, `age`, `staleness`.
+- API de eventos (`emit`, `tail_events`).
 
-- AHEAD
-- EVEN
-- BEHIND
-- confidence
+Regra:
 
----
+- `Awareness` nao executa comandos; apenas estado e eventos.
 
-## 6. Modos Globais
+## 5.5 Planners
 
-### OPENING
-- BuildRunner dominante
-- Defense médio
-- Harass baixo
+Responsabilidade:
 
-### SAFE_MACRO
-- Growth ativo
-- MapControl médio
-- Harass moderado
+- Gerar `Proposal` com score e `TaskSpec`.
 
-### PRESSURE
-- Harass alto
-- MapControl alto
-- Defense médio
+Entrada:
 
-### DEFEND
-- Defense alto
-- Harass baixo
-- MapControl reduzido
+- `Attention` + `Awareness`.
 
-### EMERGENCY_DEFENSE
-- Defense máximo
-- Harass pausado
-- MapControl mínimo
-- Preempção agressiva
+Saida:
 
-### CLOSE_OUT (futuro)
-- Negar bases
-- Conter inimigo
-- Finalizar jogo
+- `list[Proposal]`.
 
-Cada modo define:
-- Pesos por domínio
-- Budgets
-- Política de preempção
+Proibido:
+
+- Comandar unidades diretamente.
+
+Planners atuais:
+
+- `DefensePlanner`
+- `IntelPlanner`
+- `MacroPlanner`
+
+## 5.6 Ego
+
+Responsabilidade:
+
+- Arbitragem central de operacoes.
+
+Funcoes:
+
+- aplicar cooldown de proposta
+- bloquear dominios nao defensivos sob alta ameaca
+- garantir singleton por dominio configurado
+- selecionar/claim de unidades por requisito
+- bind de missao em task
+- lifecycle de missao + persistencia em `Awareness`
+
+`Ego` e o unico dono do ciclo de admissao/execucao/encerramento de missao.
+
+## 5.7 Tasks
+
+Responsabilidade:
+
+- Execucao concreta no jogo.
+
+Contrato:
+
+- `on_step` retorna obrigatoriamente `TaskResult`.
+- Estados efetivos: `RUNNING`, `DONE`, `FAILED`, `NOOP`.
+- `bind_mission(...)` e obrigatorio antes de executar.
+
+Somente tasks podem enviar comandos para jogo (`attack`, `move`, `train`, `register_behavior`, etc.).
 
 ---
 
-## 7. Macro Model
+## 6. Modelo de Missao Atual
 
-Macro é contínua e dividida em camadas.
+Definicoes em [`bot/planners/proposals.py`](bot/planners/proposals.py):
 
-### Vital Loop (sempre ativo)
-- Supply safety
-- Worker mínimo
-- Estruturas essenciais
+- `UnitRequirement(unit_type, count)`
+- `TaskSpec(task_id, task_factory, unit_requirements, lease_ttl)`
+- `Proposal(proposal_id, domain, score, tasks[1], lease_ttl, cooldown_s, risk_level, allow_preempt)`
 
-### Growth Loop
-- Expandir
-- Saturar
-- Upgrades
+Observacoes:
 
-### Greed Loop
-- Expansão agressiva
-- Tech pesado
+- `Proposal.tasks` contem exatamente 1 `TaskSpec` no modelo atual.
+- `task_factory` recebe `mission_id`.
 
-Modos podem desabilitar Growth/Greed.
-Vital nunca é totalmente desativado.
+## 6.1 Admissao de missao
 
----
+Durante `_admit`, `Ego`:
 
-## 8. Preempção
+1. ignora proposta em cooldown
+2. ignora proposta ja em execucao
+3. aplica threat gate (`domain != DEFENSE` sob urgencia alta)
+4. aplica preempcao para dominios singleton
+5. seleciona e claima unidades (se houver requisitos)
+6. instancia task, faz bind de missao e registra commitment
 
-### Soft Preempt
-- Pausa missão
-- Reavalia quando urgência cair
+## 6.2 Execucao e encerramento
 
-### Hard Preempt
-- Aborta missão
-- Libera roles
-- Ativa defesa
+Durante `_execute`, `Ego`:
 
-### Sem Preempção
-- Defesa local suficiente disponível
+- encerra expiradas (`reason=expired`)
+- executa `task.step(...)`
+- em `FAILED`: aplica cooldown e encerra
+- em `DONE`: encerra
+- em `RUNNING/NOOP`: mantem ativa e registra `mission_step`
 
----
+## 6.3 Leases e ownership
 
-## 9. Integração com Ares
+`UnitLeases` garante exclusividade por `mission_id` com TTL:
 
-Não reimplementar:
+- `claim(...)`
+- `touch(...)`
+- `release_mission(...)`
+- mapeamento de `domain -> UnitRole`
 
-- Pathfinding
-- Worker selection
-- Unit grouping
-- Build order logic
-- Placement
+Invariante:
 
-Missões devem:
-
-- Usar UnitRole para ownership
-- Usar squads do Ares
-- Usar mediator
-- Usar BuildRunner
+- unidade claimada nao pode ser usada por outra missao sem release/expiracao.
 
 ---
 
-## 10. Logging Obrigatório
+## 7. Estado e Memoria (`Awareness.mem`)
 
-Registrar:
+Catalogo detalhado: [`_docs/attention_awareness.md`](_docs/attention_awareness.md).
 
-- Modo atual
-- DefenseUrgency
-- Top mission candidates (score)
-- Missões selecionadas
-- Preempções
-- Motivo de término de missão
+Resumo de namespaces:
+
+- `ops:*`: estado de missoes e cooldowns
+- `intel:*`: bookkeeping de scout/scan
+- `enemy:*`: inferencia de abertura inimiga
+- `macro:*`: housekeeping e controles auxiliares
+
+Politica de TTL/staleness:
+
+- fatos inferidos com meia-vida curta usam `ttl` (ex.: enemy opening confidence)
+- bookkeeping estrutural usa `ttl=None`
+- consumidores devem considerar staleness (`age`, `is_stale`, `max_age`) quando relevante
 
 ---
 
-## 11. Ordem Recomendada de Implementação
+## 8. Observabilidade e Debug
 
-1. MissionRegistry + Coordinator + DefenseUrgency
-2. DefenseDirector MVP
-3. IntelDirector MVP
-4. MapControlDirector MVP
-5. HarassDirector MVP
-6. Production refinement
-7. Adaptação estatística
+Implementacao principal em [`bot/devlog.py`](bot/devlog.py).
+
+Formato:
+
+- JSONL consolidado por run
+- JSONL por modulo (`attention`, `planner`, `ego`, `runtime`, etc.)
+- JSONL por componente
+- trilhas de tick por modulo para eventos `*_tick`
+
+Eventos-chave para diagnostico:
+
+- Churn de missao: `mission_started`/`mission_ended`
+- Cooldown e falhas: `mission_ended` com `status=FAILED` + reason
+- Pressao de combate: `attention_tick` (`threatened`, `defense_urgency`)
+- Decisao de planner: `planner_proposed` e eventos especificos de planner
+
+Fluxo minimo de triagem:
+
+1. validar `attention_tick` para contexto do jogo
+2. validar `planner_proposed` para candidatas
+3. validar `mission_started`/`mission_ended` para churn/preempcao
+4. validar eventos de task (`*_tick`, success/fail)
+
+---
+
+## 9. Invariantes Operacionais
+
+1. `Attention` nao persiste estado entre ticks.
+2. `Intel` nao emite comandos de unidade.
+3. `Planners` nao executam micro.
+4. `Ego` decide admissao e ownership.
+5. `Task` retorna `TaskResult` valido em todo `on_step`.
+6. `Awareness` registra inicio/fim de toda missao admitida.
+7. Leases de unidades devem ser liberados no fim de missao.
+
+---
+
+## 10. Limites Atuais (MVP) e Roadmap
+
+Limites atuais:
+
+- Enemy build intel ainda heuristico (regras fixas, sem aprendizado online).
+- Ausencia de dominios completos de `Harass` e `MapControl` no runtime atual.
+- Parte da macro ainda sensivel a churn de missao em cenarios especificos.
+- Cobertura de testes focada no framework; modulo `bot` ainda precisa ampliar testes.
+
+Roadmap sugerido:
+
+1. Estabilizar lifecycle de missoes longas (reduzir churn em defesa/macro/scan).
+2. Consolidar dominio de manutencao separado de macro principal.
+3. Adicionar planners/tasks de `Harass` e `MapControl` com contratos iguais.
+4. Introduzir KPIs de runtime (uptime por missao, preempcao por dominio, taxa de falha).
+5. Expandir testes de `bot` para contracts de Ego/Planner/Task.
+
+---
+
+## 11. Mapa de Arquivos de Referencia
+
+- [`bot/mind/self.py`](bot/mind/self.py)
+- [`bot/mind/attention.py`](bot/mind/attention.py)
+- [`bot/mind/awareness.py`](bot/mind/awareness.py)
+- [`bot/intel/enemy_build_intel.py`](bot/intel/enemy_build_intel.py)
+- [`bot/mind/ego.py`](bot/mind/ego.py)
+- [`bot/mind/body.py`](bot/mind/body.py)
+- [`bot/planners/proposals.py`](bot/planners/proposals.py)
+- [`_docs/attention_awareness.md`](_docs/attention_awareness.md)
+
+---
+
+## 12. Status do Documento
+
+Este arquivo substitui o modelo legado como referencia oficial.
+Atualizacoes futuras devem acompanhar mudancas em contratos de `Attention/Awareness/Intel/Planner/Ego/Task`.
 ```

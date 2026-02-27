@@ -1,0 +1,174 @@
+# bot/mind/attention.py
+
+# bot/mind/attention.py
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Optional
+
+from sc2.position import Point2
+
+from bot.mind.awareness import Awareness
+from bot.sensors.threat_sensor import Threat
+
+
+@dataclass(frozen=True)
+class EconomySnapshot:
+    units_ready: dict
+    supply_left: int
+    minerals: int
+    gas: int
+
+
+@dataclass(frozen=True)
+class CombatSnapshot:
+    threatened: bool
+    defense_urgency: int
+    threat_pos: Optional[Point2]
+    enemy_count_near_bases: int
+
+
+@dataclass(frozen=True)
+class IntelSnapshot:
+    orbital_ready_to_scan: bool
+    orbital_energy: float
+
+
+@dataclass(frozen=True)
+class MacroSnapshot:
+    opening_done: bool
+
+    minerals: int
+    vespene: int
+
+    workers_total: int
+    workers_idle: int
+
+    bases_total: int
+    bases_under_saturated: int
+    bases_over_saturated: int
+
+    prod_structures_total: int
+    prod_structures_idle: int
+    prod_structures_active: int
+
+    supply_used: int
+    supply_cap: int
+    supply_left: int
+    supply_blocked: bool
+
+
+@dataclass(frozen=True)
+class EnemyBuildSnapshot:
+    """
+    Tick facts only.
+
+    Backwards-compatible fields:
+      - enemy_units: counts of enemy units currently visible anywhere
+      - enemy_structures: counts of enemy structures currently visible anywhere
+
+    Extended fields (MVP for scouting + completion state):
+      - enemy_main_pos: engine-provided enemy main (strict: enemy_start_locations[0])
+      - enemy_natural_pos: inferred from expansion locations (2nd closest to enemy main)
+      - enemy_units_main: counts of enemy units visible within main_radius of enemy_main_pos
+      - enemy_structures_main: counts of enemy structures visible within main_radius of enemy_main_pos
+
+      - enemy_structures_progress:
+          per-structure-type stats of build_progress for currently visible enemy structures, e.g.
+          {
+            UnitTypeId.SPAWNINGPOOL: {
+              "count": 1,
+              "ready": 0,
+              "incomplete": 1,
+              "min": 0.42,
+              "max": 0.42,
+              "avg": 0.42,
+            },
+            ...
+          }
+
+      - enemy_natural_on_ground:
+          True if a visible enemy townhall is on/near the enemy natural location.
+      - enemy_natural_townhall_progress:
+          max build_progress among visible townhalls near natural (None if not seen)
+      - enemy_natural_townhall_type:
+          type_id of the most-progressed townhall near natural (None if not seen)
+    """
+    enemy_units: dict
+    enemy_structures: dict
+
+    enemy_main_pos: Optional[Point2] = None
+    enemy_natural_pos: Optional[Point2] = None
+
+    enemy_units_main: dict = None
+    enemy_structures_main: dict = None
+
+    enemy_structures_progress: dict = None
+
+    enemy_natural_on_ground: bool = False
+    enemy_natural_townhall_progress: Optional[float] = None
+    enemy_natural_townhall_type: Optional[object] = None  # UnitTypeId, but keep loose to avoid typing friction
+
+
+@dataclass(frozen=True)
+class Attention:
+    """
+    Tick snapshot (read-only).
+    - immutable
+    - derived each tick
+    - history/inference belongs in Awareness
+    """
+    economy: EconomySnapshot
+    combat: CombatSnapshot
+    intel: IntelSnapshot
+    macro: MacroSnapshot
+    enemy_build: EnemyBuildSnapshot
+    time: float = 0.0
+
+
+def derive_attention(bot, *, awareness: Awareness, threat: Threat, log=None) -> Attention:
+    """
+    Derive tick snapshot from sensors.
+    Rule: no side-effects.
+
+    Note:
+      - imports for sensors are local to avoid circular imports
+        (sensors reference snapshot dataclasses from this module).
+    """
+    from bot.sensors.economy_sensor import derive_economy_snapshot
+    from bot.sensors.combat_sensor import derive_combat_snapshot
+    from bot.sensors.enemy_build_sensor import derive_enemy_build_sensor
+    from bot.sensors.macro_sensor import derive_macro_snapshot
+    from bot.sensors.orbital_sensor import derive_orbital_snapshot
+
+    now = float(getattr(bot, "time", 0.0) or 0.0)
+
+    economy = derive_economy_snapshot(bot)
+    combat = derive_combat_snapshot(bot, threat=threat)
+    intel = derive_orbital_snapshot(bot)
+    macro = derive_macro_snapshot(bot)
+    enemy_build = derive_enemy_build_sensor(bot)
+
+    out = Attention(
+        economy=economy,
+        combat=combat,
+        intel=intel,
+        macro=macro,
+        enemy_build=enemy_build,
+        time=float(now),
+    )
+    if log is not None:
+        log.emit(
+            "attention_tick",
+            {
+                "t": round(float(now), 2),
+                "threatened": bool(combat.threatened),
+                "defense_urgency": int(combat.defense_urgency),
+                "minerals": int(economy.minerals),
+                "gas": int(economy.gas),
+                "supply_left": int(economy.supply_left),
+                "opening_done": bool(macro.opening_done),
+            },
+            meta={"module": "attention", "component": "attention"},
+        )
+    return out

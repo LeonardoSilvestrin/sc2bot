@@ -1,4 +1,6 @@
 # bot/tasks/scout_task.py
+
+# bot/tasks/scout_task.py
 from __future__ import annotations
 
 from dataclasses import dataclass, field

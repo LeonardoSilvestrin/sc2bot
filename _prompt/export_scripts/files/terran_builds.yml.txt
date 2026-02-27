@@ -1,4 +1,6 @@
-﻿UseData: False
+# terran_builds.yml
+
+UseData: False
 BuildSelection: Cycle
 MinGamesWinrateBased: 3
 

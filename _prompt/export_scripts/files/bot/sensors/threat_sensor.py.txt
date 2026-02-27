@@ -1,0 +1,63 @@
+# bot/sensors/threat_sensor.py
+
+# bot/sensors/threat_sensor.py
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import List, Optional, Tuple
+
+from sc2.position import Point2
+from sc2.unit import Unit
+
+
+@dataclass(frozen=True)
+class ThreatReport:
+    threatened: bool
+    threat_pos: Optional[Point2]
+    enemy_count: int
+    radius: float
+    urgency: int  # 0..100
+
+
+class Threat:
+    """
+    Intelligence-only:
+      - Detecta inimigos perto de townhalls
+      - Produz threat_pos + enemy_count + urgency
+    """
+
+    def __init__(self, *, defend_radius: float = 22.0, min_enemy: int = 1):
+        self.defend_radius = float(defend_radius)
+        self.min_enemy = int(min_enemy)
+
+    def _townhalls(self, bot) -> List[Unit]:
+        try:
+            return list(bot.townhalls)
+        except Exception:
+            return []
+
+    def evaluate(self, bot) -> ThreatReport:
+        ths = self._townhalls(bot)
+        if not ths:
+            return ThreatReport(False, None, 0, self.defend_radius, 0)
+
+        enemies = bot.enemy_units
+        if not enemies:
+            return ThreatReport(False, None, 0, self.defend_radius, 0)
+
+        best: Tuple[int, Optional[Point2]] = (0, None)
+        for th in ths:
+            near = enemies.closer_than(self.defend_radius, th.position)
+            c = int(near.amount)
+            if c > best[0]:
+                best = (c, th.position)
+
+        threatened = best[0] >= self.min_enemy
+        enemy_count = int(best[0])
+
+        # urgência simples (MVP): ameaça => 50 + 10*count, cap 100
+        urgency = 0
+        if threatened:
+            urgency = min(100, 50 + 10 * enemy_count)
+
+        return ThreatReport(threatened, best[1], enemy_count, self.defend_radius, int(urgency))

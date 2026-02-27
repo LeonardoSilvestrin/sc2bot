@@ -1,12 +1,12 @@
+# bot/tasks/macro/production_tick.py
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from ares.behaviors.macro.auto_supply import AutoSupply
-from ares.behaviors.macro.expansion_controller import ExpansionController
-from ares.behaviors.macro.gas_building_controller import GasBuildingController
+from ares.behaviors.macro.build_workers import BuildWorkers
 from ares.behaviors.macro.macro_plan import MacroPlan
-from ares.behaviors.macro.production_controller import ProductionController
+from ares.behaviors.macro.spawn_controller import SpawnController
 from sc2.ids.unit_typeid import UnitTypeId as U
 
 from bot.devlog import DevLogger
@@ -16,13 +16,10 @@ from bot.tasks.base_task import BaseTask, TaskTick, TaskResult
 
 
 @dataclass
-class MacroSpendingTick(BaseTask):
+class MacroProductionTick(BaseTask):
     awareness: Awareness
     log: DevLogger | None = None
-    target_bases_default: int = 2
-    flood_m: int = 800
-    flood_hi_m: int = 1400
-    flood_hold_s: float = 12.0
+    scv_cap: int = 66
     log_every_iters: int = 22
 
     def __init__(
@@ -30,19 +27,13 @@ class MacroSpendingTick(BaseTask):
         *,
         awareness: Awareness,
         log: DevLogger | None = None,
-        target_bases_default: int = 2,
-        flood_m: int = 800,
-        flood_hi_m: int = 1400,
-        flood_hold_s: float = 12.0,
+        scv_cap: int = 66,
         log_every_iters: int = 22,
     ):
-        super().__init__(task_id="macro_spending", domain="MACRO_SPENDING", commitment=10)
+        super().__init__(task_id="macro_production", domain="MACRO_PRODUCTION", commitment=10)
         self.awareness = awareness
         self.log = log
-        self.target_bases_default = int(target_bases_default)
-        self.flood_m = int(flood_m)
-        self.flood_hi_m = int(flood_hi_m)
-        self.flood_hold_s = float(flood_hold_s)
+        self.scv_cap = int(scv_cap)
         self.log_every_iters = int(log_every_iters)
 
     @staticmethod
@@ -80,7 +71,7 @@ class MacroSpendingTick(BaseTask):
 
         return self._normalize(comp)
 
-    def _army_comp_for_controllers(self, now: float) -> dict[U, dict[str, float | int]]:
+    def _spawn_dict(self, now: float) -> dict[U, dict[str, float | int]]:
         comp = self._desired_comp(now)
         ordered = sorted(comp.items(), key=lambda kv: kv[1], reverse=True)
         out: dict[U, dict[str, float | int]] = {}
@@ -88,43 +79,21 @@ class MacroSpendingTick(BaseTask):
             out[uid] = {"proportion": float(proportion), "priority": int(idx)}
         return out
 
-    def _target_bases(self, *, attention: Attention, now: float) -> int:
-        minerals = int(attention.economy.minerals)
-
-        flood_until = float(self.awareness.mem.get(K("macro", "spending", "flood_until"), now=now, default=0.0) or 0.0)
-        if minerals >= self.flood_hi_m:
-            flood_until = now + float(self.flood_hold_s)
-            self.awareness.mem.set(K("macro", "spending", "flood_until"), value=float(flood_until), now=now, ttl=None)
-
-        flood_active = minerals >= self.flood_m or now < flood_until
-
-        target = int(self.target_bases_default)
-        if flood_active:
-            target += 1
-
-        return max(1, int(target))
-
     async def on_step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult:
         if not isinstance(self.mission_id, str) or not self.mission_id:
             return TaskResult.failed("unbound_mission")
 
-        bor = getattr(bot, "build_order_runner", None)
-        if bor is not None and not bool(getattr(bor, "build_completed", False)):
-            return TaskResult.noop("build_order_active")
-
         now = float(tick.time)
-        target_bases = self._target_bases(attention=attention, now=now)
-        gas_target = max(0, int(attention.macro.bases_total) * 2)
-        army_comp = self._army_comp_for_controllers(now)
+        spawn_dict = self._spawn_dict(now)
 
         plan = MacroPlan()
-        plan.add(AutoSupply(base_location=bot.start_location))
-        plan.add(GasBuildingController(to_count=int(gas_target)))
-        plan.add(ExpansionController(to_count=int(target_bases)))
+        plan.add(BuildWorkers(to_count=int(self.scv_cap)))
         plan.add(
-            ProductionController(
-                army_composition_dict=army_comp,
-                base_location=bot.start_location,
+            SpawnController(
+                army_composition_dict=spawn_dict,
+                freeflow_mode=bool(attention.economy.minerals >= 1200),
+                ignore_proportions_below_unit_count=8,
+                over_produce_on_low_tech=True,
             )
         )
 
@@ -132,14 +101,13 @@ class MacroSpendingTick(BaseTask):
 
         if self.log is not None and (int(tick.iteration) % self.log_every_iters == 0):
             self.log.emit(
-                "macro_spending",
+                "macro_production",
                 {
                     "iter": int(tick.iteration),
                     "t": round(float(now), 2),
-                    "target_bases": int(target_bases),
-                    "gas_target": int(gas_target),
-                    "minerals": int(attention.economy.minerals),
+                    "scv_cap": int(self.scv_cap),
+                    "units": [u.name for u in spawn_dict.keys()],
                 },
             )
 
-        return TaskResult.running("spending_plan_registered")
+        return TaskResult.running("production_plan_registered")

@@ -1,5 +1,11 @@
-﻿Voce e meu parceiro tecnico para evoluir um bot de StarCraft II em Python.
+Voce e meu parceiro tecnico para evoluir um bot de StarCraft II em Python.
 Vou enviar um dump do repositorio gerado por _prompt/export_prompt_root.py.
+
+CONTEXTO ATUAL (NOMES VALIDOS)
+- Planners ativos: defense_planner, intel_planner, spending_planner, production_planner, housekeeping_planner, depot_control_planner.
+- Tasks macro ativas: spending_tick, production_tick, scv_housekeeping_task.
+- Task separada de wall/depot: control_depots_task.
+- Legacy removido: macro_planner monolitico nao e referencia de verdade.
 
 PRIORIDADES
 1. Consistencia de contrato (Task, Planner, Proposal, Ego, Body, Awareness, Attention, Self)
@@ -18,7 +24,7 @@ MODO DE RESPOSTA
 Se eu nao indicar modo, use [PATCH].
 
 ENTREGA
-- Em [FILE] e [MULTI], cada .py deve começar com comentario de caminho.
+- Em [FILE] e [MULTI], cada .py deve comecar com comentario de caminho.
   Exemplo: # bot/mind/ego.py
 
 COMPORTAMENTO ESPERADO DO AGENTE

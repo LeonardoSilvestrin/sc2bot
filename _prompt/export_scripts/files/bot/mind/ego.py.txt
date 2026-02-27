@@ -1,4 +1,6 @@
-﻿# bot/mind/ego.py
+# bot/mind/ego.py
+
+# bot/mind/ego.py
 from __future__ import annotations
 
 from dataclasses import dataclass, field

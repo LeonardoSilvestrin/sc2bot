@@ -1,4 +1,6 @@
 # bot/mind/self.py
+
+# bot/mind/self.py
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, is_dataclass
@@ -19,6 +21,7 @@ from bot.mind.ego import Ego, EgoConfig
 from bot.tasks.base_task import TaskTick
 
 from bot.tasks.defend_task import Defend
+from bot.tasks.scout_task import Scout
 from bot.tasks.macro.opening import MacroOpeningTick
 
 from bot.planners.defense_planner import DefensePlanner
@@ -99,11 +102,19 @@ class RuntimeApp:
 
         defend_task = Defend(log=log, log_every_iters=11)
 
+        scout_task = Scout(
+            awareness=awareness,
+            log=log,
+            trigger_time=25.0,
+            log_every=6.0,
+            see_radius=14.0,
+        )
+
         # Opening remains a tiny SCV-only macro while BuildRunner/YML does the rest.
         opening_macro_task = MacroOpeningTick(log=log, log_every_iters=22, scv_cap=60)
 
         defense_planner = DefensePlanner(defend_task=defend_task, log=log)
-        intel_planner = IntelPlanner(awareness=awareness, log=log)
+        intel_planner = IntelPlanner(awareness=awareness, log=log, scout_task=scout_task)
 
         spending_planner = SpendingPlanner(
             target_bases_default=2,
@@ -119,9 +130,9 @@ class RuntimeApp:
         )
 
         housekeeping_planner = HousekeepingPlanner(
-            interval_s=8.0,
-            cooldown_s=2.0,
-            lease_ttl_s=6.0,
+            interval_s=35.0,
+            cooldown_s=6.0,
+            lease_ttl_s=12.0,
             score=18,
             log=log,
         )
@@ -265,30 +276,10 @@ class RuntimeApp:
     def _full_snapshots_enabled(self) -> bool:
         if bool(self.full_snapshots_default):
             return True
-
-        # Optional runtime override: set FULL_SNAPSHOTS=1/true/on.
         try:
-            import os
-
-            env = str(os.getenv("FULL_SNAPSHOTS", "")).strip().lower()
-            if env in {"1", "true", "on", "yes"}:
-                return True
-        except Exception:
-            pass
-
-        # Accept both CWD-relative and repo-root-relative flag paths.
-        try:
-            rel = Path(self.full_snapshots_flag_path)
-            if rel.exists():
-                return True
-
-            repo_root = Path(__file__).resolve().parents[2]
-            if (repo_root / rel).exists():
-                return True
+            return Path(self.full_snapshots_flag_path).exists()
         except Exception:
             return False
-
-        return False
 
     def _emit_build_order_diagnostics(self, bot, *, now: float, iteration: int) -> None:
         if self.log is None:

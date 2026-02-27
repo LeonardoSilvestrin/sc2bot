@@ -1,0 +1,22 @@
+# bot/sensors/combat_sensor.py
+
+# bot/sensors/combat_sensor.py
+from __future__ import annotations
+
+from bot.mind.attention import CombatSnapshot
+from bot.sensors.threat_sensor import Threat
+
+
+def derive_combat_snapshot(bot, *, threat: Threat) -> CombatSnapshot:
+    """
+    Combat snapshot from threat evaluation.
+    Rule: no side-effects.
+    """
+    thr = threat.evaluate(bot)
+    return CombatSnapshot(
+        threatened=bool(thr.threatened),
+        defense_urgency=int(thr.urgency),
+        threat_pos=thr.threat_pos,
+        enemy_count_near_bases=int(thr.enemy_count),
+    )
+
