@@ -37,7 +37,7 @@ class ScvHousekeeping(BaseTask):
     """
 
     awareness: Awareness
-    max_reassign_per_run: int = 12
+    max_reassign_per_run: int = 20
 
     # base mineral targets
     mineral_floor: int = 10   # seed expansions to at least this
@@ -250,6 +250,7 @@ class ScvHousekeeping(BaseTask):
 
         th_tags = [int(th.tag) for th in th_list]
         idx_by_th_tag = {t: i for i, t in enumerate(th_tags)}
+        th_by_tag = {int(th.tag): th for th in th_list}
 
         # Assign each mineral worker to a base (prefer mediator mapping, fallback nearest)
         per_base_workers: list[list] = [[] for _ in th_list]
@@ -261,7 +262,21 @@ class ScvHousekeeping(BaseTask):
             if th_tag is not None:
                 try:
                     th_tag = int(th_tag)
-                    bidx = idx_by_th_tag.get(th_tag, None)
+                    mapped_idx = idx_by_th_tag.get(th_tag, None)
+                    if mapped_idx is not None:
+                        mapped_th = th_by_tag.get(th_tag)
+                        nearest_th = self._nearest_th(w, townhalls)
+                        # Resource-manager mapping can be stale after expansions;
+                        # if it diverges materially from nearest TH, trust nearest.
+                        if mapped_th is not None and nearest_th is not None:
+                            mapped_dist = float(w.distance_to(mapped_th.position))
+                            nearest_dist = float(w.distance_to(nearest_th.position))
+                            if mapped_dist > (nearest_dist + 3.0):
+                                bidx = idx_by_th_tag.get(int(nearest_th.tag), None)
+                            else:
+                                bidx = mapped_idx
+                        else:
+                            bidx = mapped_idx
                 except Exception:
                     bidx = None
             if bidx is None:

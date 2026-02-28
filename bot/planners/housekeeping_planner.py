@@ -19,7 +19,7 @@ class HousekeepingPlanner(BasePlanner):
     Low-cost periodic housekeeping (SCV rebalance, etc.).
     """
     planner_id: str = "housekeeping_planner"
-    interval_s: float = 35.0
+    interval_s: float = 8.0
     cooldown_s: float = 6.0
     lease_ttl_s: float = 12.0
     score: int = 18
