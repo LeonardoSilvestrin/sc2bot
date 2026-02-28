@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from sc2.ids.unit_typeid import UnitTypeId as U
 from sc2.position import Point2
@@ -124,4 +124,3 @@ def derive_unit_threat_snapshot(
 
     missions_out.sort(key=lambda m: (-(m.units_in_danger), -m.enemy_count_local, m.mission_id))
     return UnitThreatsSnapshot(units=tuple(units_out), missions=tuple(missions_out))
-

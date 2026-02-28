@@ -1,7 +1,7 @@
 # bot/sensors/combat_sensor.py
 from __future__ import annotations
 
-from bot.mind.attention import CombatSnapshot
+from bot.mind.attention import BaseThreatSnapshot, CombatSnapshot
 from bot.sensors.threat_sensor import Threat
 
 
@@ -11,10 +11,21 @@ def derive_combat_snapshot(bot, *, threat: Threat) -> CombatSnapshot:
     Rule: no side-effects.
     """
     thr = threat.evaluate(bot)
-    return CombatSnapshot(
-        threatened=bool(thr.threatened),
-        defense_urgency=int(thr.urgency),
-        threat_pos=thr.threat_pos,
-        enemy_count_near_bases=int(thr.enemy_count),
+    base_threats = tuple(
+        BaseThreatSnapshot(
+            th_tag=int(b.th_tag),
+            th_pos=b.th_pos,
+            enemy_count=int(b.enemy_count),
+            enemy_power=float(b.enemy_power),
+            urgency=int(b.urgency),
+            threat_pos=b.threat_pos,
+        )
+        for b in thr.base_threats
     )
-
+    return CombatSnapshot(
+        primary_base_tag=thr.primary_base_tag,
+        primary_enemy_count=int(thr.primary_enemy_count),
+        primary_urgency=int(thr.primary_urgency),
+        primary_threat_pos=thr.primary_threat_pos,
+        base_threats=base_threats,
+    )

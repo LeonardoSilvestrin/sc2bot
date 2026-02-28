@@ -1,13 +1,12 @@
-# bot/tasks/macro/scv_housekeeping_task.py
-
 # =============================================================================
-# bot/tasks/macro/scv_housekeeping_task.py  (MODIFIED: domain)
+# bot/tasks/macro/scv_housekeeping_task.py
 # =============================================================================
 from __future__ import annotations
 
 from dataclasses import dataclass
 
 from ares.consts import UnitRole
+from sc2.ids.ability_id import AbilityId
 from sc2.ids.unit_typeid import UnitTypeId as U
 
 from bot.mind.attention import Attention
@@ -18,30 +17,58 @@ from bot.tasks.base_task import BaseTask, TaskTick, TaskResult
 @dataclass
 class ScvHousekeeping(BaseTask):
     """
-    Light-weight SCV housekeeping.
+    SCV housekeeping (rebalance minerals, keep gas full, recover idles).
 
-    Policy:
-      1) Gas first: keep ideal workers per refinery.
-      2) Minerals: keep ~16 mineral workers per base (margin).
-      3) Recover idles/orphans: any local idle SCV should be re-assigned quickly.
+    Why your distribution was still "bugada":
+      - The old policy only moved from *strict surplus vs 16* to deficits.
+        When a new base finishes, the main is often NOT surplus vs 16, but you still
+        MUST transfer workers to seed the new base (bring it to a floor like 8-10).
+      - Solution: use a water-filling target:
+          Step A) bring every base to floor_min (e.g. 10)
+          Step B) then bring bases up to cap (e.g. 16)
+        This transfers from main even if main isn't "surplus vs 16", as long as
+        main is above the current floor and the new base is below it.
+
+    Hard constraints:
+      - never retask reserved mission tags
+      - never retask BUILD/REPAIR SCVs
+      - gas fill is priority, but still respects "do not break everything":
+        pull donors first from idle/orphans/excess above floor.
     """
 
     awareness: Awareness
     max_reassign_per_run: int = 12
-    mineral_balance_margin: int = 0
 
-    # distance gates (avoid retasking scouts / far workers)
+    # base mineral targets
+    mineral_floor: int = 10   # seed expansions to at least this
+    mineral_cap: int = 16     # then saturate to this
+
+    # distance gates (avoid retasking far workers / scouts)
     local_worker_max_dist: float = 26.0
-    # if worker has no worker_to_th mapping, we allow nearest-base fallback within this distance
     th_fallback_max_dist: float = 30.0
+    mule_spam_until_s: float = 360.0
+    mule_keep_two_from_s: float = 720.0
+    mule_max_reserved_scans: int = 2
 
     def __init__(self, *, awareness: Awareness):
-        # Global housekeeping task: no unit leases are required.
         super().__init__(task_id="scv_housekeeping", domain="MACRO_HOUSEKEEPING", commitment=0)
         self.awareness = awareness
 
     def evaluate(self, bot, attention: Attention) -> int:
         return 10
+
+    # ---------------------------------------------------------------------
+    # Helpers
+    # ---------------------------------------------------------------------
+
+    @staticmethod
+    def _as_dict_maybe(x):
+        try:
+            if callable(x):
+                x = x()
+        except Exception:
+            pass
+        return x if isinstance(x, dict) else {}
 
     @staticmethod
     def _assign_worker_to_mineral(worker, mineral_fields) -> None:
@@ -49,11 +76,26 @@ class ScvHousekeeping(BaseTask):
             return
         worker.gather(mineral_fields.closest_to(worker))
 
+    @staticmethod
+    def _is_building_or_repairing(worker) -> bool:
+        try:
+            if getattr(worker, "is_constructing", False):
+                return True
+        except Exception:
+            pass
+
+        try:
+            for o in getattr(worker, "orders", []) or []:
+                ab = getattr(o, "ability", None)
+                name = str(getattr(ab, "name", "") or "")
+                if "REPAIR" in name or "BUILD" in name:
+                    return True
+        except Exception:
+            pass
+
+        return False
+
     def _reserved_running_tags(self, now: float) -> set[int]:
-        """
-        Tags currently assigned to RUNNING missions in Ego/Awareness.
-        Housekeeping must not retask these workers.
-        """
         out: set[int] = set()
         try:
             facts = self.awareness.mem._facts.items()
@@ -66,6 +108,8 @@ class ScvHousekeeping(BaseTask):
             if k[0] != "ops" or k[1] != "mission" or k[-1] != "status":
                 continue
             mission_id = k[2]
+            if isinstance(self.mission_id, str) and self.mission_id and mission_id == self.mission_id:
+                continue
             st = str(self.awareness.mem.get(K("ops", "mission", mission_id, "status"), now=now, default=""))
             if st != "RUNNING":
                 continue
@@ -80,25 +124,19 @@ class ScvHousekeeping(BaseTask):
         return out
 
     def _collect_candidate_scvs(self, bot, *, reserved_tags: set[int]):
-        """
-        Candidate SCVs for housekeeping:
-        - SCVs in GATHERING role (mediator)
-        - PLUS local idle SCVs (bot.units) to recover true idles/orphans
-        """
-        gathering = bot.mediator.get_units_from_role(role=UnitRole.GATHERING, unit_type=U.SCV)
-        all_scvs = bot.units(U.SCV)
-
-        # idle SCVs might not be in GATHERING role; recover them explicitly
-        idle = all_scvs.idle
-
-        # unify by tag
+        # Use full worker set; role mappings can be stale/incomplete for rebalancing.
+        all_scvs = bot.workers
+        if all_scvs is None:
+            all_scvs = bot.units(U.SCV)
         by_tag = {}
-        for u in list(gathering) + list(idle):
+        for u in list(all_scvs):
             try:
                 tag = int(u.tag)
             except Exception:
                 continue
             if tag in reserved_tags:
+                continue
+            if self._is_building_or_repairing(u):
                 continue
             by_tag[tag] = u
         return list(by_tag.values())
@@ -114,10 +152,61 @@ class ScvHousekeeping(BaseTask):
             return None
         return None
 
-    def _rebalance_workers(self, bot, *, now: float) -> tuple[int, int, int, int, int]:
+    def _is_local_worker(self, worker, townhalls) -> bool:
+        if townhalls.amount == 0:
+            return True
+        try:
+            nearest = min(float(worker.distance_to(th.position)) for th in townhalls)
+            return nearest <= float(self.local_worker_max_dist)
+        except Exception:
+            return True
+
+    @staticmethod
+    def _waterfill_targets(counts: list[int], total_workers: int, floor: int, cap: int) -> list[int]:
+        """
+        Allocate total_workers across len(counts) bases:
+          - first bring each base to 'floor' (seed)
+          - then bring each base to 'cap' (saturate)
+        Does NOT require current bases to be surplus vs cap to move.
+        """
+        n = len(counts)
+        if n <= 0:
+            return []
+        targets = [0] * n
+
+        remaining = max(0, int(total_workers))
+
+        # Step A: floor
+        floor_need = [max(0, floor - 0) for _ in range(n)]
+        for i in range(n):
+            take = min(remaining, floor_need[i])
+            targets[i] += take
+            remaining -= take
+
+        # Step B: cap
+        for i in range(n):
+            need = max(0, cap - targets[i])
+            take = min(remaining, need)
+            targets[i] += take
+            remaining -= take
+
+        return targets
+
+    # ---------------------------------------------------------------------
+    # Core
+    # ---------------------------------------------------------------------
+
+    def _rebalance_workers(self, bot, *, now: float):
         townhalls = bot.townhalls.ready
         if townhalls.amount == 0:
-            return 0, 0, 0, 0, 0
+            return {
+                "gas_deficit": 0,
+                "moved_to_gas": 0,
+                "moved_to_minerals": 0,
+                "recovered_idle": 0,
+                "reserved_tags": 0,
+                "base_minerals": [],
+            }
 
         reserved_tags = self._reserved_running_tags(now)
         try:
@@ -126,141 +215,205 @@ class ScvHousekeeping(BaseTask):
         except Exception:
             pass
 
-        worker_to_gas = bot.mediator.get_worker_to_vespene_dict
-        worker_to_th = bot.mediator.get_worker_tag_to_townhall_tag
+        worker_to_gas = self._as_dict_maybe(getattr(bot.mediator, "get_worker_to_vespene_dict", {}))
+        worker_to_th = self._as_dict_maybe(getattr(bot.mediator, "get_worker_tag_to_townhall_tag", {}))
 
-        own_bases = list(townhalls)
-
-        def _is_local_worker(worker) -> bool:
-            if not own_bases:
-                return True
-            try:
-                nearest = min(float(worker.distance_to(th.position)) for th in own_bases)
-                return nearest <= float(self.local_worker_max_dist)
-            except Exception:
-                return True
-
-        # candidates = gathering + idle (local), minus reserved
         candidates = self._collect_candidate_scvs(bot, reserved_tags=reserved_tags)
-
-        # filter down to local, non-reserved, non-scout etc.
-        local_candidates = [w for w in candidates if _is_local_worker(w)]
+        local_candidates = [w for w in candidates if self._is_local_worker(w, townhalls)]
         if not local_candidates:
-            return 0, 0, 0, 0, len(reserved_tags)
+            return {
+                "gas_deficit": 0,
+                "moved_to_gas": 0,
+                "moved_to_minerals": 0,
+                "recovered_idle": 0,
+                "reserved_tags": len(reserved_tags),
+                "base_minerals": [],
+            }
 
-        # classify gas workers using mediator mapping, but keep idle ones too
         def _is_gas_worker(w) -> bool:
             try:
                 return int(w.tag) in worker_to_gas
             except Exception:
                 return False
 
+        # Split pools
         mineral_pool = [w for w in local_candidates if not _is_gas_worker(w)]
-        if not mineral_pool:
-            return 0, 0, 0, 0, len(reserved_tags)
+        gas_pool = [w for w in local_candidates if _is_gas_worker(w)]
 
-        # build base_tag mapping with fallback for orphans
-        base_tag_by_worker: dict[int, int] = {}
+        # Base ordering: stable by distance to start_location (no booleans)
+        th_list = list(townhalls)
+        try:
+            sl = bot.start_location
+            th_list.sort(key=lambda th: float(th.distance_to(sl)))
+        except Exception:
+            pass
+
+        th_tags = [int(th.tag) for th in th_list]
+        idx_by_th_tag = {t: i for i, t in enumerate(th_tags)}
+
+        # Assign each mineral worker to a base (prefer mediator mapping, fallback nearest)
+        per_base_workers: list[list] = [[] for _ in th_list]
         orphans: list = []
         for w in mineral_pool:
             wtag = int(w.tag)
             th_tag = worker_to_th.get(wtag, None)
-            if th_tag is not None and int(th_tag) != -1:
-                base_tag_by_worker[wtag] = int(th_tag)
-                continue
-            th = self._nearest_th(w, townhalls)
-            if th is None:
+            bidx = None
+            if th_tag is not None:
+                try:
+                    th_tag = int(th_tag)
+                    bidx = idx_by_th_tag.get(th_tag, None)
+                except Exception:
+                    bidx = None
+            if bidx is None:
+                th = self._nearest_th(w, townhalls)
+                if th is None:
+                    orphans.append(w)
+                    continue
+                bidx = idx_by_th_tag.get(int(th.tag), None)
+            if bidx is None:
                 orphans.append(w)
-            else:
-                base_tag_by_worker[wtag] = int(th.tag)
+                continue
+            per_base_workers[bidx].append(w)
 
-        moved_tags: set[int] = set()
         remaining_budget = int(self.max_reassign_per_run)
+        moved_tags: set[int] = set()
 
-        # 1) Gas saturation first (pull from mineral pool, prioritizing idle/orphans implicitly by distance)
+        # -----------------------------------------------------------------
+        # 1) GAS: fill any refinery deficits
+        # -----------------------------------------------------------------
         gas_deficit = 0
         moved_to_gas = 0
-        gas_buildings = [g for g in bot.gas_buildings if g.is_ready]
 
-        for gas in gas_buildings:
-            assigned = int(getattr(gas, "assigned_harvesters", 0) or 0)
-            ideal = int(getattr(gas, "ideal_harvesters", 0) or 0)
-            if ideal <= 0:
-                continue
+        gas_buildings = [g for g in bot.gas_buildings if g.is_ready]
+        if gas_buildings:
+            try:
+                # Keep ResourceManager aligned with housekeeping intent while gas is missing.
+                bot.mediator.set_workers_per_gas(amount=3)
+            except Exception:
+                pass
+        for ref in gas_buildings:
+            assigned = int(getattr(ref, "assigned_harvesters", 0) or 0)
+            ideal = int(getattr(ref, "ideal_harvesters", 3) or 3)
+            ideal = 3 if ideal <= 0 else ideal
             need = max(0, ideal - assigned)
-            gas_deficit += int(need)
+            gas_deficit += need
+
             if need <= 0 or remaining_budget <= 0:
                 continue
 
-            donors = sorted(
-                [w for w in mineral_pool if int(w.tag) not in moved_tags],
-                key=lambda w: (0 if w.is_idle else 1, w.distance_to(gas)),
-            )
+            # donors: idle first, then orphans, then any mineral worker above floor.
+            # If still missing gas workers, allow any remaining mineral workers from this mission selection.
+            donors = []
+
+            donors.extend([w for w in mineral_pool if w.is_idle and int(w.tag) not in moved_tags])
+            donors.extend([w for w in orphans if int(w.tag) not in moved_tags])
+
+            # add "excess above floor" donors (per base)
+            for bidx, ws in enumerate(per_base_workers):
+                if not ws:
+                    continue
+                # if base has more than floor, donate farthest first
+                if len(ws) > int(self.mineral_floor):
+                    donors.extend(sorted(ws, key=lambda w: w.distance_to(th_list[bidx].position), reverse=True))
+            if need > 0:
+                donors.extend([w for w in mineral_pool if int(w.tag) not in moved_tags])
+
+            # de-dupe donors by tag, keep order
+            uniq = []
+            seen = set()
             for w in donors:
+                t = int(w.tag)
+                if t in seen or t in moved_tags:
+                    continue
+                seen.add(t)
+                uniq.append(w)
+
+            for w in uniq:
                 if need <= 0 or remaining_budget <= 0:
                     break
+                if self._is_building_or_repairing(w):
+                    continue
                 wtag = int(w.tag)
-                w.gather(gas)
+                try:
+                    # Prevent ResourceManager from immediately pulling this worker back to minerals.
+                    bot.mediator.remove_worker_from_mineral(worker_tag=wtag)
+                except Exception:
+                    pass
+                w.gather(ref)
                 moved_tags.add(wtag)
                 moved_to_gas += 1
                 remaining_budget -= 1
                 need -= 1
 
         if remaining_budget <= 0:
-            return gas_deficit, moved_to_gas, 0, 0, len(reserved_tags)
+            return {
+                "gas_deficit": gas_deficit,
+                "moved_to_gas": moved_to_gas,
+                "moved_to_minerals": 0,
+                "recovered_idle": 0,
+                "reserved_tags": len(reserved_tags),
+                "base_minerals": [len(ws) for ws in per_base_workers],
+            }
 
-        # 2) Minerals per base
-        margin = int(self.mineral_balance_margin)
+        # -----------------------------------------------------------------
+        # 2) MINERALS: seed expansions (floor), then saturate (cap)
+        # -----------------------------------------------------------------
+        counts = [len(ws) for ws in per_base_workers]
+        total_mineral_workers = sum(counts)
 
-        # count current mineral workers per base (excluding already moved)
-        per_base_workers: dict[int, list] = {}
-        for w in mineral_pool:
-            wtag = int(w.tag)
-            if wtag in moved_tags:
-                continue
-            btag = base_tag_by_worker.get(wtag, None)
-            if btag is None:
-                continue
-            per_base_workers.setdefault(int(btag), []).append(w)
+        targets = self._waterfill_targets(
+            counts=counts,
+            total_workers=total_mineral_workers,
+            floor=int(self.mineral_floor),
+            cap=int(self.mineral_cap),
+        )
 
-        deficits: list[tuple[object, int]] = []
-        surplus: list = []
-        total_deficit = 0
+        # build deficits/surpluses vs targets
+        deficits: list[tuple[int, int]] = []  # (base_idx, need)
+        donors: list[tuple[int, object]] = []  # (from_idx, worker)
 
-        for th in townhalls:
-            th_tag = int(th.tag)
-            ws = per_base_workers.get(th_tag, [])
-            count = len(ws)
-            desired_for_th = int(getattr(th, "ideal_harvesters", 0) or 16)
-            desired_for_th = max(8, desired_for_th)
-            if count < (desired_for_th - margin):
-                need = desired_for_th - count
-                deficits.append((th, need))
-                total_deficit += need
-            elif count > (desired_for_th + margin):
-                # donors: farthest first
-                excess = count - desired_for_th
-                surplus.extend(sorted(ws, key=lambda w: w.distance_to(th.position), reverse=True)[:excess])
+        for bidx, ws in enumerate(per_base_workers):
+            need = max(0, int(targets[bidx]) - int(len(ws)))
+            extra = max(0, int(len(ws)) - int(targets[bidx]))
 
-        # IMPORTANT: orphans + true idle should be donated first (they are the ones causing “SCV idle forever”)
-        orphan_donors = [w for w in orphans if int(w.tag) not in moved_tags and _is_local_worker(w)]
+            if need > 0:
+                deficits.append((bidx, need))
+
+            if extra > 0:
+                # donors: farthest from their own base first
+                th = th_list[bidx]
+                ws_sorted = sorted(ws, key=lambda w: w.distance_to(th.position), reverse=True)
+                for w in ws_sorted[:extra]:
+                    if int(w.tag) in moved_tags:
+                        continue
+                    donors.append((bidx, w))
+
+        # If we still have idle/orphans, treat them as donors too (best possible)
+        orphan_donors = [w for w in orphans if int(w.tag) not in moved_tags and self._is_local_worker(w, townhalls)]
         idle_donors = [w for w in mineral_pool if w.is_idle and int(w.tag) not in moved_tags]
+
+        # donor pool (ordered): orphans, idle, then surplus donors
         donor_pool = []
-        # de-dupe by tag
         seen = set()
-        for w in orphan_donors + idle_donors + surplus:
+        for w in orphan_donors + idle_donors + [w for _, w in donors]:
             t = int(w.tag)
-            if t in seen:
+            if t in seen or t in moved_tags:
+                continue
+            if self._is_building_or_repairing(w):
                 continue
             seen.add(t)
             donor_pool.append(w)
 
-        if not deficits or not donor_pool:
-            # if there are idle/orphans but no deficit, still assign them to nearest base minerals
-            reassigned_idle = 0
-            for w in orphan_donors + idle_donors:
+        moved_to_minerals = 0
+        recovered_idle = 0
+
+        # If no explicit deficits, just recover remaining idle mineral workers
+        if not deficits:
+            for w in idle_donors + orphan_donors:
                 if remaining_budget <= 0:
                     break
+                if self._is_building_or_repairing(w):
+                    continue
                 th = self._nearest_th(w, townhalls)
                 if th is None:
                     continue
@@ -268,80 +421,224 @@ class ScvHousekeeping(BaseTask):
                 if mfs.amount == 0:
                     continue
                 self._assign_worker_to_mineral(w, mfs)
+                moved_tags.add(int(w.tag))
+                recovered_idle += 1
                 remaining_budget -= 1
-                reassigned_idle += 1
-            return gas_deficit, moved_to_gas, total_deficit, reassigned_idle, len(reserved_tags)
 
-        moved_to_minerals = 0
-        moved_idle_or_orphan = 0
+            return {
+                "gas_deficit": gas_deficit,
+                "moved_to_gas": moved_to_gas,
+                "moved_to_minerals": moved_to_minerals,
+                "recovered_idle": recovered_idle,
+                "reserved_tags": len(reserved_tags),
+                "base_minerals": [len(ws) for ws in per_base_workers],
+            }
 
-        for th, need in deficits:
+        # Move donors to deficit bases (closest donors first)
+        for bidx, need in deficits:
             if remaining_budget <= 0:
                 break
+
+            th = th_list[bidx]
             mfs = bot.mineral_field.closer_than(10.0, th.position)
             if mfs.amount == 0:
                 continue
 
-            need_left = int(need)
+            # choose donors by distance to target base
             donors_sorted = sorted(
                 [w for w in donor_pool if int(w.tag) not in moved_tags],
-                key=lambda w: w.distance_to(th),
+                key=lambda w: w.distance_to(th.position),
             )
+
+            need_left = int(need)
             for w in donors_sorted:
                 if need_left <= 0 or remaining_budget <= 0:
                     break
-                wtag = int(w.tag)
-                was_idle_or_orphan = w.is_idle or (w in orphans)
+                if self._is_building_or_repairing(w):
+                    continue
+
+                was_idle_or_orphan = bool(w.is_idle) or (w in orphans)
+
                 self._assign_worker_to_mineral(w, mfs)
-                moved_tags.add(wtag)
+                moved_tags.add(int(w.tag))
                 moved_to_minerals += 1
                 if was_idle_or_orphan:
-                    moved_idle_or_orphan += 1
+                    recovered_idle += 1
+
                 remaining_budget -= 1
                 need_left -= 1
 
-        # Final anti-idle sweep: any remaining local idle mineral worker gets a mineral order.
-        recovered_tail = 0
+        # Tail: any remaining local idle mineral SCV gets a mineral order
         if remaining_budget > 0:
-            for w in local_candidates:
+            for w in mineral_pool:
                 if remaining_budget <= 0:
                     break
-                wtag = int(w.tag)
-                if wtag in moved_tags:
-                    continue
                 if not w.is_idle:
                     continue
-                if _is_gas_worker(w):
+                if int(w.tag) in moved_tags:
                     continue
+                if self._is_building_or_repairing(w):
+                    continue
+
                 th = self._nearest_th(w, townhalls)
                 if th is None:
                     continue
                 mfs = bot.mineral_field.closer_than(10.0, th.position)
                 if mfs.amount == 0:
                     continue
+
                 self._assign_worker_to_mineral(w, mfs)
-                moved_tags.add(wtag)
-                recovered_tail += 1
+                moved_tags.add(int(w.tag))
+                recovered_idle += 1
                 remaining_budget -= 1
 
-        return gas_deficit, moved_to_gas, total_deficit, (moved_idle_or_orphan + recovered_tail), len(reserved_tags)
+        return {
+            "gas_deficit": gas_deficit,
+            "moved_to_gas": moved_to_gas,
+            "moved_to_minerals": moved_to_minerals,
+            "recovered_idle": recovered_idle,
+            "reserved_tags": len(reserved_tags),
+            "base_minerals": [len(ws) for ws in per_base_workers],
+        }
+
+    def _pending_command_centers(self, bot) -> list:
+        try:
+            return [th for th in bot.townhalls.ready if th.type_id == U.COMMANDCENTER]
+        except Exception:
+            return []
+
+    def _morph_target_kind(self, *, now: float) -> str:
+        raw = self.awareness.mem.get(K("macro", "morph", "target_kind"), now=now, default="ORBITAL")
+        out = str(raw or "ORBITAL").strip().upper()
+        if out not in {"ORBITAL", "PLANETARY"}:
+            out = "ORBITAL"
+        return out
+
+    def _update_morph_signal(self, bot, *, now: float) -> dict:
+        pending_cc = self._pending_command_centers(bot)
+        pending_tags = [int(cc.tag) for cc in pending_cc]
+        pending_count = int(len(pending_tags))
+        target_kind = self._morph_target_kind(now=now)
+
+        reserve_m = 150 if pending_count > 0 else 0
+        reserve_g = 150 if (pending_count > 0 and target_kind == "PLANETARY") else 0
+
+        self.awareness.mem.set(K("macro", "morph", "pending_cc_tags"), value=list(pending_tags), now=now, ttl=None)
+        self.awareness.mem.set(K("macro", "morph", "pending_count"), value=int(pending_count), now=now, ttl=None)
+        self.awareness.mem.set(K("macro", "morph", "target_kind"), value=str(target_kind), now=now, ttl=None)
+        self.awareness.mem.set(K("macro", "morph", "reserve_minerals"), value=int(reserve_m), now=now, ttl=None)
+        self.awareness.mem.set(K("macro", "morph", "reserve_gas"), value=int(reserve_g), now=now, ttl=None)
+        self.awareness.mem.set(K("macro", "morph", "last_update_t"), value=float(now), now=now, ttl=None)
+
+        return {
+            "pending_count": int(pending_count),
+            "pending_cc_tags": list(pending_tags),
+            "target_kind": str(target_kind),
+            "reserve_minerals": int(reserve_m),
+            "reserve_gas": int(reserve_g),
+        }
+
+    def _scan_reserve_count(self, *, now: float) -> int:
+        if float(now) < float(self.mule_spam_until_s):
+            return 0
+        if float(now) < float(self.mule_keep_two_from_s):
+            return 1
+        return int(max(0, min(int(self.mule_max_reserved_scans), 2)))
+
+    @staticmethod
+    def _mule_target_for_orbital(bot, orbital):
+        try:
+            mfs = bot.mineral_field.closer_than(12.0, orbital.position)
+            if mfs.amount > 0:
+                return mfs.closest_to(orbital)
+        except Exception:
+            pass
+        try:
+            if bot.mineral_field.amount > 0:
+                return bot.mineral_field.closest_to(orbital)
+        except Exception:
+            pass
+        return None
+
+    def _control_mules(self, bot, *, now: float) -> dict:
+        reserve_scans = int(self._scan_reserve_count(now=now))
+        casts = 0
+        orbitals_count = 0
+        total_energy = 0.0
+
+        try:
+            orbitals = bot.structures(U.ORBITALCOMMAND).ready
+        except Exception:
+            orbitals = []
+
+        for oc in orbitals:
+            orbitals_count += 1
+            energy = float(getattr(oc, "energy", 0.0) or 0.0)
+            total_energy += energy
+
+            scans_available = int(energy // 50.0)
+            mules_to_cast = max(0, scans_available - int(reserve_scans))
+            if mules_to_cast <= 0:
+                continue
+
+            for _ in range(mules_to_cast):
+                target = self._mule_target_for_orbital(bot, oc)
+                if target is None:
+                    break
+                try:
+                    oc(AbilityId.CALLDOWNMULE_CALLDOWNMULE, target)
+                    casts += 1
+                except Exception:
+                    break
+
+        self.awareness.mem.set(K("macro", "mules", "scan_reserve"), value=int(reserve_scans), now=now, ttl=None)
+        self.awareness.mem.set(K("macro", "mules", "casts_last"), value=int(casts), now=now, ttl=None)
+        self.awareness.mem.set(K("macro", "mules", "last_done_at"), value=float(now), now=now, ttl=None)
+
+        return {
+            "scan_reserve": int(reserve_scans),
+            "casts": int(casts),
+            "orbitals": int(orbitals_count),
+            "orbital_energy_total": round(float(total_energy), 2),
+        }
 
     async def on_step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult:
         now = float(tick.time)
-
-        gas_deficit, moved_to_gas, mineral_deficit, recovered_idle, reserved = self._rebalance_workers(bot, now=now)
+        bound_err = self.require_mission_bound()
+        if bound_err is not None:
+            return bound_err
+        stats = self._rebalance_workers(bot, now=now)
+        morph = self._update_morph_signal(bot, now=now)
+        mules = self._control_mules(bot, now=now)
 
         # Mark last done time (planner uses it as interval gate).
-        self.awareness.mem.set(K("macro", "scv", "housekeeping", "last_done_at"), value=float(now), now=now, ttl=None)
+        # Avoid ttl=None ambiguity.
+        self.awareness.mem.set(
+            K("macro", "scv", "housekeeping", "last_done_at"),
+            value=float(now),
+            now=now,
+            ttl=3600.0,
+        )
 
         self._done("housekeeping_done")
         return TaskResult.done(
             "housekeeping_done",
             telemetry={
-                "gas_deficit": int(gas_deficit),
-                "moved_to_gas": int(moved_to_gas),
-                "mineral_deficit": int(mineral_deficit),
-                "recovered_idle": int(recovered_idle),
-                "reserved_tags": int(reserved),
+                "gas_deficit": int(stats["gas_deficit"]),
+                "moved_to_gas": int(stats["moved_to_gas"]),
+                "moved_to_minerals": int(stats["moved_to_minerals"]),
+                "recovered_idle": int(stats["recovered_idle"]),
+                "reserved_tags": int(stats["reserved_tags"]),
+                "base_minerals": list(stats["base_minerals"]),
+                "floor": int(self.mineral_floor),
+                "cap": int(self.mineral_cap),
+                "morph_pending": int(morph["pending_count"]),
+                "morph_target_kind": str(morph["target_kind"]),
+                "morph_reserve_m": int(morph["reserve_minerals"]),
+                "morph_reserve_g": int(morph["reserve_gas"]),
+                "mule_scan_reserve": int(mules["scan_reserve"]),
+                "mules_cast": int(mules["casts"]),
+                "orbitals": int(mules["orbitals"]),
+                "orbital_energy_total": float(mules["orbital_energy_total"]),
             },
         )

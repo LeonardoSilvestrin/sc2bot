@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from bot.mind.attention import Attention
 from bot.mind.awareness import Awareness, K
 from bot.mind.body import UnitLeases
-from bot.planners.proposals import Proposal, TaskSpec, UnitRequirement
+from bot.planners.utils.proposals import Proposal, TaskSpec, UnitRequirement
 from bot.tasks.base_task import Task, TaskTick, TaskResult
 
 
@@ -75,27 +75,39 @@ class Ego:
         awareness: Awareness,
         proposals: List[Proposal],
     ) -> None:
-        threatened = bool(attention.combat.threatened)
-        urgency = int(attention.combat.defense_urgency)
+        urgency = int(attention.combat.primary_urgency)
+        threatened = urgency > 0
 
         for prop in proposals:
             if self._is_in_cooldown(awareness, now=now, proposal_id=prop.proposal_id):
                 continue
 
             domain = str(prop.domain)
+            reinforce_mission_id = str(prop.reinforce_mission_id or "").strip()
+            reinforce_commitment = self._active.get(reinforce_mission_id) if reinforce_mission_id else None
 
             # Never admit the same proposal while one is already running.
-            # This is the key guard that prevents many parallel scout missions.
-            if self._is_proposal_running(prop.proposal_id):
+            if (not reinforce_mission_id) and self._is_proposal_running(prop.proposal_id):
                 continue
 
-            if threatened and urgency >= self.cfg.threat_block_start_at and domain != "DEFENSE":
+            if reinforce_mission_id and reinforce_commitment is None:
+                self._set_cooldown(
+                    awareness,
+                    now=now,
+                    proposal_id=prop.proposal_id,
+                    seconds=float(prop.cooldown_s),
+                    reason="reinforce_target_missing",
+                )
                 continue
 
-            if domain in self.cfg.singleton_domains:
+            effective_domain = domain if reinforce_commitment is None else str(reinforce_commitment.domain)
+            if threatened and urgency >= self.cfg.threat_block_start_at and effective_domain != "DEFENSE":
+                continue
+
+            if reinforce_commitment is None and domain in self.cfg.singleton_domains:
                 self._preempt_domain(now=now, awareness=awareness, domain=domain, reason=f"preempted_by:{prop.proposal_id}")
 
-            mission_id = f"{prop.proposal_id}:{int(now * 1000)}"
+            mission_id = reinforce_mission_id if reinforce_commitment is not None else f"{prop.proposal_id}:{int(now * 1000)}"
             spec: TaskSpec = prop.task()
 
             ok, tags, fail_reason = self._select_and_claim_units(
@@ -105,6 +117,7 @@ class Ego:
                 spec=spec,
                 proposal=prop,
                 mission_id=mission_id,
+                claim_domain=effective_domain,
             )
             if not ok:
                 self._set_cooldown(
@@ -114,6 +127,42 @@ class Ego:
                     seconds=float(prop.cooldown_s),
                     reason=fail_reason,
                 )
+                continue
+
+            if reinforce_commitment is not None:
+                if tags:
+                    merged_tags = self._merge_tags(reinforce_commitment.assigned_tags, tags)
+                    reinforce_commitment.assigned_tags = merged_tags
+                    reinforce_commitment.task.add_assigned_tags(tags)
+                    awareness.mem.set(
+                        K("ops", "mission", reinforce_commitment.mission_id, "assigned_tags"),
+                        value=list(merged_tags),
+                        now=now,
+                        ttl=None,
+                    )
+                    awareness.emit(
+                        "mission_reinforced",
+                        now=now,
+                        data={
+                            "mission_id": reinforce_commitment.mission_id,
+                            "proposal_id": prop.proposal_id,
+                            "domain": reinforce_commitment.domain,
+                            "added_tags": len(tags),
+                            "total_tags": len(merged_tags),
+                        },
+                    )
+                    if self.log is not None:
+                        self.log.emit(
+                            "mission_reinforced",
+                            {
+                                "time": round(now, 2),
+                                "mission_id": reinforce_commitment.mission_id,
+                                "proposal_id": prop.proposal_id,
+                                "domain": reinforce_commitment.domain,
+                                "added_tags": len(tags),
+                                "total_tags": len(merged_tags),
+                            },
+                        )
                 continue
 
             task_obj = spec.task_factory(mission_id)
@@ -136,7 +185,7 @@ class Ego:
             self._active[mission_id] = c
             self._active_by_domain.setdefault(domain, []).append(mission_id)
 
-            self._awareness_start_mission(awareness, now=now, c=c)
+            self._awareness_start_mission(bot, awareness, now=now, c=c)
             awareness.emit(
                 "mission_started",
                 now=now,
@@ -163,10 +212,16 @@ class Ego:
 
     async def _execute(self, bot, *, tick: TaskTick, attention: Attention, awareness: Awareness) -> None:
         now = float(tick.time)
+        mission_health = {str(m.mission_id): bool(m.mission_degraded) for m in attention.missions.ongoing}
 
         for mission_id, c in list(self._active.items()):
             if c.is_expired(now):
                 self._finish_mission(awareness, now=now, c=c, status="DONE", reason="expired")
+                continue
+
+            degraded = bool(mission_health.get(str(c.mission_id), False))
+            if degraded:
+                self._finish_mission(awareness, now=now, c=c, status="FAILED", reason="mission_degraded")
                 continue
 
             self._touch_leases_for_commitment(now=now, c=c)
@@ -242,7 +297,7 @@ class Ego:
 
     def _validate_task(self, task_obj: Any, *, spec: TaskSpec) -> None:
         if not isinstance(task_obj, Task):
-            raise TypeError(f"Task factory for {spec.task_id} returned non-Task: {type(task_obj)!r}")
+            raise TypeError(f"Task factory for {spec.task_id} returned non-Task: {type(task_obj).__name__}")
 
     def _select_and_claim_units(
         self,
@@ -253,6 +308,7 @@ class Ego:
         spec: TaskSpec,
         proposal: Proposal,
         mission_id: str,
+        claim_domain: Optional[str] = None,
     ) -> Tuple[bool, List[int], str]:
         reqs: List[UnitRequirement] = list(spec.unit_requirements)
         if not reqs:
@@ -264,34 +320,89 @@ class Ego:
         for req in reqs:
             utype = req.unit_type
             need = int(req.count)
+            required = bool(req.required)
 
             if int(units_ready.get(utype, 0)) <= 0:
-                return False, [], f"no_{utype.name.lower()}"
+                if required:
+                    return False, [], f"no_{utype.name.lower()}"
+                continue
 
-            candidates: List[int] = []
+            # Build candidate unit objects (not tags), so we can score/filter.
+            candidates_units: List[Any] = []
             for u in bot.units.of_type(utype).ready:
                 tag = int(u.tag)
+                if tag in selected:
+                    continue
                 if self.body.can_claim(tag, now=now):
-                    candidates.append(tag)
+                    candidates_units.append(u)
 
-            if len(candidates) < need:
+            if len(candidates_units) < need and required:
                 return False, [], f"insufficient_free_{utype.name.lower()}"
+            take_n = min(need, len(candidates_units))
+            if take_n <= 0:
+                continue
 
-            selected.extend(candidates[:need])
+            policy = req.pick_policy
+            # Hard filter (allow)
+            filtered: List[Any] = []
+            for u in candidates_units:
+                try:
+                    if bool(policy.allow(u, bot=bot, attention=attention, now=now)):
+                        filtered.append(u)
+                except Exception:
+                    # Policy errors are programmer errors; fail fast and loud via cooldown.
+                    return False, [], f"pick_policy_allow_error:{policy.name}"
+            candidates_units = filtered
+
+            if len(candidates_units) < need and required:
+                return False, [], f"insufficient_free_{utype.name.lower()}"
+            take_n = min(need, len(candidates_units))
+            if take_n <= 0:
+                continue
+
+            # Score + deterministic tie-break by tag
+            scored: List[Tuple[float, int, Any]] = []
+            for u in candidates_units:
+                tag = int(u.tag)
+                try:
+                    s = float(policy.score(u, bot=bot, attention=attention, now=now))
+                except Exception:
+                    return False, [], f"pick_policy_score_error:{policy.name}"
+                scored.append((s, tag, u))
+
+            # Higher score first; on tie, smaller tag first (deterministic)
+            scored.sort(key=lambda t: (-t[0], t[1]))
+            candidates_units = [u for _s, _tag, u in scored]
+
+            selected.extend([int(u.tag) for u in candidates_units[:take_n]])
 
         ttl_for_claim = spec.lease_ttl if spec.lease_ttl is not None else proposal.lease_ttl
         if ttl_for_claim is None:
             ttl_for_claim = self.body.default_ttl
 
-        role = self.body._role_for_domain(str(proposal.domain))
+        role = self.body._role_for_domain(str(claim_domain or proposal.domain))
+        claimed_now: List[int] = []
 
         for tag in selected:
             ok = self.body.claim(task_id=mission_id, unit_tag=tag, role=role, now=now, ttl=float(ttl_for_claim), force=False)
             if not ok:
-                self.body.release_mission(mission_id=mission_id)
+                for ct in claimed_now:
+                    self.body.release(unit_tag=int(ct))
                 return False, [], "claim_failed"
+            claimed_now.append(int(tag))
 
         return True, selected, ""
+
+    def _merge_tags(self, current: List[int], new_tags: List[int]) -> List[int]:
+        seen = {int(x) for x in current}
+        merged = [int(x) for x in current]
+        for tag in new_tags:
+            itag = int(tag)
+            if itag in seen:
+                continue
+            seen.add(itag)
+            merged.append(itag)
+        return merged
 
     def _touch_leases_for_commitment(self, *, now: float, c: Commitment) -> None:
         if not c.assigned_tags:
@@ -320,13 +431,25 @@ class Ego:
         awareness.mem.set(K("ops", "cooldown", proposal_id, "until"), value=float(now) + float(seconds), now=now, ttl=None)
         awareness.mem.set(K("ops", "cooldown", proposal_id, "reason"), value=str(reason), now=now, ttl=None)
 
-    def _awareness_start_mission(self, awareness: Awareness, *, now: float, c: Commitment) -> None:
+    def _awareness_start_mission(self, bot, awareness: Awareness, *, now: float, c: Commitment) -> None:
+        original_type_counts: Dict[str, int] = {}
+        for tag in c.assigned_tags:
+            unit = bot.units.find_by_tag(int(tag))
+            if unit is None:
+                continue
+            name = str(getattr(getattr(unit, "type_id", None), "name", ""))
+            if not name:
+                continue
+            original_type_counts[name] = int(original_type_counts.get(name, 0)) + 1
+
         awareness.mem.set(K("ops", "mission", c.mission_id, "status"), value="RUNNING", now=now, ttl=None)
         awareness.mem.set(K("ops", "mission", c.mission_id, "domain"), value=c.domain, now=now, ttl=None)
         awareness.mem.set(K("ops", "mission", c.mission_id, "proposal_id"), value=c.proposal_id, now=now, ttl=None)
         awareness.mem.set(K("ops", "mission", c.mission_id, "started_at"), value=float(c.started_at), now=now, ttl=None)
         awareness.mem.set(K("ops", "mission", c.mission_id, "expires_at"), value=c.expires_at, now=now, ttl=None)
         awareness.mem.set(K("ops", "mission", c.mission_id, "assigned_tags"), value=list(c.assigned_tags), now=now, ttl=None)
+        awareness.mem.set(K("ops", "mission", c.mission_id, "original_assigned_tags"), value=list(c.assigned_tags), now=now, ttl=None)
+        awareness.mem.set(K("ops", "mission", c.mission_id, "original_type_counts"), value=dict(original_type_counts), now=now, ttl=None)
 
     def _awareness_end_mission(self, awareness: Awareness, *, now: float, mission_id: str, status: str, reason: str) -> None:
         awareness.mem.set(K("ops", "mission", mission_id, "status"), value=str(status), now=now, ttl=None)
@@ -334,7 +457,6 @@ class Ego:
         awareness.mem.set(K("ops", "mission", mission_id, "ended_at"), value=float(now), now=now, ttl=None)
 
     def _should_emit_mission_step(self, awareness: Awareness, *, now: float, c: Commitment, status: str) -> bool:
-        # Always emit stateful transitions; throttle repetitive NOOP spam.
         if str(status) != "NOOP":
             return True
         key = K("ops", "mission", c.mission_id, "last_noop_emit_at")
@@ -343,3 +465,4 @@ class Ego:
             awareness.mem.set(key, value=float(now), now=now, ttl=None)
             return True
         return False
+

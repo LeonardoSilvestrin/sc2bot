@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict
+from typing import Dict, List, Tuple
 
 from bot.mind.awareness import Awareness, K
 from bot.mind.attention import Attention
@@ -27,6 +27,12 @@ class MyArmyCompositionConfig:
     comp_defensive: Dict[str, float] = None
     comp_standard: Dict[str, float] = None
     comp_punish: Dict[str, float] = None
+    comp_rush_response: Dict[str, float] = None
+    priority_defensive: List[str] = None
+    priority_standard: List[str] = None
+    priority_punish: List[str] = None
+    priority_rush_response: List[str] = None
+    reserve_costs: Dict[str, Tuple[int, int]] = None
 
     def __post_init__(self):
         object.__setattr__(
@@ -59,6 +65,37 @@ class MyArmyCompositionConfig:
                 "MEDIVAC": 0.20,
             },
         )
+        object.__setattr__(
+            self,
+            "comp_rush_response",
+            self.comp_rush_response
+            or {
+                "MARINE": 0.58,
+                "MARAUDER": 0.20,
+                "SIEGETANK": 0.17,
+                "MEDIVAC": 0.05,
+            },
+        )
+        object.__setattr__(self, "priority_defensive", self.priority_defensive or ["MARINE", "MARAUDER", "MEDIVAC"])
+        object.__setattr__(self, "priority_standard", self.priority_standard or ["MARINE", "MARAUDER", "MEDIVAC"])
+        object.__setattr__(self, "priority_punish", self.priority_punish or ["MARINE", "MEDIVAC", "MARAUDER"])
+        object.__setattr__(
+            self, "priority_rush_response", self.priority_rush_response or ["SIEGETANK", "MARINE", "MARAUDER", "MEDIVAC"]
+        )
+        object.__setattr__(
+            self,
+            "reserve_costs",
+            self.reserve_costs
+            or {
+                "SIEGETANK": (150, 125),
+                "MARINE": (50, 0),
+                "MARAUDER": (100, 25),
+                "MEDIVAC": (100, 100),
+                "REAPER": (50, 50),
+                "HELLION": (100, 0),
+                "BANSHEE": (150, 100),
+            },
+        )
 
 
 def _normalize(comp: Dict[str, float]) -> Dict[str, float]:
@@ -69,6 +106,68 @@ def _normalize(comp: Dict[str, float]) -> Dict[str, float]:
     if total <= 0:
         return dict(comp)
     return {str(k): float(v) / total for k, v in comp.items()}
+
+
+def _prepend_unique(items: List[str], head: str) -> List[str]:
+    if not head:
+        return list(items)
+    out = [str(head)]
+    for it in items:
+        s = str(it)
+        if s == str(head):
+            continue
+        out.append(s)
+    return out
+
+
+def _inject_unit_comp_bias(comp: Dict[str, float], *, unit_name: str, weight: float = 0.12) -> Dict[str, float]:
+    out = dict(comp)
+    if unit_name in out:
+        return out
+    out[str(unit_name)] = float(weight)
+    return _normalize(out)
+
+
+def _harass_missing_unit_from_cooldown(*, awareness: Awareness, now: float) -> str | None:
+    """
+    Looks at Ego cooldown rejection traces and returns the missing unit for the
+    reaper-hellion harass proposal when available.
+    """
+    snap = awareness.mem.snapshot(now=now, prefix=K("ops", "cooldown"), max_age=90.0)
+    latest_t = -1.0
+    missing: str | None = None
+
+    for sk, entry in snap.items():
+        parts = sk.split(":")
+        # Expected: ops:cooldown:<proposal_id>:reason
+        if len(parts) < 4:
+            continue
+        if parts[0] != "ops" or parts[1] != "cooldown":
+            continue
+        if parts[-1] != "reason":
+            continue
+
+        proposal_id = ":".join(parts[2:-1])
+        if not proposal_id.startswith("harass_planner:"):
+            continue
+
+        reason = str(entry.get("value") or "")
+        t = float(entry.get("t") or 0.0)
+        unit = ""
+        if "reaper" in reason:
+            unit = "REAPER"
+        elif "hellion" in reason:
+            unit = "HELLION"
+        elif "banshee" in reason:
+            unit = "BANSHEE"
+        if not unit:
+            continue
+
+        if t > latest_t:
+            latest_t = t
+            missing = unit
+
+    return missing
 
 
 def derive_my_army_composition_intel(
@@ -88,9 +187,12 @@ def derive_my_army_composition_intel(
     """
     enemy_kind = awareness.mem.get(K("enemy", "opening", "kind"), now=now, default="NORMAL")
     conf = awareness.mem.get(K("enemy", "opening", "confidence"), now=now, default=0.0)
+    rush_state = str(awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
 
     mode = "STANDARD"
-    if float(conf) >= float(cfg.min_confidence):
+    if rush_state in {"CONFIRMED", "HOLDING"}:
+        mode = "RUSH_RESPONSE"
+    elif float(conf) >= float(cfg.min_confidence):
         if str(enemy_kind) == "AGGRESSIVE":
             mode = "DEFENSIVE"
         elif str(enemy_kind) == "GREEDY":
@@ -98,13 +200,38 @@ def derive_my_army_composition_intel(
         else:
             mode = "STANDARD"
 
-    if mode == "DEFENSIVE":
+    if mode == "RUSH_RESPONSE":
+        comp = _normalize(dict(cfg.comp_rush_response))
+        priority_units = list(cfg.priority_rush_response)
+    elif mode == "DEFENSIVE":
         comp = _normalize(dict(cfg.comp_defensive))
+        priority_units = list(cfg.priority_defensive)
     elif mode == "PUNISH":
         comp = _normalize(dict(cfg.comp_punish))
+        priority_units = list(cfg.priority_punish)
     else:
         comp = _normalize(dict(cfg.comp_standard))
+        priority_units = list(cfg.priority_standard)
+
+    missing_harass_unit = _harass_missing_unit_from_cooldown(awareness=awareness, now=now)
+    if missing_harass_unit is not None:
+        priority_units = _prepend_unique(priority_units, missing_harass_unit)
+        comp = _inject_unit_comp_bias(comp, unit_name=str(missing_harass_unit), weight=0.12)
+
+    top_unit = str(priority_units[0]) if priority_units else ""
+    reserve = cfg.reserve_costs.get(top_unit, (0, 0))
+    reserve_m, reserve_g = int(reserve[0]), int(reserve[1])
 
     awareness.mem.set(K("macro", "desired", "mode"), value=str(mode), now=now, ttl=float(cfg.ttl_s))
     awareness.mem.set(K("macro", "desired", "comp"), value=dict(comp), now=now, ttl=float(cfg.ttl_s))
+    awareness.mem.set(K("macro", "desired", "priority_units"), value=list(priority_units), now=now, ttl=float(cfg.ttl_s))
+    awareness.mem.set(K("macro", "desired", "reserve_unit"), value=str(top_unit), now=now, ttl=float(cfg.ttl_s))
+    awareness.mem.set(K("macro", "desired", "reserve_minerals"), value=int(reserve_m), now=now, ttl=float(cfg.ttl_s))
+    awareness.mem.set(K("macro", "desired", "reserve_gas"), value=int(reserve_g), now=now, ttl=float(cfg.ttl_s))
+    awareness.mem.set(
+        K("macro", "desired", "signals"),
+        value={"rush_state": str(rush_state), "enemy_kind": str(enemy_kind), "confidence": float(conf)},
+        now=now,
+        ttl=float(cfg.ttl_s),
+    )
     awareness.mem.set(K("macro", "desired", "last_update_t"), value=float(now), now=now, ttl=None)

@@ -1,4 +1,4 @@
-# bot/mind/self.py
+﻿# bot/mind/self.py
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, is_dataclass
@@ -11,6 +11,7 @@ from sc2.data import Result
 from bot.devlog import DevLogger
 from bot.sensors.threat_sensor import Threat
 from bot.intel.enemy_build_intel import EnemyBuildIntelConfig, derive_enemy_build_intel
+from bot.intel.game_parity_intel import GameParityIntelConfig, derive_game_parity_intel
 from bot.intel.my_army_composition_intel import MyArmyCompositionConfig, derive_my_army_composition_intel
 from bot.mind.attention import derive_attention
 from bot.mind.awareness import Awareness
@@ -18,14 +19,17 @@ from bot.mind.body import UnitLeases
 from bot.mind.ego import Ego, EgoConfig
 from bot.tasks.base_task import TaskTick
 
-from bot.tasks.defend_task import Defend
+from bot.tasks.defense.defend_task import Defend
 from bot.tasks.macro.opening import MacroOpeningTick
 
 from bot.planners.defense_planner import DefensePlanner
 from bot.planners.intel_planner import IntelPlanner
+from bot.planners.harass_planner import HarassPlanner
+from bot.planners.reinforce_mission_planner import ReinforceMissionPlanner
 
 from bot.planners.production_planner import ProductionPlanner
 from bot.planners.spending_planner import SpendingPlanner
+from bot.planners.tech_planner import TechPlanner
 from bot.planners.housekeeping_planner import HousekeepingPlanner
 from bot.planners.depot_control_planner import DepotControlPlanner
 
@@ -66,6 +70,7 @@ class RuntimeApp:
     body: UnitLeases
     ego: Ego
     enemy_build_cfg: EnemyBuildIntelConfig
+    parity_cfg: GameParityIntelConfig
     my_comp_cfg: MyArmyCompositionConfig
     debug: bool = True
     attention_full_every_iters: int = 25
@@ -74,6 +79,10 @@ class RuntimeApp:
     full_snapshots_flag_path: str = "_prompt/full_snapshots.flag"
     bo_diag_every_iters: int = 25
     bo_stall_warn_s: float = 25.0
+    state_snapshot_interval_s: float = 30.0
+    awareness_snapshot_max_age_s: float | None = 180.0
+    state_snapshots_default: bool = True
+    _next_state_snapshot_t: float = 0.0
     _bo_last_step_idx: int = -1
     _bo_last_step_t: float = 0.0
 
@@ -89,7 +98,9 @@ class RuntimeApp:
             cfg=EgoConfig(
                 # New singleton macro domains: allow spending+production+housekeeping concurrently,
                 # without changing Ego internals.
-                singleton_domains=frozenset({"MACRO_SPENDING", "MACRO_PRODUCTION", "MACRO_HOUSEKEEPING", "MACRO_DEPOT_CONTROL"}),
+                singleton_domains=frozenset(
+                    {"MACRO_SPENDING", "MACRO_PRODUCTION", "MACRO_TECH", "MACRO_HOUSEKEEPING", "MACRO_DEPOT_CONTROL", "HARASS"}
+                ),
                 threat_block_start_at=70,
                 threat_force_preempt_at=90,
                 non_preemptible_grace_s=2.5,
@@ -104,6 +115,8 @@ class RuntimeApp:
 
         defense_planner = DefensePlanner(defend_task=defend_task, log=log)
         intel_planner = IntelPlanner(awareness=awareness, log=log)
+        harass_planner = HarassPlanner(log=log)
+        reinforce_mission_planner = ReinforceMissionPlanner(log=log)
 
         spending_planner = SpendingPlanner(
             target_bases_default=2,
@@ -117,9 +130,13 @@ class RuntimeApp:
             scv_cap=66,
             log=log,
         )
+        tech_planner = TechPlanner(
+            start_delay_after_opening_s=60.0,
+            log=log,
+        )
 
         housekeeping_planner = HousekeepingPlanner(
-            interval_s=8.0,
+            interval_s=4.0,
             cooldown_s=2.0,
             lease_ttl_s=6.0,
             score=18,
@@ -127,7 +144,7 @@ class RuntimeApp:
         )
 
         depot_control_planner = DepotControlPlanner(
-            interval_s=1.5,
+            interval_s=0.75,
             cooldown_s=0.0,
             score=24,
             log=log,
@@ -136,7 +153,7 @@ class RuntimeApp:
         # Keep opening as a "pre-macro" handled by its own planner? (MVP: reuse ProductionPlanner gate.)
         # For now: register opening via a tiny planner-inline shim inside runtime:
         # We keep it as a planner to respect the architecture.
-        from bot.planners.proposals import Proposal, TaskSpec
+        from bot.planners.utils.proposals import Proposal, TaskSpec
 
         @dataclass
         class OpeningPlanner:
@@ -188,9 +205,12 @@ class RuntimeApp:
             [
                 defense_planner,
                 intel_planner,
+                harass_planner,
+                reinforce_mission_planner,
                 opening_planner,
                 spending_planner,
                 production_planner,
+                tech_planner,
                 housekeeping_planner,
                 depot_control_planner,
             ]
@@ -203,6 +223,7 @@ class RuntimeApp:
             body=body,
             ego=ego,
             enemy_build_cfg=EnemyBuildIntelConfig(),
+            parity_cfg=GameParityIntelConfig(),
             my_comp_cfg=MyArmyCompositionConfig(),
             debug=bool(debug),
         )
@@ -212,6 +233,7 @@ class RuntimeApp:
             self.body.reset()
         except Exception:
             pass
+        self._next_state_snapshot_t = 0.0
         if self.log:
             self.log.emit("runtime_start", {})
 
@@ -227,6 +249,13 @@ class RuntimeApp:
             now=now,
             cfg=self.enemy_build_cfg,
         )
+        derive_game_parity_intel(
+            bot,
+            awareness=self.awareness,
+            attention=attention,
+            now=now,
+            cfg=self.parity_cfg,
+        )
 
         # New: strategy reference (mode + proportions)
         derive_my_army_composition_intel(
@@ -235,6 +264,8 @@ class RuntimeApp:
             now=now,
             cfg=self.my_comp_cfg,
         )
+
+        self._emit_periodic_state_snapshots(now=now, attention=attention)
 
         self._emit_build_order_diagnostics(bot, now=now, iteration=int(iteration))
 
@@ -289,6 +320,88 @@ class RuntimeApp:
             return False
 
         return False
+
+    def _state_snapshots_enabled(self) -> bool:
+        if bool(self.state_snapshots_default):
+            return True
+        try:
+            import os
+
+            env = str(os.getenv("STATE_SNAPSHOTS", "")).strip().lower()
+            return env in {"1", "true", "on", "yes"}
+        except Exception:
+            return False
+
+    @staticmethod
+    def _env_float(name: str, default: float) -> float:
+        try:
+            import os
+
+            raw = os.getenv(name, None)
+            if raw is None or str(raw).strip() == "":
+                return float(default)
+            return float(raw)
+        except Exception:
+            return float(default)
+
+    @staticmethod
+    def _env_optional_float(name: str, default: float | None) -> float | None:
+        try:
+            import os
+
+            raw = os.getenv(name, None)
+            if raw is None or str(raw).strip() == "":
+                return default
+            s = str(raw).strip().lower()
+            if s in {"none", "null", "off", "disable", "disabled", "0"}:
+                return None
+            return float(raw)
+        except Exception:
+            return default
+
+    def _emit_periodic_state_snapshots(self, *, now: float, attention: Any) -> None:
+        if self.log is None:
+            return
+        if not self._state_snapshots_enabled():
+            return
+
+        interval_s = max(
+            1.0,
+            float(
+                self._env_float(
+                    "STATE_SNAPSHOT_INTERVAL_S",
+                    self.state_snapshot_interval_s,
+                )
+            ),
+        )
+        max_age_s = self._env_optional_float(
+            "AWARENESS_SNAPSHOT_MAX_AGE_S",
+            self.awareness_snapshot_max_age_s,
+        )
+
+        if float(now) + 1e-6 < float(self._next_state_snapshot_t):
+            return
+
+        self.log.emit(
+            "attention_snapshot",
+            {
+                "t": round(float(now), 2),
+                "snapshot": _jsonable(attention),
+            },
+            meta={"module": "attention", "component": "attention.snapshot"},
+        )
+        self.log.emit(
+            "awareness_snapshot",
+            {
+                "t": round(float(now), 2),
+                "mem": _jsonable(self.awareness.mem.snapshot(now=now, max_age=max_age_s)),
+                "events_tail": _jsonable(self.awareness.tail_events(80)),
+                "max_age_s": None if max_age_s is None else float(max_age_s),
+            },
+            meta={"module": "awareness", "component": "awareness.snapshot"},
+        )
+
+        self._next_state_snapshot_t = float(now) + float(interval_s)
 
     def _emit_build_order_diagnostics(self, bot, *, now: float, iteration: int) -> None:
         if self.log is None:
@@ -382,3 +495,4 @@ class RuntimeApp:
                 },
                 meta={"module": "macro", "component": "build_order.runner"},
             )
+

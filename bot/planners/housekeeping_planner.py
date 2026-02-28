@@ -1,5 +1,5 @@
-# =============================================================================
-# bot/planners/housekeeping_planner.py  (NEW)
+﻿# =============================================================================
+# bot/planners/housekeeping_planner.py
 # =============================================================================
 from __future__ import annotations
 
@@ -8,12 +8,13 @@ from dataclasses import dataclass
 from bot.devlog import DevLogger
 from bot.mind.attention import Attention
 from bot.mind.awareness import Awareness, K
-from bot.planners.proposals import Proposal, TaskSpec
+from bot.planners.utils.base_planner import BasePlanner
+from bot.planners.utils.proposals import Proposal, TaskSpec
 from bot.tasks.macro.scv_housekeeping_task import ScvHousekeeping
 
 
 @dataclass
-class HousekeepingPlanner:
+class HousekeepingPlanner(BasePlanner):
     """
     Low-cost periodic housekeeping (SCV rebalance, etc.).
     """
@@ -22,19 +23,19 @@ class HousekeepingPlanner:
     cooldown_s: float = 6.0
     lease_ttl_s: float = 12.0
     score: int = 18
+    scv_count: int = 1
     log: DevLogger | None = None
 
     def _pid_housekeeping(self) -> str:
-        return f"{self.planner_id}:scv_housekeeping"
+        return self.proposal_id("scv_housekeeping")
 
     def _due(self, *, awareness: Awareness, now: float) -> bool:
-        last = awareness.mem.get(K("macro", "scv", "housekeeping", "last_done_at"), now=now, default=None)
-        if last is None:
-            return True
-        try:
-            return (float(now) - float(last)) >= float(self.interval_s)
-        except Exception:
-            return True
+        return self.due_by_last_done(
+            awareness=awareness,
+            key=K("macro", "scv", "housekeeping", "last_done_at"),
+            now=now,
+            interval_s=float(self.interval_s),
+        )
 
     def propose(self, bot, *, awareness: Awareness, attention: Attention) -> list[Proposal]:
         now = float(attention.time)
@@ -42,29 +43,26 @@ class HousekeepingPlanner:
 
         if not self._due(awareness=awareness, now=now):
             return []
-        if awareness.ops_proposal_running(proposal_id=pid, now=now):
+        if self.is_proposal_running(awareness=awareness, proposal_id=pid, now=now):
             return []
-
         def _hk_factory(mission_id: str) -> ScvHousekeeping:
             return ScvHousekeeping(awareness=awareness)
 
-        out = [
-            Proposal(
-                proposal_id=pid,
-                domain="MACRO_HOUSEKEEPING",
-                score=int(self.score),
-                tasks=[TaskSpec(task_id="scv_housekeeping", task_factory=_hk_factory, unit_requirements=[])],
-                lease_ttl=float(self.lease_ttl_s),
-                cooldown_s=float(self.cooldown_s),
-                risk_level=0,
-                allow_preempt=True,
-            )
-        ]
+        out = self.make_single_task_proposal(
+            proposal_id=pid,
+            domain="MACRO_HOUSEKEEPING",
+            score=int(self.score),
+            task_spec=TaskSpec(
+                task_id="scv_housekeeping",
+                task_factory=_hk_factory,
+                unit_requirements=[],
+            ),
+            lease_ttl=float(self.lease_ttl_s),
+            cooldown_s=float(self.cooldown_s),
+            risk_level=0,
+            allow_preempt=True,
+        )
 
-        if self.log is not None:
-            self.log.emit(
-                "planner_proposed",
-                {"planner": self.planner_id, "count": len(out)},
-                meta={"module": "planner", "component": f"planner.{self.planner_id}"},
-            )
+        self.emit_planner_proposed({"count": len(out)})
         return out
+

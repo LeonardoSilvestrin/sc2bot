@@ -1,0 +1,69 @@
+﻿from __future__ import annotations
+
+from dataclasses import dataclass
+
+from bot.devlog import DevLogger
+from bot.mind.attention import Attention
+from bot.mind.awareness import Awareness, K
+from bot.planners.utils.base_planner import BasePlanner
+from bot.planners.utils.proposals import Proposal, TaskSpec
+from bot.tasks.macro.tech_tick import MacroTechTick
+
+
+@dataclass
+class TechPlanner(BasePlanner):
+    """
+    Continuous tech/upgrades loop driven by desired army composition.
+    Starts only after opening is done and a fixed delay has elapsed.
+    """
+
+    planner_id: str = "tech_planner"
+    score: int = 42
+    start_delay_after_opening_s: float = 60.0
+    log_every_iters: int = 22
+    log: DevLogger | None = None
+
+    def _pid(self) -> str:
+        return self.proposal_id("macro_tech")
+
+    def propose(self, bot, *, awareness: Awareness, attention: Attention) -> list[Proposal]:
+        now = float(attention.time)
+        pid = self._pid()
+
+        if not bool(attention.macro.opening_done):
+            return []
+
+        opening_done_at = awareness.mem.get(K("macro", "opening", "done_at"), now=now, default=None)
+        if opening_done_at is None:
+            awareness.mem.set(K("macro", "opening", "done_at"), value=float(now), now=now, ttl=None)
+            opening_done_at = float(now)
+
+        if (float(now) - float(opening_done_at)) < float(self.start_delay_after_opening_s):
+            return []
+
+        if self.is_proposal_running(awareness=awareness, proposal_id=pid, now=now):
+            return []
+
+        def _factory(mission_id: str) -> MacroTechTick:
+            return MacroTechTick(awareness=awareness, log=self.log, log_every_iters=int(self.log_every_iters))
+
+        out = self.make_single_task_proposal(
+            proposal_id=pid,
+            domain="MACRO_TECH",
+            score=int(self.score),
+            task_spec=TaskSpec(task_id="macro_tech", task_factory=_factory, unit_requirements=[]),
+            lease_ttl=None,
+            cooldown_s=0.0,
+            risk_level=0,
+            allow_preempt=True,
+        )
+
+        self.emit_planner_proposed(
+            {
+                "count": len(out),
+                "opening_done_at": round(float(opening_done_at), 2),
+                "delay_s": float(self.start_delay_after_opening_s),
+            }
+        )
+        return out
+

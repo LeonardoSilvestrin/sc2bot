@@ -1,19 +1,35 @@
-# bot/planners/intel_planner.py
+﻿# bot/planners/intel_planner.py
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pickle import FALSE
-from typing import Optional, Tuple
 
 from sc2.ids.unit_typeid import UnitTypeId as U
 from sc2.position import Point2
 
 from bot.devlog import DevLogger
 from bot.mind.attention import Attention
-from bot.mind.awareness import Awareness, K
-from bot.planners.proposals import Proposal, TaskSpec, UnitRequirement
-from bot.tasks.scan_task import ScanAt
-from bot.tasks.reaper_scout_task import ReaperScout, ReaperScoutObjective
+from bot.mind.awareness import Awareness
+from bot.planners.utils.proposals import Proposal, TaskSpec, UnitRequirement
+from bot.tasks.scout.scan_task import ScanAt
+from bot.tasks.scout.reaper_scout_task import ReaperScout, ReaperScoutObjective
+
+
+@dataclass(frozen=True)
+class ReaperScoutPickPolicy:
+    objective: Point2
+    name: str = "intel.reaper_scout.nearest_objective.v1"
+
+    def allow(self, unit, *, bot, attention, now: float) -> bool:
+        if unit is None or unit.type_id != U.REAPER:
+            return False
+        return bool(getattr(unit, "is_ready", False))
+
+    def score(self, unit, *, bot, attention, now: float) -> float:
+        try:
+            dist = float(unit.distance_to(self.objective))
+        except Exception:
+            dist = 9999.0
+        return -dist
 
 
 @dataclass
@@ -23,12 +39,9 @@ class IntelPlanner:
     awareness: Awareness = None  # injected
     log: DevLogger | None = None
 
-    # Reaper scout
-    reaper_scout_interval_early_s: float = 35.0
-    reaper_scout_interval_mid_s: float = 70.0
+    # Reaper scout (single early dispatch)
     reaper_scout_lease_ttl_s: float = 90.0
-
-    confidence_min: float = 0.70
+    reaper_scout_early_until_s: float = 360.0
 
     def _pid_reaper_scout(self) -> str:
         return f"{self.planner_id}:scout:reaper"
@@ -39,42 +52,30 @@ class IntelPlanner:
     def _enemy_main(self, bot) -> Point2:
         return bot.enemy_start_locations[0]
 
-    def _opening_state(self, *, awareness: Awareness, now: float) -> Tuple[Optional[str], float, float, Optional[float], dict]:
-        first_seen_t = awareness.mem.get(K("enemy", "opening", "first_seen_t"), now=now, default=None)
-        last_update_t = awareness.mem.get(K("enemy", "opening", "last_update_t"), now=now, default=None)
+    def _enemy_natural(self, bot) -> Point2:
+        enemy_main = self._enemy_main(bot)
+        exps = list(getattr(bot, "expansion_locations_list", []) or [])
+        if not exps:
+            return enemy_main
+        exps_sorted = sorted(exps, key=lambda p: p.distance_to(enemy_main))
+        if len(exps_sorted) < 2:
+            return exps_sorted[0]
+        return exps_sorted[1]
 
-        kind = awareness.mem.get(K("enemy", "opening", "kind"), now=now, default=None)
-        conf = awareness.mem.get(K("enemy", "opening", "confidence"), now=now, default=0.0)
-        signals = awareness.mem.get(K("enemy", "opening", "signals"), now=now, default={}) or {}
+    def _reaper_objective(self) -> ReaperScoutObjective:
+        # Main-first scout: SCV already checks early pathing/opening outside.
+        return ReaperScoutObjective.CONFIRM_MAIN_RAMP
 
-        try:
-            conf_f = float(conf)
-        except Exception:
-            conf_f = 0.0
-
-        age_s = 9999.0
-        if last_update_t is not None:
-            try:
-                age_s = max(0.0, float(now) - float(last_update_t))
-            except Exception:
-                age_s = 9999.0
-
-        kind_s = str(kind) if kind is not None else None
-        fst = float(first_seen_t) if first_seen_t is not None else None
-        return kind_s, conf_f, float(age_s), fst, dict(signals)
-
-    def _reaper_objective(self, *, kind: Optional[str], conf: float, signals: dict, now: float) -> ReaperScoutObjective:
-        """
-        Pick ONE discriminative objective.
-        Keep it simple; we can add proxy sweeps later.
-        """
-        nat_on_ground = bool(signals.get("natural_on_ground", False))
-        if float(now) <= 210.0 and not nat_on_ground:
-            return ReaperScoutObjective.CONFIRM_NATURAL
-        if kind == "AGGRESSIVE" and conf >= 0.70:
-            # in aggressive case, just peek main/ramp quickly
-            return ReaperScoutObjective.CONFIRM_MAIN_RAMP
-        return ReaperScoutObjective.CONFIRM_NATURAL
+    def _target_for_objective(self, bot, obj: ReaperScoutObjective) -> Point2:
+        if obj == ReaperScoutObjective.CONFIRM_NATURAL:
+            return self._enemy_natural(bot)
+        if obj == ReaperScoutObjective.CONFIRM_MAIN_RAMP or obj == ReaperScoutObjective.CONFIRM_MAIN:
+            return self._enemy_main(bot)
+        if obj == ReaperScoutObjective.MAP_CENTER:
+            gi = getattr(bot, "game_info", None)
+            if gi is not None:
+                return gi.map_center
+        return bot.start_location
 
     def propose(self, bot, *, awareness: Awareness, attention: Attention) -> list[Proposal]:
         now = float(attention.time)
@@ -86,74 +87,66 @@ class IntelPlanner:
         # -------------------------
         # 0) Reaper scout controller
         # -------------------------
-        # Only if we have a reaper ready
         reapers_ready = int(attention.economy.units_ready.get(U.REAPER, 0) or 0)
         if reapers_ready >= 1:
             pid = self._pid_reaper_scout()
+            already_dispatched = bool(awareness.intel_reaper_scout_dispatched(now=now))
+            already_done = float(awareness.intel_last_reaper_scout_done_at(now=now)) > 0.0
+            in_early_window = float(now) <= float(self.reaper_scout_early_until_s)
+            opening_phase = not bool(attention.macro.opening_done)
+            should_dispatch = (in_early_window and opening_phase and not already_dispatched and not already_done)
 
-            # don't send reaper scout if home is on fire
-            if not bool(attention.combat.threatened):
-                kind, conf, age_s, first_seen_t, signals = self._opening_state(awareness=awareness, now=now)
+            if should_dispatch and not awareness.ops_proposal_running(proposal_id=pid, now=now):
+                obj = self._reaper_objective()
+                target = self._target_for_objective(bot, obj)
+                pick_policy = ReaperScoutPickPolicy(objective=target)
 
-                # staleness window: tighter early, looser mid
-                refresh = float(self.reaper_scout_interval_early_s) if now <= 240.0 else float(self.reaper_scout_interval_mid_s)
+                def _reaper_factory(mission_id: str) -> ReaperScout:
+                    return ReaperScout(awareness=awareness, log=self.log, objective=obj)
 
-                need_reaper = False
-                if first_seen_t is None and now >= 75.0:
-                    need_reaper = True
-                elif kind is None and now >= 75.0:
-                    need_reaper = True
-                elif conf < float(self.confidence_min):
-                    need_reaper = True
-                elif age_s >= refresh:
-                    need_reaper = True
-
-                # anti-spam using awareness timestamp
-                last_rep = awareness.intel_last_reaper_scout_dispatch_at(now=now)
-                if need_reaper and (last_rep <= 0.0 or (now - float(last_rep)) >= refresh):
-                    if not awareness.ops_proposal_running(proposal_id=pid, now=now):
-                        obj = self._reaper_objective(kind=kind, conf=conf, signals=signals, now=now)
-
-                        def _reaper_factory(mission_id: str) -> ReaperScout:
-                            return ReaperScout(awareness=awareness, log=self.log, objective=obj)
-
-                        proposals.append(
-                            Proposal(
-                                proposal_id=pid,
-                                domain="INTEL",
-                                score=52 if conf < 0.65 else 42,
-                                tasks=[
-                                    TaskSpec(
-                                        task_id="reaper_scout",
-                                        task_factory=_reaper_factory,
-                                        unit_requirements=[UnitRequirement(unit_type=U.REAPER, count=1)],
+                proposals.append(
+                    Proposal(
+                        proposal_id=pid,
+                        domain="INTEL",
+                        score=68,
+                        tasks=[
+                            TaskSpec(
+                                task_id="reaper_scout",
+                                task_factory=_reaper_factory,
+                                unit_requirements=[
+                                    UnitRequirement(
+                                        unit_type=U.REAPER,
+                                        count=1,
+                                        pick_policy=pick_policy,
                                     )
                                 ],
-                                lease_ttl=float(self.reaper_scout_lease_ttl_s),
-                                cooldown_s=6.0,
-                                risk_level=1,
-                                allow_preempt=True,
                             )
-                        )
+                        ],
+                        lease_ttl=float(self.reaper_scout_lease_ttl_s),
+                        cooldown_s=0.0,
+                        risk_level=1,
+                        allow_preempt=True,
+                    )
+                )
 
-                        if self.log:
-                            self.log.emit(
-                                "intel_reaper_scout_proposed",
-                                {
-                                    "t": round(float(now), 2),
-                                    "proposal_id": pid,
-                                    "objective": str(obj.value),
-                                    "kind": str(kind),
-                                    "confidence": float(conf),
-                                    "age_s": float(age_s),
-                                },
-                                meta={"module": "planner", "component": f"planner.{self.planner_id}"},
-                            )
+                if self.log:
+                    self.log.emit(
+                        "intel_reaper_scout_proposed",
+                        {
+                            "t": round(float(now), 2),
+                            "proposal_id": pid,
+                            "objective": str(obj.value),
+                            "mode": "single_early_dispatch",
+                            "opening_done": bool(attention.macro.opening_done),
+                            "reapers_ready": int(reapers_ready),
+                        },
+                        meta={"module": "planner", "component": f"planner.{self.planner_id}"},
+                    )
 
         # -------------------------
         # 1) Scan when threatened and orbital ready
         # -------------------------
-        if bool(attention.combat.threatened) and bool(attention.intel.orbital_ready_to_scan):
+        if int(attention.combat.primary_urgency) > 0 and bool(attention.intel.orbital_ready_to_scan):
             target = self._enemy_main(bot)
             label = "enemy_main"
 
@@ -174,3 +167,4 @@ class IntelPlanner:
             )
 
         return proposals
+

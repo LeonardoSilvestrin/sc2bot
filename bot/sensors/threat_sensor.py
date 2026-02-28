@@ -1,4 +1,3 @@
-# bot/sensors/threat_sensor.py
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -9,19 +8,30 @@ from sc2.unit import Unit
 
 
 @dataclass(frozen=True)
-class ThreatReport:
-    threatened: bool
-    threat_pos: Optional[Point2]
+class BaseThreatReport:
+    th_tag: int
+    th_pos: Point2
     enemy_count: int
+    enemy_power: float
+    urgency: int
+    threat_pos: Optional[Point2]
+
+
+@dataclass(frozen=True)
+class ThreatReport:
     radius: float
-    urgency: int  # 0..100
+    base_threats: Tuple[BaseThreatReport, ...]
+    primary_base_tag: Optional[int]
+    primary_enemy_count: int
+    primary_urgency: int  # 0..100
+    primary_threat_pos: Optional[Point2]
 
 
 class Threat:
     """
-    Intelligence-only:
-      - Detecta inimigos perto de townhalls
-      - Produz threat_pos + enemy_count + urgency
+    Base-local threat intelligence.
+      - Evaluate threats per own base.
+      - Expose only the primary base threat summary and full per-base list.
     """
 
     def __init__(self, *, defend_radius: float = 22.0, min_enemy: int = 1):
@@ -34,28 +44,121 @@ class Threat:
         except Exception:
             return []
 
+    @staticmethod
+    def _is_ground_threat(enemy: Unit) -> bool:
+        try:
+            return bool(getattr(enemy, "can_attack_ground", False))
+        except Exception:
+            return False
+
+    @staticmethod
+    def _enemy_power(enemy: Unit) -> float:
+        # Lightweight and race-agnostic danger proxy.
+        try:
+            if bool(getattr(enemy, "is_worker", False)):
+                return 0.35
+        except Exception:
+            pass
+
+        try:
+            if bool(getattr(enemy, "is_structure", False)):
+                return 1.25 if bool(getattr(enemy, "can_attack_ground", False)) else 0.0
+        except Exception:
+            pass
+
+        try:
+            rng = float(getattr(enemy, "ground_range", 0.0) or 0.0)
+        except Exception:
+            rng = 0.0
+
+        if rng >= 7.0:
+            return 2.25
+        if rng >= 5.0:
+            return 1.75
+        if rng > 0.0:
+            return 1.20
+        return 0.0
+
+    @staticmethod
+    def _enemy_centroid(enemies: List[Unit], fallback: Point2) -> Point2:
+        points: list[Point2] = []
+        for e in enemies:
+            try:
+                points.append(e.position)
+            except Exception:
+                continue
+        if not points:
+            return fallback
+        x = sum(float(p.x) for p in points) / float(len(points))
+        y = sum(float(p.y) for p in points) / float(len(points))
+        return Point2((x, y))
+
+    @staticmethod
+    def _urgency_from(enemy_count: int, enemy_power: float) -> int:
+        if enemy_count <= 0 or enemy_power <= 0.0:
+            return 0
+        # Count and power both contribute, but avoid hard-lock too early.
+        raw = (enemy_count * 6.0) + (enemy_power * 14.0)
+        return int(max(0.0, min(100.0, raw)))
+
     def evaluate(self, bot) -> ThreatReport:
         ths = self._townhalls(bot)
         if not ths:
-            return ThreatReport(False, None, 0, self.defend_radius, 0)
+            return ThreatReport(
+                radius=self.defend_radius,
+                base_threats=(),
+                primary_base_tag=None,
+                primary_enemy_count=0,
+                primary_urgency=0,
+                primary_threat_pos=None,
+            )
 
         enemies = bot.enemy_units
         if not enemies:
-            return ThreatReport(False, None, 0, self.defend_radius, 0)
+            return ThreatReport(
+                radius=self.defend_radius,
+                base_threats=(),
+                primary_base_tag=None,
+                primary_enemy_count=0,
+                primary_urgency=0,
+                primary_threat_pos=None,
+            )
 
-        best: Tuple[int, Optional[Point2]] = (0, None)
+        base_reports: list[BaseThreatReport] = []
         for th in ths:
             near = enemies.closer_than(self.defend_radius, th.position)
-            c = int(near.amount)
-            if c > best[0]:
-                best = (c, th.position)
+            near_threats = [e for e in near if self._is_ground_threat(e)]
+            enemy_count = int(len(near_threats))
+            enemy_power = float(sum(self._enemy_power(e) for e in near_threats))
+            urgency = self._urgency_from(enemy_count=enemy_count, enemy_power=enemy_power)
+            threat_pos = self._enemy_centroid(near_threats, fallback=th.position) if enemy_count > 0 else None
 
-        threatened = best[0] >= self.min_enemy
-        enemy_count = int(best[0])
+            base_reports.append(
+                BaseThreatReport(
+                    th_tag=int(getattr(th, "tag", -1) or -1),
+                    th_pos=th.position,
+                    enemy_count=enemy_count,
+                    enemy_power=enemy_power,
+                    urgency=int(urgency),
+                    threat_pos=threat_pos,
+                )
+            )
 
-        # urgência simples (MVP): ameaça => 50 + 10*count, cap 100
-        urgency = 0
-        if threatened:
-            urgency = min(100, 50 + 10 * enemy_count)
+        base_reports.sort(key=lambda r: (-int(r.urgency), -int(r.enemy_count), -float(r.enemy_power), int(r.th_tag)))
+        primary = base_reports[0] if base_reports else None
 
-        return ThreatReport(threatened, best[1], enemy_count, self.defend_radius, int(urgency))
+        enemy_count = int(primary.enemy_count) if primary is not None else 0
+        urgency = int(primary.urgency) if primary is not None else 0
+        if enemy_count < int(self.min_enemy):
+            urgency = 0
+        threat_pos = primary.threat_pos if primary is not None else None
+        primary_tag = int(primary.th_tag) if primary is not None and int(primary.th_tag) > 0 else None
+
+        return ThreatReport(
+            radius=self.defend_radius,
+            base_threats=tuple(base_reports),
+            primary_base_tag=primary_tag,
+            primary_enemy_count=int(enemy_count),
+            primary_urgency=int(urgency),
+            primary_threat_pos=threat_pos,
+        )

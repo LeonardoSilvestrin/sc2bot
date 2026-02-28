@@ -1,0 +1,92 @@
+# bot/tasks/control_depots_task.py
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from sc2.ids.ability_id import AbilityId
+from sc2.ids.unit_typeid import UnitTypeId as U
+from sc2.position import Point2
+
+from bot.mind.attention import Attention
+from bot.mind.awareness import Awareness, K
+from bot.tasks.base_task import BaseTask, TaskTick, TaskResult
+
+
+@dataclass
+class ControlDepots(BaseTask):
+    """
+    Regional wall-depot control with no unit leases.
+    Raises depots close to the threat hotspot, lowers when calm.
+    """
+
+    awareness: Awareness
+    threat_pos: Point2 | None
+    raise_radius: float
+    raise_urgency_min: int
+    raise_enemy_count_min: int
+
+    def __init__(
+        self,
+        *,
+        awareness: Awareness,
+        threat_pos: Point2 | None = None,
+        raise_radius: float = 12.0,
+        raise_urgency_min: int = 18,
+        raise_enemy_count_min: int = 2,
+    ):
+        super().__init__(task_id="control_depots", domain="MACRO_DEPOT_CONTROL", commitment=0)
+        self.awareness = awareness
+        self.threat_pos = threat_pos
+        self.raise_radius = float(raise_radius)
+        self.raise_urgency_min = int(raise_urgency_min)
+        self.raise_enemy_count_min = int(raise_enemy_count_min)
+
+    async def on_step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult:
+        now = float(tick.time)
+        urgency = int(attention.combat.primary_urgency)
+        enemy_count = int(attention.combat.primary_enemy_count)
+        threatened = urgency >= int(self.raise_urgency_min) and enemy_count >= int(self.raise_enemy_count_min)
+
+        issued = 0
+        action = "none"
+        target = attention.combat.primary_threat_pos if attention.combat.primary_threat_pos is not None else self.threat_pos
+
+        if threatened:
+            if target is None:
+                self._done("depots_no_threat_pos")
+                return TaskResult.done(
+                    "depots_no_threat_pos",
+                    telemetry={"threatened": True, "urgency": int(urgency), "orders": 0, "radius": float(self.raise_radius)},
+                )
+            lowered = bot.structures.of_type({U.SUPPLYDEPOTLOWERED}).ready
+            for depot in lowered:
+                if float(depot.distance_to(target)) > float(self.raise_radius):
+                    continue
+                depot(AbilityId.MORPH_SUPPLYDEPOT_RAISE)
+                issued += 1
+            action = "raise_local"
+        else:
+            raised = bot.structures.of_type({U.SUPPLYDEPOT}).ready
+            for depot in raised:
+                depot(AbilityId.MORPH_SUPPLYDEPOT_LOWER)
+                issued += 1
+            action = "lower"
+
+        self.awareness.mem.set(K("macro", "wall", "depot_control", "last_done_at"), value=now, now=now, ttl=None)
+        self.awareness.mem.set(K("macro", "wall", "depot_control", "last_action"), value=action, now=now, ttl=None)
+
+        self._done("depots_controlled")
+        return TaskResult.done(
+            "depots_controlled",
+            telemetry={
+                "threatened": bool(threatened),
+                "urgency": int(urgency),
+                "enemy_count": int(enemy_count),
+                "action": str(action),
+                "orders": int(issued),
+                "radius": float(self.raise_radius),
+                "raise_urgency_min": int(self.raise_urgency_min),
+                "raise_enemy_count_min": int(self.raise_enemy_count_min),
+                "target": None if target is None else [round(float(target.x), 1), round(float(target.y), 1)],
+            },
+        )

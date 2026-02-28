@@ -76,6 +76,7 @@ class Task(Protocol):
     def is_done(self) -> bool: ...
     def evaluate(self, bot, attention: Attention) -> int: ...
     def bind_mission(self, *, mission_id: str, assigned_tags: list[int]) -> None: ...
+    def add_assigned_tags(self, tags: list[int]) -> None: ...
     async def step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult: ...
     async def pause(self, bot, reason: str) -> None: ...
     async def abort(self, bot, reason: str) -> None: ...
@@ -123,6 +124,35 @@ class BaseTask:
             raise ValueError("mission_id must be a non-empty string")
         self.mission_id = mission_id
         self.assigned_tags = [int(x) for x in (assigned_tags or [])]
+
+    def require_mission_bound(
+        self,
+        *,
+        min_tags: int = 0,
+        exact_tags: int | None = None,
+    ) -> TaskResult | None:
+        if not isinstance(self.mission_id, str) or not self.mission_id:
+            return TaskResult.failed("unbound_mission")
+        if not isinstance(self.assigned_tags, list):
+            return TaskResult.failed("assigned_tags_invalid")
+        if exact_tags is not None and len(self.assigned_tags) != int(exact_tags):
+            return TaskResult.failed(f"expected_exactly_{int(exact_tags)}_assigned_tag")
+        if len(self.assigned_tags) < int(min_tags):
+            return TaskResult.failed("expected_units_assigned")
+        return None
+
+    def add_assigned_tags(self, tags: list[int]) -> None:
+        if not tags:
+            return
+        seen = {int(x) for x in self.assigned_tags}
+        merged = [int(x) for x in self.assigned_tags]
+        for tag in tags:
+            itag = int(tag)
+            if itag in seen:
+                continue
+            seen.add(itag)
+            merged.append(itag)
+        self.assigned_tags = merged
 
     async def step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult:
         if self.is_done():

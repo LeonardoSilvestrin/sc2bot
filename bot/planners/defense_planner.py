@@ -1,4 +1,4 @@
-# bot/planners/defense_planner.py
+﻿# bot/planners/defense_planner.py
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -6,12 +6,13 @@ from dataclasses import dataclass
 from bot.devlog import DevLogger
 from bot.mind.attention import Attention
 from bot.mind.awareness import Awareness
-from bot.planners.proposals import Proposal, TaskSpec
-from bot.tasks.defend_task import Defend
+from bot.planners.utils.base_planner import BasePlanner
+from bot.planners.utils.proposals import Proposal, TaskSpec
+from bot.tasks.defense.defend_task import Defend
 
 
 @dataclass
-class DefensePlanner:
+class DefensePlanner(BasePlanner):
     """
     Planner reativo de defesa.
     """
@@ -20,20 +21,20 @@ class DefensePlanner:
     log: DevLogger | None = None
 
     def _pid_defend(self) -> str:
-        return f"{self.planner_id}:defend:bases"
+        return self.proposal_id("defend:bases")
 
     def propose(self, bot, *, awareness: Awareness, attention: Attention) -> list[Proposal]:
-        if (not bool(attention.combat.threatened)) or (not attention.combat.threat_pos):
+        if int(attention.combat.primary_urgency) <= 0:
             return []
 
         now = float(attention.time)
         pid = self._pid_defend()
 
         # Avoid planner/log spam while an equal DEFENSE mission is already running.
-        if awareness.ops_proposal_running(proposal_id=pid, now=now):
+        if self.is_proposal_running(awareness=awareness, proposal_id=pid, now=now):
             return []
 
-        urg = int(attention.combat.defense_urgency)
+        urg = int(attention.combat.primary_urgency)
         score = max(80, min(100, 60 + urg))
 
         if self.defend_task is None:
@@ -42,22 +43,16 @@ class DefensePlanner:
         def _factory(mission_id: str) -> Defend:
             return self.defend_task.spawn()
 
-        out = [
-            Proposal(
-                proposal_id=pid,
-                domain="DEFENSE",
-                score=score,
-                tasks=[TaskSpec(task_id="defend_bases", task_factory=_factory, unit_requirements=[])],
-                lease_ttl=6.0,
-                cooldown_s=0.0,
-                risk_level=0,
-                allow_preempt=True,
-            )
-        ]
-        if self.log is not None:
-            self.log.emit(
-                "planner_proposed",
-                {"planner": self.planner_id, "count": len(out), "score": int(score)},
-                meta={"module": "planner", "component": f"planner.{self.planner_id}"},
-            )
+        out = self.make_single_task_proposal(
+            proposal_id=pid,
+            domain="DEFENSE",
+            score=score,
+            task_spec=TaskSpec(task_id="defend_bases", task_factory=_factory, unit_requirements=[]),
+            lease_ttl=6.0,
+            cooldown_s=0.0,
+            risk_level=0,
+            allow_preempt=True,
+        )
+        self.emit_planner_proposed({"count": len(out), "score": int(score)})
         return out
+
