@@ -1,0 +1,172 @@
+# bot/planners/intel_planner.py
+
+# bot/planners/intel_planner.py
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from sc2.ids.unit_typeid import UnitTypeId as U
+from sc2.position import Point2
+
+from bot.devlog import DevLogger
+from bot.mind.attention import Attention
+from bot.mind.awareness import Awareness
+from bot.planners.utils.proposals import Proposal, TaskSpec, UnitRequirement
+from bot.tasks.scout.scan_task import ScanAt
+from bot.tasks.scout.reaper_scout_task import ReaperScout, ReaperScoutObjective
+
+
+@dataclass(frozen=True)
+class ReaperScoutPickPolicy:
+    objective: Point2
+    name: str = "intel.reaper_scout.nearest_objective.v1"
+
+    def allow(self, unit, *, bot, attention, now: float) -> bool:
+        if unit is None or unit.type_id != U.REAPER:
+            return False
+        return bool(getattr(unit, "is_ready", False))
+
+    def score(self, unit, *, bot, attention, now: float) -> float:
+        try:
+            dist = float(unit.distance_to(self.objective))
+        except Exception:
+            dist = 9999.0
+        return -dist
+
+
+@dataclass
+class IntelPlanner:
+    planner_id: str = "intel_planner"
+
+    awareness: Awareness = None  # injected
+    log: DevLogger | None = None
+
+    # Reaper scout (single early dispatch)
+    reaper_scout_lease_ttl_s: float = 90.0
+    reaper_scout_early_until_s: float = 360.0
+
+    def _pid_reaper_scout(self) -> str:
+        return f"{self.planner_id}:scout:reaper"
+
+    def _pid_scan(self, label: str) -> str:
+        return f"{self.planner_id}:scan:{label}"
+
+    def _enemy_main(self, bot) -> Point2:
+        return bot.enemy_start_locations[0]
+
+    def _enemy_natural(self, bot) -> Point2:
+        enemy_main = self._enemy_main(bot)
+        exps = list(getattr(bot, "expansion_locations_list", []) or [])
+        if not exps:
+            return enemy_main
+        exps_sorted = sorted(exps, key=lambda p: p.distance_to(enemy_main))
+        if len(exps_sorted) < 2:
+            return exps_sorted[0]
+        return exps_sorted[1]
+
+    def _reaper_objective(self) -> ReaperScoutObjective:
+        # Main-first scout: SCV already checks early pathing/opening outside.
+        return ReaperScoutObjective.CONFIRM_MAIN_RAMP
+
+    def _target_for_objective(self, bot, obj: ReaperScoutObjective) -> Point2:
+        if obj == ReaperScoutObjective.CONFIRM_NATURAL:
+            return self._enemy_natural(bot)
+        if obj == ReaperScoutObjective.CONFIRM_MAIN_RAMP or obj == ReaperScoutObjective.CONFIRM_MAIN:
+            return self._enemy_main(bot)
+        if obj == ReaperScoutObjective.MAP_CENTER:
+            gi = getattr(bot, "game_info", None)
+            if gi is not None:
+                return gi.map_center
+        return bot.start_location
+
+    def propose(self, bot, *, awareness: Awareness, attention: Attention) -> list[Proposal]:
+        now = float(attention.time)
+        proposals: list[Proposal] = []
+
+        if self.awareness is None:
+            raise TypeError("IntelPlanner requires awareness injected")
+
+        # -------------------------
+        # 0) Reaper scout controller
+        # -------------------------
+        reapers_ready = int(attention.economy.units_ready.get(U.REAPER, 0) or 0)
+        if reapers_ready >= 1:
+            pid = self._pid_reaper_scout()
+            already_dispatched = bool(awareness.intel_reaper_scout_dispatched(now=now))
+            already_done = float(awareness.intel_last_reaper_scout_done_at(now=now)) > 0.0
+            in_early_window = float(now) <= float(self.reaper_scout_early_until_s)
+            opening_phase = not bool(attention.macro.opening_done)
+            should_dispatch = (in_early_window and opening_phase and not already_dispatched and not already_done)
+
+            if should_dispatch and not awareness.ops_proposal_running(proposal_id=pid, now=now):
+                obj = self._reaper_objective()
+                target = self._target_for_objective(bot, obj)
+                pick_policy = ReaperScoutPickPolicy(objective=target)
+
+                def _reaper_factory(mission_id: str) -> ReaperScout:
+                    return ReaperScout(awareness=awareness, log=self.log, objective=obj)
+
+                proposals.append(
+                    Proposal(
+                        proposal_id=pid,
+                        domain="INTEL",
+                        score=68,
+                        tasks=[
+                            TaskSpec(
+                                task_id="reaper_scout",
+                                task_factory=_reaper_factory,
+                                unit_requirements=[
+                                    UnitRequirement(
+                                        unit_type=U.REAPER,
+                                        count=1,
+                                        pick_policy=pick_policy,
+                                    )
+                                ],
+                            )
+                        ],
+                        lease_ttl=float(self.reaper_scout_lease_ttl_s),
+                        cooldown_s=0.0,
+                        risk_level=1,
+                        allow_preempt=True,
+                    )
+                )
+
+                if self.log:
+                    self.log.emit(
+                        "intel_reaper_scout_proposed",
+                        {
+                            "t": round(float(now), 2),
+                            "proposal_id": pid,
+                            "objective": str(obj.value),
+                            "mode": "single_early_dispatch",
+                            "opening_done": bool(attention.macro.opening_done),
+                            "reapers_ready": int(reapers_ready),
+                        },
+                        meta={"module": "planner", "component": f"planner.{self.planner_id}"},
+                    )
+
+        # -------------------------
+        # 1) Scan when threatened and orbital ready
+        # -------------------------
+        if int(attention.combat.primary_urgency) > 0 and bool(attention.intel.orbital_ready_to_scan):
+            target = self._enemy_main(bot)
+            label = "enemy_main"
+
+            def _scan_factory(mission_id: str) -> ScanAt:
+                return ScanAt(awareness=awareness, target=target, label=label, cooldown=20.0, log=self.log)
+
+            proposals.append(
+                Proposal(
+                    proposal_id=self._pid_scan(label),
+                    domain="INTEL",
+                    score=55,
+                    tasks=[TaskSpec(task_id="scan_at", task_factory=_scan_factory, unit_requirements=[])],
+                    lease_ttl=5.0,
+                    cooldown_s=20.0,
+                    risk_level=1,
+                    allow_preempt=True,
+                )
+            )
+
+        return proposals
+

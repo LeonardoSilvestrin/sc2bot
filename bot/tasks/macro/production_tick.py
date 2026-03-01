@@ -55,13 +55,17 @@ class MacroProductionTick(BaseTask):
             return bound_err
 
         now = float(tick.time)
-        hold_for_reserve = bool(self.awareness.mem.get(K("macro", "production", "plan", "hold_for_reserve"), now=now, default=False))
-        reserve_m = int(self.awareness.mem.get(K("macro", "production", "plan", "reserve_minerals"), now=now, default=0) or 0)
-        reserve_g = int(self.awareness.mem.get(K("macro", "production", "plan", "reserve_gas"), now=now, default=0) or 0)
-        reserve_tech_name = str(self.awareness.mem.get(K("macro", "production", "plan", "reserve_tech_name"), now=now, default="") or "")
-        reserve_spending_name = str(self.awareness.mem.get(K("macro", "production", "plan", "reserve_spending_name"), now=now, default="") or "")
-        spending_reserve_m = int(self.awareness.mem.get(K("macro", "production", "plan", "spending_reserve_minerals"), now=now, default=0) or 0)
-        spending_reserve_g = int(self.awareness.mem.get(K("macro", "production", "plan", "spending_reserve_gas"), now=now, default=0) or 0)
+        morph_reserve_m = int(self.awareness.mem.get(K("macro", "morph", "reserve_minerals"), now=now, default=0) or 0)
+        morph_reserve_g = int(self.awareness.mem.get(K("macro", "morph", "reserve_gas"), now=now, default=0) or 0)
+        tech_reserve_m = int(self.awareness.mem.get(K("macro", "reserve", "tech", "minerals"), now=now, default=0) or 0)
+        tech_reserve_g = int(self.awareness.mem.get(K("macro", "reserve", "tech", "gas"), now=now, default=0) or 0)
+        reserve_tech_name = str(self.awareness.mem.get(K("macro", "reserve", "tech", "name"), now=now, default="") or "")
+        reserve_spending_name = str(self.awareness.mem.get(K("macro", "reserve", "spending", "name"), now=now, default="") or "")
+        spending_reserve_m = int(self.awareness.mem.get(K("macro", "reserve", "spending", "minerals"), now=now, default=0) or 0)
+        spending_reserve_g = int(self.awareness.mem.get(K("macro", "reserve", "spending", "gas"), now=now, default=0) or 0)
+        reserve_m = max(int(morph_reserve_m), int(tech_reserve_m))
+        reserve_g = max(int(morph_reserve_g), int(tech_reserve_g))
+        hold_for_reserve = bool(int(attention.economy.minerals) < int(reserve_m) or int(attention.economy.gas) < int(reserve_g))
         workers_enabled = bool(self.awareness.mem.get(K("macro", "production", "plan", "workers_enabled"), now=now, default=True))
         dynamic_scv_cap = int(self.awareness.mem.get(K("macro", "production", "plan", "dynamic_scv_cap"), now=now, default=self.scv_cap) or self.scv_cap)
         freeflow_mode = bool(self.awareness.mem.get(K("macro", "production", "plan", "freeflow_mode"), now=now, default=False))
@@ -84,6 +88,10 @@ class MacroProductionTick(BaseTask):
                         "reserve_gas": int(reserve_g),
                         "minerals": int(attention.economy.minerals),
                         "gas": int(attention.economy.gas),
+                        "morph_reserve_minerals": int(morph_reserve_m),
+                        "morph_reserve_gas": int(morph_reserve_g),
+                        "tech_reserve_minerals": int(tech_reserve_m),
+                        "tech_reserve_gas": int(tech_reserve_g),
                         "reserve_tech_name": str(reserve_tech_name),
                         "reserve_spending_name": str(reserve_spending_name),
                         "spending_reserve_minerals": int(spending_reserve_m),
@@ -118,6 +126,10 @@ class MacroProductionTick(BaseTask):
                     "freeflow_mode": bool(freeflow_mode),
                     "reserve_minerals": int(reserve_m),
                     "reserve_gas": int(reserve_g),
+                    "morph_reserve_minerals": int(morph_reserve_m),
+                    "morph_reserve_gas": int(morph_reserve_g),
+                    "tech_reserve_minerals": int(tech_reserve_m),
+                    "tech_reserve_gas": int(tech_reserve_g),
                     "reserve_tech_name": str(reserve_tech_name),
                     "reserve_spending_name": str(reserve_spending_name),
                     "spending_reserve_minerals": int(spending_reserve_m),

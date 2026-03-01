@@ -134,5 +134,4 @@ dmypy.json
 #_prompt/
 .vscode1/
 .vscode/
-logs/ 
-_prompt/
+logs/

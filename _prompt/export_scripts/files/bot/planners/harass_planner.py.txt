@@ -1,0 +1,306 @@
+# bot/planners/harass_planner.py
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from sc2.ids.unit_typeid import UnitTypeId as U
+from sc2.position import Point2
+
+from bot.devlog import DevLogger
+from bot.mind.attention import Attention
+from bot.mind.awareness import Awareness, K
+from bot.planners.utils.proposals import Proposal, TaskSpec, UnitRequirement
+from bot.tasks.harass.banshee_harass_task import BansheeHarass
+from bot.tasks.harass.reaper_hellion_harass_task import ReaperHellionHarass
+
+
+@dataclass(frozen=True)
+class ReaperHarassPickPolicy:
+    objective: Point2
+    name: str = "harass.reaper.nearest_objective.v1"
+
+    def allow(self, unit, *, bot, attention, now: float) -> bool:
+        if unit is None or unit.type_id != U.REAPER:
+            return False
+        if not bool(getattr(unit, "is_ready", False)):
+            return False
+        return float(getattr(unit, "health_percentage", 1.0) or 1.0) >= 0.50
+
+    def score(self, unit, *, bot, attention, now: float) -> float:
+        try:
+            dist = float(unit.distance_to(self.objective))
+        except Exception:
+            dist = 9999.0
+        hp = float(getattr(unit, "health_percentage", 1.0) or 1.0)
+        return (hp * 25.0) - dist
+
+
+@dataclass(frozen=True)
+class HellionHarassPickPolicy:
+    objective: Point2
+    name: str = "harass.hellion.nearest_objective.v1"
+
+    def allow(self, unit, *, bot, attention, now: float) -> bool:
+        if unit is None or unit.type_id != U.HELLION:
+            return False
+        if not bool(getattr(unit, "is_ready", False)):
+            return False
+        return float(getattr(unit, "health_percentage", 1.0) or 1.0) >= 0.45
+
+    def score(self, unit, *, bot, attention, now: float) -> float:
+        try:
+            dist = float(unit.distance_to(self.objective))
+        except Exception:
+            dist = 9999.0
+        hp = float(getattr(unit, "health_percentage", 1.0) or 1.0)
+        return (hp * 15.0) - dist
+
+
+@dataclass
+class HarassPlanner:
+    planner_id: str = "harass_planner"
+    log: DevLogger | None = None
+    lease_ttl_s: float = 120.0
+    score: int = 66
+    cadence_s: float = 15.0
+    propose_hellions_until_s: float = 480.0
+
+    def _pid_reaper_hellion(self) -> str:
+        return f"{self.planner_id}:reaper_hellion"
+
+    def _pid_banshee(self) -> str:
+        return f"{self.planner_id}:banshee"
+
+    def _due(self, *, awareness: Awareness, now: float, pid: str) -> bool:
+        last = awareness.mem.get(K("ops", "harass", "proposal", pid, "last_t"), now=now, default=None)
+        if last is None:
+            return True
+        try:
+            return (float(now) - float(last)) >= float(self.cadence_s)
+        except Exception:
+            return True
+
+    @staticmethod
+    def _mark_proposed(*, awareness: Awareness, now: float, pid: str) -> None:
+        awareness.mem.set(K("ops", "harass", "proposal", pid, "last_t"), value=float(now), now=now, ttl=None)
+
+    @staticmethod
+    def _enemy_main(bot) -> Point2:
+        return bot.enemy_start_locations[0]
+
+    @staticmethod
+    def _weak_point_objective(bot, *, awareness: Awareness, now: float) -> Point2:
+        primary = awareness.mem.get(K("enemy", "weak_points", "primary"), now=now, default=None)
+        if isinstance(primary, dict):
+            try:
+                x = float(primary.get("x"))
+                y = float(primary.get("y"))
+                return Point2((x, y))
+            except Exception:
+                pass
+        return bot.enemy_start_locations[0]
+
+    def propose(self, bot, *, awareness: Awareness, attention: Attention) -> list[Proposal]:
+        now = float(attention.time)
+        pid_rh = self._pid_reaper_hellion()
+        pid_b = self._pid_banshee()
+        out: list[Proposal] = []
+
+        # Do not start/extend harass while bases are under threat.
+        if int(attention.combat.primary_urgency) > 0:
+            return []
+        objective = self._weak_point_objective(bot, awareness=awareness, now=now)
+        prefer_hellion_only = float(now) <= float(self.propose_hellions_until_s)
+
+        if not awareness.ops_proposal_running(proposal_id=pid_rh, now=now) and self._due(awareness=awareness, now=now, pid=pid_rh):
+            reapers_idle = int(bot.units.of_type(U.REAPER).ready.idle.amount)
+            hellions_idle = int(bot.units.of_type(U.HELLION).ready.idle.amount)
+            hellion_count = 4 if hellions_idle >= 4 else max(1, hellions_idle)
+            reaper_policy = ReaperHarassPickPolicy(objective=objective)
+            hellion_policy = HellionHarassPickPolicy(objective=objective)
+
+            reqs: list[UnitRequirement] = []
+            if prefer_hellion_only and hellions_idle >= 1:
+                primary_hellions = 2 if hellions_idle >= 2 else 1
+                reqs.append(
+                    UnitRequirement(
+                        unit_type=U.HELLION,
+                        count=int(primary_hellions),
+                        pick_policy=hellion_policy,
+                        required=True,
+                    )
+                )
+                if reapers_idle >= 1:
+                    reqs.append(
+                        UnitRequirement(
+                            unit_type=U.REAPER,
+                            count=1,
+                            pick_policy=reaper_policy,
+                            required=False,
+                        )
+                    )
+                extra_hellions = max(0, int(hellion_count) - int(primary_hellions))
+                if extra_hellions > 0:
+                    reqs.append(
+                        UnitRequirement(
+                            unit_type=U.HELLION,
+                            count=int(extra_hellions),
+                            pick_policy=hellion_policy,
+                            required=False,
+                        )
+                    )
+            elif reapers_idle >= 1:
+                reqs.append(
+                    UnitRequirement(
+                        unit_type=U.REAPER,
+                        count=1,
+                        pick_policy=reaper_policy,
+                        required=True,
+                    )
+                )
+                if hellion_count > 0:
+                    reqs.append(
+                        UnitRequirement(
+                            unit_type=U.HELLION,
+                            count=int(hellion_count),
+                            pick_policy=hellion_policy,
+                            required=False,
+                        )
+                    )
+            elif hellions_idle >= 1:
+                reqs.append(
+                    UnitRequirement(
+                        unit_type=U.HELLION,
+                        count=1,
+                        pick_policy=hellion_policy,
+                        required=True,
+                    )
+                )
+                extra_hellions = max(0, int(hellion_count) - 1)
+                if extra_hellions > 0:
+                    reqs.append(
+                        UnitRequirement(
+                            unit_type=U.HELLION,
+                            count=int(extra_hellions),
+                            pick_policy=hellion_policy,
+                            required=False,
+                        )
+                    )
+            else:
+                # Always propose once conditions allow so Ego can deny with a concrete
+                # shortage reason; this leaves a trace for downstream macro intel.
+                reqs.append(
+                    UnitRequirement(
+                        unit_type=U.HELLION,
+                        count=2 if prefer_hellion_only else 1,
+                        pick_policy=hellion_policy,
+                        required=True,
+                    )
+                )
+                if not prefer_hellion_only:
+                    reqs.append(
+                        UnitRequirement(
+                            unit_type=U.REAPER,
+                            count=1,
+                            pick_policy=reaper_policy,
+                            required=False,
+                        )
+                    )
+
+            def _factory_rh(mission_id: str) -> ReaperHellionHarass:
+                return ReaperHellionHarass(awareness=awareness, log=self.log, preferred_target=objective)
+
+            out.append(
+                Proposal(
+                    proposal_id=pid_rh,
+                    domain="HARASS",
+                    score=int(self.score),
+                    tasks=[
+                        TaskSpec(
+                            task_id="reaper_hellion_harass",
+                            task_factory=_factory_rh,
+                            unit_requirements=reqs,
+                        )
+                    ],
+                    lease_ttl=float(self.lease_ttl_s),
+                    cooldown_s=0.0,
+                    risk_level=1,
+                    allow_preempt=True,
+                )
+            )
+            self._mark_proposed(awareness=awareness, now=now, pid=pid_rh)
+
+        reaper_hellion_done = bool(awareness.mem.get(K("ops", "harass", "reaper_hellion", "done"), now=now, default=False))
+        if (
+            reaper_hellion_done
+            and not awareness.ops_proposal_running(proposal_id=pid_b, now=now)
+            and self._due(awareness=awareness, now=now, pid=pid_b)
+        ):
+            banshee_idle = int(bot.units.of_type(U.BANSHEE).ready.idle.amount)
+
+            class BansheeHarassPickPolicy:
+                name: str = "harass.banshee.nearest_objective.v1"
+
+                def allow(self, unit, *, bot, attention, now: float) -> bool:
+                    if unit is None or unit.type_id != U.BANSHEE:
+                        return False
+                    if not bool(getattr(unit, "is_ready", False)):
+                        return False
+                    return float(getattr(unit, "health_percentage", 1.0) or 1.0) >= 0.55
+
+                def score(self, unit, *, bot, attention, now: float) -> float:
+                    try:
+                        dist = float(unit.distance_to(objective))
+                    except Exception:
+                        dist = 9999.0
+                    hp = float(getattr(unit, "health_percentage", 1.0) or 1.0)
+                    return (hp * 20.0) - dist
+
+            banshee_policy = BansheeHarassPickPolicy()
+            reqs_b: list[UnitRequirement] = [
+                UnitRequirement(
+                    unit_type=U.BANSHEE,
+                    count=1 if banshee_idle >= 1 else 1,
+                    pick_policy=banshee_policy,
+                    required=True,
+                )
+            ]
+
+            def _factory_b(mission_id: str) -> BansheeHarass:
+                return BansheeHarass(awareness=awareness, log=self.log, preferred_target=objective)
+
+            out.append(
+                Proposal(
+                    proposal_id=pid_b,
+                    domain="HARASS",
+                    score=int(self.score - 2),
+                    tasks=[
+                        TaskSpec(
+                            task_id="banshee_harass",
+                            task_factory=_factory_b,
+                            unit_requirements=reqs_b,
+                        )
+                    ],
+                    lease_ttl=float(self.lease_ttl_s),
+                    cooldown_s=0.0,
+                    risk_level=1,
+                    allow_preempt=True,
+                )
+            )
+            self._mark_proposed(awareness=awareness, now=now, pid=pid_b)
+
+        if self.log is not None:
+            self.log.emit(
+                "planner_proposed",
+                {
+                    "planner": self.planner_id,
+                    "count": len(out),
+                    "modes": [str(p.proposal_id) for p in out],
+                    "reaper_hellion_done": bool(reaper_hellion_done),
+                    "prefer_hellion_only": bool(prefer_hellion_only),
+                },
+                meta={"module": "planner", "component": f"planner.{self.planner_id}"},
+            )
+        return out
+

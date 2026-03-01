@@ -1,0 +1,43 @@
+# bot/intel/enemy_build_intel.py
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+from bot.intel.opening_intel import OpeningIntelConfig, derive_enemy_opening_intel
+from bot.intel.weak_points_intel import WeakPointsIntelConfig, derive_enemy_weak_points_intel
+from bot.mind.attention import Attention
+from bot.mind.awareness import Awareness
+
+
+@dataclass(frozen=True)
+class EnemyBuildIntelConfig:
+    """
+    Thin orchestrator config that delegates to dedicated intel modules.
+    """
+
+    opening: OpeningIntelConfig = field(default_factory=OpeningIntelConfig)
+    weak_points: WeakPointsIntelConfig = field(default_factory=WeakPointsIntelConfig)
+
+
+def derive_enemy_build_intel(
+    bot,
+    *,
+    awareness: Awareness,
+    attention: Attention,
+    now: float,
+    cfg: EnemyBuildIntelConfig = EnemyBuildIntelConfig(),
+) -> None:
+    derive_enemy_opening_intel(
+        bot,
+        awareness=awareness,
+        attention=attention,
+        now=now,
+        cfg=cfg.opening,
+    )
+    derive_enemy_weak_points_intel(
+        bot,
+        awareness=awareness,
+        now=now,
+        cfg=cfg.weak_points,
+    )

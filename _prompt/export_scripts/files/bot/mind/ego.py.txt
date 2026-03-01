@@ -1,10 +1,11 @@
-﻿# bot/mind/ego.py
+# bot/mind/ego.py
+
+# bot/mind/ego.py
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from bot.control.priority_policy import PriorityPolicy
 from bot.mind.attention import Attention
 from bot.mind.awareness import Awareness, K
 from bot.mind.body import UnitLeases
@@ -41,7 +42,6 @@ class Ego:
         self.body = body
         self.log = log
         self.cfg = cfg
-        self.priority_policy = PriorityPolicy()
 
         self._planners: List[Any] = []
         self._active: Dict[str, Commitment] = {}
@@ -63,53 +63,10 @@ class Ego:
         for prop in proposals:
             prop.validate()
 
-        self.priority_policy.begin_tick(attention=attention, awareness=awareness, now=now)
-        proposals = self._prioritize_proposals(proposals=proposals, attention=attention, awareness=awareness, now=now)
+        proposals.sort(key=lambda p: int(p.score), reverse=True)
 
         await self._admit(bot, now=now, attention=attention, awareness=awareness, proposals=proposals)
         await self._execute(bot, tick=tick, attention=attention, awareness=awareness)
-
-    def _prioritize_proposals(
-        self,
-        *,
-        proposals: List[Proposal],
-        attention: Attention,
-        awareness: Awareness,
-        now: float,
-    ) -> List[Proposal]:
-        scored: List[Tuple[float, int, str, Proposal]] = []
-        for prop in proposals:
-            try:
-                decision = self.priority_policy.evaluate(proposal=prop, attention=attention, awareness=awareness, now=now)
-                eff = float(decision.effective_score)
-            except Exception as e:
-                eff = float(prop.score)
-                awareness.mem.set(
-                    K("control", "priority", "error", str(prop.proposal_id)),
-                    value=str(type(e).__name__),
-                    now=now,
-                    ttl=10.0,
-                )
-                if self.log is not None:
-                    self.log.emit(
-                        "priority_policy_error",
-                        {
-                            "time": round(float(now), 2),
-                            "proposal_id": str(prop.proposal_id),
-                            "domain": str(prop.domain),
-                            "error_type": str(type(e).__name__),
-                            "error": str(e),
-                            "fallback_score": int(prop.score),
-                        },
-                    )
-            scored.append((eff, int(prop.score), str(prop.proposal_id), prop))
-
-        # Deterministic ordering:
-        # 1) effective_score (policy-adjusted)
-        # 2) base planner score
-        # 3) proposal_id lexical
-        scored.sort(key=lambda x: (x[0], x[1], x[2]), reverse=True)
-        return [prop for _eff, _base, _pid, prop in scored]
 
     async def _admit(
         self,

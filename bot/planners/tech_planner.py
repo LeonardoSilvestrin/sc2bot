@@ -214,10 +214,6 @@ class TechPlanner(BasePlanner):
         awareness.mem.set(K("macro", "tech", "plan", "reserve_name"), value=str(reserve_name), now=now, ttl=ttl)
         awareness.mem.set(K("macro", "tech", "plan", "updated_at"), value=float(now), now=now, ttl=None)
 
-        # Shared explicit reserve contract used by production.
-        awareness.mem.set(K("macro", "reserve", "tech", "minerals"), value=int(reserve_m), now=now, ttl=ttl)
-        awareness.mem.set(K("macro", "reserve", "tech", "gas"), value=int(reserve_g), now=now, ttl=ttl)
-        awareness.mem.set(K("macro", "reserve", "tech", "name"), value=str(reserve_name), now=now, ttl=ttl)
         return upgrades
 
     def propose(self, bot, *, awareness: Awareness, attention: Attention) -> list[Proposal]:

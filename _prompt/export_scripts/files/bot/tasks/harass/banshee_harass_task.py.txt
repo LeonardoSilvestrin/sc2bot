@@ -1,0 +1,153 @@
+# bot/tasks/harass/banshee_harass_task.py
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+from sc2.ids.unit_typeid import UnitTypeId as U
+from sc2.position import Point2
+
+from bot.devlog import DevLogger
+from bot.mind.attention import Attention
+from bot.mind.awareness import Awareness, K
+from bot.tasks.base_task import BaseTask, TaskResult, TaskTick
+
+
+@dataclass
+class BansheeHarass(BaseTask):
+    awareness: Awareness
+    log: DevLogger | None = None
+    preferred_target: Point2 | None = None
+    max_harass_s: float = 70.0
+    regroup_radius: float = 7.0
+    retreat_hp_frac: float = 0.45
+
+    _phase: int = field(default=0, init=False)
+    _started_at: float = field(default=-1.0, init=False)
+    _last_log_t: float = field(default=0.0, init=False)
+
+    def __init__(self, *, awareness: Awareness, log: DevLogger | None = None, preferred_target: Point2 | None = None):
+        super().__init__(task_id="banshee_harass", domain="HARASS", commitment=8)
+        self.awareness = awareness
+        self.log = log
+        self.preferred_target = preferred_target
+
+    def evaluate(self, bot, attention: Attention) -> int:
+        return 68
+
+    def _enemy_main(self, bot) -> Point2:
+        return bot.enemy_start_locations[0]
+
+    def _enemy_natural(self, bot) -> Point2:
+        enemy_main = self._enemy_main(bot)
+        exps = list(getattr(bot, "expansion_locations_list", []) or [])
+        if not exps:
+            return enemy_main
+        exps_no_main = [p for p in exps if float(p.distance_to(enemy_main)) > 5.0]
+        if not exps_no_main:
+            exps_no_main = exps
+        exps_sorted = sorted(exps_no_main, key=lambda p: p.distance_to(enemy_main))
+        return exps_sorted[0]
+
+    def _our_natural(self, bot) -> Point2:
+        try:
+            return bot.mediator.get_own_nat
+        except Exception:
+            return bot.start_location
+
+    @staticmethod
+    def _closest_worker(unit, enemies):
+        workers = enemies.of_type({U.SCV, U.PROBE, U.DRONE, U.MULE})
+        if workers.amount == 0:
+            return None
+        return workers.closest_to(unit)
+
+    @staticmethod
+    def _can_attack_air(enemy) -> bool:
+        try:
+            return bool(getattr(enemy, "can_attack_air", False))
+        except Exception:
+            return False
+
+    def _log_tick(self, *, now: float, reason: str, banshees: int) -> None:
+        if self.log is None:
+            return
+        if (float(now) - float(self._last_log_t)) < 2.5:
+            return
+        self._last_log_t = float(now)
+        self.log.emit(
+            "banshee_harass_tick",
+            {
+                "t": round(float(now), 2),
+                "mission_id": str(self.mission_id or ""),
+                "phase": int(self._phase),
+                "reason": str(reason),
+                "banshees": int(banshees),
+            },
+            meta={"module": "task", "component": "task.banshee_harass"},
+        )
+
+    async def on_step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult:
+        now = float(tick.time)
+        if self._started_at < 0.0:
+            self._started_at = float(now)
+
+        bound_err = self.require_mission_bound(min_tags=1)
+        if bound_err is not None:
+            return bound_err
+
+        banshees = [bot.units.find_by_tag(int(t)) for t in self.assigned_tags]
+        banshees = [u for u in banshees if u is not None and u.type_id == U.BANSHEE]
+        if not banshees:
+            return TaskResult.failed("no_banshee_alive")
+
+        if (float(now) - float(self._started_at)) >= float(self.max_harass_s):
+            self._phase = 2
+
+        if any(float(getattr(b, "health_percentage", 1.0) or 1.0) <= float(self.retreat_hp_frac) for b in banshees):
+            self._phase = 2
+
+        enemy_main = self._enemy_main(bot)
+        base_target = self.preferred_target or self._enemy_natural(bot)
+        staging = base_target.towards(bot.game_info.map_center, 9.0)
+        harass_target = base_target.towards(enemy_main, 2.0)
+        retreat_target = self._our_natural(bot)
+
+        if self._phase == 0:
+            for b in banshees:
+                b.move(staging)
+            if all(float(b.distance_to(staging)) <= float(self.regroup_radius) for b in banshees):
+                self._phase = 1
+            self._active("banshee_regroup")
+            self._log_tick(now=now, reason="regroup", banshees=len(banshees))
+            return TaskResult.running("banshee_regroup")
+
+        if self._phase == 1:
+            for b in banshees:
+                local_enemies = bot.enemy_units.closer_than(11.0, b.position)
+                anti_air = [e for e in local_enemies if self._can_attack_air(e)]
+                if len(anti_air) >= 3:
+                    self._phase = 2
+                    break
+                target = self._closest_worker(b, local_enemies)
+                if target is not None:
+                    b.attack(target)
+                else:
+                    b.move(harass_target)
+            if self._phase == 1:
+                self._active("banshee_harass")
+                self._log_tick(now=now, reason="harass", banshees=len(banshees))
+                return TaskResult.running("banshee_harass")
+
+        for b in banshees:
+            b.move(retreat_target)
+        if all(float(b.distance_to(retreat_target)) <= 9.0 for b in banshees):
+            self.awareness.mem.set(K("ops", "harass", "banshee", "done"), value=True, now=now, ttl=None)
+            self.awareness.mem.set(K("ops", "harass", "banshee", "done_at"), value=float(now), now=now, ttl=None)
+            self._done("banshee_harass_done")
+            return TaskResult.done("banshee_harass_done")
+
+        self._active("banshee_exit_safe")
+        self._log_tick(now=now, reason="retreat", banshees=len(banshees))
+        return TaskResult.running("banshee_exit_safe")
+
