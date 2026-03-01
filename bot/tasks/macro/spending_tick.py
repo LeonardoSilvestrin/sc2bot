@@ -17,7 +17,7 @@ from bot.tasks.base_task import BaseTask, TaskTick, TaskResult
 from bot.tasks.macro.utils.desired_comp import desired_comp_units, unit_comp_to_controller_dict
 from bot.tasks.macro.utils.macro_policies import RushFortifyPolicy, WallPlacementPolicy
 from bot.tasks.macro.utils.state_store import MacroStateStore
-from bot.tasks.macro.utils.wall_mapper import try_build_next_wall_depot
+from bot.tasks.macro.utils.wall_mapper import next_available_wall_slot, try_build_next_wall_depot
 
 
 @dataclass
@@ -28,10 +28,19 @@ class MacroSpendingTick(BaseTask):
     flood_m: int = 800
     flood_hi_m: int = 1400
     flood_hold_s: float = 12.0
+    normal_natural_deadline_s: float = 75.0
+    third_t_normal_s: float = 210.0
+    fourth_t_normal_s: float = 330.0
+    fifth_t_normal_s: float = 500.0
+    third_t_rush_s: float = 290.0
+    fourth_t_rush_s: float = 430.0
+    fifth_t_rush_s: float = 620.0
+    schedule_on_time_window_s: float = 20.0
     log_every_iters: int = 22
     orbital_target: int = 3
     main_wall_target: int = 2
     natural_wall_target: int = 2
+    wall_retry_backoff_s: float = 2.0
 
     def __init__(
         self,
@@ -42,6 +51,14 @@ class MacroSpendingTick(BaseTask):
         flood_m: int = 800,
         flood_hi_m: int = 1400,
         flood_hold_s: float = 12.0,
+        normal_natural_deadline_s: float = 75.0,
+        third_t_normal_s: float = 210.0,
+        fourth_t_normal_s: float = 330.0,
+        fifth_t_normal_s: float = 500.0,
+        third_t_rush_s: float = 290.0,
+        fourth_t_rush_s: float = 430.0,
+        fifth_t_rush_s: float = 620.0,
+        schedule_on_time_window_s: float = 20.0,
         log_every_iters: int = 22,
     ):
         super().__init__(task_id="macro_spending", domain="MACRO_SPENDING", commitment=10)
@@ -51,6 +68,14 @@ class MacroSpendingTick(BaseTask):
         self.flood_m = int(flood_m)
         self.flood_hi_m = int(flood_hi_m)
         self.flood_hold_s = float(flood_hold_s)
+        self.normal_natural_deadline_s = float(normal_natural_deadline_s)
+        self.third_t_normal_s = float(third_t_normal_s)
+        self.fourth_t_normal_s = float(fourth_t_normal_s)
+        self.fifth_t_normal_s = float(fifth_t_normal_s)
+        self.third_t_rush_s = float(third_t_rush_s)
+        self.fourth_t_rush_s = float(fourth_t_rush_s)
+        self.fifth_t_rush_s = float(fifth_t_rush_s)
+        self.schedule_on_time_window_s = float(schedule_on_time_window_s)
         self.log_every_iters = int(log_every_iters)
         self.orbital_target = 3
         self.main_wall_target = 2
@@ -62,6 +87,7 @@ class MacroSpendingTick(BaseTask):
             natural_wall_target=int(self.natural_wall_target),
         )
         self.rush_fortify_policy = RushFortifyPolicy(state=self.state_store)
+        self._next_wall_try_at = 0.0
 
     def _morph_reserve(self, *, now: float) -> tuple[int, int, int, str]:
         pending = int(self.awareness.mem.get(K("macro", "morph", "pending_count"), now=now, default=0) or 0)
@@ -108,6 +134,11 @@ class MacroSpendingTick(BaseTask):
         army_bias = int(self.awareness.mem.get(K("strategy", "parity", "army_bias"), now=now, default=0) or 0)
         return overall, econ, army, expand_bias, army_bias
 
+    def _enemy_opening_signal(self, *, now: float) -> tuple[str, float]:
+        kind = str(self.awareness.mem.get(K("enemy", "opening", "kind"), now=now, default="NORMAL") or "NORMAL").upper()
+        conf = float(self.awareness.mem.get(K("enemy", "opening", "confidence"), now=now, default=0.0) or 0.0)
+        return kind, conf
+
     @staticmethod
     def _is_rush_active(state: str) -> bool:
         return str(state).upper() in {"SUSPECTED", "CONFIRMED", "HOLDING"}
@@ -116,20 +147,72 @@ class MacroSpendingTick(BaseTask):
     def _is_rush_confirmed(state: str) -> bool:
         return str(state).upper() == "CONFIRMED"
 
+    def _schedule_times(self, *, rush_active: bool) -> dict[int, float]:
+        if rush_active:
+            return {
+                3: float(self.third_t_rush_s),
+                4: float(self.fourth_t_rush_s),
+                5: float(self.fifth_t_rush_s),
+            }
+        return {
+            3: float(self.third_t_normal_s),
+            4: float(self.fourth_t_normal_s),
+            5: float(self.fifth_t_normal_s),
+        }
+
+    def _scheduled_target_bases(self, *, now: float, rush_active: bool, bases_total: int) -> int:
+        # Keep natural under opening/YML control in normal flow.
+        if not rush_active and int(bases_total) < 2:
+            return int(bases_total)
+        out = max(2, int(bases_total))
+        for base_count, at_s in self._schedule_times(rush_active=rush_active).items():
+            if float(now) >= float(at_s):
+                out = max(out, int(base_count))
+        return int(out)
+
+    def _timing_status(self, *, observed_t: float, scheduled_t: float) -> str:
+        window = float(self.schedule_on_time_window_s)
+        if float(observed_t) < (float(scheduled_t) - window):
+            return "ahead_of_schedule"
+        if float(observed_t) > (float(scheduled_t) + window):
+            return "late"
+        return "on_time"
+
+    def _emit_base_timing_reached(self, *, now: float, rush_active: bool, bases_total: int, iteration: int) -> None:
+        if self.log is None:
+            return
+        for base_count, scheduled_t in self._schedule_times(rush_active=rush_active).items():
+            if int(bases_total) < int(base_count):
+                continue
+            k_reached = K("macro", "bases", "timing", f"base_{int(base_count)}", "reached_at")
+            reached = self.awareness.mem.get(k_reached, now=now, default=None)
+            if reached is not None:
+                continue
+            self.awareness.mem.set(k_reached, value=float(now), now=now, ttl=None)
+            status = self._timing_status(observed_t=float(now), scheduled_t=float(scheduled_t))
+            self.log.emit(
+                "base_timing_reached",
+                {
+                    "iter": int(iteration),
+                    "t": round(float(now), 2),
+                    "base_count": int(base_count),
+                    "scheduled_t": round(float(scheduled_t), 2),
+                    "status": str(status),
+                    "rush_active": bool(rush_active),
+                },
+            )
+
     async def on_step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult:
         bound_err = self.require_mission_bound()
         if bound_err is not None:
             return bound_err
-
-        bor = getattr(bot, "build_order_runner", None)
-        if bor is not None and not bool(getattr(bor, "build_completed", False)):
-            return TaskResult.noop("build_order_active")
 
         now = float(tick.time)
         rush_state = self._rush_state(now=now)
         rush_active = self._is_rush_active(rush_state)
         rush_confirmed = self._is_rush_confirmed(rush_state)
         parity_overall, parity_econ, parity_army, expand_bias, army_bias = self._parity_signal(now=now)
+        opening_kind, opening_conf = self._enemy_opening_signal(now=now)
         pending_morph, reserve_m, reserve_g, target_kind = self._morph_reserve(now=now)
         prio_m, prio_g, prio_unit = self._priority_reserve(now=now)
 
@@ -178,7 +261,8 @@ class MacroSpendingTick(BaseTask):
             if int(attention.economy.minerals) < int(reserve_m) or int(attention.economy.gas) < int(reserve_g):
                 return TaskResult.running("morph_priority_reserving")
 
-        if int(attention.economy.minerals) < int(prio_m) or int(attention.economy.gas) < int(prio_g):
+        priority_hold = bool(int(attention.economy.minerals) < int(prio_m) or int(attention.economy.gas) < int(prio_g))
+        if priority_hold:
             if self.log is not None and (int(tick.iteration) % self.log_every_iters == 0):
                 self.log.emit(
                     "macro_spending",
@@ -193,7 +277,6 @@ class MacroSpendingTick(BaseTask):
                         "gas": int(attention.economy.gas),
                     },
                 )
-            return TaskResult.running("priority_unit_reserving")
 
         if rush_confirmed:
             fort = await self.rush_fortify_policy.fortify_natural(bot, now=now)
@@ -265,46 +348,80 @@ class MacroSpendingTick(BaseTask):
         nat_total = int(nat_plan.total)
 
         if wall.action == "build_main":
-            if try_build_next_wall_depot(bot, plan=main_plan):
-                if self.log is not None:
+            if float(now) < float(self._next_wall_try_at):
+                wall.action = "none"
+            else:
+                chosen = next_available_wall_slot(bot, plan=main_plan)
+                if try_build_next_wall_depot(bot, plan=main_plan):
+                    if self.log is not None:
+                        self.log.emit(
+                            "macro_spending",
+                            {
+                                "iter": int(tick.iteration),
+                                "t": round(float(now), 2),
+                                "action": "wall_main_priority",
+                                "main_wall_occupied": int(main_occupied),
+                                "main_wall_target": int(main_target),
+                                "main_slots": [[round(float(p.x), 1), round(float(p.y), 1)] for p in list(main_plan.slots[:4])],
+                                "chosen_slot": None if chosen is None else [round(float(chosen.x), 1), round(float(chosen.y), 1)],
+                            },
+                        )
+                    return TaskResult.running("wall_main_priority_issued")
+                self._next_wall_try_at = float(now) + float(self.wall_retry_backoff_s)
+                if self.log is not None and (int(tick.iteration) % self.log_every_iters == 0):
                     self.log.emit(
                         "macro_spending",
                         {
                             "iter": int(tick.iteration),
                             "t": round(float(now), 2),
-                            "action": "wall_main_priority",
+                            "action": "wall_main_waiting_slot",
                             "main_wall_occupied": int(main_occupied),
                             "main_wall_target": int(main_target),
+                            "main_slots": [[round(float(p.x), 1), round(float(p.y), 1)] for p in list(main_plan.slots[:4])],
+                            "chosen_slot": None if chosen is None else [round(float(chosen.x), 1), round(float(chosen.y), 1)],
+                            "next_wall_try_at": round(float(self._next_wall_try_at), 2),
                         },
                     )
-                return TaskResult.running("wall_main_priority_issued")
         elif wall.action == "build_natural":
-            if try_build_next_wall_depot(bot, plan=nat_plan):
-                if self.log is not None:
+            if float(now) < float(self._next_wall_try_at):
+                wall.action = "none"
+            else:
+                chosen = next_available_wall_slot(bot, plan=nat_plan)
+                if try_build_next_wall_depot(bot, plan=nat_plan):
+                    if self.log is not None:
+                        self.log.emit(
+                            "macro_spending",
+                            {
+                                "iter": int(tick.iteration),
+                                "t": round(float(now), 2),
+                                "action": "wall_natural_priority",
+                                "natural_wall_occupied": int(nat_occupied),
+                                "natural_wall_target": int(nat_target),
+                                "natural_inferred_slots": bool(nat_plan.inferred),
+                                "natural_contiguous_occupied": bool(nat_plan.contiguous_occupied),
+                                "natural_slots": [[round(float(p.x), 1), round(float(p.y), 1)] for p in list(nat_plan.slots[:5])],
+                                "chosen_slot": None if chosen is None else [round(float(chosen.x), 1), round(float(chosen.y), 1)],
+                            },
+                        )
+                    return TaskResult.running("wall_natural_priority_issued")
+                self._next_wall_try_at = float(now) + float(self.wall_retry_backoff_s)
+                if self.log is not None and (int(tick.iteration) % self.log_every_iters == 0):
                     self.log.emit(
                         "macro_spending",
                         {
                             "iter": int(tick.iteration),
                             "t": round(float(now), 2),
-                            "action": "wall_natural_priority",
+                            "action": "wall_natural_waiting_slot",
                             "natural_wall_occupied": int(nat_occupied),
                             "natural_wall_target": int(nat_target),
-                            "natural_inferred_slots": bool(nat_plan.inferred),
+                            "natural_contiguous_occupied": bool(nat_plan.contiguous_occupied),
+                            "natural_slots": [[round(float(p.x), 1), round(float(p.y), 1)] for p in list(nat_plan.slots[:5])],
+                            "chosen_slot": None if chosen is None else [round(float(chosen.x), 1), round(float(chosen.y), 1)],
+                            "next_wall_try_at": round(float(self._next_wall_try_at), 2),
                         },
                     )
-                return TaskResult.running("wall_natural_priority_issued")
-            if self.log is not None and (int(tick.iteration) % self.log_every_iters == 0):
-                self.log.emit(
-                    "macro_spending",
-                    {
-                        "iter": int(tick.iteration),
-                        "t": round(float(now), 2),
-                        "action": "wall_natural_waiting_slot",
-                        "natural_wall_occupied": int(nat_occupied),
-                        "natural_wall_target": int(nat_target),
-                    },
-                )
-            return TaskResult.running("wall_natural_waiting_slot")
+                # Do not deadlock macro spending if wall slot is temporarily unavailable.
+                # Keep trying with backoff while still running structural macro plan below.
         elif wall.action == "natural_slots_missing":
             if self.log is not None and (int(tick.iteration) % self.log_every_iters == 0):
                 self.log.emit(
@@ -316,10 +433,20 @@ class MacroSpendingTick(BaseTask):
                         "natural_wall_slots": int(nat_total),
                     },
                 )
-            return TaskResult.running("wall_natural_slots_missing")
+            # Continue macro flow even if map has no valid natural wall slots.
+        elif wall.action == "natural_unavailable":
+            if self.log is not None and (int(tick.iteration) % self.log_every_iters == 0):
+                self.log.emit(
+                    "macro_spending",
+                    {
+                        "iter": int(tick.iteration),
+                        "t": round(float(now), 2),
+                        "action": "wall_natural_unavailable",
+                    },
+                )
 
         if wall.action == "natural_waiting_slot":
-            # Strict behavior: do not place generic depots while natural wall is pending.
+            # Keep wall intent strict, but do not block all macro spending.
             if self.log is not None and (int(tick.iteration) % self.log_every_iters == 0):
                 self.log.emit(
                     "macro_spending",
@@ -329,16 +456,60 @@ class MacroSpendingTick(BaseTask):
                         "action": "wall_natural_waiting_slot",
                         "natural_wall_occupied": int(nat_occupied),
                         "natural_wall_target": int(nat_target),
+                        "natural_contiguous_occupied": bool(nat_plan.contiguous_occupied),
                     },
                 )
-            return TaskResult.running("wall_natural_waiting_slot")
+
+        bases_total_all = int(bot.townhalls.amount)
+        self._emit_base_timing_reached(
+            now=now,
+            rush_active=bool(rush_active),
+            bases_total=int(bases_total_all),
+            iteration=int(tick.iteration),
+        )
+
+        current_townhalls = int(bot.townhalls.amount)
+        pending_cc = int(bot.already_pending(U.COMMANDCENTER))
+        total_with_pending = int(current_townhalls + pending_cc)
 
         target_bases = self._target_bases(attention=attention, now=now, expand_bias=int(expand_bias))
-        if int(army_bias) > 0:
-            target_bases = min(int(target_bases), max(1, int(attention.macro.bases_total)))
-        if rush_active:
-            # During rush response, do not greed expansions.
+        schedule_target = self._scheduled_target_bases(
+            now=now,
+            rush_active=bool(rush_active),
+            bases_total=int(bases_total_all),
+        )
+        target_bases = max(int(target_bases), int(schedule_target))
+
+        # Macro orchestration:
+        # - Under rush pressure, favor army/defense and avoid fresh expansion commitments.
+        # - In normal mode, keep economy scaling and force natural recovery if opening stalled.
+        if not rush_active and int(total_with_pending) < 2:
+            # Always stabilize natural first before aiming for third/fourth targets.
             target_bases = min(int(target_bases), 2)
+        if rush_active:
+            target_bases = min(int(target_bases), max(2, int(total_with_pending)))
+        elif float(now) >= float(self.normal_natural_deadline_s) and int(total_with_pending) < 2:
+            target_bases = max(int(target_bases), 2)
+        elif str(opening_kind) == "GREEDY" and float(opening_conf) >= 0.6:
+            target_bases = max(int(target_bases), 2)
+
+        expansion_gap = max(0, int(target_bases) - int(current_townhalls) - int(pending_cc))
+        need_natural_now = bool(not rush_active and int(total_with_pending) < 2)
+        spending_reserve_m = 0
+        if int(expansion_gap) > 0 and not bool(rush_active):
+            if bool(need_natural_now):
+                # Natural is a hard economic milestone: reserve it even when
+                # unit-priority reserve is active.
+                spending_reserve_m = 400
+            elif not bool(priority_hold):
+                spending_reserve_m = 400
+        spending_reserve_g = 0
+        spending_reserve_name = "EXPAND" if int(spending_reserve_m) > 0 else ""
+        self.awareness.mem.set(K("macro", "reserve", "spending", "minerals"), value=int(spending_reserve_m), now=now, ttl=8.0)
+        self.awareness.mem.set(K("macro", "reserve", "spending", "gas"), value=int(spending_reserve_g), now=now, ttl=8.0)
+        self.awareness.mem.set(K("macro", "reserve", "spending", "name"), value=str(spending_reserve_name), now=now, ttl=8.0)
+        self.awareness.mem.set(K("macro", "reserve", "spending", "target_bases"), value=int(target_bases), now=now, ttl=8.0)
+        self.awareness.mem.set(K("macro", "reserve", "spending", "expansion_gap"), value=int(expansion_gap), now=now, ttl=8.0)
         gas_target = max(0, int(attention.macro.bases_total) * 2)
         army_comp = self._army_comp_for_controllers(now)
 
@@ -346,12 +517,13 @@ class MacroSpendingTick(BaseTask):
         plan.add(AutoSupply(base_location=bot.start_location))
         plan.add(GasBuildingController(to_count=int(gas_target)))
         plan.add(ExpansionController(to_count=int(target_bases)))
-        plan.add(
-            ProductionController(
-                army_composition_dict=army_comp,
-                base_location=bot.start_location,
+        if army_comp:
+            plan.add(
+                ProductionController(
+                    army_composition_dict=army_comp,
+                    base_location=bot.start_location,
+                )
             )
-        )
 
         bot.register_behavior(plan)
 
@@ -362,6 +534,19 @@ class MacroSpendingTick(BaseTask):
                     "iter": int(tick.iteration),
                     "t": round(float(now), 2),
                     "target_bases": int(target_bases),
+                    "schedule_target_bases": int(schedule_target),
+                    "priority_hold": bool(priority_hold),
+                    "need_natural_now": bool(need_natural_now),
+                    "enemy_opening_kind": str(opening_kind),
+                    "enemy_opening_conf": round(float(opening_conf), 3),
+                    "macro_mode": "rush_defense" if bool(rush_active) else "normal_macro",
+                    "schedule_profile": "rush" if bool(rush_active) else "normal",
+                    "schedule_normal": {"3": float(self.third_t_normal_s), "4": float(self.fourth_t_normal_s), "5": float(self.fifth_t_normal_s)},
+                    "schedule_rush": {"3": float(self.third_t_rush_s), "4": float(self.fourth_t_rush_s), "5": float(self.fifth_t_rush_s)},
+                    "spending_reserve_minerals": int(spending_reserve_m),
+                    "spending_reserve_gas": int(spending_reserve_g),
+                    "spending_reserve_name": str(spending_reserve_name),
+                    "expansion_gap": int(expansion_gap),
                     "gas_target": int(gas_target),
                     "minerals": int(attention.economy.minerals),
                     "morph_pending": int(pending_morph),
@@ -378,6 +563,7 @@ class MacroSpendingTick(BaseTask):
                     "parity_army": str(parity_army),
                     "parity_expand_bias": int(expand_bias),
                     "parity_army_bias": int(army_bias),
+                    "comp_from_awareness_count": int(len(army_comp)),
                 },
             )
 

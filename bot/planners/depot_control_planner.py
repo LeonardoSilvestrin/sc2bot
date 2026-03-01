@@ -22,8 +22,8 @@ class DepotControlPlanner(BasePlanner):
     cooldown_s: float = 0.0
     score: int = 24
     raise_radius: float = 12.0
-    raise_urgency_min: int = 8
-    raise_enemy_count_min: int = 1
+    raise_urgency_min: int = 18
+    raise_enemy_count_min: int = 2
     log: DevLogger | None = None
 
     def _pid(self) -> str:

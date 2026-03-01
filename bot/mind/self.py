@@ -3,7 +3,10 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, is_dataclass
 from enum import Enum
+import os
 from pathlib import Path
+import random
+import traceback
 from typing import Any
 
 from sc2.data import Result
@@ -14,7 +17,7 @@ from bot.intel.enemy_build_intel import EnemyBuildIntelConfig, derive_enemy_buil
 from bot.intel.game_parity_intel import GameParityIntelConfig, derive_game_parity_intel
 from bot.intel.my_army_composition_intel import MyArmyCompositionConfig, derive_my_army_composition_intel
 from bot.mind.attention import derive_attention
-from bot.mind.awareness import Awareness
+from bot.mind.awareness import Awareness, K
 from bot.mind.body import UnitLeases
 from bot.mind.ego import Ego, EgoConfig
 from bot.tasks.base_task import TaskTick
@@ -81,10 +84,22 @@ class RuntimeApp:
     bo_stall_warn_s: float = 25.0
     state_snapshot_interval_s: float = 30.0
     awareness_snapshot_max_age_s: float | None = 180.0
-    state_snapshots_default: bool = True
+    state_snapshots_default: bool = False
+    default_opening: str = "Default"
+    rush_opening: str = "DefensiveOpening"
+    post_opening_transitions: tuple[str, ...] = ("STIM", "BANSHEE")
+    announce_opening_in_chat: bool = True
+    announce_tactical_chat: bool = True
+    announce_attack_chat: bool = True
+    tactical_chat_min_interval_s: float = 22.0
+    attack_chat_min_interval_s: float = 16.0
     _next_state_snapshot_t: float = 0.0
     _bo_last_step_idx: int = -1
     _bo_last_step_t: float = 0.0
+    _last_tactical_chat_key: str = ""
+    _last_tactical_chat_t: float = -9999.0
+    _last_attack_chat_t: float = -9999.0
+    _attack_alert_active: bool = False
 
     @classmethod
     def build(cls, *, log: DevLogger, debug: bool = True) -> "RuntimeApp":
@@ -233,61 +248,160 @@ class RuntimeApp:
             self.body.reset()
         except Exception:
             pass
+        await self._select_and_announce_opening(bot)
         self._next_state_snapshot_t = 0.0
+        self._emit_wall_dump(bot)
         if self.log:
             self.log.emit("runtime_start", {})
 
+    async def _select_and_announce_opening(self, bot) -> None:
+        bor = getattr(bot, "build_order_runner", None)
+        if bor is None:
+            return
+
+        current = str(getattr(bor, "chosen_opening", "") or "")
+        chosen = str(self.default_opening or "Default")
+        switched = False
+        try:
+            if chosen != current:
+                bor.switch_opening(chosen, remove_completed=False)
+                switched = True
+        except Exception:
+            chosen = current or chosen
+
+        now = float(getattr(bot, "time", 0.0) or 0.0)
+        self.awareness.mem.set(K("macro", "opening", "selected"), value=str(chosen), now=now, ttl=None)
+        self.awareness.mem.set(K("macro", "opening", "selection_mode"), value="default_opening", now=now, ttl=None)
+
+        transition_pool = [str(x).strip().upper() for x in (self.post_opening_transitions or ()) if str(x).strip()]
+        if not transition_pool:
+            transition_pool = ["STIM", "BANSHEE"]
+        transition_target = str(random.choice(transition_pool))
+        self.awareness.mem.set(K("macro", "opening", "transition_target"), value=str(transition_target), now=now, ttl=None)
+        self.awareness.mem.set(K("macro", "opening", "transition_set_at"), value=float(now), now=now, ttl=None)
+
+        if self.log:
+            self.log.emit(
+                "opening_selected",
+                {
+                    "current": str(current),
+                    "chosen": str(chosen),
+                    "pool": [str(chosen)],
+                    "switched": bool(switched),
+                    "transition_target": str(transition_target),
+                },
+                meta={"module": "runtime", "component": "runtime.opening"},
+            )
+
+        if not bool(self.announce_opening_in_chat):
+            return
+        try:
+            await bot.chat_send(f"Opening: {chosen} | Transition: {transition_target}")
+        except Exception:
+            # Ladder/engine can reject chat; log already contains selected opening.
+            pass
+
+    async def _maybe_switch_opening_for_rush(self, bot, *, now: float) -> None:
+        bor = getattr(bot, "build_order_runner", None)
+        if bor is None:
+            return
+        rush_state = str(self.awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
+        if rush_state not in {"SUSPECTED", "CONFIRMED", "HOLDING"}:
+            return
+        if bool(getattr(bor, "build_completed", False)):
+            return
+        current = str(getattr(bor, "chosen_opening", "") or "")
+        target = str(self.rush_opening or "DefensiveOpening")
+        if not target or current == target:
+            return
+        try:
+            bor.switch_opening(target, remove_completed=False)
+        except Exception:
+            return
+        self.awareness.mem.set(K("macro", "opening", "selected"), value=str(target), now=now, ttl=None)
+        self.awareness.mem.set(K("macro", "opening", "selection_mode"), value="rush_override", now=now, ttl=None)
+        self.awareness.mem.set(K("macro", "opening", "rush_override_at"), value=float(now), now=now, ttl=None)
+        if self.log is not None:
+            self.log.emit(
+                "opening_switched_for_rush",
+                {"t": round(float(now), 2), "from": str(current), "to": str(target), "rush_state": str(rush_state)},
+                meta={"module": "runtime", "component": "runtime.opening"},
+            )
+        if bool(self.announce_opening_in_chat):
+            try:
+                await bot.chat_send("Rush detectado: trocando opening para defesa.")
+            except Exception:
+                pass
+
     async def on_step(self, bot, *, iteration: int) -> None:
         now = float(getattr(bot, "time", 0.0))
+        try:
+            attention = derive_attention(bot, awareness=self.awareness, threat=self.threat, log=None)
 
-        attention = derive_attention(bot, awareness=self.awareness, threat=self.threat, log=None)
+            derive_enemy_build_intel(
+                bot,
+                awareness=self.awareness,
+                attention=attention,
+                now=now,
+                cfg=self.enemy_build_cfg,
+            )
+            await self._maybe_switch_opening_for_rush(bot, now=now)
+            derive_game_parity_intel(
+                bot,
+                awareness=self.awareness,
+                attention=attention,
+                now=now,
+                cfg=self.parity_cfg,
+            )
 
-        derive_enemy_build_intel(
-            bot,
-            awareness=self.awareness,
-            attention=attention,
-            now=now,
-            cfg=self.enemy_build_cfg,
-        )
-        derive_game_parity_intel(
-            bot,
-            awareness=self.awareness,
-            attention=attention,
-            now=now,
-            cfg=self.parity_cfg,
-        )
+            # New: strategy reference (mode + proportions)
+            derive_my_army_composition_intel(
+                awareness=self.awareness,
+                attention=attention,
+                now=now,
+                cfg=self.my_comp_cfg,
+            )
 
-        # New: strategy reference (mode + proportions)
-        derive_my_army_composition_intel(
-            awareness=self.awareness,
-            attention=attention,
-            now=now,
-            cfg=self.my_comp_cfg,
-        )
+            await self._emit_reactive_chat(bot, attention=attention, now=now)
 
-        self._emit_periodic_state_snapshots(now=now, attention=attention)
+            self._emit_periodic_state_snapshots(now=now, attention=attention)
 
-        self._emit_build_order_diagnostics(bot, now=now, iteration=int(iteration))
+            self._emit_build_order_diagnostics(bot, now=now, iteration=int(iteration))
 
-        if self.log and self._full_snapshots_enabled():
-            if int(iteration) % max(1, int(self.attention_full_every_iters)) == 0:
+            if self.log and self._full_snapshots_enabled():
+                if int(iteration) % max(1, int(self.attention_full_every_iters)) == 0:
+                    self.log.emit(
+                        "attention_full",
+                        _jsonable(attention),
+                        meta={"module": "attention", "component": "attention.full"},
+                    )
+                if int(iteration) % max(1, int(self.awareness_full_every_iters)) == 0:
+                    self.log.emit(
+                        "awareness_full",
+                        {
+                            "mem": _jsonable(self.awareness.mem.snapshot(now=now)),
+                            "events_tail": _jsonable(self.awareness.tail_events(80)),
+                        },
+                        meta={"module": "awareness", "component": "awareness.full"},
+                    )
+
+            tick = TaskTick(iteration=int(iteration), time=now)
+            await self.ego.tick(bot, tick=tick, attention=attention, awareness=self.awareness)
+        except Exception as e:
+            if self.log is not None:
                 self.log.emit(
-                    "attention_full",
-                    _jsonable(attention),
-                    meta={"module": "attention", "component": "attention.full"},
-                )
-            if int(iteration) % max(1, int(self.awareness_full_every_iters)) == 0:
-                self.log.emit(
-                    "awareness_full",
+                    "runtime_exception",
                     {
-                        "mem": _jsonable(self.awareness.mem.snapshot(now=now)),
-                        "events_tail": _jsonable(self.awareness.tail_events(80)),
+                        "iter": int(iteration),
+                        "t": round(float(now), 2),
+                        "error_type": type(e).__name__,
+                        "error": str(e),
+                        "traceback": traceback.format_exc(limit=20),
                     },
-                    meta={"module": "awareness", "component": "awareness.full"},
+                    meta={"module": "runtime", "component": "runtime"},
                 )
-
-        tick = TaskTick(iteration=int(iteration), time=now)
-        await self.ego.tick(bot, tick=tick, attention=attention, awareness=self.awareness)
+            # Keep bot alive to avoid hard-crash during ladder/local tests.
+            return
 
     async def on_end(self, bot, game_result: Result) -> None:
         if self.log:
@@ -320,6 +434,93 @@ class RuntimeApp:
             return False
 
         return False
+
+    def _wall_dump_enabled(self) -> bool:
+        if not bool(self.debug):
+            return False
+        raw = str(os.getenv("WALL_DUMP", "")).strip().lower()
+        return raw in {"1", "true", "on", "yes"}
+
+    @staticmethod
+    def _spawn_label(bot) -> str:
+        try:
+            return "UpperSpawn" if float(bot.start_location.y) >= float(bot.game_info.map_center.y) else "LowerSpawn"
+        except Exception:
+            return "UnknownSpawn"
+
+    @staticmethod
+    def _dump_wall_slots_for_base(bot, *, base_location) -> list[list[float]]:
+        try:
+            from ares.consts import BuildingSize
+        except Exception:
+            return []
+        try:
+            placements = dict(bot.mediator.get_placements_dict or {})
+        except Exception:
+            return []
+        if not placements:
+            return []
+        try:
+            base_key = min(placements.keys(), key=lambda p: float(p.distance_to(base_location)))
+        except Exception:
+            return []
+        if float(base_key.distance_to(base_location)) > 7.5:
+            return []
+        try:
+            two_by_two = dict(placements[base_key][BuildingSize.TWO_BY_TWO] or {})
+        except Exception:
+            return []
+        out: list[list[float]] = []
+        for pos, info in two_by_two.items():
+            if bool(info.get("is_wall", False)):
+                out.append([round(float(pos.x), 1), round(float(pos.y), 1)])
+        out.sort(key=lambda p: (p[0], p[1]))
+        return out
+
+    def _emit_wall_dump(self, bot) -> None:
+        if not self._wall_dump_enabled():
+            return
+
+        map_name = str(getattr(getattr(bot, "game_info", None), "map_name", "") or "UnknownMap")
+        spawn = self._spawn_label(bot)
+        race_key = "VsAll"
+
+        main_slots = self._dump_wall_slots_for_base(bot, base_location=bot.start_location)
+        try:
+            nat = bot.mediator.get_own_nat
+        except Exception:
+            nat = bot.start_location
+        nat_slots = self._dump_wall_slots_for_base(bot, base_location=nat)
+
+        yaml_hint = {
+            map_name: {
+                spawn: {
+                    race_key: {
+                        "SupplyDepotsWallMain": main_slots,
+                        "SupplyDepotsWallNatural": nat_slots,
+                    }
+                }
+            }
+        }
+
+        if self.log is not None:
+            self.log.emit(
+                "wall_placements_dump",
+                {
+                    "map": map_name,
+                    "spawn": spawn,
+                    "main_slots": main_slots,
+                    "natural_slots": nat_slots,
+                    "yaml_hint": yaml_hint,
+                },
+                meta={"module": "runtime", "component": "runtime.wall_dump"},
+            )
+
+        # Console hint for quick copy/paste during local testing.
+        try:
+            print("[WALL_DUMP]", yaml_hint)
+        except Exception:
+            pass
 
     def _state_snapshots_enabled(self) -> bool:
         if bool(self.state_snapshots_default):
@@ -495,4 +696,122 @@ class RuntimeApp:
                 },
                 meta={"module": "macro", "component": "build_order.runner"},
             )
+
+    @staticmethod
+    def _env_bool(name: str, default: bool) -> bool:
+        try:
+            raw = os.getenv(name, None)
+            if raw is None or str(raw).strip() == "":
+                return bool(default)
+            return str(raw).strip().lower() in {"1", "true", "on", "yes"}
+        except Exception:
+            return bool(default)
+
+    @staticmethod
+    def _is_attacking_now(attention) -> bool:
+        for m in getattr(attention.missions, "ongoing", ()) or ():
+            try:
+                domain = str(getattr(m, "domain", "") or "").upper()
+                pid = str(getattr(m, "proposal_id", "") or "").upper()
+                status = str(getattr(m, "status", "") or "").upper()
+            except Exception:
+                continue
+            if status != "RUNNING":
+                continue
+            if domain == "HARASS" or "HARASS" in pid:
+                return True
+        return False
+
+    def _tactical_chat_signal(self, *, now: float) -> tuple[str, str] | None:
+        rush_state = str(self.awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
+        opening_kind = str(self.awareness.mem.get(K("enemy", "opening", "kind"), now=now, default="NORMAL") or "NORMAL").upper()
+        opening_conf = float(self.awareness.mem.get(K("enemy", "opening", "confidence"), now=now, default=0.0) or 0.0)
+
+        if rush_state == "CONFIRMED":
+            msg = random.choice(
+                [
+                    "Alerta: rush confirmado. Fechando a porta e segurando.",
+                    "Rush detectado com força. Prioridade total na defesa.",
+                    "Pressao inimiga confirmada. Jogando seguro agora.",
+                ]
+            )
+            return "rush:confirmed", msg
+        if rush_state in {"SUSPECTED", "HOLDING"}:
+            msg = random.choice(
+                [
+                    "Sinal de rush. Mantendo defesa pronta.",
+                    "Pode vir pressao cedo. Ajustando para segurar.",
+                ]
+            )
+            return "rush:suspected", msg
+        if rush_state == "ENDED":
+            msg = random.choice(
+                [
+                    "A onda de rush passou. Voltando para macro.",
+                    "Rush estabilizado. Reabrindo economia.",
+                ]
+            )
+            return "rush:ended", msg
+        if opening_kind == "GREEDY" and opening_conf >= 0.6:
+            msg = random.choice(
+                [
+                    "Inimigo greedando. Hora de punir.",
+                    "Leitura: adversario greed. Vamos acelerar o mapa.",
+                ]
+            )
+            return "opening:greedy", msg
+        if opening_kind == "NORMAL" and opening_conf >= 0.55:
+            msg = random.choice(
+                [
+                    "Jogo estabilizado. Macro limpa e pressao controlada.",
+                    "Leitura padrao no oponente. Seguimos plano solido.",
+                ]
+            )
+            return "opening:normal", msg
+        return None
+
+    async def _emit_reactive_chat(self, bot, *, attention, now: float) -> None:
+        if self._env_bool("ANNOUNCE_REACTIVE_CHAT", True):
+            tactical_on = self._env_bool("ANNOUNCE_TACTICAL_CHAT", bool(self.announce_tactical_chat))
+            attack_on = self._env_bool("ANNOUNCE_ATTACK_CHAT", bool(self.announce_attack_chat))
+        else:
+            tactical_on = False
+            attack_on = False
+
+        if tactical_on:
+            signal = self._tactical_chat_signal(now=now)
+            if signal is not None:
+                key, msg = signal
+                if key != str(self._last_tactical_chat_key) and (float(now) - float(self._last_tactical_chat_t)) >= float(
+                    self.tactical_chat_min_interval_s
+                ):
+                    try:
+                        await bot.chat_send(str(msg))
+                        self._last_tactical_chat_key = str(key)
+                        self._last_tactical_chat_t = float(now)
+                    except Exception:
+                        pass
+
+        if attack_on:
+            attacking_now = bool(self._is_attacking_now(attention))
+            under_attack_now = bool(
+                int(getattr(attention.combat, "primary_urgency", 0) or 0) >= 45
+                or int(getattr(attention.combat, "primary_enemy_count", 0) or 0) >= 5
+            )
+            active = bool(attacking_now and under_attack_now)
+            if active and not bool(self._attack_alert_active):
+                if (float(now) - float(self._last_attack_chat_t)) >= float(self.attack_chat_min_interval_s):
+                    msg = random.choice(
+                        [
+                            "Estamos atacando e tomando contra-pressao. Ajustando resposta.",
+                            "Trade ativo: ofensiva fora e defesa em casa.",
+                            "Ataque em andamento, mas base sob pressao. Rebalanceando agora.",
+                        ]
+                    )
+                    try:
+                        await bot.chat_send(str(msg))
+                        self._last_attack_chat_t = float(now)
+                    except Exception:
+                        pass
+            self._attack_alert_active = bool(active)
 

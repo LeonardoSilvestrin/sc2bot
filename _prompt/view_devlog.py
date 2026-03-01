@@ -11,7 +11,7 @@ import pandas as pd
 # =========================
 # Arquivo hardcoded para abrir no main().
 HARDCODED_LOG_PATH = Path(
-    r"C:\Users\Asus\Documents\projetos\sc2bot\ares\ares-sc2-bot-template\logs\devlog_20260228_200545\components\ego.jsonl"
+    r"C:\Users\Asus\Documents\projetos\sc2bot\ares\ares-sc2-bot-template\logs\devlog_20260228_222931\components\awareness.snapshot.jsonl"
 )
 
 # Filtros (None/[] = sem filtro)

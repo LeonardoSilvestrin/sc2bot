@@ -61,7 +61,14 @@ class HarassPlanner:
     log: DevLogger | None = None
     lease_ttl_s: float = 120.0
     score: int = 66
-    cadence_s: float = 60.0
+    cadence_s: float = 15.0
+    propose_hellions_until_s: float = 480.0
+    propose_banshee_from_s: float = 300.0
+    seed_banshee_signal_once: bool = True
+    idle_log_every_s: float = 10.0
+    block_urgency_min: int = 18
+    block_enemy_count_min: int = 2
+    _next_idle_log_at: float = 0.0
 
     def _pid_reaper_hellion(self) -> str:
         return f"{self.planner_id}:reaper_hellion"
@@ -104,10 +111,34 @@ class HarassPlanner:
         pid_b = self._pid_banshee()
         out: list[Proposal] = []
 
-        # Do not start/extend harass while bases are under threat.
-        if int(attention.combat.primary_urgency) > 0:
+        # Do not start/extend harass under meaningful home pressure.
+        primary_urgency = int(attention.combat.primary_urgency)
+        primary_enemy_count = int(attention.combat.primary_enemy_count)
+        blocked_by_threat = bool(
+            primary_urgency >= int(self.block_urgency_min)
+            and primary_enemy_count >= int(self.block_enemy_count_min)
+        )
+        if blocked_by_threat:
+            should_log_block = bool(float(now) >= float(self._next_idle_log_at))
+            if self.log is not None and should_log_block:
+                self.log.emit(
+                    "planner_proposed",
+                    {
+                        "planner": self.planner_id,
+                        "count": 0,
+                        "modes": [],
+                        "blocked_by_threat": True,
+                        "primary_urgency": int(primary_urgency),
+                        "primary_enemy_count": int(primary_enemy_count),
+                        "block_urgency_min": int(self.block_urgency_min),
+                        "block_enemy_count_min": int(self.block_enemy_count_min),
+                    },
+                    meta={"module": "planner", "component": f"planner.{self.planner_id}"},
+                )
+                self._next_idle_log_at = float(now) + float(self.idle_log_every_s)
             return []
         objective = self._weak_point_objective(bot, awareness=awareness, now=now)
+        prefer_hellion_only = float(now) <= float(self.propose_hellions_until_s)
 
         if not awareness.ops_proposal_running(proposal_id=pid_rh, now=now) and self._due(awareness=awareness, now=now, pid=pid_rh):
             reapers_idle = int(bot.units.of_type(U.REAPER).ready.idle.amount)
@@ -117,7 +148,36 @@ class HarassPlanner:
             hellion_policy = HellionHarassPickPolicy(objective=objective)
 
             reqs: list[UnitRequirement] = []
-            if reapers_idle >= 1:
+            if prefer_hellion_only and hellions_idle >= 1:
+                primary_hellions = 2 if hellions_idle >= 2 else 1
+                reqs.append(
+                    UnitRequirement(
+                        unit_type=U.HELLION,
+                        count=int(primary_hellions),
+                        pick_policy=hellion_policy,
+                        required=True,
+                    )
+                )
+                if reapers_idle >= 1:
+                    reqs.append(
+                        UnitRequirement(
+                            unit_type=U.REAPER,
+                            count=1,
+                            pick_policy=reaper_policy,
+                            required=False,
+                        )
+                    )
+                extra_hellions = max(0, int(hellion_count) - int(primary_hellions))
+                if extra_hellions > 0:
+                    reqs.append(
+                        UnitRequirement(
+                            unit_type=U.HELLION,
+                            count=int(extra_hellions),
+                            pick_policy=hellion_policy,
+                            required=False,
+                        )
+                    )
+            elif reapers_idle >= 1:
                 reqs.append(
                     UnitRequirement(
                         unit_type=U.REAPER,
@@ -159,20 +219,21 @@ class HarassPlanner:
                 # shortage reason; this leaves a trace for downstream macro intel.
                 reqs.append(
                     UnitRequirement(
-                        unit_type=U.REAPER,
-                        count=1,
-                        pick_policy=reaper_policy,
+                        unit_type=U.HELLION,
+                        count=2 if prefer_hellion_only else 1,
+                        pick_policy=hellion_policy,
                         required=True,
                     )
                 )
-                reqs.append(
-                    UnitRequirement(
-                        unit_type=U.HELLION,
-                        count=2,
-                        pick_policy=hellion_policy,
-                        required=False,
+                if not prefer_hellion_only:
+                    reqs.append(
+                        UnitRequirement(
+                            unit_type=U.REAPER,
+                            count=1,
+                            pick_policy=reaper_policy,
+                            required=False,
+                        )
                     )
-                )
 
             def _factory_rh(mission_id: str) -> ReaperHellionHarass:
                 return ReaperHellionHarass(awareness=awareness, log=self.log, preferred_target=objective)
@@ -198,10 +259,25 @@ class HarassPlanner:
             self._mark_proposed(awareness=awareness, now=now, pid=pid_rh)
 
         reaper_hellion_done = bool(awareness.mem.get(K("ops", "harass", "reaper_hellion", "done"), now=now, default=False))
-        if (
-            reaper_hellion_done
+        banshee_ready_window = bool(float(now) >= float(self.propose_banshee_from_s))
+        selected_opening = str(awareness.mem.get(K("macro", "opening", "selected"), now=now, default="") or "")
+        transition_target = str(awareness.mem.get(K("macro", "opening", "transition_target"), now=now, default="STIM") or "STIM").upper()
+        banshee_opening_enabled = selected_opening == "BansheeHellionOpen" or transition_target == "BANSHEE"
+        banshee_seeded = bool(awareness.mem.get(K("ops", "harass", "banshee", "seeded"), now=now, default=False))
+        should_seed_banshee = bool(
+            banshee_opening_enabled
+            and bool(self.seed_banshee_signal_once)
+            and not banshee_seeded
             and not awareness.ops_proposal_running(proposal_id=pid_b, now=now)
-            and self._due(awareness=awareness, now=now, pid=pid_b)
+        )
+        if (
+            should_seed_banshee
+            or (
+                banshee_opening_enabled
+                and (reaper_hellion_done or banshee_ready_window)
+                and not awareness.ops_proposal_running(proposal_id=pid_b, now=now)
+                and self._due(awareness=awareness, now=now, pid=pid_b)
+            )
         ):
             banshee_idle = int(bot.units.of_type(U.BANSHEE).ready.idle.amount)
 
@@ -255,8 +331,11 @@ class HarassPlanner:
                 )
             )
             self._mark_proposed(awareness=awareness, now=now, pid=pid_b)
+            if should_seed_banshee:
+                awareness.mem.set(K("ops", "harass", "banshee", "seeded"), value=True, now=now, ttl=None)
 
-        if self.log is not None:
+        should_log = bool(len(out) > 0 or float(now) >= float(self._next_idle_log_at))
+        if self.log is not None and should_log:
             self.log.emit(
                 "planner_proposed",
                 {
@@ -264,8 +343,20 @@ class HarassPlanner:
                     "count": len(out),
                     "modes": [str(p.proposal_id) for p in out],
                     "reaper_hellion_done": bool(reaper_hellion_done),
+                    "prefer_hellion_only": bool(prefer_hellion_only),
+                    "banshee_ready_window": bool(banshee_ready_window),
+                    "selected_opening": str(selected_opening),
+                    "transition_target": str(transition_target),
+                    "banshee_opening_enabled": bool(banshee_opening_enabled),
+                    "banshee_seeded": bool(banshee_seeded),
+                    "banshee_seed_proposed": bool(should_seed_banshee),
+                    "blocked_by_threat": bool(blocked_by_threat),
+                    "primary_urgency": int(primary_urgency),
+                    "primary_enemy_count": int(primary_enemy_count),
                 },
                 meta={"module": "planner", "component": f"planner.{self.planner_id}"},
             )
+            if len(out) == 0:
+                self._next_idle_log_at = float(now) + float(self.idle_log_every_s)
         return out
 

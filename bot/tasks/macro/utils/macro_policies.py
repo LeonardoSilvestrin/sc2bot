@@ -29,19 +29,20 @@ class WallPlacementPolicy:
         try:
             return bot.mediator.get_own_nat
         except Exception:
-            try:
-                return bot.start_location.towards(bot.game_info.map_center, 12.0)
-            except Exception:
-                return bot.start_location
+            return None
 
     def evaluate(self, bot, *, now: float) -> WallDecision:
         main_plan = get_wall_depot_plan(
             bot,
             base_location=bot.start_location,
             desired_slots=int(self.main_wall_target),
-            infer_when_missing=False,
+            infer_when_missing=True,
         )
+        main_target = min(int(self.main_wall_target), int(main_plan.total))
         nat_pos = self.own_natural(bot)
+        if nat_pos is None:
+            empty = WallDepotPlan(base_key=None, slots=(), total=0, occupied=0, contiguous_occupied=False, inferred=False)
+            return WallDecision("natural_unavailable", main_plan, empty, int(main_target), 0)
         natural_plan = get_wall_depot_plan(
             bot,
             base_location=nat_pos,
@@ -49,9 +50,8 @@ class WallPlacementPolicy:
             infer_when_missing=True,
         )
 
-        main_target = min(int(self.main_wall_target), int(main_plan.total))
-        natural_target = min(int(self.natural_wall_target), int(natural_plan.total))
-        natural_slots_missing = int(natural_plan.total) <= 0
+        natural_target = int(self.natural_wall_target)
+        natural_slots_missing = int(natural_plan.total) < int(self.natural_wall_target)
 
         self.state.set_wall_status(
             now=now,
@@ -66,11 +66,11 @@ class WallPlacementPolicy:
 
         if main_target > 0 and int(main_plan.occupied) < main_target:
             return WallDecision("build_main", main_plan, natural_plan, int(main_target), int(natural_target))
-        if natural_target > 0 and int(natural_plan.occupied) < natural_target:
-            return WallDecision("build_natural", main_plan, natural_plan, int(main_target), int(natural_target))
         if natural_slots_missing:
             return WallDecision("natural_slots_missing", main_plan, natural_plan, int(main_target), int(natural_target))
         if natural_target > 0 and int(natural_plan.occupied) < natural_target:
+            return WallDecision("natural_waiting_slot", main_plan, natural_plan, int(main_target), int(natural_target))
+        if natural_target > 1 and not bool(natural_plan.contiguous_occupied):
             return WallDecision("natural_waiting_slot", main_plan, natural_plan, int(main_target), int(natural_target))
         return WallDecision("none", main_plan, natural_plan, int(main_target), int(natural_target))
 
@@ -85,6 +85,8 @@ class RushFortifyPolicy:
 
     async def fortify_natural(self, bot, *, now: float) -> dict:
         nat = self.own_natural(bot)
+        if nat is None:
+            return {"depots": 0, "bunkers": 0}
         issued = {"depots": 0, "bunkers": 0}
 
         try:

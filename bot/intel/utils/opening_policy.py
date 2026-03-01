@@ -71,9 +71,9 @@ class OpeningIntelPolicy:
 
         score = 0.0
         if worker_deficit >= int(self.cfg.worker_under_count_tolerance):
-            score += min(24.0, float(worker_deficit) * 2.0)
+            score += min(18.0, float(worker_deficit) * 1.5)
         if int(enemy_bases) <= 1 and not nat_on_ground and float(now) >= 90.0:
-            score += 12.0
+            score += 8.0
         if float(now) <= 120.0 and z_pool > 0 and z_pool_prog >= 0.20:
             score += 28.0
         if float(now) <= 130.0 and t_rax >= 2:
@@ -81,7 +81,7 @@ class OpeningIntelPolicy:
         if float(now) <= 140.0 and p_gate >= 2:
             score += 22.0
         if float(now) <= 150.0 and not nat_on_ground and nat_prog <= 0.0:
-            score += 8.0
+            score += 4.0
 
         hard_rush = bool(
             (float(now) <= 120.0 and z_pool > 0 and z_pool_prog >= 0.35)
@@ -158,10 +158,16 @@ class OpeningIntelPolicy:
         if int(near_bases) > 0 or bool(threatened):
             last_pressure_t = float(now)
         clear_for = max(0.0, float(now) - float(last_pressure_t))
+        recent_pressure = clear_for <= float(self.cfg.rush_end_clear_s)
 
-        is_suspected = bool(rush_score >= float(self.cfg.rush_score_suspected))
+        is_suspected = bool(
+            rush_score >= float(self.cfg.rush_score_suspected)
+            and (early or recent_pressure or int(near_bases) >= 2 or bool(threatened))
+        )
         is_confirmed = bool(hard_rush or rush_score >= float(self.cfg.rush_score_confirmed) or (threatened and near_bases >= 3))
         rush_likely_end = bool(rush_math["likely_end"]) and clear_for >= float(self.cfg.rush_end_clear_s)
+        rush_forced_end = bool(clear_for >= float(self.cfg.rush_hold_max_s) and int(near_bases) <= 1 and not bool(threatened))
+        rush_suspected_decay = bool(clear_for >= float(self.cfg.rush_suspect_decay_s) and int(near_bases) <= 1 and not bool(threatened))
 
         rush_state = str(prev_rush_state or "NONE")
         if is_confirmed:
@@ -169,7 +175,10 @@ class OpeningIntelPolicy:
         elif is_suspected:
             rush_state = "SUSPECTED" if rush_state in {"NONE", "ENDED"} else "HOLDING"
         elif rush_state in {"CONFIRMED", "SUSPECTED", "HOLDING"}:
-            rush_state = "ENDED" if rush_likely_end else "HOLDING"
+            if rush_likely_end or rush_forced_end or (rush_state == "SUSPECTED" and rush_suspected_decay):
+                rush_state = "ENDED"
+            else:
+                rush_state = "HOLDING"
         else:
             rush_state = "NONE"
 
@@ -205,6 +214,9 @@ class OpeningIntelPolicy:
             "rush_confidence": float(round(rush_conf, 3)),
             "last_seen_pressure_t": float(round(last_pressure_t, 2)),
             "pressure_clear_s": float(round(clear_for, 2)),
+            "recent_pressure": bool(recent_pressure),
+            "rush_forced_end": bool(rush_forced_end),
+            "rush_suspected_decay": bool(rush_suspected_decay),
         }
 
         return OpeningDecision(

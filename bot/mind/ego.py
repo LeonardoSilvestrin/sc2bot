@@ -426,9 +426,10 @@ class Ego:
         return float(now) < float(until)
 
     def _set_cooldown(self, awareness: Awareness, *, now: float, proposal_id: str, seconds: float, reason: str) -> None:
-        if seconds <= 0:
-            return
-        awareness.mem.set(K("ops", "cooldown", proposal_id, "until"), value=float(now) + float(seconds), now=now, ttl=None)
+        # Always persist reason so downstream intel can react to proposal denials,
+        # even when proposal cooldown is configured as zero.
+        until = float(now) + max(0.0, float(seconds))
+        awareness.mem.set(K("ops", "cooldown", proposal_id, "until"), value=float(until), now=now, ttl=None)
         awareness.mem.set(K("ops", "cooldown", proposal_id, "reason"), value=str(reason), now=now, ttl=None)
 
     def _awareness_start_mission(self, bot, awareness: Awareness, *, now: float, c: Commitment) -> None:

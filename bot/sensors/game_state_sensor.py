@@ -11,6 +11,7 @@ from ares.consts import UnitRole
 from sc2.ids.unit_typeid import UnitTypeId as U
 
 from bot.mind.attention import BaseSat, EconomySnapshot, IntelSnapshot, MacroSnapshot
+from bot.mind.awareness import K
 
 
 @dataclass(frozen=True)
@@ -28,7 +29,14 @@ def _xy(u) -> tuple[float, float]:
         return 0.0, 0.0
 
 
-def _opening_done(bot) -> bool:
+def _opening_done(bot, *, awareness=None, now: float = 0.0) -> bool:
+    if awareness is not None:
+        try:
+            forced = bool(awareness.mem.get(K("macro", "opening", "forced_done"), now=now, default=False))
+            if forced:
+                return True
+        except Exception:
+            pass
     bor = getattr(bot, "build_order_runner", None)
     if bor is None:
         return False
@@ -80,7 +88,8 @@ def _as_dict_maybe(x):
     return x if isinstance(x, dict) else {}
 
 
-def derive_game_state_snapshot(bot) -> GameStateSnapshot:
+def derive_game_state_snapshot(bot, *, awareness=None) -> GameStateSnapshot:
+    now = float(getattr(bot, "time", 0.0) or 0.0)
     # resources + supply
     try:
         minerals = int(getattr(bot, "minerals", 0) or 0)
@@ -296,7 +305,7 @@ def derive_game_state_snapshot(bot) -> GameStateSnapshot:
     prod_structures_total, prod_structures_idle, prod_structures_active = _production_counts(bot)
 
     macro = MacroSnapshot(
-        opening_done=bool(_opening_done(bot)),
+        opening_done=bool(_opening_done(bot, awareness=awareness, now=now)),
         minerals=minerals,
         vespene=gas,
         workers_total=workers_total,

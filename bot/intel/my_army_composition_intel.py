@@ -40,8 +40,9 @@ class MyArmyCompositionConfig:
             "comp_defensive",
             self.comp_defensive
             or {
-                "MARINE": 0.75,
-                "MARAUDER": 0.20,
+                "MARINE": 0.65,
+                "MARAUDER": 0.15,
+                "SIEGETANK": 0.15,
                 "MEDIVAC": 0.05,
             },
         )
@@ -50,8 +51,9 @@ class MyArmyCompositionConfig:
             "comp_standard",
             self.comp_standard
             or {
-                "MARINE": 0.60,
-                "MARAUDER": 0.25,
+                "MARINE": 0.52,
+                "MARAUDER": 0.20,
+                "SIEGETANK": 0.13,
                 "MEDIVAC": 0.15,
             },
         )
@@ -60,8 +62,9 @@ class MyArmyCompositionConfig:
             "comp_punish",
             self.comp_punish
             or {
-                "MARINE": 0.65,
-                "MARAUDER": 0.15,
+                "MARINE": 0.55,
+                "MARAUDER": 0.12,
+                "SIEGETANK": 0.13,
                 "MEDIVAC": 0.20,
             },
         )
@@ -70,15 +73,15 @@ class MyArmyCompositionConfig:
             "comp_rush_response",
             self.comp_rush_response
             or {
-                "MARINE": 0.58,
-                "MARAUDER": 0.20,
-                "SIEGETANK": 0.17,
+                "MARINE": 0.55,
+                "MARAUDER": 0.18,
+                "SIEGETANK": 0.22,
                 "MEDIVAC": 0.05,
             },
         )
-        object.__setattr__(self, "priority_defensive", self.priority_defensive or ["MARINE", "MARAUDER", "MEDIVAC"])
-        object.__setattr__(self, "priority_standard", self.priority_standard or ["MARINE", "MARAUDER", "MEDIVAC"])
-        object.__setattr__(self, "priority_punish", self.priority_punish or ["MARINE", "MEDIVAC", "MARAUDER"])
+        object.__setattr__(self, "priority_defensive", self.priority_defensive or ["SIEGETANK", "MARINE", "MARAUDER", "MEDIVAC"])
+        object.__setattr__(self, "priority_standard", self.priority_standard or ["SIEGETANK", "MARINE", "MARAUDER", "MEDIVAC"])
+        object.__setattr__(self, "priority_punish", self.priority_punish or ["SIEGETANK", "MARINE", "MEDIVAC", "MARAUDER"])
         object.__setattr__(
             self, "priority_rush_response", self.priority_rush_response or ["SIEGETANK", "MARINE", "MARAUDER", "MEDIVAC"]
         )
@@ -126,6 +129,25 @@ def _inject_unit_comp_bias(comp: Dict[str, float], *, unit_name: str, weight: fl
         return out
     out[str(unit_name)] = float(weight)
     return _normalize(out)
+
+
+def _apply_opening_bias(
+    *,
+    comp: Dict[str, float],
+    priority_units: List[str],
+    opening_selected: str,
+    transition_target: str,
+    banshee_harass_done: bool,
+) -> tuple[Dict[str, float], List[str]]:
+    out_comp = dict(comp)
+    out_prio = list(priority_units)
+    wants_banshee_path = str(opening_selected) == "BansheeHellionOpen" or str(transition_target).upper() == "BANSHEE"
+    if bool(wants_banshee_path) and not bool(banshee_harass_done):
+        out_prio = _prepend_unique(out_prio, "BANSHEE")
+        out_prio = _prepend_unique(out_prio, "HELLION")
+        out_comp = _inject_unit_comp_bias(out_comp, unit_name="HELLION", weight=0.16)
+        out_comp = _inject_unit_comp_bias(out_comp, unit_name="BANSHEE", weight=0.14)
+    return _normalize(out_comp), out_prio
 
 
 def _harass_missing_unit_from_cooldown(*, awareness: Awareness, now: float) -> str | None:
@@ -188,6 +210,9 @@ def derive_my_army_composition_intel(
     enemy_kind = awareness.mem.get(K("enemy", "opening", "kind"), now=now, default="NORMAL")
     conf = awareness.mem.get(K("enemy", "opening", "confidence"), now=now, default=0.0)
     rush_state = str(awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
+    opening_selected = str(awareness.mem.get(K("macro", "opening", "selected"), now=now, default="") or "")
+    transition_target = str(awareness.mem.get(K("macro", "opening", "transition_target"), now=now, default="STIM") or "STIM").upper()
+    banshee_harass_done = bool(awareness.mem.get(K("ops", "harass", "banshee", "done"), now=now, default=False))
 
     mode = "STANDARD"
     if rush_state in {"CONFIRMED", "HOLDING"}:
@@ -218,6 +243,14 @@ def derive_my_army_composition_intel(
         priority_units = _prepend_unique(priority_units, missing_harass_unit)
         comp = _inject_unit_comp_bias(comp, unit_name=str(missing_harass_unit), weight=0.12)
 
+    comp, priority_units = _apply_opening_bias(
+        comp=comp,
+        priority_units=priority_units,
+        opening_selected=str(opening_selected),
+        transition_target=str(transition_target),
+        banshee_harass_done=bool(banshee_harass_done),
+    )
+
     top_unit = str(priority_units[0]) if priority_units else ""
     reserve = cfg.reserve_costs.get(top_unit, (0, 0))
     reserve_m, reserve_g = int(reserve[0]), int(reserve[1])
@@ -230,7 +263,15 @@ def derive_my_army_composition_intel(
     awareness.mem.set(K("macro", "desired", "reserve_gas"), value=int(reserve_g), now=now, ttl=float(cfg.ttl_s))
     awareness.mem.set(
         K("macro", "desired", "signals"),
-        value={"rush_state": str(rush_state), "enemy_kind": str(enemy_kind), "confidence": float(conf)},
+        value={
+            "rush_state": str(rush_state),
+            "enemy_kind": str(enemy_kind),
+            "confidence": float(conf),
+            "opening_selected": str(opening_selected),
+            "transition_target": str(transition_target),
+            "banshee_harass_done": bool(banshee_harass_done),
+            "missing_harass_unit": str(missing_harass_unit or ""),
+        },
         now=now,
         ttl=float(cfg.ttl_s),
     )

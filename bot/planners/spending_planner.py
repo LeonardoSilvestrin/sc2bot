@@ -17,7 +17,8 @@ from bot.tasks.macro.spending_tick import MacroSpendingTick
 class SpendingPlanner(BasePlanner):
     """
     Structural spending loop (singleton by domain).
-    Runs only after opening is done.
+    Runs continuously, including during opening/build-order execution.
+    This avoids macro deadlocks when opening stalls.
     """
     planner_id: str = "spending_planner"
     score: int = 45
@@ -27,6 +28,13 @@ class SpendingPlanner(BasePlanner):
     flood_m: int = 800
     flood_hi_m: int = 1400
     flood_hold_s: float = 12.0
+    third_t_normal_s: float = 210.0
+    fourth_t_normal_s: float = 330.0
+    fifth_t_normal_s: float = 500.0
+    third_t_rush_s: float = 290.0
+    fourth_t_rush_s: float = 430.0
+    fifth_t_rush_s: float = 620.0
+    schedule_on_time_window_s: float = 20.0
 
     log_every_iters: int = 22
 
@@ -35,13 +43,6 @@ class SpendingPlanner(BasePlanner):
 
     def propose(self, bot, *, awareness: Awareness, attention: Attention) -> list[Proposal]:
         now = float(attention.time)
-
-        bor = getattr(bot, "build_order_runner", None)
-        if bor is not None and not bool(getattr(bor, "build_completed", False)):
-            return []
-
-        if not bool(attention.macro.opening_done):
-            return []
 
         pid = self._pid()
         if self.is_proposal_running(awareness=awareness, proposal_id=pid, now=now):
@@ -55,6 +56,13 @@ class SpendingPlanner(BasePlanner):
                 flood_m=int(self.flood_m),
                 flood_hi_m=int(self.flood_hi_m),
                 flood_hold_s=float(self.flood_hold_s),
+                third_t_normal_s=float(self.third_t_normal_s),
+                fourth_t_normal_s=float(self.fourth_t_normal_s),
+                fifth_t_normal_s=float(self.fifth_t_normal_s),
+                third_t_rush_s=float(self.third_t_rush_s),
+                fourth_t_rush_s=float(self.fourth_t_rush_s),
+                fifth_t_rush_s=float(self.fifth_t_rush_s),
+                schedule_on_time_window_s=float(self.schedule_on_time_window_s),
                 log_every_iters=int(self.log_every_iters),
             )
 

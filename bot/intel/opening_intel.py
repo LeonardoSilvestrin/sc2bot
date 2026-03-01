@@ -6,7 +6,7 @@ from bot.intel.utils.opening_policy import OpeningIntelPolicy, sum_units
 from bot.intel.utils.opening_types import OpeningIntelConfig
 from bot.intel.utils.state_store import EnemyRushStateStore
 from bot.mind.attention import Attention
-from bot.mind.awareness import Awareness
+from bot.mind.awareness import Awareness, K
 
 _WORKER_TYPES = (U.SCV, U.PROBE, U.DRONE)
 
@@ -70,3 +70,8 @@ def derive_enemy_opening_intel(
         evidence=dict(decision.rush_math),
         last_seen_pressure_t=float(decision.last_seen_pressure_t),
     )
+
+    if str(decision.rush_state).upper() == "CONFIRMED":
+        awareness.mem.set(K("macro", "opening", "forced_done"), value=True, now=now, ttl=None)
+        awareness.mem.set(K("macro", "opening", "forced_done_reason"), value="rush_detected", now=now, ttl=None)
+        awareness.mem.set(K("macro", "opening", "forced_done_at"), value=float(now), now=now, ttl=None)

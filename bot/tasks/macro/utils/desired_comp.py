@@ -5,13 +5,6 @@ from sc2.ids.unit_typeid import UnitTypeId as U
 from bot.mind.awareness import K
 
 
-_DEFAULT_COMP_UNIT: dict[U, float] = {
-    U.MARINE: 0.60,
-    U.MARAUDER: 0.25,
-    U.MEDIVAC: 0.15,
-}
-
-
 def normalize_unit_comp(comp: dict[U, float]) -> dict[U, float]:
     total = float(sum(float(v) for v in comp.values()))
     if total <= 0.0:
@@ -34,9 +27,6 @@ def desired_comp_units(*, awareness, now: float) -> dict[U, float]:
                 continue
             if fv > 0.0:
                 comp[uid] = fv
-
-    if not comp:
-        comp = dict(_DEFAULT_COMP_UNIT)
 
     return normalize_unit_comp(comp)
 
