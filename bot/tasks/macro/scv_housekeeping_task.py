@@ -96,12 +96,12 @@ class ScvHousekeeping(BaseTask):
 
         return False
 
-    def _reserved_running_tags(self, now: float) -> set[int]:
+    def _reserved_running_tags(self, bot, now: float) -> set[int]:
         out: set[int] = set()
         try:
             facts = self.awareness.mem._facts.items()
         except Exception:
-            return out
+            facts = []
 
         for k, _f in facts:
             if len(k) < 4:
@@ -122,6 +122,19 @@ class ScvHousekeeping(BaseTask):
                     out.add(int(t))
                 except Exception:
                     pass
+
+        # Protect active/pending building workers from housekeeping retask.
+        # Ares marks them either in UnitRole.BUILDING or in building_tracker.
+        try:
+            building_workers = bot.mediator.get_units_from_role(role=UnitRole.BUILDING, unit_type=U.SCV)
+            out.update(int(u.tag) for u in building_workers)
+        except Exception:
+            pass
+        try:
+            tracker = self._as_dict_maybe(getattr(bot.mediator, "get_building_tracker_dict", {}))
+            out.update(int(tag) for tag in tracker.keys())
+        except Exception:
+            pass
         return out
 
     def _collect_candidate_scvs(self, bot, *, reserved_tags: set[int]):
@@ -178,7 +191,7 @@ class ScvHousekeeping(BaseTask):
                 "base_minerals": [],
             }
 
-        reserved_tags = self._reserved_running_tags(now)
+        reserved_tags = self._reserved_running_tags(bot, now)
         try:
             bo_scouts = bot.mediator.get_units_from_role(role=UnitRole.BUILD_RUNNER_SCOUT, unit_type=U.SCV)
             reserved_tags.update(int(u.tag) for u in bo_scouts)
@@ -261,9 +274,16 @@ class ScvHousekeeping(BaseTask):
 
         remaining_budget = int(self.max_reassign_per_run)
         moved_tags: set[int] = set()
+        workers_per_refinery = int(
+            self.awareness.mem.get(K("macro", "gas", "target_workers_per_refinery"), now=now, default=3) or 3
+        )
+        workers_per_refinery = max(0, min(3, int(workers_per_refinery)))
 
         gas_buildings = [g for g in bot.gas_buildings if g.is_ready]
-        gas_result = GasFillPolicy(mineral_floor=int(self.mineral_floor)).apply(
+        gas_result = GasFillPolicy(
+            mineral_floor=int(self.mineral_floor),
+            workers_per_refinery=int(workers_per_refinery),
+        ).apply(
             bot=bot,
             gas_buildings=gas_buildings,
             local_candidates=local_candidates,
@@ -316,6 +336,7 @@ class ScvHousekeeping(BaseTask):
             "recovered_idle": recovered_idle,
             "reserved_tags": len(reserved_tags),
             "base_minerals": [len(ws) for ws in per_base_workers],
+            "target_workers_per_refinery": int(workers_per_refinery),
         }
 
     async def on_step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult:
@@ -349,6 +370,7 @@ class ScvHousekeeping(BaseTask):
                 "moved_to_minerals": int(stats["moved_to_minerals"]),
                 "recovered_idle": int(stats["recovered_idle"]),
                 "base_minerals": list(stats["base_minerals"]),
+                "target_workers_per_refinery": int(stats.get("target_workers_per_refinery", 3)),
                 "morph_pending": int(morph["pending_count"]),
                 "mules_cast": int(mules["casts"]),
             },
@@ -366,6 +388,7 @@ class ScvHousekeeping(BaseTask):
                 "recovered_idle": int(stats["recovered_idle"]),
                 "reserved_tags": int(stats["reserved_tags"]),
                 "base_minerals": list(stats["base_minerals"]),
+                "target_workers_per_refinery": int(stats.get("target_workers_per_refinery", 3)),
                 "floor": int(self.mineral_floor),
                 "cap": int(self.mineral_cap),
                 "morph_pending": int(morph["pending_count"]),

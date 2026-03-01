@@ -55,3 +55,44 @@ Builds:
       - 21 starport
       - 23 marine *4
 
+  BansheeHellionOpen:
+    AutoSupplyAtSupply: 25
+    ConstantWorkerProductionTill: 60
+    OpeningBuildOrder:
+      - 14 supply @ ramp
+      - 12 worker_scout:
+          [enemy_spawn, enemy_nat, enemy_ramp, map_center]
+      - 16 barracks @ ramp
+      - 16 gas
+      - 0 orbital
+      - 19 reaper
+      - 19 expand
+      - 19 supply @ ramp
+      - 21 factory
+      - 21 factoryreactor
+      - 21 gas
+      - 22 starport
+      - 26 hellion *4
+      - 30 starporttechlab
+      
+  StimDropTankOpen:
+    AutoSupplyAtSupply: 25
+    ConstantWorkerProductionTill: 60
+    OpeningBuildOrder:
+      - 14 supply @ ramp      
+      - 12 worker_scout:
+          [enemy_spawn, enemy_nat, enemy_ramp, map_center]
+      - 16 barracks @ ramp
+      - 16 gas
+      - 0 orbital
+      - 19 expand
+      - 19 supply @ ramp
+      - 20 barrackstechlab
+      - 22 marine *3
+      - 23 stimpack
+      - 24 factory
+      - 24 gas
+      - 26 starport
+      - 30 siegetank
+      - 32 medivac *2
+      - 36 barracks

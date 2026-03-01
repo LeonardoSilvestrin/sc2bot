@@ -5,30 +5,11 @@ from typing import Dict, Tuple
 
 from sc2.ids.unit_typeid import UnitTypeId as U
 
+from bot.intel.config.opening_timing_rules import OpeningTimingRule
+from bot.intel.utils.enemy_econ_estimates import count_enemy_bases, expected_workers, sum_units
 from bot.intel.utils.opening_types import OpeningIntelConfig
 
 _WORKER_TYPES: Tuple[U, ...] = (U.SCV, U.PROBE, U.DRONE)
-
-
-def count_enemy_bases(enemy_structures: Dict[U, int]) -> int:
-    return int(
-        enemy_structures.get(U.HATCHERY, 0)
-        + enemy_structures.get(U.LAIR, 0)
-        + enemy_structures.get(U.HIVE, 0)
-        + enemy_structures.get(U.NEXUS, 0)
-        + enemy_structures.get(U.COMMANDCENTER, 0)
-        + enemy_structures.get(U.ORBITALCOMMAND, 0)
-        + enemy_structures.get(U.PLANETARYFORTRESS, 0)
-    )
-
-
-def sum_units(enemy_units: Dict[U, int], types: Tuple[U, ...]) -> int:
-    return int(sum(int(enemy_units.get(t, 0)) for t in types))
-
-
-def expected_workers(now: float, *, period_s: float) -> int:
-    out = 12 + int(max(0.0, float(now)) // max(1.0, float(period_s)))
-    return int(max(12, min(80, out)))
 
 
 @dataclass(frozen=True)
@@ -47,47 +28,94 @@ class OpeningDecision:
 class OpeningIntelPolicy:
     cfg: OpeningIntelConfig
 
-    def rush_math_signals(self, *, now: float, eb, workers_peak_seen: int = 0) -> dict:
+    def _match_timing_rule(
+        self,
+        *,
+        now: float,
+        rule: OpeningTimingRule,
+        enemy_race: str,
+        enemy_structs: Dict[U, int],
+        main_structs: Dict[U, int],
+        progress: Dict[U, dict],
+    ) -> bool:
+        rr = str(rule.race).upper()
+        er = str(enemy_race or "UNKNOWN").upper()
+        if rr != "ANY" and rr != er:
+            return False
+        if float(now) < float(rule.earliest_t) or float(now) > float(rule.latest_t):
+            return False
+
+        total_count = int(enemy_structs.get(rule.structure, 0))
+        main_count = int(main_structs.get(rule.structure, 0))
+        max_prog = float((progress.get(rule.structure, {}) or {}).get("max", 0.0) or 0.0)
+
+        if int(total_count) < int(rule.min_total_count):
+            return False
+        if rule.max_total_count is not None and int(total_count) > int(rule.max_total_count):
+            return False
+        if int(main_count) < int(rule.min_main_count):
+            return False
+        if rule.max_main_count is not None and int(main_count) > int(rule.max_main_count):
+            return False
+        if float(max_prog) < float(rule.min_progress):
+            return False
+        return True
+
+    def rush_math_signals(self, *, now: float, eb, workers_peak_seen: int = 0, enemy_race: str = "UNKNOWN") -> dict:
+        rules = tuple(self.cfg.timing_rules or ())
+        if not rules:
+            raise RuntimeError("missing_contract:opening_intel.timing_rules")
         enemy_units: Dict[U, int] = dict(getattr(eb, "enemy_units", {}) or {})
         enemy_structs: Dict[U, int] = dict(getattr(eb, "enemy_structures", {}) or {})
         main_units: Dict[U, int] = dict(getattr(eb, "enemy_units_main", {}) or {})
+        main_structs: Dict[U, int] = dict(getattr(eb, "enemy_structures_main", {}) or {})
         progress: Dict[U, dict] = dict(getattr(eb, "enemy_structures_progress", {}) or {})
 
         workers_seen_all = sum_units(enemy_units, _WORKER_TYPES)
         workers_seen_main = sum_units(main_units, _WORKER_TYPES)
         workers_seen_now = int(max(workers_seen_all, workers_seen_main))
         workers_seen = int(max(workers_seen_now, int(workers_peak_seen)))
-        expected = expected_workers(float(now), period_s=float(self.cfg.expected_worker_period_s))
+        expected = expected_workers(float(now), period_s=float(self.cfg.expected_worker_period_s), cap=80)
         worker_deficit = max(0, int(expected) - int(workers_seen))
 
         enemy_bases = count_enemy_bases(enemy_structs)
         nat_on_ground = bool(getattr(eb, "enemy_natural_on_ground", False))
         nat_prog = float(getattr(eb, "enemy_natural_townhall_progress", 0.0) or 0.0)
 
-        z_pool = int(enemy_structs.get(U.SPAWNINGPOOL, 0))
-        z_pool_prog = float((progress.get(U.SPAWNINGPOOL, {}) or {}).get("max", 0.0) or 0.0)
-        t_rax = int(enemy_structs.get(U.BARRACKS, 0))
-        p_gate = int(enemy_structs.get(U.GATEWAY, 0))
-
         score = 0.0
-        if worker_deficit >= int(self.cfg.worker_under_count_tolerance):
-            score += min(18.0, float(worker_deficit) * 1.5)
-        if int(enemy_bases) <= 1 and not nat_on_ground and float(now) >= 90.0:
-            score += 8.0
-        if float(now) <= 120.0 and z_pool > 0 and z_pool_prog >= 0.20:
-            score += 28.0
-        if float(now) <= 130.0 and t_rax >= 2:
-            score += 22.0
-        if float(now) <= 140.0 and p_gate >= 2:
-            score += 22.0
-        if float(now) <= 150.0 and not nat_on_ground and nat_prog <= 0.0:
-            score += 4.0
+        matched_rules: list[str] = []
+        hard_rush = False
 
-        hard_rush = bool(
-            (float(now) <= 120.0 and z_pool > 0 and z_pool_prog >= 0.35)
-            or (float(now) <= 130.0 and t_rax >= 2)
-            or (float(now) <= 140.0 and p_gate >= 2)
-        )
+        for rule in rules:
+            if not self._match_timing_rule(
+                now=float(now),
+                rule=rule,
+                enemy_race=str(enemy_race),
+                enemy_structs=enemy_structs,
+                main_structs=main_structs,
+                progress=progress,
+            ):
+                continue
+            score += float(rule.score)
+            matched_rules.append(str(rule.name))
+            if bool(rule.confirm):
+                hard_rush = True
+
+        # Worker-count deficit is a weak signal unless combined with an early 1-base posture.
+        worker_deficit_score = 0.0
+        if (
+            worker_deficit >= int(self.cfg.worker_under_count_tolerance)
+            and float(now) <= float(self.cfg.worker_deficit_check_until_s)
+            and int(enemy_bases) <= 1
+            and not bool(nat_on_ground)
+        ):
+            worker_deficit_score = min(float(self.cfg.worker_deficit_score_cap), float(worker_deficit) * 1.0)
+            score += float(worker_deficit_score)
+        if int(enemy_bases) <= 1 and not nat_on_ground and float(now) >= float(self.cfg.one_base_alert_at_s):
+            score += float(self.cfg.one_base_alert_score)
+        if float(now) <= float(self.cfg.no_natural_alert_until_s) and not nat_on_ground and nat_prog <= 0.0:
+            score += float(self.cfg.no_natural_alert_score)
+
         likely_end = bool((nat_on_ground and float(nat_prog) >= 0.90) and worker_deficit <= 2 and enemy_bases >= 2)
 
         return {
@@ -96,13 +124,11 @@ class OpeningIntelPolicy:
             "workers_peak_seen": int(max(0, int(workers_peak_seen))),
             "workers_expected": int(expected),
             "worker_deficit": int(worker_deficit),
+            "worker_deficit_score": float(round(worker_deficit_score, 2)),
             "enemy_bases_visible": int(enemy_bases),
             "natural_on_ground": bool(nat_on_ground),
             "natural_progress": float(nat_prog),
-            "z_pool": int(z_pool),
-            "z_pool_prog": float(round(z_pool_prog, 3)),
-            "t_rax": int(t_rax),
-            "p_gate": int(p_gate),
+            "matched_timing_rules": list(matched_rules),
             "rush_score": float(round(score, 2)),
             "hard_rush": bool(hard_rush),
             "likely_end": bool(likely_end),
@@ -113,6 +139,7 @@ class OpeningIntelPolicy:
         *,
         now: float,
         attention,
+        enemy_race: str,
         prev_rush_state: str,
         last_pressure_t: float,
         workers_peak_seen: int,
@@ -123,7 +150,10 @@ class OpeningIntelPolicy:
 
         enemy_bases = count_enemy_bases(enemy_structs)
         near_bases = int(attention.combat.primary_enemy_count)
-        threatened = int(attention.combat.primary_urgency) > 0
+        threatened = bool(
+            int(attention.combat.primary_urgency) >= int(self.cfg.threatened_urgency_min)
+            and int(near_bases) >= int(self.cfg.threatened_near_bases_min)
+        )
 
         lings = sum_units(enemy_units, (U.ZERGLING,))
         marines = sum_units(enemy_units, (U.MARINE,))
@@ -139,7 +169,12 @@ class OpeningIntelPolicy:
         kind = "NORMAL"
         conf = 0.40
 
-        rush_math = self.rush_math_signals(now=now, eb=eb, workers_peak_seen=int(workers_peak_seen))
+        rush_math = self.rush_math_signals(
+            now=now,
+            eb=eb,
+            workers_peak_seen=int(workers_peak_seen),
+            enemy_race=str(enemy_race),
+        )
         rush_score = float(rush_math["rush_score"])
         hard_rush = bool(rush_math["hard_rush"])
 
@@ -164,7 +199,10 @@ class OpeningIntelPolicy:
             rush_score >= float(self.cfg.rush_score_suspected)
             and (early or recent_pressure or int(near_bases) >= 2 or bool(threatened))
         )
-        is_confirmed = bool(hard_rush or rush_score >= float(self.cfg.rush_score_confirmed) or (threatened and near_bases >= 3))
+        confirmed_with_pressure = bool(
+            rush_score >= float(self.cfg.rush_score_confirmed) and (bool(threatened) or int(near_bases) >= 2)
+        )
+        is_confirmed = bool(hard_rush or confirmed_with_pressure or (threatened and near_bases >= 3))
         rush_likely_end = bool(rush_math["likely_end"]) and clear_for >= float(self.cfg.rush_end_clear_s)
         rush_forced_end = bool(clear_for >= float(self.cfg.rush_hold_max_s) and int(near_bases) <= 1 and not bool(threatened))
         rush_suspected_decay = bool(clear_for >= float(self.cfg.rush_suspect_decay_s) and int(near_bases) <= 1 and not bool(threatened))

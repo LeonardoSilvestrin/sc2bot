@@ -21,6 +21,7 @@ class MineralBalanceResult:
 @dataclass
 class GasFillPolicy:
     mineral_floor: int
+    workers_per_refinery: int = 3
 
     def apply(
         self,
@@ -39,16 +40,16 @@ class GasFillPolicy:
         gas_deficit = 0
         moved_to_gas = 0
 
+        workers_per_refinery = max(0, min(3, int(self.workers_per_refinery)))
         if gas_buildings:
             try:
-                bot.mediator.set_workers_per_gas(amount=3)
+                bot.mediator.set_workers_per_gas(amount=int(workers_per_refinery))
             except Exception:
                 pass
 
         for ref in gas_buildings:
             assigned = int(getattr(ref, "assigned_harvesters", 0) or 0)
-            ideal = int(getattr(ref, "ideal_harvesters", 3) or 3)
-            ideal = 3 if ideal <= 0 else ideal
+            ideal = int(workers_per_refinery)
             need = max(0, ideal - assigned)
             gas_deficit += need
 
@@ -279,4 +280,3 @@ class MineralBalancePolicy:
             recovered_idle=int(recovered_idle),
             remaining_budget=int(remaining_budget),
         )
-

@@ -135,7 +135,7 @@ Formato de chave: tupla `("a","b","c")`, documentada como `a:b:c`.
 - `intel:reaper:scout:*`
 - `intel:scan:*`
 
-### 2.4 Enemy opening
+### 2.4 Enemy openMing
 - `enemy:opening:first_seen_t`
 - `enemy:rush:*` (state, score, confidence, evidence)
 - `enemy:opening:kind`

@@ -135,8 +135,9 @@ class IntelSnapshot:
 @dataclass(frozen=True)
 class MacroSnapshot:
     """
-    Macro operational state (NOT resources, NOT worker allocation).
-    Keep it focused so it doesn't overlap EconomySnapshot.
+    Macro operational state.
+    Convenience resource/worker/supply fields are mirrored from EconomySnapshot
+    in the same tick to keep planner reads simple.
     """
     opening_done: bool
     bases_total: int
@@ -170,10 +171,10 @@ class EnemyBuildSnapshot:
     enemy_main_pos: Optional[Point2] = None
     enemy_natural_pos: Optional[Point2] = None
 
-    enemy_units_main: dict = None
-    enemy_structures_main: dict = None
+    enemy_units_main: Dict = field(default_factory=dict)
+    enemy_structures_main: Dict = field(default_factory=dict)
 
-    enemy_structures_progress: dict = None
+    enemy_structures_progress: Dict = field(default_factory=dict)
 
     enemy_natural_on_ground: bool = False
     enemy_natural_townhall_progress: Optional[float] = None
@@ -237,7 +238,7 @@ def derive_attention(bot, *, awareness: Awareness, threat: Threat, log=None) -> 
 
     now = float(getattr(bot, "time", 0.0) or 0.0)
 
-    game_state = derive_game_state_snapshot(bot)
+    game_state = derive_game_state_snapshot(bot, awareness=awareness)
     combat = derive_combat_snapshot(bot, threat=threat)
     economy = game_state.economy
     intel = game_state.intel

@@ -15,6 +15,7 @@ class WallDepotPlan:
     slots: tuple[Point2, ...]
     total: int
     occupied: int
+    contiguous_occupied: bool
     inferred: bool
 
 
@@ -47,6 +48,39 @@ def _rank_slots_for_choke(bot, *, base_location: Point2, slots: list[Point2]) ->
         scored.append((score, pos))
     scored.sort(key=lambda x: x[0])
     return [p for _, p in scored]
+
+
+def _pick_contiguous_slots(*, ranked_slots: list[Point2], desired_slots: int) -> list[Point2]:
+    if int(desired_slots) <= 1 or len(ranked_slots) <= 1:
+        return ranked_slots[: max(0, int(desired_slots))]
+
+    best_pair: tuple[float, Point2, Point2] | None = None
+    for i in range(len(ranked_slots)):
+        a = ranked_slots[i]
+        for j in range(i + 1, len(ranked_slots)):
+            b = ranked_slots[j]
+            d = float(a.distance_to(b))
+            # Depot centers should be roughly adjacent to form a closed segment.
+            if d < 1.4 or d > 2.6:
+                continue
+            pair_score = float(i + j) + abs(d - 2.0) * 3.0
+            if best_pair is None or pair_score < float(best_pair[0]):
+                best_pair = (pair_score, a, b)
+
+    if best_pair is None:
+        return ranked_slots[: max(0, int(desired_slots))]
+
+    out = [best_pair[1], best_pair[2]]
+    if int(desired_slots) <= 2:
+        return out
+
+    for p in ranked_slots:
+        if p in out:
+            continue
+        out.append(p)
+        if len(out) >= int(desired_slots):
+            break
+    return out
 
 
 def resolve_base_key(*, placements: dict, target: Point2, max_snap_distance: float = 7.5) -> Point2 | None:
@@ -183,6 +217,14 @@ def _is_slot_occupied(*, two_by_two: dict, pos: Point2) -> bool:
     return (not bool(info.get("available", True))) or bool(info.get("worker_on_route", False))
 
 
+def _contiguous_occupied(*, two_by_two: dict, slots: list[Point2]) -> bool:
+    occ = [p for p in slots if _is_slot_occupied(two_by_two=two_by_two, pos=p)]
+    if len(occ) <= 1:
+        return False
+    best = min(float(a.distance_to(b)) for i, a in enumerate(occ) for b in occ[i + 1 :])
+    return 1.4 <= float(best) <= 2.6
+
+
 def get_wall_depot_plan(
     bot,
     *,
@@ -196,14 +238,14 @@ def get_wall_depot_plan(
         placements = {}
     base_key = resolve_base_key(placements=placements, target=base_location)
     if base_key is None:
-        return WallDepotPlan(base_key=None, slots=(), total=0, occupied=0, inferred=False)
+        return WallDepotPlan(base_key=None, slots=(), total=0, occupied=0, contiguous_occupied=False, inferred=False)
 
     try:
         two_by_two = dict(placements[base_key][BuildingSize.TWO_BY_TWO] or {})
     except Exception:
         two_by_two = {}
     if not two_by_two:
-        return WallDepotPlan(base_key=base_key, slots=(), total=0, occupied=0, inferred=False)
+        return WallDepotPlan(base_key=base_key, slots=(), total=0, occupied=0, contiguous_occupied=False, inferred=False)
 
     explicit_slots = [pos for pos, info in two_by_two.items() if bool(info.get("is_wall", False))]
     inferred = False
@@ -228,12 +270,16 @@ def get_wall_depot_plan(
     else:
         slots = []
 
+    # For natural-style walling (desired >= 2), enforce contiguous slot selection.
+    slots = _pick_contiguous_slots(ranked_slots=list(slots), desired_slots=max(1, int(desired_slots)))
     occupied = sum(1 for pos in slots if _is_slot_occupied(two_by_two=two_by_two, pos=pos))
+    contiguous_occupied = _contiguous_occupied(two_by_two=two_by_two, slots=list(slots))
     return WallDepotPlan(
         base_key=base_key,
         slots=tuple(slots),
         total=int(len(slots)),
         occupied=int(occupied),
+        contiguous_occupied=bool(contiguous_occupied),
         inferred=bool(inferred),
     )
 

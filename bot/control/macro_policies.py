@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from sc2.ids.unit_typeid import UnitTypeId as U
 from sc2.position import Point2
 
-from bot.tasks.macro.utils.state_store import MacroStateStore
+from bot.control.macro_state_store import MacroStateStore
 from bot.tasks.macro.utils.wall_mapper import WallDepotPlan, get_wall_depot_plan, try_build_next_wall_depot
 
 
@@ -23,6 +23,10 @@ class WallPlacementPolicy:
     state: MacroStateStore
     main_wall_target: int = 2
     natural_wall_target: int = 2
+    infer_when_missing: bool = False
+    min_eval_interval_s: float = 1.0
+    _next_eval_at: float = 0.0
+    _cached_decision: WallDecision | None = None
 
     @staticmethod
     def own_natural(bot) -> Point2:
@@ -32,22 +36,28 @@ class WallPlacementPolicy:
             return None
 
     def evaluate(self, bot, *, now: float) -> WallDecision:
+        if self._cached_decision is not None and float(now) < float(self._next_eval_at):
+            return self._cached_decision
+
         main_plan = get_wall_depot_plan(
             bot,
             base_location=bot.start_location,
             desired_slots=int(self.main_wall_target),
-            infer_when_missing=True,
+            infer_when_missing=bool(self.infer_when_missing),
         )
         main_target = min(int(self.main_wall_target), int(main_plan.total))
         nat_pos = self.own_natural(bot)
         if nat_pos is None:
             empty = WallDepotPlan(base_key=None, slots=(), total=0, occupied=0, contiguous_occupied=False, inferred=False)
-            return WallDecision("natural_unavailable", main_plan, empty, int(main_target), 0)
+            decision = WallDecision("natural_unavailable", main_plan, empty, int(main_target), 0)
+            self._cached_decision = decision
+            self._next_eval_at = float(now) + float(self.min_eval_interval_s)
+            return decision
         natural_plan = get_wall_depot_plan(
             bot,
             base_location=nat_pos,
             desired_slots=int(self.natural_wall_target),
-            infer_when_missing=True,
+            infer_when_missing=bool(self.infer_when_missing),
         )
 
         natural_target = int(self.natural_wall_target)
@@ -65,14 +75,19 @@ class WallPlacementPolicy:
         )
 
         if main_target > 0 and int(main_plan.occupied) < main_target:
-            return WallDecision("build_main", main_plan, natural_plan, int(main_target), int(natural_target))
-        if natural_slots_missing:
-            return WallDecision("natural_slots_missing", main_plan, natural_plan, int(main_target), int(natural_target))
-        if natural_target > 0 and int(natural_plan.occupied) < natural_target:
-            return WallDecision("natural_waiting_slot", main_plan, natural_plan, int(main_target), int(natural_target))
-        if natural_target > 1 and not bool(natural_plan.contiguous_occupied):
-            return WallDecision("natural_waiting_slot", main_plan, natural_plan, int(main_target), int(natural_target))
-        return WallDecision("none", main_plan, natural_plan, int(main_target), int(natural_target))
+            decision = WallDecision("build_main", main_plan, natural_plan, int(main_target), int(natural_target))
+        elif natural_slots_missing:
+            decision = WallDecision("natural_slots_missing", main_plan, natural_plan, int(main_target), int(natural_target))
+        elif natural_target > 0 and int(natural_plan.occupied) < natural_target:
+            decision = WallDecision("natural_waiting_slot", main_plan, natural_plan, int(main_target), int(natural_target))
+        elif natural_target > 1 and not bool(natural_plan.contiguous_occupied):
+            decision = WallDecision("natural_waiting_slot", main_plan, natural_plan, int(main_target), int(natural_target))
+        else:
+            decision = WallDecision("none", main_plan, natural_plan, int(main_target), int(natural_target))
+
+        self._cached_decision = decision
+        self._next_eval_at = float(now) + float(self.min_eval_interval_s)
+        return decision
 
 
 @dataclass
@@ -90,9 +105,7 @@ class RushFortifyPolicy:
         issued = {"depots": 0, "bunkers": 0}
 
         try:
-            depots_near_nat = int(
-                bot.structures.of_type({U.SUPPLYDEPOT, U.SUPPLYDEPOTLOWERED}).closer_than(11.0, nat).amount
-            )
+            depots_near_nat = int(bot.structures.of_type({U.SUPPLYDEPOT, U.SUPPLYDEPOTLOWERED}).closer_than(11.0, nat).amount)
         except Exception:
             depots_near_nat = 0
         try:

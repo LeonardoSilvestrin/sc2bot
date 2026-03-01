@@ -1,0 +1,502 @@
+# bot/planners/macro_orchestrator_planner.py
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any
+
+from sc2.ids.unit_typeid import UnitTypeId as U
+from sc2.ids.upgrade_id import UpgradeId as Up
+
+from bot.devlog import DevLogger
+from bot.mind.attention import Attention
+from bot.mind.awareness import Awareness, K
+from bot.planners.utils.base_planner import BasePlanner
+from bot.planners.utils.proposals import Proposal, TaskSpec
+from bot.tasks.macro.production_tick import MacroProductionTick
+from bot.tasks.macro.scv_housekeeping_task import ScvHousekeeping
+from bot.tasks.macro.spending_tick import MacroSpendingTick
+from bot.tasks.macro.tech_tick import MacroTechTick
+from bot.tasks.macro.utils.desired_comp import desired_controller_dict_names
+from bot.tasks.support.control_depots_task import ControlDepots
+
+
+@dataclass
+class MacroOrchestratorPlanner(BasePlanner):
+    planner_id: str = "macro_orchestrator_planner"
+    score: int = 58
+    planners: list[Any] = None
+    log: DevLogger | None = None
+    log_every_iters: int = 22
+    spending_score: int = 45
+    spending_target_bases_default: int = 2
+    spending_flood_m: int = 800
+    spending_flood_hi_m: int = 1400
+    spending_flood_hold_s: float = 12.0
+    spending_third_t_normal_s: float = 210.0
+    spending_fourth_t_normal_s: float = 330.0
+    spending_fifth_t_normal_s: float = 500.0
+    spending_third_t_rush_s: float = 290.0
+    spending_fourth_t_rush_s: float = 430.0
+    spending_fifth_t_rush_s: float = 620.0
+    spending_schedule_on_time_window_s: float = 20.0
+    production_score: int = 55
+    production_scv_cap: int = 66
+    tech_score: int = 42
+    tech_start_delay_after_opening_s: float = 60.0
+    tech_fallback_start_after_game_s: float = 150.0
+    tech_bypass_delay_for_urgent_tech: bool = False
+    urgent_tech_unit_defaults: tuple[str, ...] = ()
+    urgent_tech_prop_thresholds: dict[str, float] = field(default_factory=dict)
+    housekeeping_score: int = 18
+    housekeeping_interval_s: float = 4.0
+    housekeeping_cooldown_s: float = 2.0
+    housekeeping_lease_ttl_s: float = 6.0
+    depot_score: int = 24
+    depot_interval_s_alert: float = 2.5
+    depot_interval_s_calm: float = 6.0
+    depot_cooldown_s: float = 2.0
+    depot_raise_radius: float = 12.0
+    depot_raise_urgency_min: int = 18
+    depot_raise_enemy_count_min: int = 2
+    depot_supply_left_trigger: int = 2
+    _tech_plan_ttl_s: float = 8.0
+    _production_plan_ttl_s: float = 8.0
+
+    def _pid(self) -> str:
+        return self.proposal_id("macro_orchestrator")
+
+    @staticmethod
+    def _upgrade_names_from_comp(*, comp: dict[str, float], reserve_unit: str) -> list[str]:
+        infantry = float(comp.get("MARINE", 0.0)) + float(comp.get("MARAUDER", 0.0)) + float(comp.get("GHOST", 0.0))
+        mech = float(comp.get("HELLION", 0.0)) + float(comp.get("SIEGETANK", 0.0)) + float(comp.get("CYCLONE", 0.0)) + float(comp.get("THOR", 0.0))
+        air = (
+            float(comp.get("MEDIVAC", 0.0))
+            + float(comp.get("VIKINGFIGHTER", 0.0))
+            + float(comp.get("LIBERATOR", 0.0))
+            + float(comp.get("BANSHEE", 0.0))
+            + float(comp.get("RAVEN", 0.0))
+        )
+        banshee_pressure = float(comp.get("BANSHEE", 0.0) or 0.0) >= 0.15 or str(reserve_unit) == "BANSHEE"
+
+        names: list[str] = []
+        if banshee_pressure:
+            names.extend(["BANSHEECLOAK"])
+        if infantry >= 0.35:
+            names.extend(
+                [
+                    "STIMPACK",
+                    "SHIELDWALL",
+                    "PUNISHERGRENADES",
+                    "TERRANINFANTRYWEAPONSLEVEL1",
+                    "TERRANINFANTRYARMORSLEVEL1",
+                    "TERRANINFANTRYWEAPONSLEVEL2",
+                    "TERRANINFANTRYARMORSLEVEL2",
+                    "TERRANINFANTRYWEAPONSLEVEL3",
+                    "TERRANINFANTRYARMORSLEVEL3",
+                ]
+            )
+        if mech >= 0.30:
+            names.extend(
+                [
+                    "TERRANVEHICLEWEAPONSLEVEL1",
+                    "TERRANVEHICLEANDSHIPARMORSLEVEL1",
+                    "TERRANVEHICLEWEAPONSLEVEL2",
+                    "TERRANVEHICLEANDSHIPARMORSLEVEL2",
+                    "TERRANVEHICLEWEAPONSLEVEL3",
+                    "TERRANVEHICLEANDSHIPARMORSLEVEL3",
+                ]
+            )
+        if air >= 0.25:
+            names.extend(
+                [
+                    "TERRANSHIPWEAPONSLEVEL1",
+                    "TERRANVEHICLEANDSHIPARMORSLEVEL1",
+                    "TERRANSHIPWEAPONSLEVEL2",
+                    "TERRANVEHICLEANDSHIPARMORSLEVEL2",
+                    "TERRANSHIPWEAPONSLEVEL3",
+                    "TERRANVEHICLEANDSHIPARMORSLEVEL3",
+                ]
+            )
+        if not names:
+            names.extend(["STIMPACK", "SHIELDWALL", "TERRANINFANTRYWEAPONSLEVEL1", "TERRANINFANTRYARMORSLEVEL1"])
+        seen: set[str] = set()
+        out: list[str] = []
+        for name in names:
+            s = str(name)
+            if s in seen or getattr(Up, s, None) is None:
+                continue
+            seen.add(s)
+            out.append(s)
+        return out
+
+    @staticmethod
+    def _unit_count_with_pending(bot, unit_type) -> int:
+        try:
+            ready = int(bot.units.of_type(unit_type).ready.amount)
+        except Exception:
+            ready = 0
+        try:
+            pending = int(bot.already_pending(unit_type) or 0)
+        except Exception:
+            pending = 0
+        return int(ready + pending)
+
+    def _upgrade_is_unlocked_by_army(self, bot, *, name: str, awareness: Awareness, now: float) -> bool:
+        n = str(name)
+        marines = self._unit_count_with_pending(bot, U.MARINE)
+        marauders = self._unit_count_with_pending(bot, U.MARAUDER)
+        tanks = self._unit_count_with_pending(bot, U.SIEGETANK)
+        hellions = self._unit_count_with_pending(bot, U.HELLION)
+        air_core = (
+            self._unit_count_with_pending(bot, U.BANSHEE)
+            + self._unit_count_with_pending(bot, U.MEDIVAC)
+            + self._unit_count_with_pending(bot, U.VIKINGFIGHTER)
+            + self._unit_count_with_pending(bot, U.LIBERATOR)
+        )
+        if n == "BANSHEECLOAK":
+            # Do not reserve cloak path before at least one banshee exists/pending.
+            return self._unit_count_with_pending(bot, U.BANSHEE) >= 1
+        if n == "STIMPACK":
+            return (marines + marauders) >= 8
+        if n == "SHIELDWALL":
+            return marines >= 10
+        if n == "PUNISHERGRENADES":
+            return marauders >= 2
+        if n in {"TERRANINFANTRYWEAPONSLEVEL1", "TERRANINFANTRYARMORSLEVEL1"}:
+            return (marines + marauders) >= 8
+        if n in {"TERRANINFANTRYWEAPONSLEVEL2", "TERRANINFANTRYARMORSLEVEL2"}:
+            return (marines + marauders) >= 14
+        if n in {"TERRANINFANTRYWEAPONSLEVEL3", "TERRANINFANTRYARMORSLEVEL3"}:
+            return (marines + marauders) >= 20
+        if n in {"TERRANVEHICLEWEAPONSLEVEL1", "TERRANVEHICLEANDSHIPARMORSLEVEL1"}:
+            return (tanks + hellions) >= 4
+        if n in {"TERRANVEHICLEWEAPONSLEVEL2", "TERRANVEHICLEANDSHIPARMORSLEVEL2"}:
+            return (tanks + hellions) >= 8
+        if n in {"TERRANVEHICLEWEAPONSLEVEL3", "TERRANVEHICLEANDSHIPARMORSLEVEL3"}:
+            return (tanks + hellions) >= 12
+        if n == "TERRANSHIPWEAPONSLEVEL1":
+            return air_core >= 3
+        if n == "TERRANSHIPWEAPONSLEVEL2":
+            return air_core >= 6
+        if n == "TERRANSHIPWEAPONSLEVEL3":
+            return air_core >= 9
+        return True
+
+    def _publish_tech_plan(self, bot, *, awareness: Awareness, now: float) -> list[str]:
+        comp = dict(awareness.mem.get(K("macro", "desired", "comp"), now=now, default={}) or {})
+        reserve_unit = str(awareness.mem.get(K("macro", "desired", "reserve_unit"), now=now, default="") or "")
+        raw_upgrades = self._upgrade_names_from_comp(comp=comp, reserve_unit=reserve_unit)
+        upgrades = [u for u in raw_upgrades if self._upgrade_is_unlocked_by_army(bot, name=str(u), awareness=awareness, now=now)]
+
+        reserve_m = 0
+        reserve_g = 0
+        reserve_name = ""
+        for name in upgrades:
+            up = getattr(Up, str(name), None)
+            if up is None:
+                continue
+            try:
+                pending = float(bot.already_pending_upgrade(up) or 0.0)
+                if pending >= 1.0:
+                    continue
+            except Exception:
+                pass
+            try:
+                cost = bot.calculate_cost(up)
+                target_m = int(getattr(cost, "minerals", 0) or 0)
+                target_g = int(getattr(cost, "vespene", 0) or 0)
+                minerals = int(getattr(bot, "minerals", 0) or 0)
+                gas = int(getattr(bot, "vespene", 0) or 0)
+                # Reserve only when close to execution, to avoid gas lock/flood.
+                if minerals >= max(50, int(0.6 * target_m)) and gas >= max(25, int(0.6 * target_g)):
+                    reserve_m = int(target_m)
+                    reserve_g = int(target_g)
+                    reserve_name = str(name)
+                break
+            except Exception:
+                continue
+
+        ttl = float(self._tech_plan_ttl_s)
+        awareness.mem.set(K("macro", "tech", "plan", "upgrades"), value=list(upgrades), now=now, ttl=ttl)
+        awareness.mem.set(K("macro", "tech", "plan", "upgrades_raw"), value=list(raw_upgrades), now=now, ttl=ttl)
+        awareness.mem.set(K("macro", "tech", "plan", "reserve_minerals"), value=int(reserve_m), now=now, ttl=ttl)
+        awareness.mem.set(K("macro", "tech", "plan", "reserve_gas"), value=int(reserve_g), now=now, ttl=ttl)
+        awareness.mem.set(K("macro", "tech", "plan", "reserve_name"), value=str(reserve_name), now=now, ttl=ttl)
+        awareness.mem.set(K("macro", "tech", "plan", "updated_at"), value=float(now), now=now, ttl=None)
+        return upgrades
+
+    def _urgent_tech_pressure(self, *, awareness: Awareness, now: float) -> bool:
+        units_cfg = awareness.mem.get(
+            K("macro", "desired", "urgent_tech_units"),
+            now=now,
+            default=list(self.urgent_tech_unit_defaults),
+        )
+        if isinstance(units_cfg, (list, tuple, set, frozenset)):
+            units = [str(u).upper() for u in units_cfg if str(u).strip()]
+        else:
+            units = [str(u).upper() for u in self.urgent_tech_unit_defaults]
+        if not units:
+            units = [str(u).upper() for u in self.urgent_tech_unit_defaults]
+
+        thresholds_cfg = awareness.mem.get(
+            K("macro", "desired", "urgent_tech_prop_thresholds"),
+            now=now,
+            default=dict(self.urgent_tech_prop_thresholds),
+        )
+        thresholds: dict[str, float] = {}
+        if isinstance(thresholds_cfg, dict):
+            for k, v in thresholds_cfg.items():
+                try:
+                    thresholds[str(k).upper()] = float(v)
+                except Exception:
+                    continue
+        for k, v in self.urgent_tech_prop_thresholds.items():
+            kk = str(k).upper()
+            if kk not in thresholds:
+                thresholds[kk] = float(v)
+
+        reserve_unit = str(awareness.mem.get(K("macro", "desired", "reserve_unit"), now=now, default="") or "").upper()
+        priority_units = [str(u).upper() for u in list(awareness.mem.get(K("macro", "desired", "priority_units"), now=now, default=[]) or [])]
+        comp = dict(awareness.mem.get(K("macro", "desired", "comp"), now=now, default={}) or {})
+
+        for unit in units:
+            if reserve_unit == unit:
+                return True
+            if unit in priority_units:
+                return True
+            try:
+                threshold = float(thresholds.get(unit, 0.10))
+                if float(comp.get(unit, 0.0) or 0.0) >= threshold:
+                    return True
+            except Exception:
+                continue
+        return False
+
+    def _publish_production_plan(self, bot, *, awareness: Awareness, attention: Attention, now: float) -> None:
+        rush_state = str(awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
+        rush_active = rush_state in {"SUSPECTED", "CONFIRMED", "HOLDING"}
+        parity_overall = str(awareness.mem.get(K("strategy", "parity", "overall"), now=now, default="EVEN") or "EVEN")
+        parity_econ = str(awareness.mem.get(K("strategy", "parity", "econ"), now=now, default="EVEN") or "EVEN")
+        parity_army = str(awareness.mem.get(K("strategy", "parity", "army"), now=now, default="EVEN") or "EVEN")
+        expand_bias = int(awareness.mem.get(K("strategy", "parity", "expand_bias"), now=now, default=0) or 0)
+        army_bias = int(awareness.mem.get(K("strategy", "parity", "army_bias"), now=now, default=0) or 0)
+
+        orbitals_total = int(bot.structures(U.ORBITALCOMMAND).ready.amount + bot.already_pending(U.ORBITALCOMMAND))
+        townhalls_total = int(bot.townhalls.ready.amount)
+        required_orbitals_now = min(3, townhalls_total)
+        allow_worker_production = orbitals_total >= required_orbitals_now
+        if rush_active and int(attention.economy.workers_total) >= 30 and int(attention.economy.minerals) <= 450:
+            allow_worker_production = False
+        if int(army_bias) > 0 and int(attention.economy.workers_total) >= 28 and int(attention.economy.minerals) <= 700:
+            allow_worker_production = False
+
+        dynamic_scv_cap = int(self.production_scv_cap)
+        if int(expand_bias) > 0:
+            dynamic_scv_cap = min(85, dynamic_scv_cap + 6)
+        elif int(army_bias) > 0:
+            dynamic_scv_cap = max(30, dynamic_scv_cap - 8)
+
+        freeflow_threshold = 900 if int(army_bias) > 0 else 1200
+        spawn_dict_names = desired_controller_dict_names(awareness=awareness, now=now)
+        ttl = float(self._production_plan_ttl_s)
+        awareness.mem.set(K("macro", "production", "plan", "workers_enabled"), value=bool(allow_worker_production), now=now, ttl=ttl)
+        awareness.mem.set(K("macro", "production", "plan", "dynamic_scv_cap"), value=int(dynamic_scv_cap), now=now, ttl=ttl)
+        awareness.mem.set(
+            K("macro", "production", "plan", "freeflow_mode"),
+            value=bool(attention.economy.minerals >= int(freeflow_threshold)),
+            now=now,
+            ttl=ttl,
+        )
+        awareness.mem.set(K("macro", "production", "plan", "spawn_dict"), value=dict(spawn_dict_names), now=now, ttl=ttl)
+        awareness.mem.set(K("macro", "production", "plan", "parity_overall"), value=str(parity_overall), now=now, ttl=ttl)
+        awareness.mem.set(K("macro", "production", "plan", "parity_econ"), value=str(parity_econ), now=now, ttl=ttl)
+        awareness.mem.set(K("macro", "production", "plan", "parity_army"), value=str(parity_army), now=now, ttl=ttl)
+        awareness.mem.set(K("macro", "production", "plan", "rush_state"), value=str(rush_state), now=now, ttl=ttl)
+        awareness.mem.set(K("macro", "production", "plan", "updated_at"), value=float(now), now=now, ttl=None)
+
+    def _make_domain_proposals(self, bot, *, awareness: Awareness, attention: Attention) -> list[Proposal]:
+        now = float(attention.time)
+        out: list[Proposal] = []
+
+        spending_pid = self.proposal_id("macro_spending")
+        if not self.is_proposal_running(awareness=awareness, proposal_id=spending_pid, now=now):
+            def _spending_factory(mission_id: str) -> MacroSpendingTick:
+                return MacroSpendingTick(
+                    awareness=awareness,
+                    log=self.log,
+                    target_bases_default=int(self.spending_target_bases_default),
+                    flood_m=int(self.spending_flood_m),
+                    flood_hi_m=int(self.spending_flood_hi_m),
+                    flood_hold_s=float(self.spending_flood_hold_s),
+                    third_t_normal_s=float(self.spending_third_t_normal_s),
+                    fourth_t_normal_s=float(self.spending_fourth_t_normal_s),
+                    fifth_t_normal_s=float(self.spending_fifth_t_normal_s),
+                    third_t_rush_s=float(self.spending_third_t_rush_s),
+                    fourth_t_rush_s=float(self.spending_fourth_t_rush_s),
+                    fifth_t_rush_s=float(self.spending_fifth_t_rush_s),
+                    schedule_on_time_window_s=float(self.spending_schedule_on_time_window_s),
+                    log_every_iters=int(self.log_every_iters),
+                )
+
+            out.extend(
+                self.make_single_task_proposal(
+                    proposal_id=spending_pid,
+                    domain="MACRO_SPENDING",
+                    score=int(self.spending_score),
+                    task_spec=TaskSpec(task_id="macro_spending", task_factory=_spending_factory, unit_requirements=[]),
+                    lease_ttl=None,
+                    cooldown_s=0.0,
+                    risk_level=0,
+                    allow_preempt=True,
+                )
+            )
+
+        self._publish_production_plan(bot, awareness=awareness, attention=attention, now=now)
+        production_pid = self.proposal_id("macro_production")
+        if not self.is_proposal_running(awareness=awareness, proposal_id=production_pid, now=now):
+            def _production_factory(mission_id: str) -> MacroProductionTick:
+                return MacroProductionTick(
+                    awareness=awareness,
+                    log=self.log,
+                    scv_cap=int(self.production_scv_cap),
+                    log_every_iters=int(self.log_every_iters),
+                )
+
+            out.extend(
+                self.make_single_task_proposal(
+                    proposal_id=production_pid,
+                    domain="MACRO_PRODUCTION",
+                    score=int(self.production_score),
+                    task_spec=TaskSpec(task_id="macro_production", task_factory=_production_factory, unit_requirements=[]),
+                    lease_ttl=None,
+                    cooldown_s=0.0,
+                    risk_level=0,
+                    allow_preempt=True,
+                )
+            )
+
+        tech_pid = self.proposal_id("macro_tech")
+        upgrades = self._publish_tech_plan(bot, awareness=awareness, now=now)
+        opening_started_at = awareness.mem.get(K("macro", "opening", "started_at"), now=now, default=None)
+        if opening_started_at is None:
+            awareness.mem.set(K("macro", "opening", "started_at"), value=float(now), now=now, ttl=None)
+            opening_started_at = float(now)
+        opening_done_at = awareness.mem.get(K("macro", "opening", "done_at"), now=now, default=None)
+        if bool(attention.macro.opening_done) and opening_done_at is None:
+            awareness.mem.set(K("macro", "opening", "done_at"), value=float(now), now=now, ttl=None)
+            opening_done_at = float(now)
+        urgent_tech_pressure = self._urgent_tech_pressure(awareness=awareness, now=now)
+        bypass = bool(self.tech_bypass_delay_for_urgent_tech) and bool(urgent_tech_pressure)
+        delay_blocked = False
+        if not bypass:
+            if opening_done_at is not None:
+                delay_blocked = (float(now) - float(opening_done_at)) < float(self.tech_start_delay_after_opening_s)
+            else:
+                delay_blocked = (float(now) - float(opening_started_at)) < float(self.tech_fallback_start_after_game_s)
+        if not delay_blocked and not self.is_proposal_running(awareness=awareness, proposal_id=tech_pid, now=now):
+            def _tech_factory(mission_id: str) -> MacroTechTick:
+                return MacroTechTick(
+                    awareness=awareness,
+                    log=self.log,
+                    log_every_iters=int(self.log_every_iters),
+                )
+
+            out.extend(
+                self.make_single_task_proposal(
+                    proposal_id=tech_pid,
+                    domain="MACRO_TECH",
+                    score=int(self.tech_score),
+                    task_spec=TaskSpec(task_id="macro_tech", task_factory=_tech_factory, unit_requirements=[]),
+                    lease_ttl=None,
+                    cooldown_s=0.0,
+                    risk_level=0,
+                    allow_preempt=True,
+                )
+            )
+
+        housekeeping_pid = self.proposal_id("scv_housekeeping")
+        due_housekeeping = self.due_by_last_done(
+            awareness=awareness,
+            key=K("macro", "scv", "housekeeping", "last_done_at"),
+            now=now,
+            interval_s=float(self.housekeeping_interval_s),
+        )
+        if due_housekeeping and not self.is_proposal_running(awareness=awareness, proposal_id=housekeeping_pid, now=now):
+            def _housekeeping_factory(mission_id: str) -> ScvHousekeeping:
+                return ScvHousekeeping(awareness=awareness)
+
+            out.extend(
+                self.make_single_task_proposal(
+                    proposal_id=housekeeping_pid,
+                    domain="MACRO_HOUSEKEEPING",
+                    score=int(self.housekeeping_score),
+                    task_spec=TaskSpec(task_id="scv_housekeeping", task_factory=_housekeeping_factory, unit_requirements=[]),
+                    lease_ttl=float(self.housekeeping_lease_ttl_s),
+                    cooldown_s=float(self.housekeeping_cooldown_s),
+                    risk_level=0,
+                    allow_preempt=True,
+                )
+            )
+
+        depot_pid = self.proposal_id("control_depots")
+        supply_left = int(attention.economy.supply_left)
+        urgency = int(attention.combat.primary_urgency)
+        enemy_count = int(attention.combat.primary_enemy_count)
+        depot_alert = bool(
+            (urgency >= int(self.depot_raise_urgency_min) and enemy_count >= int(self.depot_raise_enemy_count_min))
+            or supply_left <= int(self.depot_supply_left_trigger)
+        )
+        depot_interval = float(self.depot_interval_s_alert if depot_alert else self.depot_interval_s_calm)
+        due_depot = self.due_by_last_done(
+            awareness=awareness,
+            key=K("macro", "wall", "depot_control", "last_done_at"),
+            now=now,
+            interval_s=float(depot_interval),
+        )
+        if due_depot and not self.is_proposal_running(awareness=awareness, proposal_id=depot_pid, now=now):
+            threat_pos = attention.combat.primary_threat_pos
+            actionable = False
+            try:
+                if depot_alert:
+                    if threat_pos is not None:
+                        lowered = bot.structures.of_type({U.SUPPLYDEPOTLOWERED}).ready
+                        actionable = any(float(d.distance_to(threat_pos)) <= float(self.depot_raise_radius) for d in lowered)
+                else:
+                    raised = int(bot.structures.of_type({U.SUPPLYDEPOT}).ready.amount)
+                    actionable = int(raised) > 0
+            except Exception:
+                actionable = False
+            if not actionable:
+                return out
+            score = int(self.depot_score) + min(30, max(0, urgency // 2))
+
+            def _depot_factory(mission_id: str) -> ControlDepots:
+                return ControlDepots(
+                    awareness=awareness,
+                    threat_pos=threat_pos,
+                    raise_radius=float(self.depot_raise_radius),
+                    raise_urgency_min=int(self.depot_raise_urgency_min),
+                    raise_enemy_count_min=int(self.depot_raise_enemy_count_min),
+                )
+
+            out.extend(
+                self.make_single_task_proposal(
+                    proposal_id=depot_pid,
+                    domain="MACRO_DEPOT_CONTROL",
+                    score=int(score),
+                    task_spec=TaskSpec(task_id="control_depots", task_factory=_depot_factory, unit_requirements=[]),
+                    lease_ttl=None,
+                    cooldown_s=float(self.depot_cooldown_s),
+                    risk_level=0,
+                    allow_preempt=True,
+                )
+            )
+
+        return out
+
+    def propose(self, bot, *, awareness: Awareness, attention: Attention) -> list[Proposal]:
+        domain_proposals = self._make_domain_proposals(bot, awareness=awareness, attention=attention)
+        if domain_proposals:
+            self.emit_planner_proposed({"count": len(domain_proposals), "children": int(len(self.planners or []))})
+        return domain_proposals

@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List
 
+from sc2.ids.unit_typeid import UnitTypeId as U
+from bot.intel.build_catalog import resolve_build_profile
 from bot.mind.awareness import Awareness, K
 from bot.mind.attention import Attention
 
@@ -23,106 +25,6 @@ class MyArmyCompositionConfig:
     ttl_s: float = 25.0
     min_confidence: float = 0.55
 
-    # Default comps (ratios sum ~= 1.0)
-    comp_defensive: Dict[str, float] = None
-    comp_standard: Dict[str, float] = None
-    comp_punish: Dict[str, float] = None
-    comp_rush_response: Dict[str, float] = None
-    priority_defensive: List[str] = None
-    priority_standard: List[str] = None
-    priority_punish: List[str] = None
-    priority_rush_response: List[str] = None
-    reserve_costs: Dict[str, Tuple[int, int]] = None
-    bank_setpoint_minerals: Dict[str, int] = None
-    bank_setpoint_gas: Dict[str, int] = None
-
-    def __post_init__(self):
-        object.__setattr__(
-            self,
-            "comp_defensive",
-            self.comp_defensive
-            or {
-                "MARINE": 0.65,
-                "MARAUDER": 0.15,
-                "SIEGETANK": 0.15,
-                "MEDIVAC": 0.05,
-            },
-        )
-        object.__setattr__(
-            self,
-            "comp_standard",
-            self.comp_standard
-            or {
-                "MARINE": 0.52,
-                "MARAUDER": 0.20,
-                "SIEGETANK": 0.13,
-                "MEDIVAC": 0.15,
-            },
-        )
-        object.__setattr__(
-            self,
-            "comp_punish",
-            self.comp_punish
-            or {
-                "MARINE": 0.55,
-                "MARAUDER": 0.12,
-                "SIEGETANK": 0.13,
-                "MEDIVAC": 0.20,
-            },
-        )
-        object.__setattr__(
-            self,
-            "comp_rush_response",
-            self.comp_rush_response
-            or {
-                "MARINE": 0.55,
-                "MARAUDER": 0.18,
-                "SIEGETANK": 0.22,
-                "MEDIVAC": 0.05,
-            },
-        )
-        object.__setattr__(self, "priority_defensive", self.priority_defensive or ["SIEGETANK", "MARINE", "MARAUDER", "MEDIVAC"])
-        object.__setattr__(self, "priority_standard", self.priority_standard or ["SIEGETANK", "MARINE", "MARAUDER", "MEDIVAC"])
-        object.__setattr__(self, "priority_punish", self.priority_punish or ["SIEGETANK", "MARINE", "MEDIVAC", "MARAUDER"])
-        object.__setattr__(
-            self, "priority_rush_response", self.priority_rush_response or ["SIEGETANK", "MARINE", "MARAUDER", "MEDIVAC"]
-        )
-        object.__setattr__(
-            self,
-            "reserve_costs",
-            self.reserve_costs
-            or {
-                "SIEGETANK": (150, 125),
-                "MARINE": (50, 0),
-                "MARAUDER": (100, 25),
-                "MEDIVAC": (100, 100),
-                "REAPER": (50, 50),
-                "HELLION": (100, 0),
-                "BANSHEE": (150, 100),
-            },
-        )
-        object.__setattr__(
-            self,
-            "bank_setpoint_minerals",
-            self.bank_setpoint_minerals
-            or {
-                "RUSH_RESPONSE": 380,
-                "DEFENSIVE": 480,
-                "STANDARD": 650,
-                "PUNISH": 900,
-            },
-        )
-        object.__setattr__(
-            self,
-            "bank_setpoint_gas",
-            self.bank_setpoint_gas
-            or {
-                "RUSH_RESPONSE": 160,
-                "DEFENSIVE": 190,
-                "STANDARD": 220,
-                "PUNISH": 300,
-            },
-        )
 
 
 def _normalize(comp: Dict[str, float]) -> Dict[str, float]:
@@ -227,6 +129,76 @@ def _harass_missing_unit_from_cooldown(*, awareness: Awareness, now: float) -> s
     return missing
 
 
+def _mode_milestones(cfg_map: Dict[str, Any], *, mode: str, key: str) -> Any:
+    out = cfg_map.get(str(mode))
+    if out is None:
+        raise RuntimeError(f"missing_contract:macro.desired.{key}:{mode}")
+    return out
+
+
+def _unit_targets_at_time(*, milestones: List[Dict[str, Any]], now: float) -> Dict[str, float]:
+    points: list[tuple[float, Dict[str, float]]] = []
+    for item in milestones:
+        if not isinstance(item, dict):
+            continue
+        try:
+            t = float(item.get("t", 0.0))
+        except Exception:
+            continue
+        units_raw = item.get("units", {})
+        if not isinstance(units_raw, dict):
+            continue
+        units: Dict[str, float] = {}
+        for name, val in units_raw.items():
+            if not isinstance(name, str):
+                continue
+            try:
+                units[str(name)] = max(0.0, float(val))
+            except Exception:
+                continue
+        points.append((t, units))
+    if not points:
+        return {}
+    points.sort(key=lambda x: x[0])
+    t_now = float(now)
+    if t_now <= points[0][0]:
+        return dict(points[0][1])
+    for i in range(1, len(points)):
+        t0, u0 = points[i - 1]
+        t1, u1 = points[i]
+        if t_now <= t1:
+            a = max(0.0, min(1.0, (t_now - t0) / max(1e-6, t1 - t0)))
+            names = set(u0.keys()) | set(u1.keys())
+            out: Dict[str, float] = {}
+            for n in names:
+                v0 = float(u0.get(n, 0.0))
+                v1 = float(u1.get(n, 0.0))
+                out[str(n)] = float(v0 + (a * (v1 - v0)))
+            return out
+    return dict(points[-1][1])
+
+
+def _largest_unit_shortfall(*, attention: Attention, unit_targets: Dict[str, float]) -> tuple[str | None, float]:
+    if not unit_targets:
+        return None, 0.0
+    ready = dict(attention.economy.units_ready or {})
+    best_name: str | None = None
+    best_gap = 0.0
+    for name, target in unit_targets.items():
+        if float(target) <= 0.0:
+            continue
+        try:
+            uid = getattr(U, str(name))
+            cur = float(int(ready.get(uid, 0) or 0))
+        except Exception:
+            continue
+        gap = max(0.0, float(target) - cur)
+        if gap > best_gap:
+            best_gap = float(gap)
+            best_name = str(name)
+    return best_name, float(best_gap)
+
+
 def derive_my_army_composition_intel(
     *,
     awareness: Awareness,
@@ -245,10 +217,26 @@ def derive_my_army_composition_intel(
     enemy_kind = awareness.mem.get(K("enemy", "opening", "kind"), now=now, default="NORMAL")
     conf = awareness.mem.get(K("enemy", "opening", "confidence"), now=now, default=0.0)
     rush_state = str(awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
-    opening_selected = str(awareness.mem.get(K("macro", "opening", "selected"), now=now, default="") or "")
+    opening_selected = str(awareness.mem.get(K("macro", "opening", "selected"), now=now, default="Default") or "Default")
     transition_target = str(awareness.mem.get(K("macro", "opening", "transition_target"), now=now, default="STIM") or "STIM").upper()
     banshee_harass_done = bool(awareness.mem.get(K("ops", "harass", "banshee", "done"), now=now, default=False))
+    profile = resolve_build_profile(opening_selected=str(opening_selected), transition_target=str(transition_target))
 
+    comp_defensive = _normalize(dict(profile["comp_defensive"]))
+    comp_standard = _normalize(dict(profile["comp_standard"]))
+    comp_punish = _normalize(dict(profile["comp_punish"]))
+    comp_rush_response = _normalize(dict(profile["comp_rush_response"]))
+    priority_defensive = [str(x) for x in list(profile["priority_defensive"])]
+    priority_standard = [str(x) for x in list(profile["priority_standard"])]
+    priority_punish = [str(x) for x in list(profile["priority_punish"])]
+    priority_rush_response = [str(x) for x in list(profile["priority_rush_response"])]
+    reserve_costs = dict(profile["reserve_costs"])
+    bank_setpoint_minerals = dict(profile["bank_setpoint_minerals"])
+    bank_setpoint_gas = dict(profile["bank_setpoint_gas"])
+    pid_tuning_by_mode = dict(profile["pid_tuning_by_mode"])
+    army_supply_milestones_by_mode = dict(profile["army_supply_milestones_by_mode"])
+    unit_count_milestones_by_mode = dict(profile["unit_count_milestones_by_mode"])
+    timing_attacks_by_mode = dict(profile["timing_attacks_by_mode"])
     mode = "STANDARD"
     if rush_state in {"CONFIRMED", "HOLDING"}:
         mode = "RUSH_RESPONSE"
@@ -260,18 +248,26 @@ def derive_my_army_composition_intel(
         else:
             mode = "STANDARD"
 
+    pid_tuning = _mode_milestones(
+        dict(pid_tuning_by_mode or {}),
+        mode=str(mode),
+        key="pid_tuning",
+    )
+    if not isinstance(pid_tuning, dict):
+        raise RuntimeError(f"invalid_contract:macro.desired.pid_tuning:{mode}")
+
     if mode == "RUSH_RESPONSE":
-        comp = _normalize(dict(cfg.comp_rush_response))
-        priority_units = list(cfg.priority_rush_response)
+        comp = _normalize(dict(comp_rush_response))
+        priority_units = list(priority_rush_response)
     elif mode == "DEFENSIVE":
-        comp = _normalize(dict(cfg.comp_defensive))
-        priority_units = list(cfg.priority_defensive)
+        comp = _normalize(dict(comp_defensive))
+        priority_units = list(priority_defensive)
     elif mode == "PUNISH":
-        comp = _normalize(dict(cfg.comp_punish))
-        priority_units = list(cfg.priority_punish)
+        comp = _normalize(dict(comp_punish))
+        priority_units = list(priority_punish)
     else:
-        comp = _normalize(dict(cfg.comp_standard))
-        priority_units = list(cfg.priority_standard)
+        comp = _normalize(dict(comp_standard))
+        priority_units = list(priority_standard)
 
     missing_harass_unit = _harass_missing_unit_from_cooldown(awareness=awareness, now=now)
     if missing_harass_unit is not None:
@@ -286,13 +282,39 @@ def derive_my_army_composition_intel(
         banshee_harass_done=bool(banshee_harass_done),
     )
 
+    army_supply_milestones = _mode_milestones(
+        dict(army_supply_milestones_by_mode or {}),
+        mode=str(mode),
+        key="army_supply_milestones",
+    )
+    unit_count_milestones = _mode_milestones(
+        dict(unit_count_milestones_by_mode or {}),
+        mode=str(mode),
+        key="unit_count_milestones",
+    )
+    timing_attacks = _mode_milestones(
+        dict(timing_attacks_by_mode or {}),
+        mode=str(mode),
+        key="timing_attacks",
+    )
+
+    unit_targets_now = _unit_targets_at_time(milestones=list(unit_count_milestones), now=float(now))
+    lag_unit_name, lag_unit_gap = _largest_unit_shortfall(attention=attention, unit_targets=unit_targets_now)
+    if lag_unit_name is not None and float(lag_unit_gap) > 0.0:
+        priority_units = _prepend_unique(priority_units, str(lag_unit_name))
+        comp = _inject_unit_comp_bias(comp, unit_name=str(lag_unit_name), weight=0.18)
+
     top_unit = str(priority_units[0]) if priority_units else ""
-    reserve = cfg.reserve_costs.get(top_unit, (0, 0))
+    reserve = reserve_costs.get(top_unit, (0, 0))
     reserve_m, reserve_g = int(reserve[0]), int(reserve[1])
     controller_comp = _controller_comp(comp=comp, priority_units=priority_units)
 
-    bank_target_m = int(cfg.bank_setpoint_minerals.get(mode, cfg.bank_setpoint_minerals.get("STANDARD", 650)))
-    bank_target_g = int(cfg.bank_setpoint_gas.get(mode, cfg.bank_setpoint_gas.get("STANDARD", 220)))
+    if str(mode) not in bank_setpoint_minerals:
+        raise RuntimeError(f"missing_contract:build_profile.bank_setpoint_minerals:{mode}")
+    if str(mode) not in bank_setpoint_gas:
+        raise RuntimeError(f"missing_contract:build_profile.bank_setpoint_gas:{mode}")
+    bank_target_m = int(bank_setpoint_minerals[str(mode)])
+    bank_target_g = int(bank_setpoint_gas[str(mode)])
 
     awareness.mem.set(K("macro", "desired", "mode"), value=str(mode), now=now, ttl=float(cfg.ttl_s))
     awareness.mem.set(K("macro", "desired", "comp"), value=dict(comp), now=now, ttl=float(cfg.ttl_s))
@@ -303,6 +325,10 @@ def derive_my_army_composition_intel(
     awareness.mem.set(K("macro", "desired", "reserve_gas"), value=int(reserve_g), now=now, ttl=float(cfg.ttl_s))
     awareness.mem.set(K("macro", "desired", "bank_target_minerals"), value=int(bank_target_m), now=now, ttl=float(cfg.ttl_s))
     awareness.mem.set(K("macro", "desired", "bank_target_gas"), value=int(bank_target_g), now=now, ttl=float(cfg.ttl_s))
+    awareness.mem.set(K("macro", "desired", "pid_tuning"), value=dict(pid_tuning), now=now, ttl=float(cfg.ttl_s))
+    awareness.mem.set(K("macro", "desired", "army_supply_milestones"), value=list(army_supply_milestones), now=now, ttl=float(cfg.ttl_s))
+    awareness.mem.set(K("macro", "desired", "unit_count_milestones"), value=list(unit_count_milestones), now=now, ttl=float(cfg.ttl_s))
+    awareness.mem.set(K("macro", "desired", "timing_attacks"), value=list(timing_attacks), now=now, ttl=float(cfg.ttl_s))
     awareness.mem.set(
         K("macro", "desired", "signals"),
         value={
@@ -313,6 +339,8 @@ def derive_my_army_composition_intel(
             "transition_target": str(transition_target),
             "banshee_harass_done": bool(banshee_harass_done),
             "missing_harass_unit": str(missing_harass_unit or ""),
+            "lagging_unit": str(lag_unit_name or ""),
+            "lagging_unit_gap": float(round(lag_unit_gap, 2)),
             "bank_target_minerals": int(bank_target_m),
             "bank_target_gas": int(bank_target_g),
         },

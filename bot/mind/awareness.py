@@ -83,6 +83,74 @@ class MemoryStore:
             }
         return out
 
+    def prune(
+        self,
+        *,
+        now: float,
+        mission_retention_s: float = 120.0,
+        cooldown_retention_s: float = 60.0,
+    ) -> int:
+        """
+        Compact internal memory to avoid unbounded growth.
+        Returns number of removed facts.
+        """
+        nowf = float(now)
+        removed = 0
+
+        # 1) Remove facts expired by TTL.
+        to_remove: list[Key] = []
+        for k, f in self._facts.items():
+            if f.ttl is None:
+                continue
+            age = max(0.0, nowf - float(f.t))
+            if age > float(f.ttl):
+                to_remove.append(k)
+        for k in to_remove:
+            if self._facts.pop(k, None) is not None:
+                removed += 1
+
+        # 2) Remove ended mission trees after retention window.
+        ended_ids: list[str] = []
+        for k, f in self._facts.items():
+            if len(k) != 4:
+                continue
+            if k[0] != "ops" or k[1] != "mission" or k[3] != "ended_at":
+                continue
+            try:
+                ended_at = float(f.value)
+            except Exception:
+                ended_at = float(f.t)
+            if (nowf - ended_at) >= float(mission_retention_s):
+                ended_ids.append(str(k[2]))
+        if ended_ids:
+            ended_set = set(ended_ids)
+            rm_keys = [k for k in self._facts.keys() if len(k) >= 3 and k[0] == "ops" and k[1] == "mission" and str(k[2]) in ended_set]
+            for k in rm_keys:
+                if self._facts.pop(k, None) is not None:
+                    removed += 1
+
+        # 3) Remove stale cooldown entries.
+        cooldown_ids: list[str] = []
+        for k, f in self._facts.items():
+            if len(k) != 4:
+                continue
+            if k[0] != "ops" or k[1] != "cooldown" or k[3] != "until":
+                continue
+            try:
+                until = float(f.value)
+            except Exception:
+                continue
+            if nowf >= (until + float(cooldown_retention_s)):
+                cooldown_ids.append(str(k[2]))
+        if cooldown_ids:
+            cd_set = set(cooldown_ids)
+            rm_keys = [k for k in self._facts.keys() if len(k) >= 3 and k[0] == "ops" and k[1] == "cooldown" and str(k[2]) in cd_set]
+            for k in rm_keys:
+                if self._facts.pop(k, None) is not None:
+                    removed += 1
+
+        return int(removed)
+
 
 def K(*parts: str) -> Key:
     return tuple(parts)

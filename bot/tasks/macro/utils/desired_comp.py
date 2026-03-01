@@ -68,26 +68,24 @@ def unit_comp_to_controller_dict(comp: dict[U, float], *, priority_units: list[U
 
 def desired_controller_dict(*, awareness, now: float) -> dict[U, dict[str, float | int]]:
     raw = awareness.mem.get(K("macro", "desired", "controller_comp"), now=now, default=None)
-    if isinstance(raw, dict):
-        out: dict[U, dict[str, float | int]] = {}
-        for name, cfg in raw.items():
-            if not isinstance(name, str) or not isinstance(cfg, dict):
-                continue
-            try:
-                uid = getattr(U, str(name))
-                proportion = float(cfg.get("proportion", 0.0))
-                priority = int(cfg.get("priority", 0))
-            except Exception:
-                continue
-            if proportion <= 0.0:
-                continue
-            out[uid] = {"proportion": proportion, "priority": priority}
-        if out:
-            return out
-
-    comp = desired_comp_units(awareness=awareness, now=now)
-    priority_units = desired_priority_units(awareness=awareness, now=now)
-    return unit_comp_to_controller_dict(comp, priority_units=priority_units)
+    if not isinstance(raw, dict):
+        raise RuntimeError("missing_contract:macro.desired.controller_comp")
+    out: dict[U, dict[str, float | int]] = {}
+    for name, cfg in raw.items():
+        if not isinstance(name, str) or not isinstance(cfg, dict):
+            raise RuntimeError("invalid_contract:macro.desired.controller_comp.entry")
+        try:
+            uid = getattr(U, str(name))
+            proportion = float(cfg.get("proportion", 0.0))
+            priority = int(cfg.get("priority", 0))
+        except Exception as e:
+            raise RuntimeError(f"invalid_contract:macro.desired.controller_comp.parse:{type(e).__name__}") from e
+        if proportion <= 0.0:
+            continue
+        out[uid] = {"proportion": proportion, "priority": priority}
+    if not out:
+        raise RuntimeError("invalid_contract:macro.desired.controller_comp.empty")
+    return out
 
 
 def desired_controller_dict_names(*, awareness, now: float) -> dict[str, dict[str, float | int]]:

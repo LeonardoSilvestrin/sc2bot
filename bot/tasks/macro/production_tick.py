@@ -63,8 +63,13 @@ class MacroProductionTick(BaseTask):
         reserve_spending_name = str(self.awareness.mem.get(K("macro", "reserve", "spending", "name"), now=now, default="") or "")
         spending_reserve_m = int(self.awareness.mem.get(K("macro", "reserve", "spending", "minerals"), now=now, default=0) or 0)
         spending_reserve_g = int(self.awareness.mem.get(K("macro", "reserve", "spending", "gas"), now=now, default=0) or 0)
-        reserve_m = max(int(morph_reserve_m), int(tech_reserve_m))
-        reserve_g = max(int(morph_reserve_g), int(tech_reserve_g))
+        spending_blocks_production = bool(
+            self.awareness.mem.get(K("macro", "reserve", "spending", "block_production"), now=now, default=False)
+        )
+        eff_spend_m = int(spending_reserve_m) if bool(spending_blocks_production) else 0
+        eff_spend_g = int(spending_reserve_g) if bool(spending_blocks_production) else 0
+        reserve_m = max(int(morph_reserve_m), int(tech_reserve_m), int(eff_spend_m))
+        reserve_g = max(int(morph_reserve_g), int(tech_reserve_g), int(eff_spend_g))
         hold_for_reserve = bool(int(attention.economy.minerals) < int(reserve_m) or int(attention.economy.gas) < int(reserve_g))
         workers_enabled = bool(self.awareness.mem.get(K("macro", "production", "plan", "workers_enabled"), now=now, default=True))
         dynamic_scv_cap = int(self.awareness.mem.get(K("macro", "production", "plan", "dynamic_scv_cap"), now=now, default=self.scv_cap) or self.scv_cap)
@@ -75,6 +80,12 @@ class MacroProductionTick(BaseTask):
         parity_army = str(self.awareness.mem.get(K("macro", "production", "plan", "parity_army"), now=now, default="EVEN") or "EVEN")
         spawn_dict_raw = self.awareness.mem.get(K("macro", "production", "plan", "spawn_dict"), now=now, default={}) or {}
         spawn_dict = _spawn_dict_from_names(spawn_dict_raw)
+        addon_balance_pressure = bool(
+            self.awareness.mem.get(K("macro", "production", "plan", "addon_balance_pressure"), now=now, default=False)
+        )
+        addon_gap_techlab_ratio = float(
+            self.awareness.mem.get(K("macro", "production", "plan", "addon_gap_techlab_ratio"), now=now, default=0.0) or 0.0
+        )
 
         if hold_for_reserve:
             if self.log is not None and (int(tick.iteration) % self.log_every_iters == 0):
@@ -96,6 +107,7 @@ class MacroProductionTick(BaseTask):
                         "reserve_spending_name": str(reserve_spending_name),
                         "spending_reserve_minerals": int(spending_reserve_m),
                         "spending_reserve_gas": int(spending_reserve_g),
+                        "spending_blocks_production": bool(spending_blocks_production),
                     },
                 )
             return TaskResult.running("production_reserved_by_plan")
@@ -134,10 +146,13 @@ class MacroProductionTick(BaseTask):
                     "reserve_spending_name": str(reserve_spending_name),
                     "spending_reserve_minerals": int(spending_reserve_m),
                     "spending_reserve_gas": int(spending_reserve_g),
+                    "spending_blocks_production": bool(spending_blocks_production),
                     "rush_state": str(rush_state),
                     "parity_overall": str(parity_overall),
                     "parity_econ": str(parity_econ),
                     "parity_army": str(parity_army),
+                    "addon_balance_pressure": bool(addon_balance_pressure),
+                    "addon_gap_techlab_ratio": round(float(addon_gap_techlab_ratio), 3),
                 },
             )
 

@@ -133,9 +133,8 @@ class IntelSnapshot:
 @dataclass(frozen=True)
 class MacroSnapshot:
     """
-    Macro operational state.
-    Convenience resource/worker/supply fields are mirrored from EconomySnapshot
-    in the same tick to keep planner reads simple.
+    Macro operational state only.
+    Economy/supply signals live exclusively in EconomySnapshot.
     """
     opening_done: bool
     bases_total: int
@@ -143,18 +142,17 @@ class MacroSnapshot:
     prod_structures_total: int
     prod_structures_idle: int
     prod_structures_active: int
-
-    minerals: int = 0
-    vespene: int = 0
-    workers_total: int = 0
-    workers_idle: int = 0
-    bases_under_saturated: int = 0
-    bases_over_saturated: int = 0
-
-    supply_used: int = 0
-    supply_cap: int = 0
-    supply_left: int = 0
-    supply_blocked: bool = False
+    addon_total: int = 0
+    addon_reactor_total: int = 0
+    addon_techlab_total: int = 0
+    addon_reactor_ratio: float = 0.0
+    addon_techlab_ratio: float = 0.0
+    barracks_reactor: int = 0
+    barracks_techlab: int = 0
+    factory_reactor: int = 0
+    factory_techlab: int = 0
+    starport_reactor: int = 0
+    starport_techlab: int = 0
 
 
 # -----------------------------------------------------------------------------
@@ -269,6 +267,8 @@ def derive_attention(bot, *, awareness: Awareness, threat: Threat, log=None) -> 
                 "opening_done": bool(macro.opening_done),
                 "workers_idle": int(economy.workers_idle),
                 "bases": int(len(economy.bases_sat)),
+                "addon_reactor_ratio": round(float(macro.addon_reactor_ratio), 3),
+                "addon_techlab_ratio": round(float(macro.addon_techlab_ratio), 3),
                 "ongoing_missions": int(missions.ongoing_count),
                 "missions_needing_support": int(missions.needing_support_count),
                 "threatened_bases": int(sum(1 for b in combat.base_threats if int(b.urgency) > 0)),

@@ -6,6 +6,7 @@ from enum import Enum
 import os
 from pathlib import Path
 import random
+import time
 import traceback
 from typing import Any
 
@@ -30,11 +31,7 @@ from bot.planners.intel_planner import IntelPlanner
 from bot.planners.harass_planner import HarassPlanner
 from bot.planners.reinforce_mission_planner import ReinforceMissionPlanner
 
-from bot.planners.production_planner import ProductionPlanner
-from bot.planners.spending_planner import SpendingPlanner
-from bot.planners.tech_planner import TechPlanner
-from bot.planners.housekeeping_planner import HousekeepingPlanner
-from bot.planners.depot_control_planner import DepotControlPlanner
+from bot.planners.macro_orchestrator_planner import MacroOrchestratorPlanner
 
 
 def _jsonable(value: Any) -> Any:
@@ -82,12 +79,12 @@ class RuntimeApp:
     full_snapshots_flag_path: str = "_prompt/full_snapshots.flag"
     bo_diag_every_iters: int = 25
     bo_stall_warn_s: float = 25.0
-    state_snapshot_interval_s: float = 30.0
+    state_snapshot_interval_s: float = 15.0
     awareness_snapshot_max_age_s: float | None = 180.0
     state_snapshots_default: bool = False
     default_opening: str = "Default"
     rush_opening: str = "DefensiveOpening"
-    post_opening_transitions: tuple[str, ...] = ("STIM", "BANSHEE")
+    post_opening_transitions: tuple[str, ...] = ("STIM",)
     announce_opening_in_chat: bool = True
     announce_tactical_chat: bool = True
     announce_attack_chat: bool = True
@@ -100,6 +97,14 @@ class RuntimeApp:
     _last_tactical_chat_t: float = -9999.0
     _last_attack_chat_t: float = -9999.0
     _attack_alert_active: bool = False
+    perf_snapshot_interval_s: float = 10.0
+    enemy_build_every_iters: int = 4
+    parity_every_iters: int = 4
+    my_comp_every_iters: int = 4
+    _next_perf_snapshot_t: float = 0.0
+    clock_print_interval_s: float = 10.0
+    _wall_start_real_s: float = 0.0
+    _last_clock_print_t: float = -9999.0
 
     @classmethod
     def build(cls, *, log: DevLogger, debug: bool = True) -> "RuntimeApp":
@@ -111,15 +116,13 @@ class RuntimeApp:
             body=body,
             log=log,
             cfg=EgoConfig(
-                # New singleton macro domains: allow spending+production+housekeeping concurrently,
-                # without changing Ego internals.
-                singleton_domains=frozenset(
-                    {"MACRO_SPENDING", "MACRO_PRODUCTION", "MACRO_TECH", "MACRO_HOUSEKEEPING", "MACRO_DEPOT_CONTROL", "HARASS"}
-                ),
+                singleton_domains=frozenset({"MACRO", "HARASS"}),
                 threat_block_start_at=70,
                 threat_force_preempt_at=90,
                 non_preemptible_grace_s=2.5,
                 default_failure_cooldown_s=8.0,
+                macro_task_min_step_interval_s=0.35,
+                perf_log_interval_s=3.5,
             ),
         )
 
@@ -133,39 +136,15 @@ class RuntimeApp:
         harass_planner = HarassPlanner(log=log)
         reinforce_mission_planner = ReinforceMissionPlanner(log=log)
 
-        spending_planner = SpendingPlanner(
-            target_bases_default=2,
-            flood_m=800,
-            flood_hi_m=1400,
-            flood_hold_s=12.0,
-            log=log,
-        )
+        macro_orchestrator_planner = MacroOrchestratorPlanner(log=log)
+        # Planner cadence: avoid recomputing heavy macro/planning logic every frame.
+        setattr(defense_planner, "propose_every_iters", 2)
+        setattr(intel_planner, "propose_every_iters", 2)
+        setattr(harass_planner, "propose_every_iters", 4)
+        setattr(reinforce_mission_planner, "propose_every_iters", 4)
+        setattr(macro_orchestrator_planner, "propose_every_iters", 10)
 
-        production_planner = ProductionPlanner(
-            scv_cap=66,
-            log=log,
-        )
-        tech_planner = TechPlanner(
-            start_delay_after_opening_s=60.0,
-            log=log,
-        )
-
-        housekeeping_planner = HousekeepingPlanner(
-            interval_s=4.0,
-            cooldown_s=2.0,
-            lease_ttl_s=6.0,
-            score=18,
-            log=log,
-        )
-
-        depot_control_planner = DepotControlPlanner(
-            interval_s=0.75,
-            cooldown_s=0.0,
-            score=24,
-            log=log,
-        )
-
-        # Keep opening as a "pre-macro" handled by its own planner? (MVP: reuse ProductionPlanner gate.)
+        # Keep opening as a pre-macro handled by its own lightweight planner.
         # For now: register opening via a tiny planner-inline shim inside runtime:
         # We keep it as a planner to respect the architecture.
         from bot.planners.utils.proposals import Proposal, TaskSpec
@@ -197,7 +176,7 @@ class RuntimeApp:
                 out = [
                     Proposal(
                         proposal_id=pid,
-                        domain="MACRO_PRODUCTION",  # opening shares the production lane
+                        domain="MACRO",
                         score=int(self.score),
                         tasks=[TaskSpec(task_id="macro_opening", task_factory=_factory, unit_requirements=[], lease_ttl=None)],
                         lease_ttl=None,
@@ -215,6 +194,7 @@ class RuntimeApp:
                 return out
 
         opening_planner = OpeningPlanner(opening_task=opening_macro_task, log=log)
+        setattr(opening_planner, "propose_every_iters", 2)
 
         ego.register_planners(
             [
@@ -223,11 +203,7 @@ class RuntimeApp:
                 harass_planner,
                 reinforce_mission_planner,
                 opening_planner,
-                spending_planner,
-                production_planner,
-                tech_planner,
-                housekeeping_planner,
-                depot_control_planner,
+                macro_orchestrator_planner,
             ]
         )
 
@@ -248,6 +224,9 @@ class RuntimeApp:
             self.body.reset()
         except Exception:
             pass
+        self._wall_start_real_s = float(time.perf_counter())
+        self._last_clock_print_t = -9999.0
+        self._sync_opening_done_contract(bot, now=float(getattr(bot, "time", 0.0) or 0.0))
         await self._select_and_announce_opening(bot)
         self._next_state_snapshot_t = 0.0
         self._emit_wall_dump(bot)
@@ -275,7 +254,7 @@ class RuntimeApp:
 
         transition_pool = [str(x).strip().upper() for x in (self.post_opening_transitions or ()) if str(x).strip()]
         if not transition_pool:
-            transition_pool = ["STIM", "BANSHEE"]
+            transition_pool = ["STIM"]
         transition_target = str(random.choice(transition_pool))
         self.awareness.mem.set(K("macro", "opening", "transition_target"), value=str(transition_target), now=now, ttl=None)
         self.awareness.mem.set(K("macro", "opening", "transition_set_at"), value=float(now), now=now, ttl=None)
@@ -301,12 +280,26 @@ class RuntimeApp:
             # Ladder/engine can reject chat; log already contains selected opening.
             pass
 
+    def _sync_opening_done_contract(self, bot, *, now: float) -> None:
+        bor = getattr(bot, "build_order_runner", None)
+        done = bool(getattr(bor, "build_completed", False)) if bor is not None else False
+        self.awareness.mem.set(K("macro", "opening", "done"), value=bool(done), now=float(now), ttl=2.5)
+        self.awareness.mem.set(K("macro", "opening", "done_owner"), value="runtime.build_order_runner", now=float(now), ttl=2.5)
+
     async def _maybe_switch_opening_for_rush(self, bot, *, now: float) -> None:
         bor = getattr(bot, "build_order_runner", None)
         if bor is None:
             return
         rush_state = str(self.awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
         if rush_state not in {"SUSPECTED", "CONFIRMED", "HOLDING"}:
+            return
+        rush_conf = float(self.awareness.mem.get(K("enemy", "rush", "confidence"), now=now, default=0.0) or 0.0)
+        last_pressure_t = float(self.awareness.mem.get(K("enemy", "rush", "last_seen_pressure_t"), now=now, default=0.0) or 0.0)
+        pressure_clear_s = max(0.0, float(now) - float(last_pressure_t))
+        recent_pressure = bool(pressure_clear_s <= 22.0)
+        allow_confirmed = bool(rush_state == "CONFIRMED" and (recent_pressure or rush_conf >= 0.90))
+        allow_suspected = bool(rush_state in {"SUSPECTED", "HOLDING"} and recent_pressure and rush_conf >= 0.78)
+        if not (allow_confirmed or allow_suspected):
             return
         if bool(getattr(bor, "build_completed", False)):
             return
@@ -324,7 +317,15 @@ class RuntimeApp:
         if self.log is not None:
             self.log.emit(
                 "opening_switched_for_rush",
-                {"t": round(float(now), 2), "from": str(current), "to": str(target), "rush_state": str(rush_state)},
+                {
+                    "t": round(float(now), 2),
+                    "from": str(current),
+                    "to": str(target),
+                    "rush_state": str(rush_state),
+                    "rush_confidence": round(float(rush_conf), 3),
+                    "recent_pressure": bool(recent_pressure),
+                    "pressure_clear_s": round(float(pressure_clear_s), 2),
+                },
                 meta={"module": "runtime", "component": "runtime.opening"},
             )
         if bool(self.announce_opening_in_chat):
@@ -336,31 +337,51 @@ class RuntimeApp:
     async def on_step(self, bot, *, iteration: int) -> None:
         now = float(getattr(bot, "time", 0.0))
         try:
+            t_total_0 = time.perf_counter()
+            # Emit clock first so it still appears even if later stages throw.
+            self._emit_runtime_clock(now=now)
+            self._sync_opening_done_contract(bot, now=now)
+            t0 = time.perf_counter()
             attention = derive_attention(bot, awareness=self.awareness, threat=self.threat, log=None)
+            attention_ms = (time.perf_counter() - t0) * 1000.0
 
-            derive_enemy_build_intel(
-                bot,
-                awareness=self.awareness,
-                attention=attention,
-                now=now,
-                cfg=self.enemy_build_cfg,
-            )
+            enemy_build_ms = 0.0
+            if int(iteration) % max(1, int(self.enemy_build_every_iters)) == 0:
+                t0 = time.perf_counter()
+                derive_enemy_build_intel(
+                    bot,
+                    awareness=self.awareness,
+                    attention=attention,
+                    now=now,
+                    cfg=self.enemy_build_cfg,
+                )
+                enemy_build_ms = (time.perf_counter() - t0) * 1000.0
             await self._maybe_switch_opening_for_rush(bot, now=now)
-            derive_game_parity_intel(
-                bot,
-                awareness=self.awareness,
-                attention=attention,
-                now=now,
-                cfg=self.parity_cfg,
-            )
+            parity_ms = 0.0
+            need_parity_bootstrap = self.awareness.mem.get(K("strategy", "parity", "overall"), now=now, default=None) is None
+            if need_parity_bootstrap or (int(iteration) % max(1, int(self.parity_every_iters)) == 0):
+                t0 = time.perf_counter()
+                derive_game_parity_intel(
+                    bot,
+                    awareness=self.awareness,
+                    attention=attention,
+                    now=now,
+                    cfg=self.parity_cfg,
+                )
+                parity_ms = (time.perf_counter() - t0) * 1000.0
 
             # New: strategy reference (mode + proportions)
-            derive_my_army_composition_intel(
-                awareness=self.awareness,
-                attention=attention,
-                now=now,
-                cfg=self.my_comp_cfg,
-            )
+            my_comp_ms = 0.0
+            need_comp_bootstrap = self.awareness.mem.get(K("macro", "desired", "comp"), now=now, default=None) is None
+            if need_comp_bootstrap or (int(iteration) % max(1, int(self.my_comp_every_iters)) == 0):
+                t0 = time.perf_counter()
+                derive_my_army_composition_intel(
+                    awareness=self.awareness,
+                    attention=attention,
+                    now=now,
+                    cfg=self.my_comp_cfg,
+                )
+                my_comp_ms = (time.perf_counter() - t0) * 1000.0
 
             await self._emit_reactive_chat(bot, attention=attention, now=now)
 
@@ -386,7 +407,29 @@ class RuntimeApp:
                     )
 
             tick = TaskTick(iteration=int(iteration), time=now)
+            t0 = time.perf_counter()
             await self.ego.tick(bot, tick=tick, attention=attention, awareness=self.awareness)
+            ego_ms = (time.perf_counter() - t0) * 1000.0
+
+            if self.log is not None and (self._next_perf_snapshot_t <= 0.0 or float(now) >= float(self._next_perf_snapshot_t)):
+                total_ms = (time.perf_counter() - t_total_0) * 1000.0
+                self.log.emit(
+                    "perf_snapshot",
+                    {
+                        "iter": int(iteration),
+                        "t": round(float(now), 2),
+                        "on_step_total_ms": round(float(total_ms), 3),
+                        "attention_ms": round(float(attention_ms), 3),
+                        "enemy_build_ms": round(float(enemy_build_ms), 3),
+                        "parity_ms": round(float(parity_ms), 3),
+                        "my_comp_ms": round(float(my_comp_ms), 3),
+                        "ego_ms": round(float(ego_ms), 3),
+                        "awareness_facts": int(len(self.awareness.mem._facts)),
+                        "ongoing_missions": int(len(attention.missions.ongoing)),
+                    },
+                    meta={"module": "runtime", "component": "runtime.perf"},
+                )
+                self._next_perf_snapshot_t = float(now) + max(2.0, float(self.perf_snapshot_interval_s))
         except Exception as e:
             if self.log is not None:
                 self.log.emit(
@@ -563,9 +606,6 @@ class RuntimeApp:
     def _emit_periodic_state_snapshots(self, *, now: float, attention: Any) -> None:
         if self.log is None:
             return
-        if not self._state_snapshots_enabled():
-            return
-
         interval_s = max(
             1.0,
             float(
@@ -581,6 +621,80 @@ class RuntimeApp:
         )
 
         if float(now) + 1e-6 < float(self._next_state_snapshot_t):
+            return
+
+        rush_state = str(self.awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE")
+        opening_kind = str(self.awareness.mem.get(K("enemy", "opening", "kind"), now=now, default="NORMAL") or "NORMAL")
+        opening_conf = float(self.awareness.mem.get(K("enemy", "opening", "confidence"), now=now, default=0.0) or 0.0)
+        parity_overall = str(self.awareness.mem.get(K("strategy", "parity", "overall"), now=now, default="EVEN") or "EVEN")
+        lag_prod = float(self.awareness.mem.get(K("control", "priority", "lag", "production"), now=now, default=0.0) or 0.0)
+        lag_spend = float(self.awareness.mem.get(K("control", "priority", "lag", "spending"), now=now, default=0.0) or 0.0)
+        lag_tech = float(self.awareness.mem.get(K("control", "priority", "lag", "tech"), now=now, default=0.0) or 0.0)
+        bank_pi = float(self.awareness.mem.get(K("control", "priority", "bank_pi_output"), now=now, default=0.0) or 0.0)
+        reserve_spending_m = int(self.awareness.mem.get(K("macro", "reserve", "spending", "minerals"), now=now, default=0) or 0)
+        reserve_spending_g = int(self.awareness.mem.get(K("macro", "reserve", "spending", "gas"), now=now, default=0) or 0)
+        reserve_spending_block_prod = bool(
+            self.awareness.mem.get(K("macro", "reserve", "spending", "block_production"), now=now, default=False)
+        )
+        reserve_tech_m = int(self.awareness.mem.get(K("macro", "reserve", "tech", "minerals"), now=now, default=0) or 0)
+        reserve_tech_g = int(self.awareness.mem.get(K("macro", "reserve", "tech", "gas"), now=now, default=0) or 0)
+        gas_status = dict(self.awareness.mem.get(K("macro", "gas", "status"), now=now, default={}) or {})
+
+        try:
+            ongoing = int(len(getattr(attention.missions, "ongoing", ()) or ()))
+        except Exception:
+            ongoing = 0
+
+        self.log.emit(
+            "state_snapshot",
+            {
+                "t": round(float(now), 2),
+                "economy": {
+                    "minerals": int(getattr(attention.economy, "minerals", 0) or 0),
+                    "gas": int(getattr(attention.economy, "gas", 0) or 0),
+                    "workers_total": int(getattr(attention.economy, "workers_total", 0) or 0),
+                    "supply_used": int(getattr(attention.economy, "supply_used", 0) or 0),
+                    "supply_left": int(getattr(attention.economy, "supply_left", 0) or 0),
+                    "townhalls_total": int(getattr(attention.macro, "bases_total", 0) or 0),
+                },
+                "combat": {
+                    "primary_urgency": int(getattr(attention.combat, "primary_urgency", 0) or 0),
+                    "primary_enemy_count": int(getattr(attention.combat, "primary_enemy_count", 0) or 0),
+                },
+                "macro": {
+                    "prod_structures_total": int(getattr(attention.macro, "prod_structures_total", 0) or 0),
+                    "prod_structures_idle": int(getattr(attention.macro, "prod_structures_idle", 0) or 0),
+                    "addon_reactor_ratio": round(float(getattr(attention.macro, "addon_reactor_ratio", 0.0) or 0.0), 3),
+                    "addon_techlab_ratio": round(float(getattr(attention.macro, "addon_techlab_ratio", 0.0) or 0.0), 3),
+                },
+                "strategy": {
+                    "rush_state": str(rush_state),
+                    "enemy_opening_kind": str(opening_kind),
+                    "enemy_opening_conf": round(float(opening_conf), 3),
+                    "parity_overall": str(parity_overall),
+                },
+                "control": {
+                    "lag_production": round(float(lag_prod), 3),
+                    "lag_spending": round(float(lag_spend), 3),
+                    "lag_tech": round(float(lag_tech), 3),
+                    "bank_pi_output": round(float(bank_pi), 3),
+                    "reserve_spending_m": int(reserve_spending_m),
+                    "reserve_spending_g": int(reserve_spending_g),
+                    "reserve_spending_block_production": bool(reserve_spending_block_prod),
+                    "reserve_tech_m": int(reserve_tech_m),
+                    "reserve_tech_g": int(reserve_tech_g),
+                    "gas_mode": str(gas_status.get("mode", "")),
+                    "gas_target_workers_per_refinery": int(gas_status.get("target_workers_per_refinery", 0) or 0),
+                },
+                "missions": {
+                    "ongoing_count": int(ongoing),
+                },
+            },
+            meta={"module": "runtime", "component": "runtime.state_snapshot"},
+        )
+
+        if not self._state_snapshots_enabled():
+            self._next_state_snapshot_t = float(now) + float(interval_s)
             return
 
         self.log.emit(
@@ -603,6 +717,42 @@ class RuntimeApp:
         )
 
         self._next_state_snapshot_t = float(now) + float(interval_s)
+
+    def _emit_runtime_clock(self, *, now: float) -> None:
+        if (float(now) - float(self._last_clock_print_t)) < max(1.0, float(self.clock_print_interval_s)):
+            return
+        if self._wall_start_real_s <= 0.0:
+            self._wall_start_real_s = float(time.perf_counter())
+        real_elapsed = max(0.001, float(time.perf_counter()) - float(self._wall_start_real_s))
+        game_elapsed = max(0.0, float(now))
+        speed = float(game_elapsed / real_elapsed)
+        lag_prod = float(self.awareness.mem.get(K("control", "priority", "lag", "production"), now=now, default=0.0) or 0.0)
+        lag_spend = float(self.awareness.mem.get(K("control", "priority", "lag", "spending"), now=now, default=0.0) or 0.0)
+        lag_tech = float(self.awareness.mem.get(K("control", "priority", "lag", "tech"), now=now, default=0.0) or 0.0)
+        bank_pi = float(self.awareness.mem.get(K("control", "priority", "bank_pi_output"), now=now, default=0.0) or 0.0)
+        print(
+            (
+                f"[clock] real={real_elapsed:.1f}s game={game_elapsed:.1f}s speed={speed:.2f}x "
+                f"| pid p={lag_prod:.2f} s={lag_spend:.2f} t={lag_tech:.2f} bank={bank_pi:.2f}"
+            ),
+            flush=True,
+        )
+        if self.log is not None:
+            self.log.emit(
+                "runtime_clock",
+                {
+                    "t": round(float(now), 2),
+                    "real_elapsed_s": round(float(real_elapsed), 2),
+                    "game_elapsed_s": round(float(game_elapsed), 2),
+                    "speed_x": round(float(speed), 3),
+                    "lag_production": round(float(lag_prod), 3),
+                    "lag_spending": round(float(lag_spend), 3),
+                    "lag_tech": round(float(lag_tech), 3),
+                    "bank_pi_output": round(float(bank_pi), 3),
+                },
+                meta={"module": "runtime", "component": "runtime.clock"},
+            )
+        self._last_clock_print_t = float(now)
 
     def _emit_build_order_diagnostics(self, bot, *, now: float, iteration: int) -> None:
         if self.log is None:

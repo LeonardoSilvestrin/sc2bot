@@ -29,18 +29,56 @@ class PriorityPolicyConfig:
     bank_pi_ki: float = 0.35
     bank_pi_integral_cap: float = 3.5
     bank_pi_output_cap: float = 1.0
-    bank_spending_gain: float = 0.35
-    bank_production_gain: float = 0.20
+    bank_spending_gain: float = 0.32
+    bank_production_gain: float = 0.42
+    lag_pi_kp: float = 0.85
+    lag_pi_ki: float = 0.28
+    lag_pi_integral_cap: float = 2.5
+    lag_pi_output_cap: float = 2.0
 
     # Plan/reserve signals.
     tech_shortfall_weight_boost: float = 0.25
     tech_shortfall_bias: float = 8.0
+    tech_lag_inflight_dampen_gain: float = 0.70
     expansion_gap_weight_boost: float = 0.18
     expansion_gap_bias: float = 6.0
     natural_recovery_weight_boost: float = 0.10
+    natural_reserve_min_minerals: int = 320
+    gas_target_workers_default: int = 3
+    gas_target_workers_min: int = 0
+    gas_overflow_soft: int = 260
+    gas_overflow_hard: int = 420
+    mineral_low_soft: int = 420
+    mineral_low_hard: int = 260
+    gas_to_mineral_ratio_soft: float = 1.45
+    gas_to_mineral_ratio_hard: float = 1.85
+    gas_ratio_min_stock_soft: int = 250
+    gas_ratio_min_stock_hard: int = 420
+    gas_mode_hold_s: float = 14.0
+    gas_workers_change_cooldown_s: float = 10.0
+    gas_refineries_change_cooldown_s: float = 12.0
 
     # Opening focus.
     opening_production_weight_boost: float = 0.12
+    production_lag_weight_boost: float = 0.60
+    spending_lag_from_prod_dampen: float = 0.12
+    tech_lag_from_prod_dampen: float = 0.28
+    production_lag_prop_weight: float = 0.55
+    production_lag_supply_weight: float = 0.45
+    production_lag_count_weight: float = 0.35
+    block_production_max_lag_prod: float = 0.65
+    timing_attack_production_weight_boost: float = 0.95
+    timing_attack_spending_dampen: float = 0.48
+    timing_attack_tech_dampen: float = 0.40
+    timing_attack_production_bias: float = 10.0
+
+    # Macro timeline delay controller (rush/pressure compensation).
+    macro_delay_urgency_threshold: int = 22
+    macro_delay_enemy_count_threshold: int = 3
+    macro_delay_recent_pressure_s: float = 22.0
+    macro_delay_gain_s_per_s: float = 1.0
+    macro_delay_decay_s_per_s: float = 0.35
+    macro_delay_max_s: float = 240.0
 
     # Hard clamps.
     min_domain_weight: float = 0.45
@@ -64,14 +102,36 @@ class PriorityPolicy:
         self._cached_lag_tech: float = 0.0
         self._cached_lag_spending: float = 0.0
         self._cached_lag_production: float = 0.0
+        self._pid_tuning: dict[str, float] = {}
 
     def begin_tick(self, *, attention: Attention, awareness: Awareness, now: float) -> None:
         nowf = float(now)
         if self._tick_now == nowf:
             return
         self._tick_now = nowf
+        self._load_pid_tuning(awareness=awareness, now=nowf)
+        self._update_macro_delay(attention=attention, awareness=awareness, now=nowf)
         self._cached_bank_pi_output = self._bank_pi_update(attention=attention, awareness=awareness, now=nowf)
         self._publish_resource_arbitration(attention=attention, awareness=awareness, now=nowf)
+
+    def _load_pid_tuning(self, *, awareness: Awareness, now: float) -> None:
+        raw = awareness.mem.get(K("macro", "desired", "pid_tuning"), now=now, default={}) or {}
+        out: dict[str, float] = {}
+        if isinstance(raw, dict):
+            for k, v in raw.items():
+                if not isinstance(k, str):
+                    continue
+                try:
+                    out[str(k)] = float(v)
+                except Exception:
+                    continue
+        self._pid_tuning = out
+
+    def _tuned(self, name: str, default: float) -> float:
+        try:
+            return float(self._pid_tuning.get(str(name), default))
+        except Exception:
+            return float(default)
 
     def evaluate(self, *, proposal: Proposal, attention: Attention, awareness: Awareness, now: float) -> PriorityDecision:
         self.begin_tick(attention=attention, awareness=awareness, now=now)
@@ -114,15 +174,12 @@ class PriorityPolicy:
         if tech_shortfall > 0.0 and domain == "MACRO_TECH":
             domain_weight += float(self.cfg.tech_shortfall_weight_boost)
             notes.append("tech_shortfall_weight")
-        if tech_shortfall > 0.0 and proposal_id.startswith("tech_planner:"):
+        if tech_shortfall > 0.0 and domain == "MACRO_TECH":
             proposal_bias += float(self.cfg.tech_shortfall_bias)
             notes.append("tech_shortfall_bias")
 
         # Expansion pressure from spending plan.
-        expansion_gap = int(
-            awareness.mem.get(K("macro", "spending", "status", "expansion_gap"), now=now, default=awareness.mem.get(K("macro", "reserve", "spending", "expansion_gap"), now=now, default=0))
-            or 0
-        )
+        expansion_gap = int(awareness.mem.get(K("macro", "spending", "status", "expansion_gap"), now=now, default=0) or 0)
         need_natural = bool(awareness.mem.get(K("macro", "spending", "status", "need_natural_now"), now=now, default=False))
         if expansion_gap > 0 and domain == "MACRO_SPENDING":
             domain_weight += float(self.cfg.expansion_gap_weight_boost)
@@ -130,7 +187,7 @@ class PriorityPolicy:
             if need_natural:
                 domain_weight += float(self.cfg.natural_recovery_weight_boost)
                 notes.append("natural_recovery_weight")
-        if expansion_gap > 0 and proposal_id.startswith("spending_planner:"):
+        if expansion_gap > 0 and domain == "MACRO_SPENDING":
             proposal_bias += float(self.cfg.expansion_gap_bias)
             notes.append("expansion_gap_bias")
 
@@ -138,6 +195,40 @@ class PriorityPolicy:
         if not bool(attention.macro.opening_done) and domain == "MACRO_PRODUCTION":
             domain_weight += float(self.cfg.opening_production_weight_boost)
             notes.append("opening_production_weight")
+
+        # If production lag is high (including army-by-time shortfall), bias toward army production.
+        prod_lag = float(self._cached_lag_production)
+        if domain == "MACRO_PRODUCTION" and prod_lag > 0.0:
+            domain_weight += float(self._tuned("production_lag_weight_boost", self.cfg.production_lag_weight_boost)) * prod_lag
+            notes.append("production_lag_weight")
+        elif domain == "MACRO_SPENDING" and prod_lag > 0.0:
+            if int(attention.economy.minerals) < 320:
+                damp = max(0.75, 1.0 - (float(self.cfg.spending_lag_from_prod_dampen) * prod_lag))
+                domain_weight *= damp
+                notes.append("spending_dampen_from_prod_lag")
+            else:
+                domain_weight += 0.12 * float(prod_lag)
+                notes.append("spending_boost_for_infra_scale")
+        elif domain == "MACRO_TECH" and prod_lag > 0.0:
+            damp = max(0.60, 1.0 - (float(self.cfg.tech_lag_from_prod_dampen) * prod_lag))
+            domain_weight *= damp
+            notes.append("tech_dampen_from_prod_lag")
+
+        timing = self._timing_attack_pressure(attention=attention, awareness=awareness, now=now)
+        timing_pressure = float(timing.get("pressure", 0.0))
+        if timing_pressure > 0.0:
+            if domain == "MACRO_PRODUCTION":
+                domain_weight += float(self._tuned("timing_attack_production_weight_boost", self.cfg.timing_attack_production_weight_boost)) * timing_pressure
+                proposal_bias += float(self.cfg.timing_attack_production_bias) * timing_pressure
+                notes.append("timing_attack_boost_prod")
+            elif domain == "MACRO_SPENDING":
+                damp = max(0.50, 1.0 - (float(self.cfg.timing_attack_spending_dampen) * timing_pressure))
+                domain_weight *= damp
+                notes.append("timing_attack_dampen_spending")
+            elif domain == "MACRO_TECH":
+                damp = max(0.55, 1.0 - (float(self.cfg.timing_attack_tech_dampen) * timing_pressure))
+                domain_weight *= damp
+                notes.append("timing_attack_dampen_tech")
 
         # External overrides (for explicit arbitration experiments without code edits).
         override_domain_weight = awareness.mem.get(
@@ -246,9 +337,12 @@ class PriorityPolicy:
         return float(out)
 
     def _publish_resource_arbitration(self, *, attention: Attention, awareness: Awareness, now: float) -> None:
-        lag_prod = self._production_lag(attention=attention, awareness=awareness, now=now)
-        lag_tech = self._tech_lag(attention=attention, awareness=awareness, now=now)
-        lag_spend = self._spending_lag(attention=attention, awareness=awareness, now=now)
+        err_prod = self._production_lag(attention=attention, awareness=awareness, now=now)
+        err_tech = self._tech_lag(attention=attention, awareness=awareness, now=now)
+        err_spend = self._spending_lag(attention=attention, awareness=awareness, now=now)
+        lag_prod = self._lag_pi(name="production", error=float(err_prod), now=now, awareness=awareness)
+        lag_tech = self._lag_pi(name="tech", error=float(err_tech), now=now, awareness=awareness)
+        lag_spend = self._lag_pi(name="spending", error=float(err_spend), now=now, awareness=awareness)
 
         self._cached_lag_production = float(lag_prod)
         self._cached_lag_tech = float(lag_tech)
@@ -262,9 +356,16 @@ class PriorityPolicy:
             awareness.mem.get(
                 K("macro", "spending", "status", "expansion_gap"),
                 now=now,
-                default=awareness.mem.get(K("macro", "reserve", "spending", "expansion_gap"), now=now, default=0),
+                default=0,
             )
             or 0
+        )
+        need_natural_now = bool(
+            awareness.mem.get(
+                K("macro", "spending", "status", "need_natural_now"),
+                now=now,
+                default=False,
+            )
         )
         rush_active = bool(awareness.mem.get(K("macro", "spending", "status", "rush_active"), now=now, default=False))
         spending_base_m = 400 if (int(expansion_gap) > 0 and not rush_active) else 0
@@ -286,11 +387,33 @@ class PriorityPolicy:
         spending_reserve_g = int(round(float(spending_base_g) * spend_factor))
         if spending_base_m > 0 and spending_reserve_m <= 0:
             spending_reserve_m = min(spending_base_m, 100)
+        if bool(need_natural_now) and not bool(rush_active):
+            spending_reserve_m = max(int(spending_reserve_m), int(self.cfg.natural_reserve_min_minerals))
+
+        mineral_bank = int(attention.economy.minerals)
+        gas_bank = int(attention.economy.gas)
+        prod_pressure = float(lag_prod)
+        infra_scale_pressure = bool(float(prod_pressure) >= 0.95 and int(mineral_bank) >= 380)
+        if infra_scale_pressure:
+            # Do not over-reserve expand minerals while army production is critically late.
+            spending_reserve_m = min(int(spending_reserve_m), 180)
 
         max_reserve_m = int(max(0, int(attention.economy.minerals * 0.75)))
         max_reserve_g = int(max(0, int(attention.economy.gas * 0.75)))
-        tech_reserve_m = max(0, min(int(tech_reserve_m), max_reserve_m))
-        spending_reserve_m = max(0, min(int(spending_reserve_m), max(0, max_reserve_m - tech_reserve_m)))
+        if bool(need_natural_now) and not bool(rush_active):
+            # For natural recovery we need an absolute accumulation target.
+            # Relative-to-bank clamping (x% of current minerals) causes self-lock at low bank.
+            spend_floor = int(self.cfg.natural_reserve_min_minerals)
+            if not bool(infra_scale_pressure):
+                spending_reserve_m = max(int(spending_reserve_m), int(spend_floor))
+                spending_reserve_m = max(0, min(int(spending_reserve_m), 450))
+            else:
+                spending_reserve_m = max(0, min(int(spending_reserve_m), 220))
+            available_for_tech = max(0, int(attention.economy.minerals) - int(spending_reserve_m))
+            tech_reserve_m = max(0, min(int(tech_reserve_m), int(available_for_tech)))
+        else:
+            tech_reserve_m = max(0, min(int(tech_reserve_m), max_reserve_m))
+            spending_reserve_m = max(0, min(int(spending_reserve_m), max(0, max_reserve_m - tech_reserve_m)))
         tech_reserve_g = max(0, min(int(tech_reserve_g), max_reserve_g))
         spending_reserve_g = max(0, min(int(spending_reserve_g), max(0, max_reserve_g - tech_reserve_g)))
 
@@ -301,10 +424,32 @@ class PriorityPolicy:
         awareness.mem.set(K("macro", "reserve", "spending", "minerals"), value=int(spending_reserve_m), now=now, ttl=8.0)
         awareness.mem.set(K("macro", "reserve", "spending", "gas"), value=int(spending_reserve_g), now=now, ttl=8.0)
         awareness.mem.set(K("macro", "reserve", "spending", "name"), value=str(spending_name if spending_reserve_m > 0 else ""), now=now, ttl=8.0)
+        spending_block_production = bool(
+            bool(need_natural_now)
+            and not bool(rush_active)
+            and not bool(infra_scale_pressure)
+            and int(mineral_bank) < int(self.cfg.natural_reserve_min_minerals)
+            and float(lag_prod) <= float(self._tuned("block_production_max_lag_prod", self.cfg.block_production_max_lag_prod))
+        )
+        awareness.mem.set(
+            K("macro", "reserve", "spending", "block_production"),
+            value=bool(spending_block_production),
+            now=now,
+            ttl=8.0,
+        )
+        awareness.mem.set(
+            K("control", "priority", "infra_scale_pressure"),
+            value=bool(infra_scale_pressure),
+            now=now,
+            ttl=8.0,
+        )
 
         awareness.mem.set(K("control", "priority", "lag", "production"), value=float(lag_prod), now=now, ttl=5.0)
         awareness.mem.set(K("control", "priority", "lag", "tech"), value=float(lag_tech), now=now, ttl=5.0)
         awareness.mem.set(K("control", "priority", "lag", "spending"), value=float(lag_spend), now=now, ttl=5.0)
+        awareness.mem.set(K("control", "priority", "lag_error", "production"), value=float(err_prod), now=now, ttl=5.0)
+        awareness.mem.set(K("control", "priority", "lag_error", "tech"), value=float(err_tech), now=now, ttl=5.0)
+        awareness.mem.set(K("control", "priority", "lag_error", "spending"), value=float(err_spend), now=now, ttl=5.0)
         awareness.mem.set(
             K("control", "priority", "reserve", "owner"),
             value={
@@ -314,11 +459,156 @@ class PriorityPolicy:
             now=now,
             ttl=8.0,
         )
+        self._publish_gas_arbitration(
+            attention=attention,
+            awareness=awareness,
+            now=now,
+            lag_tech=float(lag_tech),
+            lag_spend=float(lag_spend),
+            lag_prod=float(lag_prod),
+        )
+
+    def _publish_gas_arbitration(
+        self,
+        *,
+        attention: Attention,
+        awareness: Awareness,
+        now: float,
+        lag_tech: float,
+        lag_spend: float,
+        lag_prod: float,
+    ) -> None:
+        bases = int(attention.macro.bases_total)
+        gas_stock = int(attention.economy.gas)
+        mineral_stock = int(attention.economy.minerals)
+
+        target_refineries_default = max(0, int(bases) * 2)
+        target_refineries = int(target_refineries_default)
+
+        tech_pressure = max(0.0, float(lag_tech))
+        expand_pressure = max(0.0, float(lag_spend))
+        production_pressure = max(0.0, float(lag_prod))
+        workers_per_refinery = int(self.cfg.gas_target_workers_default)
+        mode = "normal"
+
+        # Gas overflow logic:
+        # reduce active gas workers first, then reduce desired refinery count.
+        if gas_stock >= int(self.cfg.gas_overflow_hard) and mineral_stock <= int(self.cfg.mineral_low_soft) and tech_pressure < 0.55:
+            workers_per_refinery = 0
+            target_refineries = max(0, target_refineries - 2)
+            mode = "gas_overflow_hard"
+        elif gas_stock >= int(self.cfg.gas_overflow_soft) and mineral_stock <= int(self.cfg.mineral_low_soft) and tech_pressure < 0.65:
+            workers_per_refinery = 1
+            target_refineries = max(0, target_refineries - 1)
+            mode = "gas_overflow_soft"
+        elif gas_stock >= int(self.cfg.gas_overflow_soft) and mineral_stock <= int(self.cfg.mineral_low_hard) and production_pressure > expand_pressure:
+            workers_per_refinery = 1
+            mode = "gas_shift_to_minerals"
+        elif (
+            gas_stock >= int(self.cfg.gas_ratio_min_stock_hard)
+            and gas_stock >= int(float(self.cfg.gas_to_mineral_ratio_hard) * max(1.0, float(mineral_stock)))
+            and tech_pressure < 0.75
+        ):
+            workers_per_refinery = 0
+            target_refineries = max(0, target_refineries - 2)
+            mode = "gas_ratio_hard"
+        elif (
+            gas_stock >= int(self.cfg.gas_ratio_min_stock_soft)
+            and gas_stock >= int(float(self.cfg.gas_to_mineral_ratio_soft) * max(1.0, float(mineral_stock)))
+            and tech_pressure < 0.85
+        ):
+            workers_per_refinery = 1
+            target_refineries = max(0, target_refineries - 1)
+            mode = "gas_ratio_soft"
+
+        if tech_pressure >= 0.70:
+            workers_per_refinery = max(2, workers_per_refinery)
+            mode = "tech_pressure"
+
+        workers_per_refinery = max(
+            int(self.cfg.gas_target_workers_min),
+            min(3, int(workers_per_refinery)),
+        )
+
+        # Hysteresis: avoid rapid gas/mineral toggle that causes worker thrash.
+        prev_status = awareness.mem.get(K("macro", "gas", "status"), now=now, default={})
+        prev_mode = ""
+        prev_workers = int(workers_per_refinery)
+        prev_refineries = int(target_refineries)
+        prev_changed_at = float(now)
+        if isinstance(prev_status, dict):
+            try:
+                prev_mode = str(prev_status.get("mode", "") or "")
+                prev_workers = int(prev_status.get("target_workers_per_refinery", workers_per_refinery) or workers_per_refinery)
+                prev_refineries = int(prev_status.get("target_refineries", target_refineries) or target_refineries)
+                prev_changed_at = float(prev_status.get("changed_at", now) or now)
+            except Exception:
+                prev_mode = ""
+                prev_workers = int(workers_per_refinery)
+                prev_refineries = int(target_refineries)
+                prev_changed_at = float(now)
+
+        dt_change = max(0.0, float(now) - float(prev_changed_at))
+        emergency_modes = {"gas_overflow_hard", "gas_ratio_hard", "tech_pressure"}
+        changed = (int(prev_workers) != int(workers_per_refinery)) or (int(prev_refineries) != int(target_refineries))
+        if changed and mode not in emergency_modes:
+            if dt_change < float(self.cfg.gas_mode_hold_s):
+                workers_per_refinery = int(prev_workers)
+                target_refineries = int(prev_refineries)
+                mode = str(prev_mode or mode)
+                changed = False
+            else:
+                if int(prev_workers) != int(workers_per_refinery) and dt_change < float(self.cfg.gas_workers_change_cooldown_s):
+                    workers_per_refinery = int(prev_workers)
+                    mode = str(prev_mode or mode)
+                    changed = False
+                if int(prev_refineries) != int(target_refineries) and dt_change < float(self.cfg.gas_refineries_change_cooldown_s):
+                    target_refineries = int(prev_refineries)
+                    mode = str(prev_mode or mode)
+                    changed = False
+
+        changed_at = float(now) if changed else float(prev_changed_at)
+
+        awareness.mem.set(
+            K("macro", "gas", "target_refineries"),
+            value=int(target_refineries),
+            now=now,
+            ttl=8.0,
+        )
+        awareness.mem.set(
+            K("macro", "gas", "target_workers_per_refinery"),
+            value=int(workers_per_refinery),
+            now=now,
+            ttl=8.0,
+        )
+        awareness.mem.set(
+            K("macro", "gas", "status"),
+            value={
+                "mode": str(mode),
+                "target_refineries": int(target_refineries),
+                "target_refineries_default": int(target_refineries_default),
+                "target_workers_per_refinery": int(workers_per_refinery),
+                "gas_stock": int(gas_stock),
+                "mineral_stock": int(mineral_stock),
+                "lag_tech": float(lag_tech),
+                "lag_spending": float(lag_spend),
+                "lag_production": float(lag_prod),
+                "changed_at": float(changed_at),
+            },
+            now=now,
+            ttl=8.0,
+        )
 
     def _production_lag(self, *, attention: Attention, awareness: Awareness, now: float) -> float:
-        comp = awareness.mem.get(K("macro", "desired", "comp"), now=now, default={}) or {}
+        comp = self._required_mem(
+            awareness=awareness,
+            now=now,
+            key=K("macro", "desired", "comp"),
+            label="macro.desired.comp",
+        )
         if not isinstance(comp, dict) or not comp:
-            return 0.0
+            raise RuntimeError("invalid_contract:macro.desired.comp")
+        comp_deficit = 0.0
 
         units_ready = attention.economy.units_ready
         desired_units = []
@@ -334,23 +624,282 @@ class PriorityPolicy:
                 continue
             desired_units.append((uid, target))
 
-        if not desired_units:
-            return 0.0
+        if desired_units:
+            total = float(sum(int(units_ready.get(uid, 0) or 0) for uid, _ in desired_units))
+            if total <= 0.0:
+                comp_deficit = 1.0
+            else:
+                for uid, target in desired_units:
+                    cur_prop = float(int(units_ready.get(uid, 0) or 0)) / total
+                    comp_deficit += max(0.0, float(target) - cur_prop)
+                comp_deficit = self._clamp(comp_deficit, low=0.0, high=1.0)
 
-        total = float(sum(int(units_ready.get(uid, 0) or 0) for uid, _ in desired_units))
-        if total <= 0.0:
-            return 1.0
+        army_supply_now = max(0, int(attention.economy.supply_used) - int(attention.economy.workers_total))
+        effective_now = float(self._effective_macro_now(awareness=awareness, now=now))
+        army_supply_target = float(self._army_supply_target_by_time(awareness=awareness, now=effective_now))
+        supply_shortfall = 0.0
+        if army_supply_target > 0.0:
+            supply_shortfall = max(0.0, float(army_supply_target) - float(army_supply_now)) / max(1.0, float(army_supply_target))
+        supply_shortfall = self._clamp(supply_shortfall, low=0.0, high=1.0)
 
-        deficit = 0.0
-        for uid, target in desired_units:
-            cur_prop = float(int(units_ready.get(uid, 0) or 0)) / total
-            deficit += max(0.0, float(target) - cur_prop)
-        return self._clamp(deficit, low=0.0, high=1.0)
+        count_shortfall, lag_unit, lag_unit_gap = self._unit_count_shortfall(attention=attention, awareness=awareness, now=effective_now)
+
+        pw = float(self.cfg.production_lag_prop_weight)
+        sw = float(self.cfg.production_lag_supply_weight)
+        cw = float(self.cfg.production_lag_count_weight)
+        den = max(1e-6, pw + sw + cw)
+
+        lag = ((pw * float(comp_deficit)) + (sw * float(supply_shortfall)) + (cw * float(count_shortfall))) / den
+        lag = self._clamp(lag, low=0.0, high=1.0)
+        awareness.mem.set(K("control", "priority", "army_supply", "now"), value=int(army_supply_now), now=now, ttl=5.0)
+        awareness.mem.set(K("control", "priority", "army_supply", "target"), value=float(army_supply_target), now=now, ttl=5.0)
+        awareness.mem.set(K("control", "priority", "army_supply", "shortfall"), value=float(supply_shortfall), now=now, ttl=5.0)
+        awareness.mem.set(K("control", "priority", "unit_count", "shortfall"), value=float(count_shortfall), now=now, ttl=5.0)
+        awareness.mem.set(K("control", "priority", "unit_count", "lagging_unit"), value=str(lag_unit or ""), now=now, ttl=5.0)
+        awareness.mem.set(K("control", "priority", "unit_count", "lagging_gap"), value=float(lag_unit_gap), now=now, ttl=5.0)
+        return lag
+
+    def _army_supply_target_by_time(self, *, awareness: Awareness, now: float) -> float:
+        raw = self._required_mem(
+            awareness=awareness,
+            now=now,
+            key=K("macro", "desired", "army_supply_milestones"),
+            label="macro.desired.army_supply_milestones",
+        )
+        pts: list[tuple[float, float]] = []
+        if isinstance(raw, (list, tuple)):
+            for item in raw:
+                try:
+                    if isinstance(item, dict):
+                        t = float(item.get("t", 0.0))
+                        s = float(item.get("supply", 0.0))
+                    else:
+                        t = float(item[0])
+                        s = float(item[1])
+                    pts.append((t, max(0.0, s)))
+                except Exception:
+                    continue
+        if not pts:
+            raise RuntimeError("invalid_contract:macro.desired.army_supply_milestones.empty")
+        pts.sort(key=lambda x: x[0])
+        t_now = float(now)
+        if t_now <= pts[0][0]:
+            return float(pts[0][1])
+        for i in range(1, len(pts)):
+            t0, s0 = pts[i - 1]
+            t1, s1 = pts[i]
+            if t_now <= t1:
+                den = max(1e-6, float(t1 - t0))
+                a = (t_now - t0) / den
+                return float(s0 + (a * (s1 - s0)))
+        return float(pts[-1][1])
+
+    def _unit_count_shortfall(self, *, attention: Attention, awareness: Awareness, now: float) -> tuple[float, str | None, float]:
+        raw = self._required_mem(
+            awareness=awareness,
+            now=now,
+            key=K("macro", "desired", "unit_count_milestones"),
+            label="macro.desired.unit_count_milestones",
+        )
+        if not isinstance(raw, (list, tuple)) or not raw:
+            raise RuntimeError("invalid_contract:macro.desired.unit_count_milestones")
+
+        points: list[tuple[float, dict[str, float]]] = []
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            try:
+                t = float(item.get("t", 0.0))
+            except Exception:
+                continue
+            units_raw = item.get("units", {})
+            if not isinstance(units_raw, dict):
+                continue
+            units: dict[str, float] = {}
+            for n, v in units_raw.items():
+                if not isinstance(n, str):
+                    continue
+                try:
+                    units[str(n)] = max(0.0, float(v))
+                except Exception:
+                    continue
+            points.append((t, units))
+        if not points:
+            raise RuntimeError("invalid_contract:macro.desired.unit_count_milestones.empty")
+        points.sort(key=lambda x: x[0])
+
+        t_now = float(now)
+        target_units: dict[str, float]
+        if t_now <= points[0][0]:
+            target_units = dict(points[0][1])
+        else:
+            target_units = dict(points[-1][1])
+            for i in range(1, len(points)):
+                t0, u0 = points[i - 1]
+                t1, u1 = points[i]
+                if t_now <= t1:
+                    a = max(0.0, min(1.0, (t_now - t0) / max(1e-6, (t1 - t0))))
+                    names = set(u0.keys()) | set(u1.keys())
+                    inter: dict[str, float] = {}
+                    for n in names:
+                        v0 = float(u0.get(n, 0.0))
+                        v1 = float(u1.get(n, 0.0))
+                        inter[str(n)] = float(v0 + (a * (v1 - v0)))
+                    target_units = inter
+                    break
+
+        ready = dict(attention.economy.units_ready or {})
+        lag = 0.0
+        n = 0
+        lag_unit: str | None = None
+        lag_gap_abs = 0.0
+        for name, target in target_units.items():
+            if float(target) <= 0.0:
+                continue
+            try:
+                uid = getattr(U, str(name))
+                cur = float(int(ready.get(uid, 0) or 0))
+            except Exception:
+                continue
+            gap_abs = max(0.0, float(target) - cur)
+            gap_norm = float(gap_abs) / max(1.0, float(target))
+            lag += gap_norm
+            n += 1
+            if gap_abs > lag_gap_abs:
+                lag_gap_abs = float(gap_abs)
+                lag_unit = str(name)
+        if n <= 0:
+            return 0.0, None, 0.0
+        return self._clamp(lag / float(n), low=0.0, high=1.0), lag_unit, float(lag_gap_abs)
+
+    def _timing_attack_pressure(self, *, attention: Attention, awareness: Awareness, now: float) -> dict:
+        timings_raw = self._required_mem(
+            awareness=awareness,
+            now=now,
+            key=K("macro", "desired", "timing_attacks"),
+            label="macro.desired.timing_attacks",
+        )
+        timings = list(timings_raw) if isinstance(timings_raw, (list, tuple)) else []
+        if not timings:
+            out = {
+                "active": False,
+                "name": "",
+                "phase": "none",
+                "pressure": 0.0,
+                "supply_target": 0.0,
+                "supply_gap": 0.0,
+                "effective_now": float(self._effective_macro_now(awareness=awareness, now=now)),
+            }
+            awareness.mem.set(K("control", "priority", "timing_attack", "status"), value=dict(out), now=now, ttl=5.0)
+            return out
+
+        effective_now = float(self._effective_macro_now(awareness=awareness, now=now))
+        army_supply_now = max(0, int(attention.economy.supply_used) - int(attention.economy.workers_total))
+        best: dict | None = None
+        best_pressure = 0.0
+
+        for item in timings:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name", "") or "")
+            hit_t = float(item.get("hit_t", 0.0) or 0.0)
+            prep_s = max(1.0, float(item.get("prep_s", 60.0) or 60.0))
+            hold_s = max(0.0, float(item.get("hold_s", 25.0) or 25.0))
+            supply_target = max(0.0, float(item.get("army_supply_target", 0.0) or 0.0))
+            start_t = float(hit_t - prep_s)
+            end_t = float(hit_t + hold_s)
+            if effective_now < start_t or effective_now > end_t:
+                continue
+
+            before_hit = max(0.0, float(hit_t - effective_now))
+            urgency = 1.0 - self._clamp(before_hit / prep_s, low=0.0, high=1.0)
+            if effective_now >= hit_t:
+                urgency = 1.0
+            supply_gap = 0.0
+            if supply_target > 0.0:
+                supply_gap = max(0.0, supply_target - float(army_supply_now)) / max(1.0, supply_target)
+            pressure = self._clamp((0.45 * urgency) + (0.85 * supply_gap), low=0.0, high=1.4)
+            phase = "hold" if effective_now >= hit_t else "prep"
+            if pressure > best_pressure:
+                best_pressure = float(pressure)
+                best = {
+                    "active": True,
+                    "name": str(name),
+                    "phase": str(phase),
+                    "pressure": float(pressure),
+                    "supply_target": float(supply_target),
+                    "supply_gap": float(supply_gap),
+                    "army_supply_now": int(army_supply_now),
+                    "hit_t": float(hit_t),
+                    "prep_s": float(prep_s),
+                    "hold_s": float(hold_s),
+                    "effective_now": float(effective_now),
+                }
+
+        if best is None:
+            best = {
+                "active": False,
+                "name": "",
+                "phase": "none",
+                "pressure": 0.0,
+                "supply_target": 0.0,
+                "supply_gap": 0.0,
+                "army_supply_now": int(army_supply_now),
+                "effective_now": float(effective_now),
+            }
+        awareness.mem.set(K("control", "priority", "timing_attack", "status"), value=dict(best), now=now, ttl=5.0)
+        return best
+
+    def _update_macro_delay(self, *, attention: Attention, awareness: Awareness, now: float) -> None:
+        k_delay = K("control", "priority", "macro_delay_s")
+        k_last_t = K("control", "priority", "macro_delay_last_t")
+        prev_delay = float(awareness.mem.get(k_delay, now=now, default=0.0) or 0.0)
+        prev_t = awareness.mem.get(k_last_t, now=now, default=None)
+        dt = 0.0
+        if isinstance(prev_t, (int, float)):
+            dt = max(0.0, min(2.0, float(now) - float(prev_t)))
+
+        rush_state = str(awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
+        last_pressure_t = float(awareness.mem.get(K("enemy", "rush", "last_seen_pressure_t"), now=now, default=0.0) or 0.0)
+        recent_pressure = bool(float(now) - float(last_pressure_t) <= float(self.cfg.macro_delay_recent_pressure_s))
+        under_pressure = bool(
+            int(attention.combat.primary_urgency) >= int(self.cfg.macro_delay_urgency_threshold)
+            or int(attention.combat.primary_enemy_count) >= int(self.cfg.macro_delay_enemy_count_threshold)
+            or (rush_state in {"SUSPECTED", "CONFIRMED", "HOLDING"} and recent_pressure)
+        )
+
+        delay = float(prev_delay)
+        if under_pressure:
+            delay += float(dt) * float(self.cfg.macro_delay_gain_s_per_s)
+        else:
+            delay -= float(dt) * float(self.cfg.macro_delay_decay_s_per_s)
+        delay = self._clamp(delay, low=0.0, high=float(self.cfg.macro_delay_max_s))
+        effective_now = max(0.0, float(now) - float(delay))
+
+        awareness.mem.set(k_delay, value=float(delay), now=now, ttl=8.0)
+        awareness.mem.set(k_last_t, value=float(now), now=now, ttl=None)
+        awareness.mem.set(K("control", "priority", "macro_effective_t"), value=float(effective_now), now=now, ttl=8.0)
+        awareness.mem.set(K("control", "priority", "macro_under_pressure"), value=bool(under_pressure), now=now, ttl=8.0)
+
+    def _effective_macro_now(self, *, awareness: Awareness, now: float) -> float:
+        delay = float(awareness.mem.get(K("control", "priority", "macro_delay_s"), now=now, default=0.0) or 0.0)
+        return max(0.0, float(now) - float(delay))
+
+    @staticmethod
+    def _required_mem(*, awareness: Awareness, now: float, key: str, label: str):
+        sentinel = "__MISSING__"
+        value = awareness.mem.get(key, now=now, default=sentinel)
+        if value == sentinel:
+            raise RuntimeError(f"missing_contract:{label}")
+        return value
 
     def _tech_lag(self, *, attention: Attention, awareness: Awareness, now: float) -> float:
         reserve_m = int(awareness.mem.get(K("macro", "tech", "plan", "reserve_minerals"), now=now, default=0) or 0)
         reserve_g = int(awareness.mem.get(K("macro", "tech", "plan", "reserve_gas"), now=now, default=0) or 0)
         reserve_name = str(awareness.mem.get(K("macro", "tech", "plan", "reserve_name"), now=now, default="") or "")
+        reserve_pending_progress = float(
+            awareness.mem.get(K("macro", "tech", "plan", "reserve_pending_progress"), now=now, default=0.0) or 0.0
+        )
         upgrades = list(awareness.mem.get(K("macro", "tech", "plan", "upgrades"), now=now, default=[]) or [])
 
         short_m = max(0, reserve_m - int(attention.economy.minerals))
@@ -360,10 +909,14 @@ class PriorityPolicy:
 
         lag = 0.0
         if reserve_name:
-            lag += 0.35
+            lag += 0.25
         if upgrades:
-            lag += 0.10
+            lag += 0.08
         lag += 0.80 * short
+        if reserve_pending_progress > 0.0:
+            damp_gain = float(self._tuned("tech_lag_inflight_dampen_gain", self.cfg.tech_lag_inflight_dampen_gain))
+            damp = 1.0 - (damp_gain * self._clamp(reserve_pending_progress, low=0.0, high=1.0))
+            lag *= self._clamp(damp, low=0.20, high=1.0)
         return self._clamp(lag, low=0.0, high=1.0)
 
     def _spending_lag(self, *, attention: Attention, awareness: Awareness, now: float) -> float:
@@ -371,7 +924,7 @@ class PriorityPolicy:
             awareness.mem.get(
                 K("macro", "spending", "status", "expansion_gap"),
                 now=now,
-                default=awareness.mem.get(K("macro", "reserve", "spending", "expansion_gap"), now=now, default=0),
+                default=0,
             )
             or 0
         )
@@ -384,6 +937,28 @@ class PriorityPolicy:
         if rush_active:
             lag -= 0.20
         return self._clamp(lag, low=0.0, high=1.0)
+
+    def _lag_pi(self, *, name: str, error: float, now: float, awareness: Awareness) -> float:
+        k_int = K("control", "priority", "pi", "lag", str(name), "integral")
+        k_last_t = K("control", "priority", "pi", "lag", str(name), "last_t")
+        integ_prev = float(awareness.mem.get(k_int, now=now, default=0.0) or 0.0)
+        t_prev = awareness.mem.get(k_last_t, now=now, default=None)
+        dt = 0.0
+        if isinstance(t_prev, (int, float)):
+            dt = max(0.0, min(2.0, float(now) - float(t_prev)))
+
+        integ = integ_prev + (float(error) * dt)
+        cap_i = float(self._tuned("lag_pi_integral_cap", self.cfg.lag_pi_integral_cap))
+        kp = float(self._tuned("lag_pi_kp", self.cfg.lag_pi_kp))
+        ki = float(self._tuned("lag_pi_ki", self.cfg.lag_pi_ki))
+        cap_out = float(self._tuned("lag_pi_output_cap", self.cfg.lag_pi_output_cap))
+        integ = self._clamp(integ, low=-cap_i, high=cap_i)
+        out = (kp * float(error)) + (ki * float(integ))
+        out = self._clamp(out, low=0.0, high=cap_out)
+
+        awareness.mem.set(k_int, value=float(integ), now=now, ttl=None)
+        awareness.mem.set(k_last_t, value=float(now), now=now, ttl=None)
+        return float(out)
 
     @staticmethod
     def _tech_shortfall(*, attention: Attention, awareness: Awareness, now: float) -> float:

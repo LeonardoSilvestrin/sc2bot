@@ -1,0 +1,36 @@
+from __future__ import annotations
+
+
+def is_ground_threat(enemy) -> bool:
+    try:
+        return bool(getattr(enemy, "can_attack_ground", False))
+    except Exception:
+        return False
+
+
+def danger_weight(enemy) -> float:
+    # Shared lightweight danger proxy used by base threat and unit-local threat.
+    try:
+        if bool(getattr(enemy, "is_worker", False)):
+            return 0.35
+    except Exception:
+        pass
+
+    try:
+        if bool(getattr(enemy, "is_structure", False)):
+            return 1.25 if bool(getattr(enemy, "can_attack_ground", False)) else 0.0
+    except Exception:
+        pass
+
+    try:
+        rng = float(getattr(enemy, "ground_range", 0.0) or 0.0)
+    except Exception:
+        rng = 0.0
+
+    if rng >= 7.0:
+        return 2.25
+    if rng >= 5.0:
+        return 1.75
+    if rng > 0.0:
+        return 1.20
+    return 0.0

@@ -10,9 +10,8 @@ from sc2.ids.upgrade_id import UpgradeId as Up
 
 from bot.devlog import DevLogger
 from bot.mind.attention import Attention
-from bot.mind.awareness import Awareness
+from bot.mind.awareness import Awareness, K
 from bot.tasks.base_task import BaseTask, TaskResult, TaskTick
-from bot.tasks.macro.utils.desired_comp import desired_comp_names
 
 
 @dataclass
@@ -27,79 +26,11 @@ class MacroTechTick(BaseTask):
         self.log = log
         self.log_every_iters = int(log_every_iters)
 
-    def _desired_comp(self, now: float) -> dict[str, float]:
-        return desired_comp_names(awareness=self.awareness, now=now)
-
-    @staticmethod
-    def _u(name: str):
-        try:
-            return getattr(Up, name)
-        except Exception:
-            return None
-
-    def _upgrade_list(self, now: float) -> list:
-        comp = self._desired_comp(now)
-        infantry = float(comp.get("MARINE", 0.0)) + float(comp.get("MARAUDER", 0.0)) + float(comp.get("GHOST", 0.0))
-        mech = float(comp.get("HELLION", 0.0)) + float(comp.get("SIEGETANK", 0.0)) + float(comp.get("CYCLONE", 0.0)) + float(comp.get("THOR", 0.0))
-        air = float(comp.get("MEDIVAC", 0.0)) + float(comp.get("VIKINGFIGHTER", 0.0)) + float(comp.get("LIBERATOR", 0.0)) + float(comp.get("BANSHEE", 0.0)) + float(comp.get("RAVEN", 0.0))
-
-        names: list[str] = []
-        if infantry >= 0.35:
-            names.extend(
-                [
-                    "STIMPACK",
-                    "SHIELDWALL",
-                    "PUNISHERGRENADES",
-                    "TERRANINFANTRYWEAPONSLEVEL1",
-                    "TERRANINFANTRYARMORSLEVEL1",
-                    "TERRANINFANTRYWEAPONSLEVEL2",
-                    "TERRANINFANTRYARMORSLEVEL2",
-                    "TERRANINFANTRYWEAPONSLEVEL3",
-                    "TERRANINFANTRYARMORSLEVEL3",
-                ]
-            )
-
-        if mech >= 0.30:
-            names.extend(
-                [
-                    "TERRANVEHICLEWEAPONSLEVEL1",
-                    "TERRANVEHICLEANDSHIPARMORSLEVEL1",
-                    "TERRANVEHICLEWEAPONSLEVEL2",
-                    "TERRANVEHICLEANDSHIPARMORSLEVEL2",
-                    "TERRANVEHICLEWEAPONSLEVEL3",
-                    "TERRANVEHICLEANDSHIPARMORSLEVEL3",
-                ]
-            )
-
-        if air >= 0.25:
-            names.extend(
-                [
-                    "TERRANSHIPWEAPONSLEVEL1",
-                    "TERRANVEHICLEANDSHIPARMORSLEVEL1",
-                    "TERRANSHIPWEAPONSLEVEL2",
-                    "TERRANVEHICLEANDSHIPARMORSLEVEL2",
-                    "TERRANSHIPWEAPONSLEVEL3",
-                    "TERRANVEHICLEANDSHIPARMORSLEVEL3",
-                ]
-            )
-
-        if not names:
-            names.extend(
-                [
-                    "STIMPACK",
-                    "SHIELDWALL",
-                    "TERRANINFANTRYWEAPONSLEVEL1",
-                    "TERRANINFANTRYARMORSLEVEL1",
-                ]
-            )
-
-        seen: set = set()
+    def _planned_upgrades(self, now: float) -> list:
+        names = list(self.awareness.mem.get(K("macro", "tech", "plan", "upgrades"), now=now, default=[]) or [])
         upgrades: list = []
         for name in names:
-            if name in seen:
-                continue
-            seen.add(name)
-            up = self._u(name)
+            up = getattr(Up, str(name), None)
             if up is not None:
                 upgrades.append(up)
         return upgrades
@@ -110,9 +41,9 @@ class MacroTechTick(BaseTask):
             return bound_err
 
         now = float(tick.time)
-        upgrades = self._upgrade_list(now)
+        upgrades = self._planned_upgrades(now)
         if not upgrades:
-            return TaskResult.noop("no_upgrades_selected")
+            return TaskResult.noop("no_tech_plan")
 
         plan = MacroPlan()
         plan.add(
@@ -126,6 +57,9 @@ class MacroTechTick(BaseTask):
         bot.register_behavior(plan)
 
         if self.log is not None and (int(tick.iteration) % self.log_every_iters == 0):
+            reserve_m = int(self.awareness.mem.get(K("macro", "tech", "plan", "reserve_minerals"), now=now, default=0) or 0)
+            reserve_g = int(self.awareness.mem.get(K("macro", "tech", "plan", "reserve_gas"), now=now, default=0) or 0)
+            reserve_name = str(self.awareness.mem.get(K("macro", "tech", "plan", "reserve_name"), now=now, default="") or "")
             self.log.emit(
                 "macro_tech",
                 {
@@ -133,6 +67,9 @@ class MacroTechTick(BaseTask):
                     "t": round(float(now), 2),
                     "upgrades_head": [str(u.name) for u in upgrades[:6]],
                     "upgrade_count": int(len(upgrades)),
+                    "tech_reserve_minerals": int(reserve_m),
+                    "tech_reserve_gas": int(reserve_g),
+                    "tech_reserve_name": str(reserve_name),
                 },
             )
 

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import time
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from bot.control.priority_policy import PriorityPolicy
@@ -34,6 +35,10 @@ class EgoConfig:
     non_preemptible_grace_s: float = 2.5
     default_failure_cooldown_s: float = 8.0
     singleton_domains: frozenset[str] = frozenset({"MACRO"})
+    # Global anti-spam / pacing controls.
+    default_task_min_step_interval_s: float = 0.0
+    macro_task_min_step_interval_s: float = 0.35
+    perf_log_interval_s: float = 2.0
 
 
 class Ego:
@@ -46,6 +51,8 @@ class Ego:
         self._planners: List[Any] = []
         self._active: Dict[str, Commitment] = {}
         self._active_by_domain: Dict[str, List[str]] = {}
+        self._last_mem_gc_at: float = -1.0
+        self._last_perf_emit_at: float = -9999.0
 
     def register_planners(self, planners: Sequence[Any]) -> None:
         self._planners = list(planners)
@@ -53,12 +60,39 @@ class Ego:
     async def tick(self, bot, *, tick: TaskTick, attention: Attention, awareness: Awareness) -> None:
         now = float(tick.time)
 
+        # Periodic memory compaction keeps O(n) scans from degrading over time.
+        if self._last_mem_gc_at < 0.0 or (now - self._last_mem_gc_at) >= 8.0:
+            removed = int(awareness.mem.prune(now=now, mission_retention_s=120.0, cooldown_retention_s=60.0))
+            self._last_mem_gc_at = float(now)
+            if self.log is not None and removed > 0:
+                self.log.emit(
+                    "awareness_gc",
+                    {"time": round(now, 2), "removed": int(removed)},
+                    meta={"module": "awareness", "component": "awareness"},
+                )
+
         self.body.reap(now=now)
         self._reap_commitments(now=now, awareness=awareness)
 
         proposals: List[Proposal] = []
+        planner_perf: list[dict[str, Any]] = []
         for planner in self._planners:
-            proposals.extend(planner.propose(bot, awareness=awareness, attention=attention) or [])
+            every = int(getattr(planner, "propose_every_iters", 1) or 1)
+            if every > 1 and (int(tick.iteration) % every) != 0:
+                continue
+            t0 = time.perf_counter()
+            p = planner.propose(bot, awareness=awareness, attention=attention) or []
+            dt_ms = (time.perf_counter() - t0) * 1000.0
+            proposals.extend(p)
+            if dt_ms >= 2.0:
+                planner_perf.append(
+                    {
+                        "planner_id": str(getattr(planner, "planner_id", type(planner).__name__)),
+                        "ms": round(float(dt_ms), 3),
+                        "proposals": int(len(p)),
+                        "every_iters": int(every),
+                    }
+                )
 
         for prop in proposals:
             prop.validate()
@@ -67,7 +101,26 @@ class Ego:
         proposals = self._prioritize_proposals(proposals=proposals, attention=attention, awareness=awareness, now=now)
 
         await self._admit(bot, now=now, attention=attention, awareness=awareness, proposals=proposals)
-        await self._execute(bot, tick=tick, attention=attention, awareness=awareness)
+        task_perf = await self._execute(bot, tick=tick, attention=attention, awareness=awareness)
+
+        if (
+            self.log is not None
+            and (planner_perf or task_perf)
+            and (float(now) - float(self._last_perf_emit_at)) >= float(self.cfg.perf_log_interval_s)
+        ):
+            self.log.emit(
+                "ego_perf",
+                {
+                    "iter": int(tick.iteration),
+                    "t": round(float(now), 2),
+                    "planner_slow": planner_perf,
+                    "task_slow": task_perf,
+                    "proposals_total": int(len(proposals)),
+                    "active_missions": int(len(self._active)),
+                },
+                meta={"module": "runtime", "component": "runtime.perf"},
+            )
+            self._last_perf_emit_at = float(now)
 
     def _prioritize_proposals(
         self,
@@ -83,7 +136,6 @@ class Ego:
                 decision = self.priority_policy.evaluate(proposal=prop, attention=attention, awareness=awareness, now=now)
                 eff = float(decision.effective_score)
             except Exception as e:
-                eff = float(prop.score)
                 awareness.mem.set(
                     K("control", "priority", "error", str(prop.proposal_id)),
                     value=str(type(e).__name__),
@@ -99,9 +151,9 @@ class Ego:
                             "domain": str(prop.domain),
                             "error_type": str(type(e).__name__),
                             "error": str(e),
-                            "fallback_score": int(prop.score),
                         },
                     )
+                raise RuntimeError(f"priority_policy_failed:{prop.proposal_id}:{type(e).__name__}") from e
             scored.append((eff, int(prop.score), str(prop.proposal_id), prop))
 
         # Deterministic ordering:
@@ -255,9 +307,10 @@ class Ego:
                     },
                 )
 
-    async def _execute(self, bot, *, tick: TaskTick, attention: Attention, awareness: Awareness) -> None:
+    async def _execute(self, bot, *, tick: TaskTick, attention: Attention, awareness: Awareness) -> list[dict[str, Any]]:
         now = float(tick.time)
         mission_health = {str(m.mission_id): bool(m.mission_degraded) for m in attention.missions.ongoing}
+        task_perf: list[dict[str, Any]] = []
 
         for mission_id, c in list(self._active.items()):
             if c.is_expired(now):
@@ -269,9 +322,45 @@ class Ego:
                 self._finish_mission(awareness, now=now, c=c, status="FAILED", reason="mission_degraded")
                 continue
 
+            # Global pacing by domain/task to prevent per-frame command spam.
+            min_step_interval_s = float(self.cfg.default_task_min_step_interval_s)
+            if str(c.domain).startswith("MACRO"):
+                min_step_interval_s = max(min_step_interval_s, float(self.cfg.macro_task_min_step_interval_s))
+            try:
+                task_override = float(getattr(c.task, "min_step_interval_s", 0.0) or 0.0)
+            except Exception:
+                task_override = 0.0
+            min_step_interval_s = max(min_step_interval_s, float(task_override))
+            if min_step_interval_s > 0.0:
+                last_step_at = awareness.mem.get(
+                    K("ops", "mission", c.mission_id, "last_step_at"),
+                    now=now,
+                    default=None,
+                )
+                if last_step_at is not None and (float(now) - float(last_step_at)) < min_step_interval_s:
+                    continue
+
             self._touch_leases_for_commitment(now=now, c=c)
 
+            t0 = time.perf_counter()
             res = await c.task.step(bot, tick, attention)
+            dt_ms = (time.perf_counter() - t0) * 1000.0
+            awareness.mem.set(
+                K("ops", "mission", c.mission_id, "last_step_at"),
+                value=float(now),
+                now=now,
+                ttl=120.0,
+            )
+            if dt_ms >= 2.0:
+                task_perf.append(
+                    {
+                        "mission_id": str(c.mission_id),
+                        "domain": str(c.domain),
+                        "task_id": str(getattr(c.task, "task_id", type(c.task).__name__)),
+                        "ms": round(float(dt_ms), 3),
+                        "status": str(getattr(res, "status", "UNKNOWN")),
+                    }
+                )
             if not isinstance(res, TaskResult):
                 raise TypeError(f"Task {type(c.task).__name__} returned non-TaskResult: {type(res)!r}")
 
@@ -291,6 +380,7 @@ class Ego:
                     now=now,
                     data={"mission_id": c.mission_id, "domain": c.domain, "status": res.status, "reason": res.reason},
                 )
+        return task_perf
 
     def _reap_commitments(self, *, now: float, awareness: Awareness) -> None:
         for mission_id, c in list(self._active.items()):
