@@ -74,6 +74,25 @@ def _army_power(units: Dict[U, int]) -> float:
     return float(p)
 
 
+def _army_power_from_mediator_dict(*, army_dict: dict) -> float:
+    if not isinstance(army_dict, dict):
+        raise RuntimeError("invalid_contract:mediator.army_dict")
+    p = 0.0
+    for uid, units in army_dict.items():
+        try:
+            n = int(getattr(units, "amount", len(units)))
+        except Exception:
+            n = 0
+        if n <= 0:
+            continue
+        try:
+            u = U(uid) if isinstance(uid, int) else uid
+        except Exception:
+            u = uid
+        p += float(_ARMY_WEIGHTS.get(u, 1.0)) * float(n)
+    return float(p)
+
+
 def _army_power_named(units: list[dict]) -> float:
     p = 0.0
     for item in units:
@@ -134,17 +153,29 @@ def derive_game_parity_intel(
     now: float,
     cfg: GameParityIntelConfig = GameParityIntelConfig(),
 ) -> None:
+    if not hasattr(bot, "mediator"):
+        raise RuntimeError("missing_contract:mediator")
+    own_army_dict = getattr(bot.mediator, "get_own_army_dict", None)
+    enemy_army_dict = getattr(bot.mediator, "get_enemy_army_dict", None)
+    if own_army_dict is None:
+        raise RuntimeError("missing_contract:mediator.get_own_army_dict")
+    if enemy_army_dict is None:
+        raise RuntimeError("missing_contract:mediator.get_enemy_army_dict")
+    if not isinstance(own_army_dict, dict):
+        raise RuntimeError("invalid_contract:mediator.get_own_army_dict")
+    if not isinstance(enemy_army_dict, dict):
+        raise RuntimeError("invalid_contract:mediator.get_enemy_army_dict")
+
     enemy_units = dict(attention.enemy_build.enemy_units or {})
     enemy_structs = dict(attention.enemy_build.enemy_structures or {})
-    own_units = dict(attention.economy.units_ready or {})
 
     own_workers = int(attention.economy.workers_total)
     own_bases = int(attention.macro.bases_total)
-    own_army_power = float(_army_power(own_units))
+    own_army_power = float(_army_power_from_mediator_dict(army_dict=own_army_dict))
 
     enemy_workers_seen = int(sum_units(enemy_units, _WORKER_TYPES))
     enemy_bases_seen = int(count_enemy_bases(enemy_structs))
-    enemy_army_seen_power = float(_army_power(enemy_units))
+    enemy_army_seen_power = float(_army_power_from_mediator_dict(army_dict=enemy_army_dict))
     army_summary = awareness.mem.get(K("enemy", "army", "comp_summary"), now=now, default={}) or {}
     if not isinstance(army_summary, dict):
         army_summary = {}
@@ -229,7 +260,12 @@ def derive_game_parity_intel(
         expand_bias = 0
 
     rush_state = str(awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
-    if rush_state in {"SUSPECTED", "CONFIRMED", "HOLDING"}:
+    aggression_state = str(awareness.mem.get(K("enemy", "aggression", "state"), now=now, default="NONE") or "NONE").upper()
+    aggression_source = awareness.mem.get(K("enemy", "aggression", "source"), now=now, default={}) or {}
+    if not isinstance(aggression_source, dict):
+        aggression_source = {}
+    rush_is_early = bool(aggression_source.get("rush_is_early", False))
+    if (rush_is_early and rush_state in {"SUSPECTED", "CONFIRMED", "HOLDING"}) or aggression_state == "AGGRESSION":
         army_bias = max(army_bias, 1)
         expand_bias = 0
 
@@ -265,6 +301,7 @@ def derive_game_parity_intel(
         "expand_bias": int(expand_bias),
         "army_bias": int(army_bias),
         "rush_state": str(rush_state),
+        "aggression_state": str(aggression_state),
     }
 
     awareness.mem.set(K("enemy", "parity", "workers_est"), value=float(enemy_workers_est), now=now, ttl=float(cfg.ttl_s))

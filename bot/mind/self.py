@@ -6,6 +6,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from ares.behaviors.macro.mining import Mining
 from sc2.data import Result
 
 from bot.devlog import DevLogger
@@ -87,6 +88,9 @@ class RuntimeApp:
     _chat_last_transition: str = ""
     _chat_last_enemy_kind: str = ""
     _chat_last_rush_state: str = ""
+    _chat_last_aggression_state: str = ""
+    _chat_seen_early_rush: bool = False
+    _chat_rush_held_announced: bool = False
     _chat_last_sent_t: float = -9999.0
     chat_enabled: bool = True
     chat_min_interval_s: float = 10.0
@@ -212,6 +216,11 @@ class RuntimeApp:
             self.body.reset()
         except Exception:
             pass
+        self._chat_last_enemy_kind = ""
+        self._chat_last_rush_state = ""
+        self._chat_last_aggression_state = ""
+        self._chat_seen_early_rush = False
+        self._chat_rush_held_announced = False
         self._wall_start_s = float(time.perf_counter())
         derive_opening_contract_intel(
             bot,
@@ -223,6 +232,8 @@ class RuntimeApp:
 
     async def on_step(self, bot, *, iteration: int) -> None:
         now = float(getattr(bot, "time", 0.0))
+        # Keep Ares resource-manager bookkeeping actively applied each frame.
+        bot.register_behavior(Mining())
         derive_opening_contract_intel(bot, awareness=self.awareness, now=now)
 
         attention = derive_attention(bot, awareness=self.awareness, threat=self.threat, log=self.log)
@@ -501,18 +512,64 @@ class RuntimeApp:
                 f"bank_pi={payload['bank_pi_output']:.3f}"
             )
 
-    async def _safe_chat_send(self, bot, *, now: float, message: str) -> None:
+    async def _safe_chat_send(self, bot, *, now: float, message: str) -> bool:
         if not bool(self.chat_enabled):
-            return
+            return False
         if not str(message).strip():
-            return
+            return False
         if (float(now) - float(self._chat_last_sent_t)) < float(self.chat_min_interval_s):
-            return
+            return False
         try:
             await bot.chat_send(str(message))
             self._chat_last_sent_t = float(now)
+            return True
         except Exception:
-            return
+            return False
+
+    def _enemy_inference_line(self, *, now: float) -> str:
+        enemy_kind = str(self.awareness.mem.get(K("enemy", "opening", "kind"), now=now, default="NORMAL") or "NORMAL").upper()
+        aggression_state = str(
+            self.awareness.mem.get(K("enemy", "aggression", "state"), now=now, default="NONE") or "NONE"
+        ).upper()
+        snapshot = self.awareness.mem.get(K("enemy", "build", "snapshot"), now=now, default={}) or {}
+        if not isinstance(snapshot, dict):
+            snapshot = {}
+        top = snapshot.get("army_comp_top", [])
+        top_unit = "unknown"
+        top_count = 0
+        if isinstance(top, list) and top:
+            first = top[0] if isinstance(top[0], dict) else {}
+            top_unit = str(first.get("unit", "unknown"))
+            top_count = int(first.get("count", 0) or 0)
+        bases_visible = int(snapshot.get("bases_visible", 0) or 0)
+
+        if enemy_kind == "AGGRESSIVE" or aggression_state in {"RUSH", "AGGRESSION"}:
+            return f"Intel: faca nos dentes ({top_unit} x{top_count}). Segura o tranco."
+        if enemy_kind == "GREEDY":
+            return f"Intel: greed detectado, eco aberto ({bases_visible} bases vistas). Hora de cobrar."
+        return f"Intel: plano padrao estranho, sem caos por enquanto ({top_unit} x{top_count})."
+
+    def _rush_held_summary_line(self, *, now: float) -> str:
+        parity_state = str(
+            self.awareness.mem.get(K("strategy", "parity", "state"), now=now, default="TRADEOFF_MIXED") or "TRADEOFF_MIXED"
+        ).upper()
+        parity_signals = self.awareness.mem.get(K("strategy", "parity", "signals"), now=now, default={}) or {}
+        if not isinstance(parity_signals, dict):
+            parity_signals = {}
+        own_army = float(parity_signals.get("own_army_power", 0.0) or 0.0)
+        enemy_army = float(parity_signals.get("enemy_army_power_est", 0.0) or 0.0)
+        delta = float(own_army - enemy_army)
+
+        if delta >= 6.0 or parity_state in {"AHEAD_BOTH", "AHEAD_ARMY_BEHIND_ECON"}:
+            verdict = "foi bem"
+        elif delta <= -6.0 or parity_state in {"BEHIND_BOTH", "BEHIND_ARMY_AHEAD_ECON"}:
+            verdict = "foi mal"
+        else:
+            verdict = "foi ok"
+        return (
+            f"Rush segurado. Resultado: {verdict}. "
+            f"Army power nosso/inimigo {own_army:.1f}/{enemy_army:.1f}, parity={parity_state}."
+        )
 
     async def _emit_chat_updates(self, bot, *, now: float) -> None:
         # Build/opening selected
@@ -534,12 +591,36 @@ class RuntimeApp:
 
         # Enemy opening classifier
         enemy_kind = str(self.awareness.mem.get(K("enemy", "opening", "kind"), now=now, default="") or "").upper()
-        if enemy_kind and enemy_kind != str(self._chat_last_enemy_kind):
+        aggression_state = str(
+            self.awareness.mem.get(K("enemy", "aggression", "state"), now=now, default="NONE") or "NONE"
+        ).upper()
+        if (
+            enemy_kind
+            and (
+                enemy_kind != str(self._chat_last_enemy_kind)
+                or aggression_state != str(self._chat_last_aggression_state)
+            )
+        ):
             self._chat_last_enemy_kind = str(enemy_kind)
-            await self._safe_chat_send(bot, now=now, message=f"Intel: {enemy_kind}")
+            self._chat_last_aggression_state = str(aggression_state)
+            await self._safe_chat_send(bot, now=now, message=self._enemy_inference_line(now=now))
 
         # Rush state transitions
+        prev_rush_state = str(self._chat_last_rush_state or "NONE").upper()
         rush_state = str(self.awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
+        rush_is_early = bool(float(now) <= float(self.opening_cfg.rush_phase_max_s))
+        rush_active = rush_state in {"SUSPECTED", "CONFIRMED", "HOLDING"}
+        prev_rush_active = prev_rush_state in {"SUSPECTED", "CONFIRMED", "HOLDING"}
+        if rush_is_early and rush_active:
+            self._chat_seen_early_rush = True
+        if (
+            self._chat_seen_early_rush
+            and (not self._chat_rush_held_announced)
+            and prev_rush_active
+            and rush_state in {"ENDED", "NONE"}
+        ):
+            if await self._safe_chat_send(bot, now=now, message=self._rush_held_summary_line(now=now)):
+                self._chat_rush_held_announced = True
         if rush_state and rush_state != str(self._chat_last_rush_state):
             self._chat_last_rush_state = str(rush_state)
             await self._safe_chat_send(bot, now=now, message=f"Rush: {rush_state}")

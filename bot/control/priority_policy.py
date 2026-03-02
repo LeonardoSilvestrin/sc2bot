@@ -91,6 +91,11 @@ class PriorityPolicy:
         ).upper()
         macro_mode = str(awareness.mem.get(K("macro", "desired", "mode"), now=now, default="STANDARD") or "STANDARD").upper()
         rush_state = str(awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
+        aggression_state = str(awareness.mem.get(K("enemy", "aggression", "state"), now=now, default="NONE") or "NONE").upper()
+        aggression_source = awareness.mem.get(K("enemy", "aggression", "source"), now=now, default={}) or {}
+        if not isinstance(aggression_source, dict):
+            aggression_source = {}
+        rush_is_early = bool(aggression_source.get("rush_is_early", False))
         rush_army_dump = bool(awareness.mem.get(K("macro", "exec", "rush_army_dump"), now=now, default=False))
         if threat_factor > 0.0:
             if domain == "DEFENSE":
@@ -185,16 +190,16 @@ class PriorityPolicy:
             domain_weight += float(self.cfg.depot_supply_weight_boost)
             notes.append("depot_boost_supply_low")
 
-        if rush_army_dump or rush_state in {"SUSPECTED", "CONFIRMED", "HOLDING"}:
+        if rush_army_dump or (rush_is_early and rush_state in {"SUSPECTED", "CONFIRMED", "HOLDING"}) or aggression_state == "AGGRESSION":
             if domain == "MACRO_ARMY_EXECUTOR":
                 domain_weight += float(self.cfg.rush_bank_army_boost)
-                notes.append("rush_army_boost")
+                notes.append("aggression_army_boost")
             elif domain == "MACRO_ECON_EXECUTOR":
                 domain_weight *= max(0.0, 1.0 - float(self.cfg.rush_bank_econ_dampen))
-                notes.append("rush_econ_dampen")
+                notes.append("aggression_econ_dampen")
             elif domain == "TECH_EXECUTOR":
                 domain_weight *= max(0.0, 1.0 - float(self.cfg.rush_bank_tech_dampen))
-                notes.append("rush_tech_dampen")
+                notes.append("aggression_tech_dampen")
 
         if domain in {"MACRO_EXECUTOR", "MACRO_ARMY_EXECUTOR", "MACRO_ECON_EXECUTOR"}:
             if not bool(attention.macro.opening_done):
@@ -247,6 +252,7 @@ class PriorityPolicy:
                 "parity_state": str(parity_state),
                 "macro_mode": str(macro_mode),
                 "rush_state": str(rush_state),
+                "aggression_state": str(aggression_state),
                 "rush_army_dump": bool(rush_army_dump),
                 "bank_pressure": float(self._cached_bank_pressure),
                 "domain": str(domain),

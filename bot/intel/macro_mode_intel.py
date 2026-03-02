@@ -22,14 +22,21 @@ def derive_macro_mode_intel(
     enemy_kind = awareness.mem.get(K("enemy", "opening", "kind"), now=now, default="NORMAL")
     conf = float(awareness.mem.get(K("enemy", "opening", "confidence"), now=now, default=0.0) or 0.0)
     rush_state = str(awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
+    aggression_state = str(awareness.mem.get(K("enemy", "aggression", "state"), now=now, default="NONE") or "NONE").upper()
+    aggression_source = awareness.mem.get(K("enemy", "aggression", "source"), now=now, default={}) or {}
+    if not isinstance(aggression_source, dict):
+        aggression_source = {}
+    rush_is_early = bool(aggression_source.get("rush_is_early", False))
     opening_selected = str(awareness.mem.get(K("macro", "opening", "selected"), now=now, default="Default") or "Default")
     transition_target = str(awareness.mem.get(K("macro", "opening", "transition_target"), now=now, default="STIM") or "STIM").upper()
     banshee_harass_done = bool(awareness.mem.get(K("ops", "harass", "banshee", "done"), now=now, default=False))
 
     profile = resolve_build_profile(opening_selected=str(opening_selected), transition_target=str(transition_target))
     mode = "STANDARD"
-    if rush_state in {"CONFIRMED", "HOLDING"}:
+    if (rush_is_early and rush_state in {"CONFIRMED", "HOLDING"}) or aggression_state == "RUSH":
         mode = "RUSH_RESPONSE"
+    elif aggression_state == "AGGRESSION":
+        mode = "DEFENSIVE"
     elif float(conf) >= float(cfg.min_confidence):
         if str(enemy_kind) == "AGGRESSIVE":
             mode = "DEFENSIVE"
@@ -41,6 +48,7 @@ def derive_macro_mode_intel(
         K("macro", "desired", "signals"),
         value={
             "rush_state": str(rush_state),
+            "aggression_state": str(aggression_state),
             "enemy_kind": str(enemy_kind),
             "confidence": float(conf),
             "opening_selected": str(opening_selected),
@@ -61,4 +69,5 @@ def derive_macro_mode_intel(
         "enemy_kind": str(enemy_kind),
         "confidence": float(conf),
         "rush_state": str(rush_state),
+        "aggression_state": str(aggression_state),
     }

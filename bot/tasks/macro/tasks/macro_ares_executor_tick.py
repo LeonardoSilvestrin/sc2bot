@@ -148,108 +148,40 @@ class MacroAresExecutorTick(BaseTask):
             return TaskResult.running("missing_army_comp")
 
         plan_active = self.awareness.mem.get(K("macro", "plan", "active"), now=now, default={}) or {}
-        if not isinstance(plan_active, dict):
-            plan_active = {}
-        enable_workers = bool(
-            plan_active.get(
-                "enable_workers",
-                self.awareness.mem.get(K("macro", "exec", "enable_workers"), now=now, default=True),
-            )
-        )
-        scv_cap = int(
-            plan_active.get(
-                "scv_cap",
-                self.awareness.mem.get(K("macro", "exec", "scv_cap"), now=now, default=66) or 66,
-            )
-            or 66
-        )
-        enable_supply = bool(
-            plan_active.get(
-                "enable_supply",
-                self.awareness.mem.get(K("macro", "exec", "enable_supply"), now=now, default=True),
-            )
-        )
-        enable_gas = bool(
-            plan_active.get(
-                "enable_gas",
-                self.awareness.mem.get(K("macro", "exec", "enable_gas"), now=now, default=True),
-            )
-        )
-        gas_target = int(
-            plan_active.get(
-                "gas_target",
-                self.awareness.mem.get(
-                    K("macro", "exec", "gas_target"),
-                    now=now,
-                    default=max(0, int(attention.macro.bases_total) * 2),
-                )
-                or 0,
-            )
-            or 0
-        )
-        gas_workers_per_refinery = int(
-            plan_active.get(
-                "gas_workers_per_refinery",
-                self.awareness.mem.get(
-                    K("macro", "gas", "target_workers_per_refinery"),
-                    now=now,
-                    default=3,
-                )
-                or 3,
-            )
-            or 3
-        )
-        gas_workers_per_refinery = max(0, min(3, int(gas_workers_per_refinery)))
-        enable_spawn = bool(
-            plan_active.get(
-                "enable_spawn",
-                self.awareness.mem.get(K("macro", "exec", "enable_spawn"), now=now, default=True),
-            )
-        )
-        freeflow_mode = bool(
-            plan_active.get(
-                "freeflow_mode",
-                self.awareness.mem.get(K("macro", "exec", "freeflow_mode"), now=now, default=False),
-            )
-        )
-        enable_production = bool(
-            plan_active.get(
-                "enable_production",
-                self.awareness.mem.get(K("macro", "exec", "enable_production"), now=now, default=True),
-            )
-        )
-        enable_expansion = bool(
-            plan_active.get(
-                "enable_expansion",
-                self.awareness.mem.get(K("macro", "exec", "enable_expansion"), now=now, default=True),
-            )
-        )
-        enable_orbital_morph = bool(
-            plan_active.get(
-                "enable_orbital_morph",
-                self.awareness.mem.get(K("macro", "exec", "enable_orbital_morph"), now=now, default=True),
-            )
-        )
-        expand_to = int(
-            plan_active.get(
-                "expand_to",
-                self.awareness.mem.get(
-                    K("macro", "exec", "expand_to"),
-                    now=now,
-                    default=max(1, int(attention.macro.bases_total)),
-                )
-                or 1,
-            )
-            or 1
-        )
-        lane_order_raw = plan_active.get(
+        if not isinstance(plan_active, dict) or not plan_active:
+            return TaskResult.running("macro_plan_missing")
+        required = (
+            "enable_workers",
+            "scv_cap",
+            "enable_supply",
+            "enable_gas",
+            "gas_target",
+            "gas_workers_per_refinery",
+            "enable_spawn",
+            "freeflow_mode",
+            "enable_production",
+            "enable_expansion",
+            "enable_orbital_morph",
+            "expand_to",
             "lane_order",
-            self.awareness.mem.get(
-                K("macro", "exec", "lane_order"),
-                now=now,
-                default=["workers", "supply", "gas", "spawn", "production", "expand"],
-            ),
         )
+        if any(k not in plan_active for k in required):
+            return TaskResult.running("macro_plan_incomplete")
+
+        enable_workers = bool(plan_active.get("enable_workers"))
+        scv_cap = int(plan_active.get("scv_cap") or 66)
+        enable_supply = bool(plan_active.get("enable_supply"))
+        enable_gas = bool(plan_active.get("enable_gas"))
+        gas_target = int(plan_active.get("gas_target") or 0)
+        gas_workers_per_refinery = int(plan_active.get("gas_workers_per_refinery") or 3)
+        gas_workers_per_refinery = max(0, min(3, int(gas_workers_per_refinery)))
+        enable_spawn = bool(plan_active.get("enable_spawn"))
+        freeflow_mode = bool(plan_active.get("freeflow_mode"))
+        enable_production = bool(plan_active.get("enable_production"))
+        enable_expansion = bool(plan_active.get("enable_expansion"))
+        enable_orbital_morph = bool(plan_active.get("enable_orbital_morph"))
+        expand_to = int(plan_active.get("expand_to") or 1)
+        lane_order_raw = plan_active.get("lane_order")
         lane_order = [str(x) for x in lane_order_raw] if isinstance(lane_order_raw, list) else [
             "workers",
             "supply",

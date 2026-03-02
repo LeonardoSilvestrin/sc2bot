@@ -8,8 +8,6 @@ PROFILE = {
         "STANDARD": {
             "comp": {"MARINE": 0.52, "MARAUDER": 0.20, "SIEGETANK": 0.13, "MEDIVAC": 0.15},
             "priority": ["SIEGETANK", "MARINE", "MARAUDER", "MEDIVAC"],
-            "bank_minerals": 650,
-            "bank_gas": 180,
             "pid": {"lag_pi_kp": 0.85, "lag_pi_ki": 0.20},
             "army_supply_milestones": [{"t": 210.0, "supply": 28.0}],
             "unit_count_milestones": [{"t": 210.0, "units": {"MARINE": 20}}],
@@ -23,7 +21,6 @@ PROFILE = {
         "PUNISH": {...},
         "RUSH_RESPONSE": {...},
     },
-    "reserve_costs": {"SIEGETANK": (150, 125), "MARINE": (50, 0)},
     "transition_overrides": {
         "BANSHEE": {
             "priority_standard": ["BANSHEE", "HELLION", "SIEGETANK", "MARINE", "MARAUDER", "MEDIVAC"]
@@ -33,3 +30,19 @@ PROFILE = {
 ```
 
 The engine auto-expands this into the legacy schema expected by `build_catalog`.
+
+## Quick Edit Guide
+
+- `modes.<MODE>.comp`: target composition weights (`MARINE`, `SIEGETANK`, etc).
+- `modes.<MODE>.priority`: tie-break order when multiple units are buildable.
+- `bank targets`: inferred automatically from comp + Ares `COST_DICT` (do not set in build).
+  Contract: adding `bank_minerals` / `bank_gas` (or legacy `bank_setpoint_*`) is invalid and raises `invalid_contract`.
+- `modes.<MODE>.army_supply_milestones`: expected army supply over game time (`t` in seconds).
+- `modes.<MODE>.unit_count_milestones`: expected unit counts over time (`t` in seconds).
+- `modes.<MODE>.production_structure_targets`: hard baseline of Barracks/Factory/Starport.
+- `modes.<MODE>.production_scale`: per-base soft growth for production structures.
+- `modes.<MODE>.tech_timing_milestones`: desired upgrades/tech by time (`t` in seconds).
+
+Practical tuning:
+- If third base is late, reduce early combat pressure (`unit_count_milestones`) and/or increase `production_scale` for Barracks slightly.
+- If army is late, increase `priority` pressure on core units and bring forward `unit_count_milestones`.

@@ -96,11 +96,24 @@ def derive_enemy_opening_intel(
         rush_state_out = "HOLDING" if str(prev_state).upper() in {"CONFIRMED", "HOLDING"} else "SUSPECTED"
     if since_confirmed <= float(cfg.rush_confirmed_min_hold_s) and rush_state_out in {"NONE", "ENDED", "SUSPECTED"}:
         rush_state_out = "HOLDING"
-    if no_natural and float(now) <= float(cfg.rush_structural_hold_s) and rush_state_out in {"NONE", "ENDED"}:
+    if (
+        no_natural
+        and structural_evidence
+        and float(now) <= float(cfg.rush_structural_hold_s)
+        and rush_state_out in {"NONE", "ENDED"}
+    ):
         rush_state_out = "SUSPECTED"
-    if worker_deficit >= int(cfg.worker_under_count_tolerance) and float(now) <= float(cfg.rush_worker_deficit_hold_s):
+    if (
+        worker_deficit >= int(cfg.worker_under_count_tolerance)
+        and float(now) <= float(cfg.rush_worker_deficit_hold_s)
+        and (bool(signals.get("threatened", False)) or int(signals.get("enemy_near_our_bases", 0) or 0) > 0)
+    ):
         if rush_state_out in {"NONE", "ENDED"}:
             rush_state_out = "SUSPECTED"
+
+    rush_is_early = bool(float(now) <= float(cfg.rush_phase_max_s))
+    if (not rush_is_early) and rush_state_out in {"SUSPECTED", "CONFIRMED", "HOLDING"}:
+        rush_state_out = "ENDED"
 
     last_seen_pressure_out = float(decision.last_seen_pressure_t)
     near_bases = int(signals.get("enemy_near_our_bases", 0) or 0)
@@ -130,6 +143,29 @@ def derive_enemy_opening_intel(
         evidence=dict(decision.rush_math),
         last_seen_pressure_t=float(last_seen_pressure_out),
     )
+    aggression_state = "NONE"
+    if bool(signals.get("threatened", False)) or int(signals.get("enemy_near_our_bases", 0) or 0) > 0:
+        aggression_state = "RUSH" if (rush_is_early and rush_state_out in {"SUSPECTED", "CONFIRMED", "HOLDING"}) else "AGGRESSION"
+    aggression_confidence = float(
+        _clamp(
+            max(float(decision.rush_confidence), 0.20 + (0.10 * float(int(signals.get("enemy_near_our_bases", 0) or 0)))),
+            0.05,
+            0.99,
+        )
+    )
+    awareness.mem.set(K("enemy", "aggression", "state"), value=str(aggression_state), now=now, ttl=float(cfg.ttl_s))
+    awareness.mem.set(
+        K("enemy", "aggression", "confidence"),
+        value=float(aggression_confidence if aggression_state != "NONE" else 0.0),
+        now=now,
+        ttl=float(cfg.ttl_s),
+    )
+    awareness.mem.set(
+        K("enemy", "aggression", "source"),
+        value={"rush_state": str(rush_state_out), "rush_is_early": bool(rush_is_early)},
+        now=now,
+        ttl=float(cfg.ttl_s),
+    )
     # Periodic explicit intel log for rush/greedy classification observability.
     last_emit = float(
         awareness.mem.get(K("intel", "opening", "last_emit_t"), now=now, default=0.0) or 0.0
@@ -147,6 +183,7 @@ def derive_enemy_opening_intel(
                     "rush_confidence": round(float(decision.rush_confidence), 3),
                     "rush_score": round(float(decision.rush_score), 3),
                     "rush_ttl_s": round(float(rush_ttl_s), 2),
+                    "aggression_state": str(aggression_state),
                     "workers_peak_seen": int(workers_peak_seen),
                     "signals": dict(decision.signals),
                 },

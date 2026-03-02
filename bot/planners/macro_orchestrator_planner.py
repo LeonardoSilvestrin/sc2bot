@@ -43,6 +43,9 @@ class MacroOrchestratorPlanner(BasePlanner):
 
     pressure_urgency_high: int = 18
     pressure_enemy_count_high: int = 3
+    aggression_urgency_high: int = 14
+    aggression_enemy_count_high: int = 2
+    rush_phase_max_s: float = 180.0
 
     freeflow_on_minerals: int = 700
     freeflow_off_minerals: int = 450
@@ -54,7 +57,7 @@ class MacroOrchestratorPlanner(BasePlanner):
 
     opening_gas_cap: int = 1
     late_gas_bonus: int = 1
-    gas_target_workers_default: int = 2
+    gas_target_workers_default: int = 3
     gas_target_workers_min: int = 0
     gas_overflow_hard: int = 650
     gas_overflow_soft: int = 420
@@ -77,13 +80,14 @@ class MacroOrchestratorPlanner(BasePlanner):
     production_boost_max: int = 2
     lane_switch_margin: float = 0.12
     lane_min_hold_s: float = 6.0
-    lane_watchdog_expand_minerals: int = 900
-    lane_watchdog_expand_no_progress_s: float = 42.0
+    lane_watchdog_expand_minerals: int = 760
+    lane_watchdog_expand_no_progress_s: float = 30.0
     emergency_dump_on_minerals: int = 1400
     emergency_dump_off_minerals: int = 1000
     emergency_dump_hold_s: float = 8.0
     ahead_expand_min_army_supply: float = 24.0
     rush_army_dump_minerals: int = 500
+    aggression_army_dump_minerals: int = 900
 
     housekeeping_score: int = 18
     housekeeping_interval_s: float = 4.0
@@ -490,9 +494,9 @@ class MacroOrchestratorPlanner(BasePlanner):
         if float(lag_army) >= 0.45 and enable_production:
             scores["production"] -= 0.18
         scores["expand"] = (
-            (0.46 * float(lag_spend))
-            + (0.34 * bank_m)
-            + (0.20 * self._clamp01(expand_need / 2.0))
+            (0.50 * float(lag_spend))
+            + (0.42 * bank_m)
+            + (0.25 * self._clamp01(expand_need / 2.0))
         ) if enable_expansion else -1.0
 
         if emergency_dump:
@@ -510,7 +514,7 @@ class MacroOrchestratorPlanner(BasePlanner):
             scores["expand"] += 0.48
 
         if pressure_high:
-            scores["expand"] -= 0.45
+            scores["expand"] -= 0.35
             scores["spawn"] += 0.12
             scores["production"] += 0.05
 
@@ -553,10 +557,19 @@ class MacroOrchestratorPlanner(BasePlanner):
 
     def _pressure_high(self, *, awareness: Awareness, attention: Attention, now: float) -> bool:
         rush_state = str(awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
+        aggression_state = str(
+            awareness.mem.get(K("enemy", "aggression", "state"), now=now, default="NONE") or "NONE"
+        ).upper()
+        rush_is_early = bool(float(now) <= float(self.rush_phase_max_s))
         return bool(
             int(attention.combat.primary_urgency) >= int(self.pressure_urgency_high)
             or int(attention.combat.primary_enemy_count) >= int(self.pressure_enemy_count_high)
-            or rush_state in {"SUSPECTED", "CONFIRMED", "HOLDING"}
+            or (rush_is_early and rush_state in {"SUSPECTED", "CONFIRMED", "HOLDING"})
+            or (
+                aggression_state in {"AGGRESSION", "RUSH"}
+                and int(attention.combat.primary_urgency) >= int(self.aggression_urgency_high)
+                and int(attention.combat.primary_enemy_count) >= int(self.aggression_enemy_count_high)
+            )
         )
 
     def _freeflow_hysteresis(self, *, awareness: Awareness, now: float, minerals: int, pressure_high: bool) -> bool:
@@ -704,6 +717,9 @@ class MacroOrchestratorPlanner(BasePlanner):
         workers_per_refinery = int(gas_decision.target_workers_per_refinery)
         if phase == "OPENING":
             gas_target = min(int(gas_target), int(self.opening_gas_cap))
+            workers_per_refinery = 3
+        elif phase == "MID":
+            workers_per_refinery = 3
         elif phase == "LATE" and not pressure_high:
             gas_target += int(self.late_gas_bonus)
         workers_per_refinery = max(0, min(3, int(workers_per_refinery)))
@@ -729,9 +745,15 @@ class MacroOrchestratorPlanner(BasePlanner):
             freeflow_mode = False
 
         rush_state = str(awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
+        aggression_state = str(
+            awareness.mem.get(K("enemy", "aggression", "state"), now=now, default="NONE") or "NONE"
+        ).upper()
+        rush_is_early = bool(float(now) <= float(self.rush_phase_max_s))
+        rush_active = bool(rush_is_early and rush_state in {"SUSPECTED", "CONFIRMED", "HOLDING"})
+        aggression_active = bool(aggression_state == "AGGRESSION")
         rush_army_dump = bool(
-            rush_state in {"SUSPECTED", "CONFIRMED", "HOLDING"}
-            and int(attention.economy.minerals) >= int(self.rush_army_dump_minerals)
+            (rush_active and int(attention.economy.minerals) >= int(self.rush_army_dump_minerals))
+            or (aggression_active and int(attention.economy.minerals) >= int(self.aggression_army_dump_minerals))
         )
         if rush_army_dump:
             freeflow_mode = True

@@ -67,11 +67,12 @@ Builds:
       - 19 expand
       - 20 supply @ ramp
       - 21 factory
-      - 21 factoryreactor
       - 21 gas
       - 22 starport
       - 26 hellion *4
       - 30 starporttechlab
+      - 34 expand
+      - 34 factory *2
       
   StimDropTankOpen:
     AutoSupplyAtSupply: 25

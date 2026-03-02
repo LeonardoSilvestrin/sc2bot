@@ -5,9 +5,7 @@ from typing import List, Optional, Tuple
 
 from sc2.position import Point2
 from sc2.unit import Unit
-
-from bot.sensors.threat_model import danger_weight, is_ground_threat
-
+from sc2.units import Units
 
 @dataclass(frozen=True)
 class BaseThreatReport:
@@ -47,6 +45,64 @@ class Threat:
             return []
 
     @staticmethod
+    def _own_army_near_base(bot, *, th_pos: Point2, radius: float) -> list[Unit]:
+        if not hasattr(bot, "mediator"):
+            raise RuntimeError("missing_contract:mediator")
+        own_army_dict = getattr(bot.mediator, "get_own_army_dict", None)
+        if callable(own_army_dict):
+            own_army_dict = own_army_dict()
+        if own_army_dict is None:
+            raise RuntimeError("missing_contract:mediator.get_own_army_dict")
+        if not isinstance(own_army_dict, dict):
+            raise RuntimeError("invalid_contract:mediator.get_own_army_dict")
+        own_units: list[Unit] = []
+        for units in dict(own_army_dict).values():
+            for u in list(units or []):
+                try:
+                    if float(u.distance_to(th_pos)) <= float(radius):
+                        own_units.append(u)
+                except Exception:
+                    continue
+        return own_units
+
+    @staticmethod
+    def _can_win_value(bot, *, own_units: list[Unit], enemy_units: list[Unit]) -> int | None:
+        if not enemy_units:
+            return 10
+        if not own_units:
+            # No army near base against visible threat => effectively losing.
+            return 0
+        if not hasattr(bot, "mediator"):
+            raise RuntimeError("missing_contract:mediator")
+        can_win_fight = getattr(bot.mediator, "can_win_fight", None)
+        if not callable(can_win_fight):
+            raise RuntimeError("missing_contract:mediator.can_win_fight")
+        try:
+            own = Units(own_units, bot)
+            enemy = Units(enemy_units, bot)
+            res = can_win_fight(
+                own_units=own,
+                enemy_units=enemy,
+                timing_adjust=True,
+                good_positioning=True,
+                workers_do_no_damage=True,
+            )
+            return int(getattr(res, "value", int(res)))
+        except Exception as exc:
+            raise RuntimeError("invalid_contract:mediator.can_win_fight") from exc
+
+    @staticmethod
+    def _enemy_by_base_from_manager(bot) -> dict[int, list[Unit]]:
+        if not hasattr(bot, "mediator"):
+            raise RuntimeError("missing_contract:mediator")
+        by_base = dict(getattr(bot.mediator, "get_ground_enemy_near_bases", {}) or {})
+        out: dict[int, list[Unit]] = {}
+        for th_tag, tags in by_base.items():
+            units = list(bot.mediator.get_units_from_tags(tags=set(tags)))
+            out[int(th_tag)] = [u for u in units if bool(getattr(u, "can_attack_ground", False))]
+        return out
+
+    @staticmethod
     def _enemy_centroid(enemies: List[Unit], fallback: Point2) -> Point2:
         points: list[Point2] = []
         for e in enemies:
@@ -61,11 +117,14 @@ class Threat:
         return Point2((x, y))
 
     @staticmethod
-    def _urgency_from(enemy_count: int, enemy_power: float) -> int:
-        if enemy_count <= 0 or enemy_power <= 0.0:
+    def _urgency_from(*, enemy_count: int, can_win_value: int) -> int:
+        if enemy_count <= 0:
             return 0
-        # Count and power both contribute, but avoid hard-lock too early.
-        raw = (enemy_count * 6.0) + (enemy_power * 14.0)
+        # Ares combat-sim scale is centered around 5 ~= even fight.
+        # Lower values mean we're losing and urgency should rise quickly.
+        lose_pressure = max(0.0, float(5 - int(can_win_value)) * 16.0)
+        count_pressure = min(36.0, float(enemy_count) * 5.0)
+        raw = lose_pressure + count_pressure
         return int(max(0.0, min(100.0, raw)))
 
     def evaluate(self, bot) -> ThreatReport:
@@ -80,8 +139,8 @@ class Threat:
                 primary_threat_pos=None,
             )
 
-        enemies = bot.enemy_units
-        if not enemies:
+        by_base_manager = self._enemy_by_base_from_manager(bot)
+        if not by_base_manager:
             return ThreatReport(
                 radius=self.defend_radius,
                 base_threats=(),
@@ -93,11 +152,19 @@ class Threat:
 
         base_reports: list[BaseThreatReport] = []
         for th in ths:
-            near = enemies.closer_than(self.defend_radius, th.position)
-            near_threats = [e for e in near if is_ground_threat(e)]
+            near_threats = list(by_base_manager.get(int(getattr(th, "tag", -1) or -1), []))
             enemy_count = int(len(near_threats))
-            enemy_power = float(sum(danger_weight(e) for e in near_threats))
-            urgency = self._urgency_from(enemy_count=enemy_count, enemy_power=enemy_power)
+            own_near = self._own_army_near_base(
+                bot,
+                th_pos=th.position,
+                radius=max(float(self.defend_radius) + 8.0, 30.0),
+            )
+            can_win_value = self._can_win_value(bot, own_units=own_near, enemy_units=near_threats)
+            urgency = self._urgency_from(
+                enemy_count=enemy_count,
+                can_win_value=int(can_win_value),
+            )
+            enemy_power = max(0.0, float(5 - int(can_win_value)))
             threat_pos = self._enemy_centroid(near_threats, fallback=th.position) if enemy_count > 0 else None
 
             base_reports.append(

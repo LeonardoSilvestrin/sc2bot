@@ -25,8 +25,6 @@ def expand_compact_profile(profile: Dict[str, Any]) -> Dict[str, Any]:
            "STANDARD": {
              "comp": {...},
              "priority": [...],
-             "bank_minerals": 650,
-             "bank_gas": 180,
              "pid": {...},
              "army_supply_milestones": [...],
              "unit_count_milestones": [...],
@@ -38,7 +36,6 @@ def expand_compact_profile(profile: Dict[str, Any]) -> Dict[str, Any]:
            },
            ...
          },
-         "reserve_costs": {...},
          "transition_overrides": {...}
        }
     """
@@ -50,12 +47,11 @@ def expand_compact_profile(profile: Dict[str, Any]) -> Dict[str, Any]:
     out: Dict[str, Any] = {}
     for mode in _MODES:
         mode_cfg = dict(modes.get(mode, {}) or {})
+        if "bank_minerals" in mode_cfg or "bank_gas" in mode_cfg:
+            raise RuntimeError(f"invalid_contract:build_profile:{mode}:deprecated_bank_fields")
         out[f"comp_{mode.lower()}"] = deepcopy(mode_cfg.get("comp", {}))
         out[f"priority_{mode.lower()}"] = list(mode_cfg.get("priority", []))
 
-    out["reserve_costs"] = deepcopy(raw.get("reserve_costs", {}))
-    out["bank_setpoint_minerals"] = _mode_map(modes, "bank_minerals", 650)
-    out["bank_setpoint_gas"] = _mode_map(modes, "bank_gas", 180)
     out["pid_tuning_by_mode"] = _mode_map(modes, "pid", {})
     out["army_supply_milestones_by_mode"] = _mode_map(modes, "army_supply_milestones", [])
     out["unit_count_milestones_by_mode"] = _mode_map(modes, "unit_count_milestones", [])
@@ -66,4 +62,3 @@ def expand_compact_profile(profile: Dict[str, Any]) -> Dict[str, Any]:
     out["tech_timing_milestones_by_mode"] = _mode_map(modes, "tech_timing_milestones", [])
     out["transition_overrides"] = deepcopy(raw.get("transition_overrides", {}))
     return out
-

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from ares.dicts.cost_dict import COST_DICT
 from sc2.ids.unit_typeid import UnitTypeId as U
 
 from bot.mind.attention import Attention
@@ -58,6 +59,52 @@ def _mode_value(cfg_map: dict[str, Any], *, mode: str, key: str) -> Any:
     if out is None:
         raise RuntimeError(f"missing_contract:macro.desired.{key}:{mode}")
     return out
+
+
+def _unit_reserve_cost(unit_name: str) -> tuple[int, int]:
+    if not str(unit_name):
+        return 0, 0
+    try:
+        uid = getattr(U, str(unit_name))
+        cost = COST_DICT.get(uid, None)
+        if cost is not None:
+            return int(getattr(cost, "minerals", 0) or 0), int(getattr(cost, "vespene", 0) or 0)
+    except Exception:
+        pass
+    return 0, 0
+
+
+def _infer_bank_targets(*, comp: dict[str, float], mode: str) -> tuple[int, int]:
+    total_w = 0.0
+    avg_m = 0.0
+    avg_g = 0.0
+    for unit_name, w in dict(comp or {}).items():
+        weight = max(0.0, float(w))
+        if weight <= 0.0:
+            continue
+        total_w += float(weight)
+        m, g = _unit_reserve_cost(str(unit_name))
+        avg_m += float(m) * float(weight)
+        avg_g += float(g) * float(weight)
+    if total_w > 1e-6:
+        avg_m /= float(total_w)
+        avg_g /= float(total_w)
+    gas_ratio = float(avg_g) / max(1.0, float(avg_m))
+    mineral_factor = max(0.0, min(1.4, float(avg_m) / 120.0))
+    tech_factor = max(0.0, min(1.4, float(avg_g) / 90.0))
+
+    base_m = 420.0 + (160.0 * mineral_factor) + (80.0 * max(0.0, 1.0 - gas_ratio))
+    base_g = 110.0 + (170.0 * tech_factor) + (90.0 * min(1.0, gas_ratio))
+
+    mode_mul = {
+        "RUSH_RESPONSE": (0.78, 0.82),
+        "DEFENSIVE": (0.88, 0.90),
+        "STANDARD": (1.00, 1.00),
+        "PUNISH": (1.20, 1.15),
+    }.get(str(mode).upper(), (1.0, 1.0))
+    bank_m = int(max(300, min(980, round(base_m * float(mode_mul[0])))))
+    bank_g = int(max(90, min(520, round(base_g * float(mode_mul[1])))))
+    return int(bank_m), int(bank_g)
 
 
 def _harass_missing_unit_from_cooldown(*, awareness: Awareness, now: float) -> str | None:
@@ -198,14 +245,9 @@ def derive_army_comp_intel(
     comp = _normalize(comp)
     controller_comp = _controller_comp(comp=comp, priority_units=priority_units)
     top_unit = str(priority_units[0]) if priority_units else ""
-    reserve_costs = dict(profile["reserve_costs"])
-    reserve = reserve_costs.get(top_unit, (0, 0))
-    reserve_m, reserve_g = int(reserve[0]), int(reserve[1])
+    reserve_m, reserve_g = _unit_reserve_cost(str(top_unit))
 
-    bank_setpoint_minerals = dict(profile["bank_setpoint_minerals"])
-    bank_setpoint_gas = dict(profile["bank_setpoint_gas"])
-    bank_target_m = int(bank_setpoint_minerals[str(mode)])
-    bank_target_g = int(bank_setpoint_gas[str(mode)])
+    bank_target_m, bank_target_g = _infer_bank_targets(comp=comp, mode=str(mode))
 
     army_supply_milestones = list(_mode_value(dict(profile["army_supply_milestones_by_mode"]), mode=str(mode), key="army_supply_milestones"))
     timing_attacks = list(_mode_value(dict(profile["timing_attacks_by_mode"]), mode=str(mode), key="timing_attacks"))

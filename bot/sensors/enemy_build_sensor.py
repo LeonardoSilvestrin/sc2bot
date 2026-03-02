@@ -57,6 +57,23 @@ def _progress_stats(values: list[float]) -> dict:
     }
 
 
+def _enemy_from_managers(bot) -> tuple[list, list]:
+    if not hasattr(bot, "mediator"):
+        raise RuntimeError("missing_contract:mediator")
+    all_enemy = list(getattr(bot.mediator, "get_all_enemy", []) or [])
+    units = []
+    structs = []
+    for u in all_enemy:
+        try:
+            if bool(getattr(u, "is_structure", False)):
+                structs.append(u)
+            else:
+                units.append(u)
+        except Exception:
+            continue
+    return units, structs
+
+
 def derive_enemy_build_sensor(bot) -> EnemyBuildSnapshot:
     """
     EnemyBuildSensor (tick facts -> Attention):
@@ -80,8 +97,13 @@ def derive_enemy_build_sensor(bot) -> EnemyBuildSnapshot:
 
     progress_by_type: Dict[U, list[float]] = defaultdict(list)
 
-    # enemy units currently visible
-    for u in bot.enemy_units:
+    enemy_units_mgr, enemy_structs_mgr = _enemy_from_managers(bot)
+    if not hasattr(bot, "enemy_structures"):
+        raise RuntimeError("missing_contract:bot.enemy_structures")
+    enemy_structs_visible = list(bot.enemy_structures or [])
+
+    # enemy units (prefer manager cache/memory)
+    for u in enemy_units_mgr:
         try:
             tid = u.type_id
             units_all[tid] += 1
@@ -90,23 +112,26 @@ def derive_enemy_build_sensor(bot) -> EnemyBuildSnapshot:
         except Exception:
             continue
 
-    # enemy structures currently visible (+ progress stats)
-    for s in bot.enemy_structures:
+    # enemy structures (prefer manager cache/memory) for counts
+    for s in enemy_structs_mgr:
         try:
             tid = s.type_id
             structs_all[tid] += 1
+            if s.position.distance_to(enemy_main) <= main_radius:
+                structs_main[tid] += 1
+        except Exception:
+            continue
 
-            # build_progress is meaningful for "ongoing vs ready"
+    # visibility-specific structure progress stats
+    for s in enemy_structs_visible:
+        try:
+            tid = s.type_id
             prog = float(getattr(s, "build_progress", 1.0))
-            # clamp for sanity
             if prog < 0.0:
                 prog = 0.0
             if prog > 1.0:
                 prog = 1.0
             progress_by_type[tid].append(prog)
-
-            if s.position.distance_to(enemy_main) <= main_radius:
-                structs_main[tid] += 1
         except Exception:
             continue
 
@@ -115,7 +140,7 @@ def derive_enemy_build_sensor(bot) -> EnemyBuildSnapshot:
     nat_best_prog: Optional[float] = None
     nat_best_type: Optional[U] = None
     if enemy_nat is not None:
-        for s in bot.enemy_structures:
+        for s in enemy_structs_visible:
             try:
                 if s.type_id not in _TOWNHALL_TYPES:
                     continue
