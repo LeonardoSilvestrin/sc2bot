@@ -2,20 +2,52 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from bot.intel.opening_intel import OpeningIntelConfig, derive_enemy_opening_intel
+from sc2.ids.unit_typeid import UnitTypeId as U
+
+from bot.intel.utils.enemy_econ_estimates import count_enemy_bases
 from bot.intel.weak_points_intel import WeakPointsIntelConfig, derive_enemy_weak_points_intel
 from bot.mind.attention import Attention
-from bot.mind.awareness import Awareness
+from bot.mind.awareness import Awareness, K
 
 
 @dataclass(frozen=True)
 class EnemyBuildIntelConfig:
     """
-    Thin orchestrator config that delegates to dedicated intel modules.
+    Enemy build snapshot + weak points intel.
+    Opening/rush classification lives in opening_intel and must be called separately.
     """
 
-    opening: OpeningIntelConfig = field(default_factory=OpeningIntelConfig)
     weak_points: WeakPointsIntelConfig = field(default_factory=WeakPointsIntelConfig)
+    ttl_s: float = 15.0
+    comp_top_n: int = 12
+
+
+_WORKER_TYPES = (U.SCV, U.PROBE, U.DRONE, U.MULE, U.LARVA, U.EGG, U.OVERLORD)
+_WORKER_TYPE_NAMES = frozenset(u.name for u in _WORKER_TYPES)
+
+
+def _unit_name(uid) -> str:
+    return str(getattr(uid, "name", str(uid)))
+
+
+def _normalize_comp(enemy_units: dict, *, top_n: int) -> tuple[list[dict[str, int]], int]:
+    pairs: list[tuple[str, int]] = []
+    total = 0
+    for uid, cnt in (enemy_units or {}).items():
+        try:
+            n = int(cnt)
+        except Exception:
+            continue
+        if n <= 0:
+            continue
+        name = _unit_name(uid)
+        if name in _WORKER_TYPE_NAMES:
+            continue
+        pairs.append((name, n))
+        total += int(n)
+    pairs.sort(key=lambda x: x[1], reverse=True)
+    top = [{"unit": str(name), "count": int(n)} for name, n in pairs[: max(1, int(top_n))]]
+    return top, int(total)
 
 
 def derive_enemy_build_intel(
@@ -26,13 +58,64 @@ def derive_enemy_build_intel(
     now: float,
     cfg: EnemyBuildIntelConfig = EnemyBuildIntelConfig(),
 ) -> None:
-    derive_enemy_opening_intel(
-        bot,
-        awareness=awareness,
-        attention=attention,
+    eb = attention.enemy_build
+    enemy_units = dict(getattr(eb, "enemy_units", {}) or {})
+    enemy_structures = dict(getattr(eb, "enemy_structures", {}) or {})
+    enemy_units_main = dict(getattr(eb, "enemy_units_main", {}) or {})
+    enemy_structures_main = dict(getattr(eb, "enemy_structures_main", {}) or {})
+
+    comp_top, comp_total = _normalize_comp(enemy_units, top_n=int(cfg.comp_top_n))
+    comp_main_top, comp_main_total = _normalize_comp(enemy_units_main, top_n=int(cfg.comp_top_n))
+    bases_visible = int(count_enemy_bases(enemy_structures))
+    natural_on_ground = bool(getattr(eb, "enemy_natural_on_ground", False))
+
+    awareness.mem.set(
+        K("enemy", "build", "snapshot"),
+        value={
+            "bases_visible": int(bases_visible),
+            "natural_on_ground": bool(natural_on_ground),
+            "natural_townhall_progress": float(getattr(eb, "enemy_natural_townhall_progress", 0.0) or 0.0),
+            "natural_townhall_type": str(getattr(eb, "enemy_natural_townhall_type", "") or ""),
+            "army_comp_top": list(comp_top),
+            "army_comp_total_visible": int(comp_total),
+            "army_comp_main_top": list(comp_main_top),
+            "army_comp_main_total_visible": int(comp_main_total),
+        },
         now=now,
-        cfg=cfg.opening,
+        ttl=float(cfg.ttl_s),
     )
+    awareness.mem.set(K("enemy", "build", "units"), value=dict(enemy_units), now=now, ttl=float(cfg.ttl_s))
+    awareness.mem.set(K("enemy", "build", "structures"), value=dict(enemy_structures), now=now, ttl=float(cfg.ttl_s))
+    awareness.mem.set(K("enemy", "build", "units_main"), value=dict(enemy_units_main), now=now, ttl=float(cfg.ttl_s))
+    awareness.mem.set(
+        K("enemy", "build", "structures_main"),
+        value=dict(enemy_structures_main),
+        now=now,
+        ttl=float(cfg.ttl_s),
+    )
+    awareness.mem.set(
+        K("enemy", "build", "structures_progress"),
+        value=dict(getattr(eb, "enemy_structures_progress", {}) or {}),
+        now=now,
+        ttl=float(cfg.ttl_s),
+    )
+    awareness.mem.set(
+        K("enemy", "army", "comp_summary"),
+        value={
+            "top_units": list(comp_top),
+            "total_visible_non_worker": int(comp_total),
+            "top_units_main": list(comp_main_top),
+            "total_visible_non_worker_main": int(comp_main_total),
+            "bases_visible": int(bases_visible),
+            "natural_on_ground": bool(natural_on_ground),
+        },
+        now=now,
+        ttl=float(cfg.ttl_s),
+    )
+    awareness.mem.set(K("enemy", "army", "last_update_t"), value=float(now), now=now, ttl=None)
+    awareness.mem.set(K("enemy", "build", "last_seen_t"), value=float(now), now=now, ttl=None)
+    if enemy_units_main or enemy_structures_main:
+        awareness.mem.set(K("enemy", "build", "last_seen_main_t"), value=float(now), now=now, ttl=None)
     derive_enemy_weak_points_intel(
         bot,
         awareness=awareness,

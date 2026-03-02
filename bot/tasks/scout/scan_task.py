@@ -6,7 +6,7 @@ from sc2.ids.ability_id import AbilityId
 
 from bot.devlog import DevLogger
 from bot.mind.attention import Attention
-from bot.mind.awareness import Awareness
+from bot.mind.awareness import Awareness, K
 from bot.tasks.base_task import BaseTask, TaskResult, TaskTick
 
 
@@ -57,6 +57,10 @@ class ScanAt(BaseTask):
                 self.awareness.mark_scanned_enemy_main(now=now)
             except Exception:
                 pass
+        try:
+            self.awareness.mem.set(K("intel", "scan", "by_label", str(self.label), "last_t"), value=float(now), now=now, ttl=None)
+        except Exception:
+            pass
 
         if self.log is not None:
             try:

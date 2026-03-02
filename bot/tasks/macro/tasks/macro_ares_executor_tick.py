@@ -9,6 +9,7 @@ from ares.behaviors.macro.gas_building_controller import GasBuildingController
 from ares.behaviors.macro.macro_plan import MacroPlan
 from ares.behaviors.macro.production_controller import ProductionController
 from ares.behaviors.macro.spawn_controller import SpawnController
+from ares.behaviors.macro.upgrade_ccs import UpgradeCCs
 from sc2.ids.unit_typeid import UnitTypeId as U
 
 from bot.devlog import DevLogger
@@ -23,6 +24,8 @@ class MacroAresExecutorTick(BaseTask):
     log: DevLogger | None = None
     log_every_iters: int = 22
     apply_min_interval_s: float = 1.0
+    lane_whitelist: tuple[str, ...] = ()
+    force_front_lanes: tuple[str, ...] = ()
 
     _last_sig: str = ""
     _next_apply_at: float = 0.0
@@ -35,12 +38,19 @@ class MacroAresExecutorTick(BaseTask):
         log: DevLogger | None = None,
         log_every_iters: int = 22,
         apply_min_interval_s: float = 1.0,
+        task_id: str = "macro_ares_executor",
+        domain: str = "MACRO_EXECUTOR",
+        commitment: int = 10,
+        lane_whitelist: tuple[str, ...] | None = None,
+        force_front_lanes: tuple[str, ...] | None = None,
     ):
-        super().__init__(task_id="macro_ares_executor", domain="MACRO_EXECUTOR", commitment=10)
+        super().__init__(task_id=str(task_id), domain=str(domain), commitment=int(commitment))
         self.awareness = awareness
         self.log = log
         self.log_every_iters = int(log_every_iters)
         self.apply_min_interval_s = float(apply_min_interval_s)
+        self.lane_whitelist = tuple(str(x) for x in (lane_whitelist or ()))
+        self.force_front_lanes = tuple(str(x) for x in (force_front_lanes or ()))
         self._last_sig = ""
         self._next_apply_at = 0.0
         self._apply_count = 0
@@ -75,11 +85,13 @@ class MacroAresExecutorTick(BaseTask):
         enable_supply: bool,
         enable_gas: bool,
         gas_target: int,
+        gas_workers_per_refinery: int,
         enable_spawn: bool,
         freeflow_mode: bool,
         enable_production: bool,
         enable_expansion: bool,
         expand_to: int,
+        enable_orbital_morph: bool,
     ) -> str:
         comp_items = sorted(
             ((u.name, float(cfg.get("proportion", 0.0)), int(cfg.get("priority", 0))) for u, cfg in army_comp.items()),
@@ -89,10 +101,11 @@ class MacroAresExecutorTick(BaseTask):
             [
                 f"w:{int(enable_workers)}:{int(scv_cap)}",
                 f"s:{int(enable_supply)}",
-                f"g:{int(enable_gas)}:{int(gas_target)}",
+                f"g:{int(enable_gas)}:{int(gas_target)}:{int(gas_workers_per_refinery)}",
                 f"sp:{int(enable_spawn)}:{int(freeflow_mode)}",
                 f"pr:{int(enable_production)}",
                 f"ex:{int(enable_expansion)}:{int(expand_to)}",
+                f"orb:{int(enable_orbital_morph)}",
                 "comp:" + ",".join([f"{n}:{p:.4f}:{pri}" for (n, p, pri) in comp_items]),
             ]
         )
@@ -106,6 +119,24 @@ class MacroAresExecutorTick(BaseTask):
         bor = getattr(bot, "build_order_runner", None)
         if bor is not None and not bool(getattr(bor, "build_completed", False)):
             return TaskResult.running("opening_buildorder_active")
+        macro_budget_enabled = bool(
+            self.awareness.mem.get(
+                K("ego", "exec_budget", "macro_enabled"),
+                now=now,
+                default=True,
+            )
+        )
+        if not macro_budget_enabled:
+            return TaskResult.running("macro_budget_blocked")
+        macro_cadence = float(
+            self.awareness.mem.get(
+                K("ego", "exec_budget", "macro_cadence"),
+                now=now,
+                default=1.0,
+            )
+            or 1.0
+        )
+        macro_cadence = max(0.1, min(1.0, float(macro_cadence)))
 
         cooldown_until = float(self.awareness.mem.get(K("macro", "exec", "cooldown_until"), now=now, default=0.0) or 0.0)
         if now < cooldown_until:
@@ -116,30 +147,125 @@ class MacroAresExecutorTick(BaseTask):
         except Exception:
             return TaskResult.running("missing_army_comp")
 
-        enable_workers = bool(self.awareness.mem.get(K("macro", "exec", "enable_workers"), now=now, default=True))
-        scv_cap = int(self.awareness.mem.get(K("macro", "exec", "scv_cap"), now=now, default=66) or 66)
-        enable_supply = bool(self.awareness.mem.get(K("macro", "exec", "enable_supply"), now=now, default=True))
-        enable_gas = bool(self.awareness.mem.get(K("macro", "exec", "enable_gas"), now=now, default=True))
+        plan_active = self.awareness.mem.get(K("macro", "plan", "active"), now=now, default={}) or {}
+        if not isinstance(plan_active, dict):
+            plan_active = {}
+        enable_workers = bool(
+            plan_active.get(
+                "enable_workers",
+                self.awareness.mem.get(K("macro", "exec", "enable_workers"), now=now, default=True),
+            )
+        )
+        scv_cap = int(
+            plan_active.get(
+                "scv_cap",
+                self.awareness.mem.get(K("macro", "exec", "scv_cap"), now=now, default=66) or 66,
+            )
+            or 66
+        )
+        enable_supply = bool(
+            plan_active.get(
+                "enable_supply",
+                self.awareness.mem.get(K("macro", "exec", "enable_supply"), now=now, default=True),
+            )
+        )
+        enable_gas = bool(
+            plan_active.get(
+                "enable_gas",
+                self.awareness.mem.get(K("macro", "exec", "enable_gas"), now=now, default=True),
+            )
+        )
         gas_target = int(
-            self.awareness.mem.get(
-                K("macro", "exec", "gas_target"),
-                now=now,
-                default=max(0, int(attention.macro.bases_total) * 2),
+            plan_active.get(
+                "gas_target",
+                self.awareness.mem.get(
+                    K("macro", "exec", "gas_target"),
+                    now=now,
+                    default=max(0, int(attention.macro.bases_total) * 2),
+                )
+                or 0,
             )
             or 0
         )
-        enable_spawn = bool(self.awareness.mem.get(K("macro", "exec", "enable_spawn"), now=now, default=True))
-        freeflow_mode = bool(self.awareness.mem.get(K("macro", "exec", "freeflow_mode"), now=now, default=False))
-        enable_production = bool(self.awareness.mem.get(K("macro", "exec", "enable_production"), now=now, default=True))
-        enable_expansion = bool(self.awareness.mem.get(K("macro", "exec", "enable_expansion"), now=now, default=True))
+        gas_workers_per_refinery = int(
+            plan_active.get(
+                "gas_workers_per_refinery",
+                self.awareness.mem.get(
+                    K("macro", "gas", "target_workers_per_refinery"),
+                    now=now,
+                    default=3,
+                )
+                or 3,
+            )
+            or 3
+        )
+        gas_workers_per_refinery = max(0, min(3, int(gas_workers_per_refinery)))
+        enable_spawn = bool(
+            plan_active.get(
+                "enable_spawn",
+                self.awareness.mem.get(K("macro", "exec", "enable_spawn"), now=now, default=True),
+            )
+        )
+        freeflow_mode = bool(
+            plan_active.get(
+                "freeflow_mode",
+                self.awareness.mem.get(K("macro", "exec", "freeflow_mode"), now=now, default=False),
+            )
+        )
+        enable_production = bool(
+            plan_active.get(
+                "enable_production",
+                self.awareness.mem.get(K("macro", "exec", "enable_production"), now=now, default=True),
+            )
+        )
+        enable_expansion = bool(
+            plan_active.get(
+                "enable_expansion",
+                self.awareness.mem.get(K("macro", "exec", "enable_expansion"), now=now, default=True),
+            )
+        )
+        enable_orbital_morph = bool(
+            plan_active.get(
+                "enable_orbital_morph",
+                self.awareness.mem.get(K("macro", "exec", "enable_orbital_morph"), now=now, default=True),
+            )
+        )
         expand_to = int(
-            self.awareness.mem.get(
-                K("macro", "exec", "expand_to"),
-                now=now,
-                default=max(1, int(attention.macro.bases_total)),
+            plan_active.get(
+                "expand_to",
+                self.awareness.mem.get(
+                    K("macro", "exec", "expand_to"),
+                    now=now,
+                    default=max(1, int(attention.macro.bases_total)),
+                )
+                or 1,
             )
             or 1
         )
+        lane_order_raw = plan_active.get(
+            "lane_order",
+            self.awareness.mem.get(
+                K("macro", "exec", "lane_order"),
+                now=now,
+                default=["workers", "supply", "gas", "spawn", "production", "expand"],
+            ),
+        )
+        lane_order = [str(x) for x in lane_order_raw] if isinstance(lane_order_raw, list) else [
+            "workers",
+            "supply",
+            "gas",
+            "spawn",
+            "production",
+            "expand",
+        ]
+        if self.lane_whitelist:
+            allowed = set(self.lane_whitelist)
+            lane_order = [ln for ln in lane_order if ln in allowed]
+            if not lane_order:
+                lane_order = [ln for ln in ["workers", "supply", "gas", "spawn", "production", "expand"] if ln in allowed]
+        if self.force_front_lanes:
+            forced = [ln for ln in self.force_front_lanes if ln in lane_order]
+            lane_order = forced + [ln for ln in lane_order if ln not in set(forced)]
 
         sig = self._sig_from_plan(
             army_comp=army_comp,
@@ -148,73 +274,124 @@ class MacroAresExecutorTick(BaseTask):
             enable_supply=enable_supply,
             enable_gas=enable_gas,
             gas_target=gas_target,
+            gas_workers_per_refinery=gas_workers_per_refinery,
             enable_spawn=enable_spawn,
             freeflow_mode=freeflow_mode,
             enable_production=enable_production,
             enable_expansion=enable_expansion,
             expand_to=expand_to,
+            enable_orbital_morph=enable_orbital_morph,
         )
-        if sig == self._last_sig:
-            return TaskResult.running("macro_executor_no_change")
-        if now < float(self._next_apply_at):
-            return TaskResult.running("macro_executor_throttled")
 
         plan = MacroPlan()
-        if enable_workers:
-            plan.add(BuildWorkers(to_count=max(0, int(scv_cap))))
-        if enable_supply:
-            plan.add(
-                AutoSupply(
-                    base_location=bot.start_location,
-                    return_true_if_supply_required=False,
-                )
-            )
-        if enable_gas:
-            plan.add(GasBuildingController(to_count=max(0, int(gas_target))))
-        if enable_spawn:
-            plan.add(
-                SpawnController(
-                    army_composition_dict=army_comp,
-                    freeflow_mode=bool(freeflow_mode),
-                    ignore_proportions_below_unit_count=8,
-                    over_produce_on_low_tech=True,
-                )
-            )
-        if enable_production:
-            plan.add(
-                ProductionController(
-                    army_composition_dict=army_comp,
-                    base_location=bot.start_location,
-                )
-            )
-        if enable_expansion:
-            plan.add(ExpansionController(to_count=max(1, int(expand_to))))
+        if bool(enable_orbital_morph):
+            plan.add(UpgradeCCs(to=U.ORBITALCOMMAND, prioritize=True))
 
+        def _add_lane(lane: str) -> None:
+            if lane == "workers" and enable_workers:
+                plan.add(BuildWorkers(to_count=max(0, int(scv_cap))))
+                return
+            if lane == "supply" and enable_supply:
+                plan.add(
+                    AutoSupply(
+                        base_location=bot.start_location,
+                        return_true_if_supply_required=False,
+                    )
+                )
+                return
+            if lane == "gas" and enable_gas:
+                plan.add(GasBuildingController(to_count=max(0, int(gas_target))))
+                return
+            if lane == "spawn" and enable_spawn:
+                plan.add(
+                    SpawnController(
+                        army_composition_dict=army_comp,
+                        freeflow_mode=bool(freeflow_mode),
+                        ignore_proportions_below_unit_count=8,
+                        over_produce_on_low_tech=True,
+                    )
+                )
+                return
+            if lane == "production" and enable_production:
+                plan.add(
+                    ProductionController(
+                        army_composition_dict=army_comp,
+                        base_location=bot.start_location,
+                    )
+                )
+                return
+            if lane == "expand" and enable_expansion:
+                plan.add(ExpansionController(to_count=max(1, int(expand_to))))
+                return
+
+        seen = set()
+        for lane in lane_order + ["workers", "supply", "gas", "spawn", "production", "expand"]:
+            if lane in seen:
+                continue
+            seen.add(lane)
+            _add_lane(str(lane))
+
+        sig_changed = str(sig) != str(self._last_sig)
         bot.register_behavior(plan)
+        # Central gas ownership: planner decides workers-per-gas, resource manager executes.
+        try:
+            if bool(enable_gas):
+                bot.mediator.set_workers_per_gas(amount=int(gas_workers_per_refinery))
+        except Exception:
+            pass
         self._last_sig = str(sig)
-        self._next_apply_at = float(now) + max(0.1, float(self.apply_min_interval_s))
+        effective_interval = max(0.1, float(self.apply_min_interval_s) / float(macro_cadence))
+        self._next_apply_at = float(now) + float(effective_interval)
         self._apply_count += 1
-        self.awareness.mem.set(K("macro", "exec", "register_count"), value=int(self._apply_count), now=now, ttl=None)
+        prev_global_register_count = int(
+            self.awareness.mem.get(K("macro", "exec", "register_count"), now=now, default=0) or 0
+        )
+        self.awareness.mem.set(
+            K("macro", "exec", "register_count"),
+            value=int(prev_global_register_count + 1),
+            now=now,
+            ttl=None,
+        )
+        self.awareness.mem.set(
+            K("macro", "exec", "register_count", str(self.task_id)),
+            value=int(self._apply_count),
+            now=now,
+            ttl=None,
+        )
 
-        if self.log is not None:
+        if self.log is not None and (
+            (int(tick.iteration) % max(1, int(self.log_every_iters)) == 0)
+            or bool(sig_changed)
+        ):
+            plan_version = int(self.awareness.mem.get(K("macro", "plan", "version"), now=now, default=0) or 0)
+            plan_hash = str(self.awareness.mem.get(K("macro", "plan", "hash"), now=now, default="") or "")
             self.log.emit(
                 "macro_executor_applied",
                 {
                     "iter": int(tick.iteration),
                     "t": round(float(now), 2),
+                    "task_id": str(self.task_id),
+                    "domain": str(self.domain),
                     "apply_count": int(self._apply_count),
                     "apply_min_interval_s": float(self.apply_min_interval_s),
+                    "effective_apply_interval_s": float(effective_interval),
+                    "macro_cadence": float(macro_cadence),
                     "enable_workers": bool(enable_workers),
                     "scv_cap": int(scv_cap),
                     "enable_supply": bool(enable_supply),
                     "enable_gas": bool(enable_gas),
                     "gas_target": int(gas_target),
+                    "gas_workers_per_refinery": int(gas_workers_per_refinery),
                     "enable_spawn": bool(enable_spawn),
                     "freeflow_mode": bool(freeflow_mode),
                     "enable_production": bool(enable_production),
                     "enable_expansion": bool(enable_expansion),
                     "expand_to": int(expand_to),
+                    "enable_orbital_morph": bool(enable_orbital_morph),
+                    "lane_order": list(lane_order),
                     "army_comp_count": int(len(army_comp)),
+                    "macro_plan_version": int(plan_version),
+                    "macro_plan_hash": str(plan_hash),
                 },
             )
 

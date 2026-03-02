@@ -23,6 +23,22 @@ class PriorityPolicyConfig:
     executor_bank_dampen_gain: float = 0.30
     executor_bank_target_minerals: int = 700
     executor_bank_target_gas: int = 240
+    parity_army_behind_defense_boost: float = 0.70
+    parity_army_behind_macro_army_boost: float = 0.55
+    parity_army_behind_macro_econ_dampen: float = 0.40
+    parity_army_behind_tech_dampen: float = 0.45
+    parity_econ_behind_macro_econ_boost: float = 0.40
+    parity_econ_behind_expand_boost: float = 0.28
+    parity_econ_behind_army_dampen: float = 0.24
+    parity_mode_aggressive_army_boost: float = 0.42
+    parity_mode_aggressive_harass_boost: float = 0.50
+    parity_mode_aggressive_econ_dampen: float = 0.24
+    parity_mode_macro_econ_boost: float = 0.36
+    parity_mode_macro_expand_boost: float = 0.30
+    parity_mode_macro_army_dampen: float = 0.16
+    rush_bank_army_boost: float = 0.55
+    rush_bank_econ_dampen: float = 0.40
+    rush_bank_tech_dampen: float = 0.45
 
     min_domain_weight: float = 0.45
     max_domain_weight: float = 2.75
@@ -62,6 +78,20 @@ class PriorityPolicy:
 
         urgency = int(attention.combat.primary_urgency)
         threat_factor = self._threat_factor(urgency=urgency)
+        parity_army_behind = float(
+            awareness.mem.get(K("strategy", "parity", "severity", "army_behind"), now=now, default=0.0) or 0.0
+        )
+        parity_econ_behind = float(
+            awareness.mem.get(K("strategy", "parity", "severity", "econ_behind"), now=now, default=0.0) or 0.0
+        )
+        parity_army_behind = self._clamp(parity_army_behind, low=0.0, high=1.0)
+        parity_econ_behind = self._clamp(parity_econ_behind, low=0.0, high=1.0)
+        parity_state = str(
+            awareness.mem.get(K("strategy", "parity", "state"), now=now, default="TRADEOFF_MIXED") or "TRADEOFF_MIXED"
+        ).upper()
+        macro_mode = str(awareness.mem.get(K("macro", "desired", "mode"), now=now, default="STANDARD") or "STANDARD").upper()
+        rush_state = str(awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
+        rush_army_dump = bool(awareness.mem.get(K("macro", "exec", "rush_army_dump"), now=now, default=False))
         if threat_factor > 0.0:
             if domain == "DEFENSE":
                 domain_weight += float(self.cfg.defense_weight_boost) * float(threat_factor)
@@ -71,13 +101,102 @@ class PriorityPolicy:
                 domain_weight *= damp
                 notes.append("macro_dampen_from_threat")
 
+        if parity_army_behind > 0.0:
+            if domain == "DEFENSE":
+                domain_weight += float(self.cfg.parity_army_behind_defense_boost) * float(parity_army_behind)
+                notes.append("defense_boost_from_parity_army_behind")
+            elif domain == "MACRO_ARMY_EXECUTOR":
+                domain_weight += float(self.cfg.parity_army_behind_macro_army_boost) * float(parity_army_behind)
+                notes.append("macro_army_boost_from_parity_army_behind")
+            elif domain == "MACRO_ECON_EXECUTOR":
+                damp = max(
+                    0.0,
+                    1.0 - (float(self.cfg.parity_army_behind_macro_econ_dampen) * float(parity_army_behind)),
+                )
+                domain_weight *= damp
+                notes.append("macro_econ_dampen_from_parity_army_behind")
+            elif domain == "TECH_EXECUTOR":
+                damp = max(
+                    0.0,
+                    1.0 - (float(self.cfg.parity_army_behind_tech_dampen) * float(parity_army_behind)),
+                )
+                domain_weight *= damp
+                notes.append("tech_dampen_from_parity_army_behind")
+
+        if parity_econ_behind > 0.0:
+            if domain == "MACRO_ECON_EXECUTOR":
+                domain_weight += float(self.cfg.parity_econ_behind_macro_econ_boost) * float(parity_econ_behind)
+                notes.append("macro_econ_boost_from_parity_econ_behind")
+                if parity_state == "BEHIND_BOTH":
+                    domain_weight += float(self.cfg.parity_econ_behind_expand_boost) * float(parity_econ_behind)
+                    notes.append("expand_boost_from_parity_econ_behind")
+            elif domain == "MACRO_ARMY_EXECUTOR":
+                damp = max(
+                    0.0,
+                    1.0 - (float(self.cfg.parity_econ_behind_army_dampen) * float(parity_econ_behind)),
+                )
+                domain_weight *= damp
+                notes.append("macro_army_dampen_from_parity_econ_behind")
+
+        # Mode-conditioned response for mixed parity:
+        # AHEAD_ARMY_BEHIND_ECON => aggressive modes pressure, macro modes catch up eco.
+        if parity_state == "AHEAD_ARMY_BEHIND_ECON":
+            if macro_mode in {"PUNISH", "RUSH_RESPONSE"}:
+                if domain == "MACRO_ARMY_EXECUTOR":
+                    domain_weight += float(self.cfg.parity_mode_aggressive_army_boost) * float(parity_econ_behind)
+                    notes.append("mode_aggressive_army_pressure")
+                elif domain == "HARASS":
+                    domain_weight += float(self.cfg.parity_mode_aggressive_harass_boost) * float(parity_econ_behind)
+                    notes.append("mode_aggressive_harass_pressure")
+                elif domain == "MACRO_ECON_EXECUTOR":
+                    damp = max(
+                        0.0,
+                        1.0 - (float(self.cfg.parity_mode_aggressive_econ_dampen) * float(parity_econ_behind)),
+                    )
+                    domain_weight *= damp
+                    notes.append("mode_aggressive_econ_dampen")
+            elif macro_mode in {"STANDARD", "DEFENSIVE"}:
+                if domain == "MACRO_ECON_EXECUTOR":
+                    domain_weight += float(self.cfg.parity_mode_macro_econ_boost) * float(parity_econ_behind)
+                    notes.append("mode_macro_econ_catchup")
+                elif domain == "MACRO_ARMY_EXECUTOR":
+                    damp = max(
+                        0.0,
+                        1.0 - (float(self.cfg.parity_mode_macro_army_dampen) * float(parity_econ_behind)),
+                    )
+                    domain_weight *= damp
+                    notes.append("mode_macro_army_dampen")
+        elif parity_state == "BEHIND_ARMY_AHEAD_ECON":
+            # We can trade eco lead for army stabilization.
+            if domain == "MACRO_ARMY_EXECUTOR":
+                domain_weight += float(self.cfg.parity_mode_aggressive_army_boost) * float(parity_army_behind)
+                notes.append("mode_trade_eco_for_army")
+            elif domain == "TECH_EXECUTOR":
+                damp = max(
+                    0.0,
+                    1.0 - (float(self.cfg.parity_mode_macro_army_dampen) * float(parity_army_behind)),
+                )
+                domain_weight *= damp
+                notes.append("mode_trade_eco_tech_dampen")
+
         supply_left = int(attention.economy.supply_left)
         supply_cap = int(attention.economy.supply_cap)
         if domain == "MACRO_DEPOT_CONTROL" and supply_cap < 200 and supply_left <= int(self.cfg.depot_supply_left_low):
             domain_weight += float(self.cfg.depot_supply_weight_boost)
             notes.append("depot_boost_supply_low")
 
-        if domain == "MACRO_EXECUTOR":
+        if rush_army_dump or rush_state in {"SUSPECTED", "CONFIRMED", "HOLDING"}:
+            if domain == "MACRO_ARMY_EXECUTOR":
+                domain_weight += float(self.cfg.rush_bank_army_boost)
+                notes.append("rush_army_boost")
+            elif domain == "MACRO_ECON_EXECUTOR":
+                domain_weight *= max(0.0, 1.0 - float(self.cfg.rush_bank_econ_dampen))
+                notes.append("rush_econ_dampen")
+            elif domain == "TECH_EXECUTOR":
+                domain_weight *= max(0.0, 1.0 - float(self.cfg.rush_bank_tech_dampen))
+                notes.append("rush_tech_dampen")
+
+        if domain in {"MACRO_EXECUTOR", "MACRO_ARMY_EXECUTOR", "MACRO_ECON_EXECUTOR"}:
             if not bool(attention.macro.opening_done):
                 domain_weight += float(self.cfg.executor_opening_boost)
                 notes.append("executor_opening_boost")
@@ -119,6 +238,22 @@ class PriorityPolicy:
         awareness.mem.set(K("control", "priority", "effective_score", proposal_id), value=float(effective_score), now=now, ttl=5.0)
         awareness.mem.set(K("control", "priority", "domain_weight", proposal_id), value=float(domain_weight), now=now, ttl=5.0)
         awareness.mem.set(K("control", "priority", "proposal_bias", proposal_id), value=float(proposal_bias), now=now, ttl=5.0)
+        awareness.mem.set(
+            K("control", "priority", "components", proposal_id),
+            value={
+                "threat_factor": float(threat_factor),
+                "parity_army_behind": float(parity_army_behind),
+                "parity_econ_behind": float(parity_econ_behind),
+                "parity_state": str(parity_state),
+                "macro_mode": str(macro_mode),
+                "rush_state": str(rush_state),
+                "rush_army_dump": bool(rush_army_dump),
+                "bank_pressure": float(self._cached_bank_pressure),
+                "domain": str(domain),
+            },
+            now=now,
+            ttl=5.0,
+        )
         awareness.mem.set(K("control", "priority", "notes", proposal_id), value=list(notes), now=now, ttl=5.0)
 
         return PriorityDecision(

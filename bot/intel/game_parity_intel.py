@@ -16,6 +16,12 @@ class GameParityIntelConfig:
     ema_alpha: float = 0.22
     max_enemy_workers_assumed: int = 85
     expected_worker_period_s: float = 12.0
+    enemy_awareness_power_blend: float = 0.40
+    army_behind_norm: float = 22.0
+    army_ahead_norm: float = 22.0
+    econ_behind_norm: float = 18.0
+    econ_ahead_norm: float = 18.0
+    parity_state_trigger: float = 0.32
 
 
 _WORKER_TYPES: Tuple[U, ...] = (U.SCV, U.PROBE, U.DRONE)
@@ -68,6 +74,28 @@ def _army_power(units: Dict[U, int]) -> float:
     return float(p)
 
 
+def _army_power_named(units: list[dict]) -> float:
+    p = 0.0
+    for item in units:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("unit", "") or "").strip().upper()
+        if not name:
+            continue
+        try:
+            uid = getattr(U, name)
+        except Exception:
+            uid = None
+        try:
+            n = int(item.get("count", 0) or 0)
+        except Exception:
+            n = 0
+        if uid is None or n <= 0:
+            continue
+        p += float(_ARMY_WEIGHTS.get(uid, 1.0)) * float(n)
+    return float(p)
+
+
 def _ema(*, prev: float, cur: float, alpha: float) -> float:
     a = max(0.01, min(1.0, float(alpha)))
     return (float(prev) * (1.0 - a)) + (float(cur) * a)
@@ -79,6 +107,23 @@ def _state(v: float, *, low: float, high: float) -> str:
     if float(v) >= float(high):
         return "AHEAD"
     return "EVEN"
+
+
+def _parity_state(*, army_delta: float, econ_delta: float, cfg: GameParityIntelConfig) -> str:
+    army_behind = max(0.0, min(1.0, (0.0 - float(army_delta)) / max(1e-6, float(cfg.army_behind_norm))))
+    army_ahead = max(0.0, min(1.0, float(army_delta) / max(1e-6, float(cfg.army_ahead_norm))))
+    econ_behind = max(0.0, min(1.0, (0.0 - float(econ_delta)) / max(1e-6, float(cfg.econ_behind_norm))))
+    econ_ahead = max(0.0, min(1.0, float(econ_delta) / max(1e-6, float(cfg.econ_ahead_norm))))
+    thr = max(0.05, min(0.9, float(cfg.parity_state_trigger)))
+    if army_ahead >= thr and econ_behind >= thr:
+        return "AHEAD_ARMY_BEHIND_ECON"
+    if army_behind >= thr and econ_ahead >= thr:
+        return "BEHIND_ARMY_AHEAD_ECON"
+    if army_ahead >= thr and econ_ahead >= thr:
+        return "AHEAD_BOTH"
+    if army_behind >= thr and econ_behind >= thr:
+        return "BEHIND_BOTH"
+    return "TRADEOFF_MIXED"
 
 
 def derive_game_parity_intel(
@@ -100,6 +145,24 @@ def derive_game_parity_intel(
     enemy_workers_seen = int(sum_units(enemy_units, _WORKER_TYPES))
     enemy_bases_seen = int(count_enemy_bases(enemy_structs))
     enemy_army_seen_power = float(_army_power(enemy_units))
+    army_summary = awareness.mem.get(K("enemy", "army", "comp_summary"), now=now, default={}) or {}
+    if not isinstance(army_summary, dict):
+        army_summary = {}
+    enemy_aw_top = list(army_summary.get("top_units", [])) if isinstance(army_summary.get("top_units", []), list) else []
+    enemy_aw_main_top = (
+        list(army_summary.get("top_units_main", []))
+        if isinstance(army_summary.get("top_units_main", []), list)
+        else []
+    )
+    enemy_army_aw_power = max(
+        float(_army_power_named(enemy_aw_top)),
+        float(_army_power_named(enemy_aw_main_top)),
+    )
+    blend = max(0.0, min(1.0, float(cfg.enemy_awareness_power_blend)))
+    enemy_army_obs_power = max(
+        float(enemy_army_seen_power),
+        ((1.0 - blend) * float(enemy_army_seen_power)) + (blend * float(enemy_army_aw_power)),
+    )
 
     expected_workers_now = expected_workers(
         float(now),
@@ -129,14 +192,17 @@ def derive_game_parity_intel(
         awareness.mem.get(
             K("enemy", "parity", "army_power_est"),
             now=now,
-            default=float(enemy_army_seen_power),
+            default=float(enemy_army_obs_power),
         )
-        or float(enemy_army_seen_power)
+        or float(enemy_army_obs_power)
     )
 
     enemy_workers_est = max(float(enemy_workers_now), _ema(prev=prev_workers_est, cur=float(enemy_workers_now), alpha=float(cfg.ema_alpha)))
     enemy_bases_est = max(float(enemy_bases_now), _ema(prev=prev_bases_est, cur=float(enemy_bases_now), alpha=float(cfg.ema_alpha)))
-    enemy_army_est = max(float(enemy_army_seen_power), _ema(prev=prev_army_est, cur=float(enemy_army_seen_power), alpha=float(cfg.ema_alpha)))
+    enemy_army_est = max(
+        float(enemy_army_obs_power),
+        _ema(prev=prev_army_est, cur=float(enemy_army_obs_power), alpha=float(cfg.ema_alpha)),
+    )
 
     econ_delta = (float(own_workers) - float(enemy_workers_est)) + (float(own_bases) - float(enemy_bases_est)) * 7.0
     army_delta = float(own_army_power) - float(enemy_army_est)
@@ -167,6 +233,12 @@ def derive_game_parity_intel(
         army_bias = max(army_bias, 1)
         expand_bias = 0
 
+    army_behind_severity = max(0.0, min(1.0, (0.0 - float(army_delta)) / max(1e-6, float(cfg.army_behind_norm))))
+    army_ahead_severity = max(0.0, min(1.0, float(army_delta) / max(1e-6, float(cfg.army_ahead_norm))))
+    econ_behind_severity = max(0.0, min(1.0, (0.0 - float(econ_delta)) / max(1e-6, float(cfg.econ_behind_norm))))
+    econ_ahead_severity = max(0.0, min(1.0, float(econ_delta) / max(1e-6, float(cfg.econ_ahead_norm))))
+    parity_state = _parity_state(army_delta=float(army_delta), econ_delta=float(econ_delta), cfg=cfg)
+
     payload = {
         "overall": str(overall_state),
         "econ": str(econ_state),
@@ -183,6 +255,13 @@ def derive_game_parity_intel(
         "enemy_workers_seen": int(enemy_workers_seen),
         "enemy_bases_seen": int(enemy_bases_seen),
         "enemy_army_power_seen": float(round(enemy_army_seen_power, 2)),
+        "enemy_army_power_awareness": float(round(enemy_army_aw_power, 2)),
+        "enemy_army_power_observed": float(round(enemy_army_obs_power, 2)),
+        "army_behind_severity": float(round(army_behind_severity, 3)),
+        "army_ahead_severity": float(round(army_ahead_severity, 3)),
+        "econ_behind_severity": float(round(econ_behind_severity, 3)),
+        "econ_ahead_severity": float(round(econ_ahead_severity, 3)),
+        "parity_state": str(parity_state),
         "expand_bias": int(expand_bias),
         "army_bias": int(army_bias),
         "rush_state": str(rush_state),
@@ -197,5 +276,30 @@ def derive_game_parity_intel(
     awareness.mem.set(K("strategy", "parity", "army"), value=str(army_state), now=now, ttl=float(cfg.ttl_s))
     awareness.mem.set(K("strategy", "parity", "expand_bias"), value=int(expand_bias), now=now, ttl=float(cfg.ttl_s))
     awareness.mem.set(K("strategy", "parity", "army_bias"), value=int(army_bias), now=now, ttl=float(cfg.ttl_s))
+    awareness.mem.set(
+        K("strategy", "parity", "severity", "army_behind"),
+        value=float(army_behind_severity),
+        now=now,
+        ttl=float(cfg.ttl_s),
+    )
+    awareness.mem.set(
+        K("strategy", "parity", "severity", "army_ahead"),
+        value=float(army_ahead_severity),
+        now=now,
+        ttl=float(cfg.ttl_s),
+    )
+    awareness.mem.set(
+        K("strategy", "parity", "severity", "econ_behind"),
+        value=float(econ_behind_severity),
+        now=now,
+        ttl=float(cfg.ttl_s),
+    )
+    awareness.mem.set(
+        K("strategy", "parity", "severity", "econ_ahead"),
+        value=float(econ_ahead_severity),
+        now=now,
+        ttl=float(cfg.ttl_s),
+    )
+    awareness.mem.set(K("strategy", "parity", "state"), value=str(parity_state), now=now, ttl=float(cfg.ttl_s))
     awareness.mem.set(K("strategy", "parity", "signals"), value=dict(payload), now=now, ttl=float(cfg.ttl_s))
     awareness.mem.set(K("strategy", "parity", "last_update_t"), value=float(now), now=now, ttl=None)

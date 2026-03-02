@@ -145,10 +145,44 @@ PROFILE: Dict[str, Any] = {
             }
         ],
     },
+    "production_structure_targets_by_mode": {
+        "RUSH_RESPONSE": {"BARRACKS": 3, "FACTORY": 1, "STARPORT": 1},
+        "DEFENSIVE": {"BARRACKS": 3, "FACTORY": 1, "STARPORT": 1},
+        "STANDARD": {"BARRACKS": 4, "FACTORY": 2, "STARPORT": 2},
+        "PUNISH": {"BARRACKS": 5, "FACTORY": 2, "STARPORT": 2},
+    },
+    "production_scale_by_mode": {
+        "RUSH_RESPONSE": {"BARRACKS": 1.4, "FACTORY": 0.45, "STARPORT": 0.45},
+        "DEFENSIVE": {"BARRACKS": 1.4, "FACTORY": 0.45, "STARPORT": 0.45},
+        "STANDARD": {"BARRACKS": 1.5, "FACTORY": 0.5, "STARPORT": 0.5},
+        "PUNISH": {"BARRACKS": 1.7, "FACTORY": 0.55, "STARPORT": 0.55},
+    },
     "tech_structure_targets_by_mode": {
         "RUSH_RESPONSE": {"ENGINEERINGBAY": 1, "ARMORY": 0},
         "DEFENSIVE": {"ENGINEERINGBAY": 1, "ARMORY": 0},
         "STANDARD": {"ENGINEERINGBAY": 2, "ARMORY": 2},
         "PUNISH": {"ENGINEERINGBAY": 2, "ARMORY": 2},
+    },
+    "tech_timing_milestones_by_mode": {
+        "RUSH_RESPONSE": [
+            {"t": 240.0, "structures": {"ENGINEERINGBAY": 1}, "upgrades": []},
+            {"t": 400.0, "structures": {"ENGINEERINGBAY": 1, "ARMORY": 0}, "upgrades": ["TERRANINFANTRYWEAPONSLEVEL1"]},
+        ],
+        "DEFENSIVE": [
+            {"t": 260.0, "structures": {"ENGINEERINGBAY": 1}, "upgrades": []},
+            {"t": 430.0, "structures": {"ENGINEERINGBAY": 1, "ARMORY": 0}, "upgrades": ["TERRANINFANTRYWEAPONSLEVEL1"]},
+        ],
+        "STANDARD": [
+            {"t": 240.0, "structures": {}, "upgrades": ["STIMPACK"]},
+            {"t": 340.0, "structures": {"ENGINEERINGBAY": 1}, "upgrades": []},
+            {"t": 500.0, "structures": {"ENGINEERINGBAY": 2, "ARMORY": 1}, "upgrades": ["TERRANINFANTRYWEAPONSLEVEL1", "TERRANINFANTRYARMORSLEVEL1"]},
+            {"t": 680.0, "structures": {"ENGINEERINGBAY": 2, "ARMORY": 2}, "upgrades": ["TERRANINFANTRYWEAPONSLEVEL2"]},
+        ],
+        "PUNISH": [
+            {"t": 230.0, "structures": {}, "upgrades": ["STIMPACK"]},
+            {"t": 320.0, "structures": {"ENGINEERINGBAY": 1}, "upgrades": []},
+            {"t": 460.0, "structures": {"ENGINEERINGBAY": 2, "ARMORY": 1}, "upgrades": ["TERRANINFANTRYWEAPONSLEVEL1"]},
+            {"t": 630.0, "structures": {"ENGINEERINGBAY": 2, "ARMORY": 2}, "upgrades": ["TERRANINFANTRYWEAPONSLEVEL2", "TERRANINFANTRYARMORSLEVEL1"]},
+        ],
     },
 }

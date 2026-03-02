@@ -147,10 +147,44 @@ PROFILE: Dict[str, Any] = {
             }
         ],
     },
+    "production_structure_targets_by_mode": {
+        "RUSH_RESPONSE": {"BARRACKS": 3, "FACTORY": 1, "STARPORT": 1},
+        "DEFENSIVE": {"BARRACKS": 3, "FACTORY": 1, "STARPORT": 1},
+        "STANDARD": {"BARRACKS": 4, "FACTORY": 2, "STARPORT": 2},
+        "PUNISH": {"BARRACKS": 5, "FACTORY": 2, "STARPORT": 2},
+    },
+    "production_scale_by_mode": {
+        "RUSH_RESPONSE": {"BARRACKS": 1.3, "FACTORY": 0.5, "STARPORT": 0.5},
+        "DEFENSIVE": {"BARRACKS": 1.3, "FACTORY": 0.5, "STARPORT": 0.5},
+        "STANDARD": {"BARRACKS": 1.45, "FACTORY": 0.6, "STARPORT": 0.7},
+        "PUNISH": {"BARRACKS": 1.6, "FACTORY": 0.65, "STARPORT": 0.8},
+    },
     "tech_structure_targets_by_mode": {
         "RUSH_RESPONSE": {"ENGINEERINGBAY": 1, "ARMORY": 0},
         "DEFENSIVE": {"ENGINEERINGBAY": 1, "ARMORY": 0},
         "STANDARD": {"ENGINEERINGBAY": 2, "ARMORY": 2},
         "PUNISH": {"ENGINEERINGBAY": 2, "ARMORY": 2},
+    },
+    "tech_timing_milestones_by_mode": {
+        "RUSH_RESPONSE": [
+            {"t": 280.0, "structures": {"ENGINEERINGBAY": 1}, "upgrades": []},
+            {"t": 450.0, "structures": {"ENGINEERINGBAY": 1, "ARMORY": 0}, "upgrades": ["TERRANINFANTRYWEAPONSLEVEL1"]},
+        ],
+        "DEFENSIVE": [
+            {"t": 300.0, "structures": {"ENGINEERINGBAY": 1}, "upgrades": []},
+            {"t": 470.0, "structures": {"ENGINEERINGBAY": 1, "ARMORY": 0}, "upgrades": ["TERRANINFANTRYWEAPONSLEVEL1"]},
+        ],
+        "STANDARD": [
+            {"t": 230.0, "structures": {}, "upgrades": ["BANSHEECLOAK"]},
+            {"t": 340.0, "structures": {"ENGINEERINGBAY": 1}, "upgrades": []},
+            {"t": 500.0, "structures": {"ENGINEERINGBAY": 2, "ARMORY": 1}, "upgrades": ["TERRANINFANTRYWEAPONSLEVEL1"]},
+            {"t": 680.0, "structures": {"ENGINEERINGBAY": 2, "ARMORY": 2}, "upgrades": ["TERRANINFANTRYWEAPONSLEVEL2", "TERRANSHIPWEAPONSLEVEL1"]},
+        ],
+        "PUNISH": [
+            {"t": 220.0, "structures": {}, "upgrades": ["BANSHEECLOAK"]},
+            {"t": 320.0, "structures": {"ENGINEERINGBAY": 1}, "upgrades": []},
+            {"t": 460.0, "structures": {"ENGINEERINGBAY": 2, "ARMORY": 1}, "upgrades": ["TERRANINFANTRYWEAPONSLEVEL1"]},
+            {"t": 620.0, "structures": {"ENGINEERINGBAY": 2, "ARMORY": 2}, "upgrades": ["TERRANINFANTRYWEAPONSLEVEL2", "TERRANSHIPWEAPONSLEVEL1"]},
+        ],
     },
 }

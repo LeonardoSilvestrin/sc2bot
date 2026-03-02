@@ -147,6 +147,7 @@ class OpeningIntelPolicy:
         eb = attention.enemy_build
         enemy_units: Dict[U, int] = eb.enemy_units
         enemy_structs: Dict[U, int] = eb.enemy_structures
+        main_units: Dict[U, int] = dict(getattr(eb, "enemy_units_main", {}) or {})
 
         enemy_bases = count_enemy_bases(enemy_structs)
         near_bases = int(attention.combat.primary_enemy_count)
@@ -161,6 +162,20 @@ class OpeningIntelPolicy:
         zealots = sum_units(enemy_units, (U.ZEALOT,))
         adepts = sum_units(enemy_units, (U.ADEPT,))
         stalkers = sum_units(enemy_units, (U.STALKER,))
+        main_army_core = sum_units(
+            main_units,
+            (
+                U.ZERGLING,
+                U.MARINE,
+                U.REAPER,
+                U.ZEALOT,
+                U.ADEPT,
+                U.STALKER,
+                U.ROACH,
+                U.RAVAGER,
+                U.HYDRALISK,
+            ),
+        )
 
         early = float(now) <= float(self.cfg.early_s)
         greedy_window = float(now) <= float(self.cfg.greedy_s)
@@ -190,7 +205,12 @@ class OpeningIntelPolicy:
             kind = "GREEDY"
             conf = 0.75
 
-        if int(near_bases) > 0 or bool(threatened):
+        main_army_refresh_evidence = bool(
+            (not nat_on_ground)
+            and float(now) <= float(self.cfg.rush_main_army_refresh_no_nat_until_s)
+            and int(main_army_core) >= int(self.cfg.rush_main_army_refresh_units_min)
+        )
+        if int(near_bases) > 0 or bool(threatened) or bool(main_army_refresh_evidence):
             last_pressure_t = float(now)
         clear_for = max(0.0, float(now) - float(last_pressure_t))
         recent_pressure = clear_for <= float(self.cfg.rush_end_clear_s)
@@ -245,6 +265,8 @@ class OpeningIntelPolicy:
                 "stalkers": int(stalkers),
             },
             "main_units": dict(getattr(eb, "enemy_units_main", {}) or {}),
+            "main_army_core": int(main_army_core),
+            "main_army_refresh_evidence": bool(main_army_refresh_evidence),
             "main_structures": dict(getattr(eb, "enemy_structures_main", {}) or {}),
             "structures_progress": dict(getattr(eb, "enemy_structures_progress", {}) or {}),
             "rush_math": dict(rush_math),

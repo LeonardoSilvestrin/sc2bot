@@ -82,13 +82,46 @@ def derive_tech_intel(
     reserve_unit: str,
     cfg: TechIntelConfig = TechIntelConfig(),
 ) -> dict[str, Any]:
+    production_structure_targets = dict(dict(profile["production_structure_targets_by_mode"]).get(str(mode), {}))
+    if not isinstance(production_structure_targets, dict):
+        raise RuntimeError(f"invalid_contract:macro.desired.production_structure_targets:{mode}")
+    production_scale = dict(dict(profile["production_scale_by_mode"]).get(str(mode), {}))
+    if not isinstance(production_scale, dict):
+        raise RuntimeError(f"invalid_contract:macro.desired.production_scale:{mode}")
     tech_structure_targets = dict(dict(profile["tech_structure_targets_by_mode"]).get(str(mode), {}))
     if not isinstance(tech_structure_targets, dict):
         raise RuntimeError(f"invalid_contract:macro.desired.tech_structure_targets:{mode}")
+    tech_timing_milestones = list(dict(profile["tech_timing_milestones_by_mode"]).get(str(mode), []))
+    if not isinstance(tech_timing_milestones, list):
+        raise RuntimeError(f"invalid_contract:macro.desired.tech_timing_milestones:{mode}")
 
     upgrades = _upgrade_names_from_comp(comp=dict(comp), reserve_unit=str(reserve_unit))
     tech_targets = {"upgrades": list(upgrades), "structures": dict(tech_structure_targets)}
+    construction_targets = {
+        "production_structures": dict(production_structure_targets),
+        "tech_structures": dict(tech_structure_targets),
+    }
 
+    awareness.mem.set(
+        K("macro", "desired", "production_structure_targets"),
+        value=dict(production_structure_targets),
+        now=now,
+        ttl=float(cfg.ttl_s),
+    )
+    awareness.mem.set(
+        K("macro", "desired", "production_scale"),
+        value=dict(production_scale),
+        now=now,
+        ttl=float(cfg.ttl_s),
+    )
     awareness.mem.set(K("macro", "desired", "tech_structure_targets"), value=dict(tech_structure_targets), now=now, ttl=float(cfg.ttl_s))
+    awareness.mem.set(K("macro", "desired", "tech_timing_milestones"), value=list(tech_timing_milestones), now=now, ttl=float(cfg.ttl_s))
     awareness.mem.set(K("macro", "desired", "tech_targets"), value=dict(tech_targets), now=now, ttl=float(cfg.ttl_s))
-    return {"tech_structure_targets": dict(tech_structure_targets), "upgrades": list(upgrades)}
+    awareness.mem.set(K("macro", "desired", "construction_targets"), value=dict(construction_targets), now=now, ttl=float(cfg.ttl_s))
+    return {
+        "production_structure_targets": dict(production_structure_targets),
+        "production_scale": dict(production_scale),
+        "tech_structure_targets": dict(tech_structure_targets),
+        "tech_timing_milestones": list(tech_timing_milestones),
+        "upgrades": list(upgrades),
+    }

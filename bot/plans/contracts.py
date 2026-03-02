@@ -11,9 +11,11 @@ CONTRACTS: dict[str, dict[str, str]] = {
     "macro.opening.done*": {"writer": "intel.opening_contract", "reader": "sensors/planners/control"},
     "macro.production.plan.*": {"writer": "planner.macro_orchestrator", "reader": "task.macro_production"},
     "macro.tech.plan.*": {"writer": "planner.macro_orchestrator", "reader": "task.macro_tech"},
-    "macro.gas.*": {"writer": "control.priority_policy", "reader": "tasks.macro_spending/scv_housekeeping"},
+    "macro.gas.*": {"writer": "planner.macro_orchestrator", "reader": "tasks.macro_executor/scv_housekeeping"},
+    "macro.plan.*": {"writer": "planner.macro_orchestrator", "reader": "task.macro_executor"},
     "macro.reserve.*": {"writer": "control.priority_policy", "reader": "macro tasks"},
     "control.priority.*": {"writer": "control.priority_policy", "reader": "ego"},
+    "ego.exec_budget.*": {"writer": "ego", "reader": "tasks"},
     "ops.*": {"writer": "ego/tasks", "reader": "sensors/planners/tasks/control"},
 }
 

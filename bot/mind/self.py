@@ -11,7 +11,9 @@ from sc2.data import Result
 from bot.devlog import DevLogger
 from bot.sensors.threat_sensor import Threat
 from bot.intel.enemy_build_intel import EnemyBuildIntelConfig, derive_enemy_build_intel
+from bot.intel.game_parity_intel import GameParityIntelConfig, derive_game_parity_intel
 from bot.intel.my_army_composition_intel import MyArmyCompositionConfig, derive_my_army_composition_intel
+from bot.intel.opening_intel import OpeningIntelConfig, derive_enemy_opening_intel
 from bot.intel.opening_contract_intel import derive_opening_contract_intel
 from bot.mind.attention import derive_attention
 from bot.mind.awareness import Awareness, K
@@ -24,9 +26,10 @@ from bot.tasks.macro.tasks.opening import MacroOpeningTick
 
 from bot.planners.defense_planner import DefensePlanner
 from bot.planners.harass_planner import HarassPlanner
+from bot.planners.housekeeping_planner import HousekeepingPlanner
 from bot.planners.intel_planner import IntelPlanner
 
-from bot.planners.macro.orchestrator_planner import MacroOrchestratorPlanner
+from bot.planners.macro_orchestrator_planner import MacroOrchestratorPlanner
 
 
 def _jsonable(value: Any) -> Any:
@@ -65,7 +68,9 @@ class RuntimeApp:
     body: UnitLeases
     ego: Ego
     enemy_build_cfg: EnemyBuildIntelConfig
+    opening_cfg: OpeningIntelConfig
     my_comp_cfg: MyArmyCompositionConfig
+    parity_cfg: GameParityIntelConfig
     debug: bool = True
     attention_full_every_iters: int = 25
     awareness_full_every_iters: int = 50
@@ -79,6 +84,7 @@ class RuntimeApp:
     _bo_last_step_t: float = 0.0
     _bo_last_opening: str = ""
     _chat_last_opening: str = ""
+    _chat_last_transition: str = ""
     _chat_last_enemy_kind: str = ""
     _chat_last_rush_state: str = ""
     _chat_last_sent_t: float = -9999.0
@@ -97,7 +103,16 @@ class RuntimeApp:
             log=log,
             cfg=EgoConfig(
                 # Singleton macro domains after macro executor unification.
-                singleton_domains=frozenset({"MACRO_EXECUTOR", "TECH_EXECUTOR", "MACRO_HOUSEKEEPING", "MACRO_DEPOT_CONTROL"}),
+                singleton_domains=frozenset(
+                    {
+                        "MACRO_EXECUTOR",
+                        "MACRO_ARMY_EXECUTOR",
+                        "MACRO_ECON_EXECUTOR",
+                        "TECH_EXECUTOR",
+                        "MACRO_HOUSEKEEPING",
+                        "MACRO_DEPOT_CONTROL",
+                    }
+                ),
                 threat_block_start_at=70,
                 threat_force_preempt_at=90,
                 non_preemptible_grace_s=2.5,
@@ -113,6 +128,7 @@ class RuntimeApp:
         defense_planner = DefensePlanner(defend_task=defend_task, log=log)
         harass_planner = HarassPlanner(log=log)
         intel_planner = IntelPlanner(awareness=awareness, log=log)
+        housekeeping_planner = HousekeepingPlanner(log=log)
         macro_orchestrator_planner = MacroOrchestratorPlanner(log=log)
 
         # Keep opening as a "pre-macro" handled by its own planner.
@@ -171,6 +187,7 @@ class RuntimeApp:
                 defense_planner,
                 harass_planner,
                 intel_planner,
+                housekeeping_planner,
                 opening_planner,
                 macro_orchestrator_planner,
             ]
@@ -183,7 +200,9 @@ class RuntimeApp:
             body=body,
             ego=ego,
             enemy_build_cfg=EnemyBuildIntelConfig(),
+            opening_cfg=OpeningIntelConfig(),
             my_comp_cfg=MyArmyCompositionConfig(),
+            parity_cfg=GameParityIntelConfig(),
             debug=bool(debug),
         )
 
@@ -208,6 +227,13 @@ class RuntimeApp:
 
         attention = derive_attention(bot, awareness=self.awareness, threat=self.threat, log=self.log)
 
+        derive_enemy_opening_intel(
+            bot,
+            awareness=self.awareness,
+            attention=attention,
+            now=now,
+            cfg=self.opening_cfg,
+        )
         derive_enemy_build_intel(
             bot,
             awareness=self.awareness,
@@ -222,6 +248,13 @@ class RuntimeApp:
             attention=attention,
             now=now,
             cfg=self.my_comp_cfg,
+        )
+        derive_game_parity_intel(
+            bot,
+            awareness=self.awareness,
+            attention=attention,
+            now=now,
+            cfg=self.parity_cfg,
         )
         await self._emit_chat_updates(bot, now=now)
 
@@ -319,6 +352,7 @@ class RuntimeApp:
         target = None
         start_condition_ok = None
         end_condition_ok = None
+        blocked_reason = ""
 
         if 0 <= step_idx < total_steps:
             step = build_order[step_idx]
@@ -333,6 +367,23 @@ class RuntimeApp:
                 end_condition_ok = bool(step.end_condition())
             except Exception as e:
                 end_condition_ok = f"error:{type(e).__name__}"
+
+            # Lightweight explainability for why current step is not advancing.
+            if not bool(build_completed) and not blocked_reason:
+                if not bool(current_step_started):
+                    if int(getattr(bot, "supply_used", 0.0) or 0.0) < int(start_at_supply or 0):
+                        blocked_reason = f"waiting_supply:{int(getattr(bot, 'supply_used', 0.0) or 0)}/{int(start_at_supply or 0)}"
+                    elif isinstance(start_condition_ok, str):
+                        blocked_reason = f"start_condition_{start_condition_ok}"
+                    elif start_condition_ok is False:
+                        blocked_reason = "start_condition_false"
+                elif bool(current_step_started) and not bool(current_step_complete):
+                    if isinstance(end_condition_ok, str):
+                        blocked_reason = f"end_condition_{end_condition_ok}"
+                    elif end_condition_ok is False:
+                        blocked_reason = "waiting_end_condition"
+                if not blocked_reason:
+                    blocked_reason = "progressing"
 
         if int(iteration) % max(1, int(self.bo_diag_every_iters)) == 0:
             self.log.emit(
@@ -352,6 +403,7 @@ class RuntimeApp:
                     "target": target,
                     "start_condition_ok": start_condition_ok,
                     "end_condition_ok": end_condition_ok,
+                    "blocked_reason": str(blocked_reason),
                     "supply_used": float(getattr(bot, "supply_used", 0.0) or 0.0),
                     "minerals": int(getattr(bot, "minerals", 0) or 0),
                     "vespene": int(getattr(bot, "vespene", 0) or 0),
@@ -377,6 +429,7 @@ class RuntimeApp:
                     "start_at_supply": start_at_supply,
                     "start_condition_ok": start_condition_ok,
                     "end_condition_ok": end_condition_ok,
+                    "blocked_reason": str(blocked_reason),
                     "current_step_started": bool(current_step_started),
                     "current_step_complete": bool(current_step_complete),
                     "stall_s_on_step": round(float(stall_s), 2),
@@ -394,18 +447,45 @@ class RuntimeApp:
         wall_elapsed = max(1e-6, float(time.perf_counter()) - float(self._wall_start_s))
         speed_x = float(now) / float(wall_elapsed)
         lag_prod = float(self.awareness.mem.get(K("control", "priority", "lag", "production"), now=now, default=0.0) or 0.0)
+        lag_construction = float(
+            self.awareness.mem.get(K("control", "priority", "lag", "construction"), now=now, default=0.0) or 0.0
+        )
         lag_spend = float(self.awareness.mem.get(K("control", "priority", "lag", "spending"), now=now, default=0.0) or 0.0)
         lag_tech = float(self.awareness.mem.get(K("control", "priority", "lag", "tech"), now=now, default=0.0) or 0.0)
+        lag_army = float(self.awareness.mem.get(K("control", "priority", "lag", "army_supply"), now=now, default=0.0) or 0.0)
+        macro_plan_version = int(self.awareness.mem.get(K("macro", "plan", "version"), now=now, default=0) or 0)
+        macro_budget_enabled = bool(self.awareness.mem.get(K("ego", "exec_budget", "macro_enabled"), now=now, default=True))
+        macro_budget_reason = str(self.awareness.mem.get(K("ego", "exec_budget", "macro_reason"), now=now, default="normal") or "normal")
         bank_pi_output = float(self.awareness.mem.get(K("control", "priority", "bank_pi_output"), now=now, default=0.0) or 0.0)
+        parity_state = str(
+            self.awareness.mem.get(K("strategy", "parity", "state"), now=now, default="TRADEOFF_MIXED")
+            or "TRADEOFF_MIXED"
+        )
+        parity_army_behind = float(
+            self.awareness.mem.get(K("strategy", "parity", "severity", "army_behind"), now=now, default=0.0) or 0.0
+        )
+        parity_econ_behind = float(
+            self.awareness.mem.get(K("strategy", "parity", "severity", "econ_behind"), now=now, default=0.0) or 0.0
+        )
+        rush_state = str(self.awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
         payload = {
             "iter": int(iteration),
             "game_t": round(float(now), 2),
             "wall_t": round(float(wall_elapsed), 2),
             "speed_x": round(float(speed_x), 3),
             "lag_production": round(float(lag_prod), 3),
+            "lag_construction": round(float(lag_construction), 3),
             "lag_spending": round(float(lag_spend), 3),
             "lag_tech": round(float(lag_tech), 3),
+            "lag_army_supply": round(float(lag_army), 3),
+            "macro_plan_version": int(macro_plan_version),
+            "macro_budget_enabled": bool(macro_budget_enabled),
+            "macro_budget_reason": str(macro_budget_reason),
             "bank_pi_output": round(float(bank_pi_output), 3),
+            "parity_state": str(parity_state),
+            "parity_army_behind": round(float(parity_army_behind), 3),
+            "parity_econ_behind": round(float(parity_econ_behind), 3),
+            "rush_state": str(rush_state),
         }
         self.log.emit(
             "runtime_clock",
@@ -437,9 +517,20 @@ class RuntimeApp:
     async def _emit_chat_updates(self, bot, *, now: float) -> None:
         # Build/opening selected
         opening_selected = str(self.awareness.mem.get(K("macro", "opening", "selected"), now=now, default="") or "")
+        if not opening_selected:
+            bor = getattr(bot, "build_order_runner", None)
+            if bor is not None:
+                opening_selected = str(getattr(bor, "chosen_opening", "") or "")
         if opening_selected and opening_selected != str(self._chat_last_opening):
             self._chat_last_opening = str(opening_selected)
             await self._safe_chat_send(bot, now=now, message=f"BO: {opening_selected}")
+
+        transition_target = str(
+            self.awareness.mem.get(K("macro", "opening", "transition_target"), now=now, default="") or ""
+        ).upper()
+        if transition_target and transition_target != str(self._chat_last_transition):
+            self._chat_last_transition = str(transition_target)
+            await self._safe_chat_send(bot, now=now, message=f"Transition: {transition_target}")
 
         # Enemy opening classifier
         enemy_kind = str(self.awareness.mem.get(K("enemy", "opening", "kind"), now=now, default="") or "").upper()

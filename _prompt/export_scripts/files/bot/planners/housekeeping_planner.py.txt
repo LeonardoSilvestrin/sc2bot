@@ -1,0 +1,212 @@
+# bot/planners/housekeeping_planner.py
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from sc2.ids.unit_typeid import UnitTypeId as U
+
+from bot.devlog import DevLogger
+from bot.mind.attention import Attention
+from bot.mind.awareness import Awareness, K
+from bot.planners.utils.base_planner import BasePlanner
+from bot.planners.utils.proposals import Proposal, TaskSpec
+from bot.tasks.macro.tasks.scv_housekeeping_task import ScvHousekeeping
+from bot.tasks.support.control_depots_task import ControlDepots
+
+
+@dataclass
+class HousekeepingPlanner(BasePlanner):
+    planner_id: str = "housekeeping_planner"
+    log: DevLogger | None = None
+
+    housekeeping_score: int = 18
+    housekeeping_min_interval_s: float = 2.5
+    housekeeping_idle_trigger: int = 1
+    housekeeping_idle_local_radius: float = 30.0
+    housekeeping_skew_trigger: int = 4
+
+    depot_score: int = 24
+    depot_interval_s_alert: float = 2.5
+    depot_interval_s_calm: float = 6.0
+    depot_cooldown_s: float = 2.0
+    depot_raise_radius: float = 12.0
+    depot_raise_urgency_min: int = 18
+    depot_raise_enemy_count_min: int = 2
+    depot_supply_left_trigger: int = 2
+
+    @staticmethod
+    def _phase(*, awareness: Awareness, now: float, opening_done: bool) -> str:
+        plan_active = awareness.mem.get(K("macro", "plan", "active"), now=now, default={}) or {}
+        if isinstance(plan_active, dict):
+            phase = str(plan_active.get("phase", "") or "").upper()
+            if phase in {"OPENING", "MID", "LATE"}:
+                return phase
+        phase = str(awareness.mem.get(K("control", "phase"), now=now, default="") or "").upper()
+        if phase in {"OPENING", "MID", "LATE"}:
+            return phase
+        return "OPENING" if not bool(opening_done) else "MID"
+
+    def _desired_workers_per_refinery(self, *, awareness: Awareness, now: float, opening_done: bool) -> int:
+        phase = self._phase(awareness=awareness, now=now, opening_done=opening_done)
+        gas_status = awareness.mem.get(K("macro", "gas", "status"), now=now, default={}) or {}
+        gas_mode = str(gas_status.get("mode", "")).strip().lower() if isinstance(gas_status, dict) else ""
+        raw = awareness.mem.get(K("macro", "gas", "target_workers_per_refinery"), now=now, default=None)
+        planner_target = int(raw) if isinstance(raw, (int, float)) else 3
+        planner_target = max(0, min(3, int(planner_target)))
+
+        if phase in {"OPENING", "MID"}:
+            return 3
+        if gas_mode in {"gas_overflow_hard", "gas_overflow_soft", "flow_shift_hard_to_minerals"}:
+            return min(2, int(planner_target))
+        return max(1, int(planner_target))
+
+    def _needs_housekeeping(self, bot, *, awareness: Awareness, attention: Attention, now: float) -> tuple[bool, dict]:
+        idle_workers = int(attention.economy.workers_idle)
+        idle_local = 0
+        try:
+            townhalls = bot.townhalls.ready
+            for w in list(bot.workers.idle):
+                if townhalls.amount <= 0:
+                    idle_local += 1
+                    continue
+                nearest = min(float(w.distance_to(th.position)) for th in townhalls)
+                if nearest <= float(self.housekeeping_idle_local_radius):
+                    idle_local += 1
+        except Exception:
+            idle_local = int(idle_workers)
+
+        bases = list(attention.economy.bases_sat or ())
+        mineral_counts = [int(b.mineral_actual) for b in bases]
+        max_m = max(mineral_counts) if mineral_counts else 0
+        min_m = min(mineral_counts) if mineral_counts else 0
+        mineral_skew = max(0, int(max_m - min_m))
+        has_over = any(int(b.mineral_actual) > 16 for b in bases)
+        has_under = any(int(b.mineral_actual) < 10 for b in bases)
+
+        desired_wpg = self._desired_workers_per_refinery(
+            awareness=awareness,
+            now=now,
+            opening_done=bool(attention.macro.opening_done),
+        )
+        gas_deficit = 0
+        gas_surplus = 0
+        try:
+            for ref in [g for g in bot.gas_buildings if g.is_ready]:
+                assigned = int(getattr(ref, "assigned_harvesters", 0) or 0)
+                gas_deficit += max(0, int(desired_wpg) - int(assigned))
+                gas_surplus += max(0, int(assigned) - int(desired_wpg))
+        except Exception:
+            gas_deficit = 0
+            gas_surplus = 0
+
+        need = bool(
+            idle_local >= int(self.housekeeping_idle_trigger)
+            or (has_over and has_under)
+            or mineral_skew >= int(self.housekeeping_skew_trigger)
+            or gas_deficit > 0
+            or gas_surplus > 0
+        )
+        return need, {
+            "idle_workers": int(idle_workers),
+            "idle_local": int(idle_local),
+            "mineral_skew": int(mineral_skew),
+            "has_over": bool(has_over),
+            "has_under": bool(has_under),
+            "gas_deficit": int(gas_deficit),
+            "gas_surplus": int(gas_surplus),
+            "desired_wpg": int(desired_wpg),
+        }
+
+    def propose(self, bot, *, awareness: Awareness, attention: Attention) -> list[Proposal]:
+        now = float(attention.time)
+        out: list[Proposal] = []
+
+        housekeeping_pid = self.proposal_id("scv_housekeeping")
+        need_housekeeping, trigger = self._needs_housekeeping(bot, awareness=awareness, attention=attention, now=now)
+        due_housekeeping = self.due_by_last_done(
+            awareness=awareness,
+            key=K("ops", "macro", "scv", "housekeeping", "last_done_at"),
+            now=now,
+            interval_s=float(self.housekeeping_min_interval_s),
+        )
+        if need_housekeeping and due_housekeeping and not self.is_proposal_running(awareness=awareness, proposal_id=housekeeping_pid, now=now):
+
+            def _housekeeping_factory(mission_id: str) -> ScvHousekeeping:
+                return ScvHousekeeping(awareness=awareness)
+
+            out.extend(
+                self.make_single_task_proposal(
+                    proposal_id=housekeeping_pid,
+                    domain="MACRO_HOUSEKEEPING",
+                    score=int(self.housekeeping_score),
+                    task_spec=TaskSpec(task_id="scv_housekeeping", task_factory=_housekeeping_factory, unit_requirements=[]),
+                    lease_ttl=6.0,
+                    cooldown_s=1.5,
+                    risk_level=0,
+                    allow_preempt=True,
+                )
+            )
+
+        depot_pid = self.proposal_id("control_depots")
+        supply_left = int(attention.economy.supply_left)
+        urgency = int(attention.combat.primary_urgency)
+        enemy_count = int(attention.combat.primary_enemy_count)
+        depot_alert = bool(
+            (urgency >= int(self.depot_raise_urgency_min) and enemy_count >= int(self.depot_raise_enemy_count_min))
+            or supply_left <= int(self.depot_supply_left_trigger)
+        )
+        depot_interval = float(self.depot_interval_s_alert if depot_alert else self.depot_interval_s_calm)
+        due_depot = self.due_by_last_done(
+            awareness=awareness,
+            key=K("ops", "macro", "wall", "depot_control", "last_done_at"),
+            now=now,
+            interval_s=float(depot_interval),
+        )
+        if due_depot and not self.is_proposal_running(awareness=awareness, proposal_id=depot_pid, now=now):
+            threat_pos = attention.combat.primary_threat_pos
+            actionable = False
+            try:
+                if depot_alert:
+                    if threat_pos is not None:
+                        lowered = bot.structures.of_type({U.SUPPLYDEPOTLOWERED}).ready
+                        actionable = any(float(d.distance_to(threat_pos)) <= float(self.depot_raise_radius) for d in lowered)
+                else:
+                    raised = int(bot.structures.of_type({U.SUPPLYDEPOT}).ready.amount)
+                    actionable = int(raised) > 0
+            except Exception:
+                actionable = False
+            if actionable:
+                score = int(self.depot_score) + min(30, max(0, urgency // 2))
+
+                def _depot_factory(mission_id: str) -> ControlDepots:
+                    return ControlDepots(
+                        awareness=awareness,
+                        threat_pos=threat_pos,
+                        raise_radius=float(self.depot_raise_radius),
+                        raise_urgency_min=int(self.depot_raise_urgency_min),
+                        raise_enemy_count_min=int(self.depot_raise_enemy_count_min),
+                    )
+
+                out.extend(
+                    self.make_single_task_proposal(
+                        proposal_id=depot_pid,
+                        domain="MACRO_DEPOT_CONTROL",
+                        score=int(score),
+                        task_spec=TaskSpec(task_id="control_depots", task_factory=_depot_factory, unit_requirements=[]),
+                        lease_ttl=None,
+                        cooldown_s=float(self.depot_cooldown_s),
+                        risk_level=0,
+                        allow_preempt=True,
+                    )
+                )
+
+        if out:
+            self.emit_planner_proposed(
+                {
+                    "count": len(out),
+                    "trigger": trigger,
+                    "proposal_ids": [str(p.proposal_id) for p in out],
+                }
+            )
+        return out

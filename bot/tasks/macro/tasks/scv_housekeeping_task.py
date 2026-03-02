@@ -12,7 +12,7 @@ from bot.mind.attention import Attention
 from bot.mind.awareness import Awareness, K
 from bot.tasks.base_task import BaseTask, TaskTick, TaskResult
 from bot.tasks.macro.policies.housekeeping_ops_policies import MorphReservePolicy, MulePolicy
-from bot.tasks.macro.policies.scv_housekeeping_policies import GasFillPolicy, MineralBalancePolicy
+from bot.tasks.macro.policies.scv_housekeeping_policies import MineralBalancePolicy
 
 
 @dataclass
@@ -184,17 +184,24 @@ class ScvHousekeeping(BaseTask):
         if townhalls.amount == 0:
             return {
                 "gas_deficit": 0,
+                "gas_surplus": 0,
                 "moved_to_gas": 0,
+                "moved_from_gas": 0,
                 "moved_to_minerals": 0,
                 "recovered_idle": 0,
                 "reserved_tags": 0,
+                "gas_contract_missing": 0,
                 "base_minerals": [],
             }
 
         reserved_tags = self._reserved_running_tags(bot, now)
         try:
             bo_scouts = bot.mediator.get_units_from_role(role=UnitRole.BUILD_RUNNER_SCOUT, unit_type=U.SCV)
-            reserved_tags.update(int(u.tag) for u in bo_scouts)
+            for u in bo_scouts:
+                # Reclaim idle scout workers that are already back near our economy.
+                if bool(getattr(u, "is_idle", False)) and self._is_local_worker(u, townhalls):
+                    continue
+                reserved_tags.add(int(u.tag))
         except Exception:
             pass
 
@@ -206,10 +213,13 @@ class ScvHousekeeping(BaseTask):
         if not local_candidates:
             return {
                 "gas_deficit": 0,
+                "gas_surplus": 0,
                 "moved_to_gas": 0,
+                "moved_from_gas": 0,
                 "moved_to_minerals": 0,
                 "recovered_idle": 0,
                 "reserved_tags": len(reserved_tags),
+                "gas_contract_missing": 0,
                 "base_minerals": [],
             }
 
@@ -274,38 +284,21 @@ class ScvHousekeeping(BaseTask):
 
         remaining_budget = int(self.max_reassign_per_run)
         moved_tags: set[int] = set()
-        workers_per_refinery = int(
-            self.awareness.mem.get(K("macro", "gas", "target_workers_per_refinery"), now=now, default=3) or 3
-        )
-        workers_per_refinery = max(0, min(3, int(workers_per_refinery)))
-
-        gas_buildings = [g for g in bot.gas_buildings if g.is_ready]
-        gas_result = GasFillPolicy(
-            mineral_floor=int(self.mineral_floor),
-            workers_per_refinery=int(workers_per_refinery),
-        ).apply(
-            bot=bot,
-            gas_buildings=gas_buildings,
-            local_candidates=local_candidates,
-            mineral_pool=mineral_pool,
-            orphans=orphans,
-            per_base_workers=per_base_workers,
-            th_list=th_list,
-            moved_tags=moved_tags,
-            remaining_budget=int(remaining_budget),
-            is_building_or_repairing=self._is_building_or_repairing,
-        )
-        gas_deficit = int(gas_result.gas_deficit)
-        moved_to_gas = int(gas_result.moved_to_gas)
-        remaining_budget = int(gas_result.remaining_budget)
+        gas_deficit = 0
+        gas_surplus = 0
+        moved_to_gas = 0
+        moved_from_gas = 0
 
         if remaining_budget <= 0:
             return {
                 "gas_deficit": gas_deficit,
+                "gas_surplus": gas_surplus,
                 "moved_to_gas": moved_to_gas,
+                "moved_from_gas": moved_from_gas,
                 "moved_to_minerals": 0,
                 "recovered_idle": 0,
                 "reserved_tags": len(reserved_tags),
+                "gas_contract_missing": 0,
                 "base_minerals": [len(ws) for ws in per_base_workers],
             }
 
@@ -331,12 +324,15 @@ class ScvHousekeeping(BaseTask):
 
         return {
             "gas_deficit": gas_deficit,
+            "gas_surplus": gas_surplus,
             "moved_to_gas": moved_to_gas,
+            "moved_from_gas": moved_from_gas,
             "moved_to_minerals": moved_to_minerals,
             "recovered_idle": recovered_idle,
             "reserved_tags": len(reserved_tags),
+            "gas_contract_missing": 0,
             "base_minerals": [len(ws) for ws in per_base_workers],
-            "target_workers_per_refinery": int(workers_per_refinery),
+            "target_workers_per_refinery": None,
         }
 
     async def on_step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult:
@@ -366,11 +362,14 @@ class ScvHousekeeping(BaseTask):
             value={
                 "t": float(now),
                 "gas_deficit": int(stats["gas_deficit"]),
+                "gas_surplus": int(stats.get("gas_surplus", 0)),
                 "moved_to_gas": int(stats["moved_to_gas"]),
+                "moved_from_gas": int(stats.get("moved_from_gas", 0)),
                 "moved_to_minerals": int(stats["moved_to_minerals"]),
                 "recovered_idle": int(stats["recovered_idle"]),
                 "base_minerals": list(stats["base_minerals"]),
-                "target_workers_per_refinery": int(stats.get("target_workers_per_refinery", 3)),
+                "target_workers_per_refinery": stats.get("target_workers_per_refinery"),
+                "gas_contract_missing": int(stats.get("gas_contract_missing", 0)),
                 "morph_pending": int(morph["pending_count"]),
                 "mules_cast": int(mules["casts"]),
             },
@@ -383,12 +382,15 @@ class ScvHousekeeping(BaseTask):
             "housekeeping_done",
             telemetry={
                 "gas_deficit": int(stats["gas_deficit"]),
+                "gas_surplus": int(stats.get("gas_surplus", 0)),
                 "moved_to_gas": int(stats["moved_to_gas"]),
+                "moved_from_gas": int(stats.get("moved_from_gas", 0)),
                 "moved_to_minerals": int(stats["moved_to_minerals"]),
                 "recovered_idle": int(stats["recovered_idle"]),
                 "reserved_tags": int(stats["reserved_tags"]),
                 "base_minerals": list(stats["base_minerals"]),
-                "target_workers_per_refinery": int(stats.get("target_workers_per_refinery", 3)),
+                "target_workers_per_refinery": stats.get("target_workers_per_refinery"),
+                "gas_contract_missing": int(stats.get("gas_contract_missing", 0)),
                 "floor": int(self.mineral_floor),
                 "cap": int(self.mineral_cap),
                 "morph_pending": int(morph["pending_count"]),

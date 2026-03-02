@@ -8,7 +8,7 @@ BuildChoices:
     Cycle: [Default]
   Terran:
     BotName: MyBot
-    Cycle: [Default]
+    Cycle: [BansheeHellionOpen, StimDropTankOpen]
   Zerg:
     BotName: MyBot
     Cycle: [Default]
@@ -32,7 +32,7 @@ Builds:
       - 20 supply @ ramp
       - 21 factory
       - 21 barracksreactor
-      - 21 gas
+      - 26 gas
       - 21 starport
       - 21 addonswap factory barracksreactor
       - 23 hellion *4

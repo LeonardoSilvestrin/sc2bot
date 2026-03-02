@@ -4,6 +4,7 @@ from copy import deepcopy
 from typing import Any, Dict
 
 from bot.builds import PROFILES_BY_OPENING
+from bot.builds.profile_compact import expand_compact_profile
 
 
 _REQUIRED_KEYS = {
@@ -15,13 +16,15 @@ _REQUIRED_KEYS = {
     "priority_standard",
     "priority_punish",
     "priority_rush_response",
-    "reserve_costs",
     "bank_setpoint_minerals",
     "bank_setpoint_gas",
     "army_supply_milestones_by_mode",
     "unit_count_milestones_by_mode",
     "timing_attacks_by_mode",
+    "production_structure_targets_by_mode",
+    "production_scale_by_mode",
     "tech_structure_targets_by_mode",
+    "tech_timing_milestones_by_mode",
     "pid_tuning_by_mode",
 }
 
@@ -43,7 +46,9 @@ def resolve_build_profile(*, opening_selected: str, transition_target: str) -> D
     if opening not in PROFILES_BY_OPENING:
         raise RuntimeError(f"missing_contract:build_profile:{opening}")
 
-    profile = deepcopy(PROFILES_BY_OPENING[opening])
+    profile = expand_compact_profile(deepcopy(PROFILES_BY_OPENING[opening]))
+    if "reserve_costs" not in profile or not isinstance(profile.get("reserve_costs"), dict):
+        profile["reserve_costs"] = {}
     transition_overrides = dict(profile.pop("transition_overrides", {}) or {})
     transition = str(transition_target or "").strip().upper()
     if transition and transition in transition_overrides:

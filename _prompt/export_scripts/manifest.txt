@@ -1,5 +1,5 @@
 EXPORT META
-generated_at_utc: 2026-03-02T10:30:17.461943+00:00
+generated_at_utc: 2026-03-02T19:05:42.087019+00:00
 repo_root: C:\Users\Asus\Documents\projetos\sc2bot\ares\ares-sc2-bot-template
 files_total: 89
 
@@ -46,9 +46,9 @@ FILES
 - bot/plans/macro_plan.py -> files/bot/plans/macro_plan.py.txt
 - bot/planners/defense_planner.py -> files/bot/planners/defense_planner.py.txt
 - bot/planners/harass_planner.py -> files/bot/planners/harass_planner.py.txt
+- bot/planners/housekeeping_planner.py -> files/bot/planners/housekeeping_planner.py.txt
 - bot/planners/intel_planner.py -> files/bot/planners/intel_planner.py.txt
-- bot/planners/macro/__init__.py -> files/bot/planners/macro/__init__.py.txt
-- bot/planners/macro/orchestrator_planner.py -> files/bot/planners/macro/orchestrator_planner.py.txt
+- bot/planners/macro_orchestrator_planner.py -> files/bot/planners/macro_orchestrator_planner.py.txt
 - bot/planners/reinforce_mission_planner.py -> files/bot/planners/reinforce_mission_planner.py.txt
 - bot/planners/utils/__init__.py -> files/bot/planners/utils/__init__.py.txt
 - bot/planners/utils/base_planner.py -> files/bot/planners/utils/base_planner.py.txt

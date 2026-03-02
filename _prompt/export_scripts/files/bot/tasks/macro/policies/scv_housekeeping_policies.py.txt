@@ -9,7 +9,9 @@ from typing import Any, Callable
 @dataclass
 class GasFillResult:
     gas_deficit: int
+    gas_surplus: int
     moved_to_gas: int
+    moved_from_gas: int
     remaining_budget: int
 
 
@@ -35,25 +37,55 @@ class GasFillPolicy:
         orphans: list,
         per_base_workers: list[list],
         th_list: list,
+        worker_to_gas: dict,
         moved_tags: set[int],
         remaining_budget: int,
         is_building_or_repairing: Callable[[Any], bool],
     ) -> GasFillResult:
         gas_deficit = 0
+        gas_surplus = 0
         moved_to_gas = 0
+        moved_from_gas = 0
 
         workers_per_refinery = max(0, min(3, int(self.workers_per_refinery)))
-        if gas_buildings:
-            try:
-                bot.mediator.set_workers_per_gas(amount=int(workers_per_refinery))
-            except Exception:
-                pass
 
         for ref in gas_buildings:
             assigned = int(getattr(ref, "assigned_harvesters", 0) or 0)
             ideal = int(workers_per_refinery)
+            surplus = max(0, assigned - ideal)
             need = max(0, ideal - assigned)
+            gas_surplus += surplus
             gas_deficit += need
+
+            if surplus > 0 and remaining_budget > 0:
+                ref_tag = int(getattr(ref, "tag", -1) or -1)
+                gas_workers = []
+                for w in local_candidates:
+                    wtag = int(w.tag)
+                    if wtag in moved_tags:
+                        continue
+                    if int(worker_to_gas.get(wtag, -1) or -1) != ref_tag:
+                        continue
+                    gas_workers.append(w)
+                gas_workers.sort(key=lambda w: float(w.distance_to(ref.position)), reverse=True)
+                for w in gas_workers:
+                    if surplus <= 0 or remaining_budget <= 0:
+                        break
+                    if is_building_or_repairing(w):
+                        continue
+                    mfs = bot.mineral_field
+                    if mfs.amount <= 0:
+                        break
+                    wtag = int(w.tag)
+                    try:
+                        bot.mediator.remove_worker_from_mineral(worker_tag=wtag)
+                    except Exception:
+                        pass
+                    w.gather(mfs.closest_to(w))
+                    moved_tags.add(wtag)
+                    moved_from_gas += 1
+                    remaining_budget -= 1
+                    surplus -= 1
 
             if need <= 0 or remaining_budget <= 0:
                 continue
@@ -67,10 +99,8 @@ class GasFillPolicy:
                     continue
                 if len(ws) > int(self.mineral_floor):
                     donors.extend(sorted(ws, key=lambda w: w.distance_to(th_list[bidx].position), reverse=True))
-            if need > 0:
-                donors.extend([w for w in mineral_pool if int(w.tag) not in moved_tags])
-            if need > 0:
-                donors.extend([w for w in local_candidates if int(w.tag) not in moved_tags])
+            donors.extend([w for w in mineral_pool if int(w.tag) not in moved_tags])
+            donors.extend([w for w in local_candidates if int(w.tag) not in moved_tags])
 
             uniq = []
             seen = set()
@@ -120,7 +150,9 @@ class GasFillPolicy:
 
         return GasFillResult(
             gas_deficit=int(gas_deficit),
+            gas_surplus=int(gas_surplus),
             moved_to_gas=int(moved_to_gas),
+            moved_from_gas=int(moved_from_gas),
             remaining_budget=int(remaining_budget),
         )
 
@@ -135,20 +167,56 @@ class MineralBalancePolicy:
         n = len(counts)
         if n <= 0:
             return []
-        targets = [0] * n
+        floor_i = max(0, int(floor))
+        cap_i = max(floor_i, int(cap))
+        targets = [max(0, int(c)) for c in counts]
 
-        remaining = max(0, int(total_workers))
-        floor_need = [max(0, floor - 0) for _ in range(n)]
+        # Conservative anti-churn policy:
+        # only move workers if some base is above cap.
+        overflow_total = int(sum(max(0, int(c) - cap_i) for c in targets))
+        if overflow_total <= 0:
+            return targets
+
+        # Prefer filling floor deficits first, then any room up to cap.
+        add = [0] * n
+        remaining = int(overflow_total)
         for i in range(n):
-            take = min(remaining, floor_need[i])
-            targets[i] += take
+            if remaining <= 0:
+                break
+            need_floor = max(0, floor_i - int(targets[i]))
+            take = min(remaining, need_floor)
+            add[i] += take
+            remaining -= take
+        for i in range(n):
+            if remaining <= 0:
+                break
+            room_cap = max(0, cap_i - int(targets[i]) - int(add[i]))
+            take = min(remaining, room_cap)
+            add[i] += take
             remaining -= take
 
+        moved = int(sum(add))
+        if moved <= 0:
+            return targets
+
         for i in range(n):
-            need = max(0, cap - targets[i])
-            take = min(remaining, need)
-            targets[i] += take
-            remaining -= take
+            targets[i] += int(add[i])
+
+        # Remove the exact moved amount from donors above cap.
+        to_remove = int(moved)
+        for j in range(n):
+            if to_remove <= 0:
+                break
+            spare = max(0, int(targets[j]) - cap_i)
+            take = min(spare, to_remove)
+            targets[j] -= take
+            to_remove -= take
+
+        # Keep robust behavior on inconsistent inputs.
+        expected_total = int(sum(max(0, int(c)) for c in counts))
+        if int(sum(targets)) != expected_total:
+            return [max(0, int(c)) for c in counts]
+
         return targets
 
     def apply(

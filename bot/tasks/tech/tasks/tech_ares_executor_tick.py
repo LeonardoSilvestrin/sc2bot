@@ -95,13 +95,10 @@ class TechAresExecutorTick(BaseTask):
         structures = self._read_structures(raw_structures)
 
         sig = self._sig(enable=enable, upgrades=[str(x.name) for x in upgrades], structures={str(k.name): int(v) for k, v in structures.items()})
-        if sig == self._last_sig:
-            return TaskResult.running("tech_executor_no_change")
-        if now < float(self._next_apply_at):
-            return TaskResult.running("tech_executor_throttled")
         if not upgrades and not structures:
             return TaskResult.running("tech_targets_empty")
 
+        sig_changed = str(sig) != str(self._last_sig)
         plan = MacroPlan()
         for uid, to_count in structures.items():
             plan.add(
@@ -128,7 +125,9 @@ class TechAresExecutorTick(BaseTask):
         self._apply_count += 1
         self.awareness.mem.set(K("tech", "exec", "register_count"), value=int(self._apply_count), now=now, ttl=None)
 
-        if self.log is not None:
+        if self.log is not None and (
+            (int(tick.iteration) % 22 == 0) or bool(sig_changed)
+        ):
             self.log.emit(
                 "tech_executor_applied",
                 {
@@ -140,4 +139,3 @@ class TechAresExecutorTick(BaseTask):
                 },
             )
         return TaskResult.running("tech_executor_plan_registered")
-

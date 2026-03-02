@@ -38,6 +38,8 @@ class EgoConfig:
     # Global anti-spam / pacing controls.
     default_task_min_step_interval_s: float = 0.0
     macro_task_min_step_interval_s: float = 0.35
+    macro_apm_soft_block_urgency: int = 30
+    macro_apm_hard_block_urgency: int = 70
     perf_log_interval_s: float = 2.0
 
 
@@ -59,6 +61,7 @@ class Ego:
 
     async def tick(self, bot, *, tick: TaskTick, attention: Attention, awareness: Awareness) -> None:
         now = float(tick.time)
+        self._publish_exec_budget(attention=attention, awareness=awareness, now=now)
 
         # Periodic memory compaction keeps O(n) scans from degrading over time.
         if self._last_mem_gc_at < 0.0 or (now - self._last_mem_gc_at) >= 8.0:
@@ -127,6 +130,22 @@ class Ego:
                 meta={"module": "runtime", "component": "runtime.perf"},
             )
             self._last_perf_emit_at = float(now)
+
+    def _publish_exec_budget(self, *, attention: Attention, awareness: Awareness, now: float) -> None:
+        urgency = int(attention.combat.primary_urgency)
+        macro_enabled = bool(urgency < int(self.cfg.macro_apm_hard_block_urgency))
+        if urgency >= int(self.cfg.macro_apm_hard_block_urgency):
+            reason = "hard_micro_pressure"
+            cadence = 0.0
+        elif urgency >= int(self.cfg.macro_apm_soft_block_urgency):
+            reason = "soft_micro_pressure"
+            cadence = 0.55
+        else:
+            reason = "normal"
+            cadence = 1.0
+        awareness.mem.set(K("ego", "exec_budget", "macro_enabled"), value=bool(macro_enabled), now=now, ttl=10.0)
+        awareness.mem.set(K("ego", "exec_budget", "macro_cadence"), value=float(cadence), now=now, ttl=10.0)
+        awareness.mem.set(K("ego", "exec_budget", "macro_reason"), value=str(reason), now=now, ttl=10.0)
 
     def _pre_filter_proposals(self, *, proposals: List[Proposal], awareness: Awareness, now: float) -> List[Proposal]:
         """

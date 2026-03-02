@@ -22,7 +22,7 @@ PROFILE: Dict[str, Any] = {
         "BANSHEE": (150, 100),
     },
     "bank_setpoint_minerals": {"RUSH_RESPONSE": 380, "DEFENSIVE": 480, "STANDARD": 650, "PUNISH": 900},
-    "bank_setpoint_gas": {"RUSH_RESPONSE": 160, "DEFENSIVE": 190, "STANDARD": 220, "PUNISH": 300},
+    "bank_setpoint_gas": {"RUSH_RESPONSE": 160, "DEFENSIVE": 190, "STANDARD": 180, "PUNISH": 300},
     "pid_tuning_by_mode": {
         "RUSH_RESPONSE": {
             "lag_pi_kp": 0.95,
@@ -147,11 +147,45 @@ PROFILE: Dict[str, Any] = {
             }
         ],
     },
+    "production_structure_targets_by_mode": {
+        "RUSH_RESPONSE": {"BARRACKS": 3, "FACTORY": 1, "STARPORT": 1},
+        "DEFENSIVE": {"BARRACKS": 3, "FACTORY": 1, "STARPORT": 1},
+        "STANDARD": {"BARRACKS": 5, "FACTORY": 2, "STARPORT": 2},
+        "PUNISH": {"BARRACKS": 6, "FACTORY": 2, "STARPORT": 2},
+    },
+    "production_scale_by_mode": {
+        "RUSH_RESPONSE": {"BARRACKS": 1.4, "FACTORY": 0.5, "STARPORT": 0.5},
+        "DEFENSIVE": {"BARRACKS": 1.4, "FACTORY": 0.5, "STARPORT": 0.5},
+        "STANDARD": {"BARRACKS": 1.6, "FACTORY": 0.55, "STARPORT": 0.55},
+        "PUNISH": {"BARRACKS": 1.8, "FACTORY": 0.6, "STARPORT": 0.6},
+    },
     "tech_structure_targets_by_mode": {
         "RUSH_RESPONSE": {"ENGINEERINGBAY": 1, "ARMORY": 0},
         "DEFENSIVE": {"ENGINEERINGBAY": 1, "ARMORY": 0},
         "STANDARD": {"ENGINEERINGBAY": 2, "ARMORY": 2},
         "PUNISH": {"ENGINEERINGBAY": 2, "ARMORY": 2},
+    },
+    "tech_timing_milestones_by_mode": {
+        "RUSH_RESPONSE": [
+            {"t": 260.0, "structures": {"ENGINEERINGBAY": 1}, "upgrades": []},
+            {"t": 420.0, "structures": {"ENGINEERINGBAY": 1, "ARMORY": 0}, "upgrades": ["TERRANINFANTRYWEAPONSLEVEL1"]},
+        ],
+        "DEFENSIVE": [
+            {"t": 280.0, "structures": {"ENGINEERINGBAY": 1}, "upgrades": []},
+            {"t": 440.0, "structures": {"ENGINEERINGBAY": 1, "ARMORY": 0}, "upgrades": ["TERRANINFANTRYWEAPONSLEVEL1"]},
+        ],
+        "STANDARD": [
+            {"t": 230.0, "structures": {}, "upgrades": ["STIMPACK"]},
+            {"t": 320.0, "structures": {"ENGINEERINGBAY": 1}, "upgrades": []},
+            {"t": 470.0, "structures": {"ENGINEERINGBAY": 2, "ARMORY": 1}, "upgrades": ["TERRANINFANTRYWEAPONSLEVEL1", "TERRANINFANTRYARMORSLEVEL1"]},
+            {"t": 640.0, "structures": {"ENGINEERINGBAY": 2, "ARMORY": 2}, "upgrades": ["TERRANINFANTRYWEAPONSLEVEL2"]},
+        ],
+        "PUNISH": [
+            {"t": 220.0, "structures": {}, "upgrades": ["STIMPACK"]},
+            {"t": 300.0, "structures": {"ENGINEERINGBAY": 1}, "upgrades": []},
+            {"t": 430.0, "structures": {"ENGINEERINGBAY": 2, "ARMORY": 1}, "upgrades": ["TERRANINFANTRYWEAPONSLEVEL1"]},
+            {"t": 600.0, "structures": {"ENGINEERINGBAY": 2, "ARMORY": 2}, "upgrades": ["TERRANINFANTRYWEAPONSLEVEL2", "TERRANINFANTRYARMORSLEVEL1"]},
+        ],
     },
     "transition_overrides": {
         "BANSHEE": {

@@ -108,6 +108,24 @@ class MacroAresExecutorTick(BaseTask):
         bor = getattr(bot, "build_order_runner", None)
         if bor is not None and not bool(getattr(bor, "build_completed", False)):
             return TaskResult.running("opening_buildorder_active")
+        macro_budget_enabled = bool(
+            self.awareness.mem.get(
+                K("ego", "exec_budget", "macro_enabled"),
+                now=now,
+                default=True,
+            )
+        )
+        if not macro_budget_enabled:
+            return TaskResult.running("macro_budget_blocked")
+        macro_cadence = float(
+            self.awareness.mem.get(
+                K("ego", "exec_budget", "macro_cadence"),
+                now=now,
+                default=1.0,
+            )
+            or 1.0
+        )
+        macro_cadence = max(0.1, min(1.0, float(macro_cadence)))
 
         cooldown_until = float(self.awareness.mem.get(K("macro", "exec", "cooldown_until"), now=now, default=0.0) or 0.0)
         if now < cooldown_until:
@@ -118,30 +136,98 @@ class MacroAresExecutorTick(BaseTask):
         except Exception:
             return TaskResult.running("missing_army_comp")
 
-        enable_workers = bool(self.awareness.mem.get(K("macro", "exec", "enable_workers"), now=now, default=True))
-        scv_cap = int(self.awareness.mem.get(K("macro", "exec", "scv_cap"), now=now, default=66) or 66)
-        enable_supply = bool(self.awareness.mem.get(K("macro", "exec", "enable_supply"), now=now, default=True))
-        enable_gas = bool(self.awareness.mem.get(K("macro", "exec", "enable_gas"), now=now, default=True))
+        plan_active = self.awareness.mem.get(K("macro", "plan", "active"), now=now, default={}) or {}
+        if not isinstance(plan_active, dict):
+            plan_active = {}
+        enable_workers = bool(
+            plan_active.get(
+                "enable_workers",
+                self.awareness.mem.get(K("macro", "exec", "enable_workers"), now=now, default=True),
+            )
+        )
+        scv_cap = int(
+            plan_active.get(
+                "scv_cap",
+                self.awareness.mem.get(K("macro", "exec", "scv_cap"), now=now, default=66) or 66,
+            )
+            or 66
+        )
+        enable_supply = bool(
+            plan_active.get(
+                "enable_supply",
+                self.awareness.mem.get(K("macro", "exec", "enable_supply"), now=now, default=True),
+            )
+        )
+        enable_gas = bool(
+            plan_active.get(
+                "enable_gas",
+                self.awareness.mem.get(K("macro", "exec", "enable_gas"), now=now, default=True),
+            )
+        )
         gas_target = int(
-            self.awareness.mem.get(
-                K("macro", "exec", "gas_target"),
-                now=now,
-                default=max(0, int(attention.macro.bases_total) * 2),
+            plan_active.get(
+                "gas_target",
+                self.awareness.mem.get(
+                    K("macro", "exec", "gas_target"),
+                    now=now,
+                    default=max(0, int(attention.macro.bases_total) * 2),
+                )
+                or 0,
             )
             or 0
         )
-        enable_spawn = bool(self.awareness.mem.get(K("macro", "exec", "enable_spawn"), now=now, default=True))
-        freeflow_mode = bool(self.awareness.mem.get(K("macro", "exec", "freeflow_mode"), now=now, default=False))
-        enable_production = bool(self.awareness.mem.get(K("macro", "exec", "enable_production"), now=now, default=True))
-        enable_expansion = bool(self.awareness.mem.get(K("macro", "exec", "enable_expansion"), now=now, default=True))
+        enable_spawn = bool(
+            plan_active.get(
+                "enable_spawn",
+                self.awareness.mem.get(K("macro", "exec", "enable_spawn"), now=now, default=True),
+            )
+        )
+        freeflow_mode = bool(
+            plan_active.get(
+                "freeflow_mode",
+                self.awareness.mem.get(K("macro", "exec", "freeflow_mode"), now=now, default=False),
+            )
+        )
+        enable_production = bool(
+            plan_active.get(
+                "enable_production",
+                self.awareness.mem.get(K("macro", "exec", "enable_production"), now=now, default=True),
+            )
+        )
+        enable_expansion = bool(
+            plan_active.get(
+                "enable_expansion",
+                self.awareness.mem.get(K("macro", "exec", "enable_expansion"), now=now, default=True),
+            )
+        )
         expand_to = int(
-            self.awareness.mem.get(
-                K("macro", "exec", "expand_to"),
-                now=now,
-                default=max(1, int(attention.macro.bases_total)),
+            plan_active.get(
+                "expand_to",
+                self.awareness.mem.get(
+                    K("macro", "exec", "expand_to"),
+                    now=now,
+                    default=max(1, int(attention.macro.bases_total)),
+                )
+                or 1,
             )
             or 1
         )
+        lane_order_raw = plan_active.get(
+            "lane_order",
+            self.awareness.mem.get(
+                K("macro", "exec", "lane_order"),
+                now=now,
+                default=["workers", "supply", "gas", "spawn", "production", "expand"],
+            ),
+        )
+        lane_order = [str(x) for x in lane_order_raw] if isinstance(lane_order_raw, list) else [
+            "workers",
+            "supply",
+            "gas",
+            "spawn",
+            "production",
+            "expand",
+        ]
 
         sig = self._sig_from_plan(
             army_comp=army_comp,
@@ -156,49 +242,65 @@ class MacroAresExecutorTick(BaseTask):
             enable_expansion=enable_expansion,
             expand_to=expand_to,
         )
-        if sig == self._last_sig:
-            return TaskResult.running("macro_executor_no_change")
         if now < float(self._next_apply_at):
             return TaskResult.running("macro_executor_throttled")
 
         plan = MacroPlan()
-        if enable_workers:
-            plan.add(BuildWorkers(to_count=max(0, int(scv_cap))))
-        if enable_supply:
-            plan.add(
-                AutoSupply(
-                    base_location=bot.start_location,
-                    return_true_if_supply_required=False,
+
+        def _add_lane(lane: str) -> None:
+            if lane == "workers" and enable_workers:
+                plan.add(BuildWorkers(to_count=max(0, int(scv_cap))))
+                return
+            if lane == "supply" and enable_supply:
+                plan.add(
+                    AutoSupply(
+                        base_location=bot.start_location,
+                        return_true_if_supply_required=False,
+                    )
                 )
-            )
-        if enable_gas:
-            plan.add(GasBuildingController(to_count=max(0, int(gas_target))))
-        if enable_spawn:
-            plan.add(
-                SpawnController(
-                    army_composition_dict=army_comp,
-                    freeflow_mode=bool(freeflow_mode),
-                    ignore_proportions_below_unit_count=8,
-                    over_produce_on_low_tech=True,
+                return
+            if lane == "gas" and enable_gas:
+                plan.add(GasBuildingController(to_count=max(0, int(gas_target))))
+                return
+            if lane == "spawn" and enable_spawn:
+                plan.add(
+                    SpawnController(
+                        army_composition_dict=army_comp,
+                        freeflow_mode=bool(freeflow_mode),
+                        ignore_proportions_below_unit_count=8,
+                        over_produce_on_low_tech=True,
+                    )
                 )
-            )
-        if enable_production:
-            plan.add(
-                ProductionController(
-                    army_composition_dict=army_comp,
-                    base_location=bot.start_location,
+                return
+            if lane == "production" and enable_production:
+                plan.add(
+                    ProductionController(
+                        army_composition_dict=army_comp,
+                        base_location=bot.start_location,
+                    )
                 )
-            )
-        if enable_expansion:
-            plan.add(ExpansionController(to_count=max(1, int(expand_to))))
+                return
+            if lane == "expand" and enable_expansion:
+                plan.add(ExpansionController(to_count=max(1, int(expand_to))))
+                return
+
+        seen = set()
+        for lane in lane_order + ["workers", "supply", "gas", "spawn", "production", "expand"]:
+            if lane in seen:
+                continue
+            seen.add(lane)
+            _add_lane(str(lane))
 
         bot.register_behavior(plan)
         self._last_sig = str(sig)
-        self._next_apply_at = float(now) + max(0.1, float(self.apply_min_interval_s))
+        effective_interval = max(0.1, float(self.apply_min_interval_s) / float(macro_cadence))
+        self._next_apply_at = float(now) + float(effective_interval)
         self._apply_count += 1
         self.awareness.mem.set(K("macro", "exec", "register_count"), value=int(self._apply_count), now=now, ttl=None)
 
         if self.log is not None:
+            plan_version = int(self.awareness.mem.get(K("macro", "plan", "version"), now=now, default=0) or 0)
+            plan_hash = str(self.awareness.mem.get(K("macro", "plan", "hash"), now=now, default="") or "")
             self.log.emit(
                 "macro_executor_applied",
                 {
@@ -206,6 +308,8 @@ class MacroAresExecutorTick(BaseTask):
                     "t": round(float(now), 2),
                     "apply_count": int(self._apply_count),
                     "apply_min_interval_s": float(self.apply_min_interval_s),
+                    "effective_apply_interval_s": float(effective_interval),
+                    "macro_cadence": float(macro_cadence),
                     "enable_workers": bool(enable_workers),
                     "scv_cap": int(scv_cap),
                     "enable_supply": bool(enable_supply),
@@ -216,7 +320,10 @@ class MacroAresExecutorTick(BaseTask):
                     "enable_production": bool(enable_production),
                     "enable_expansion": bool(enable_expansion),
                     "expand_to": int(expand_to),
+                    "lane_order": list(lane_order),
                     "army_comp_count": int(len(army_comp)),
+                    "macro_plan_version": int(plan_version),
+                    "macro_plan_hash": str(plan_hash),
                 },
             )
 

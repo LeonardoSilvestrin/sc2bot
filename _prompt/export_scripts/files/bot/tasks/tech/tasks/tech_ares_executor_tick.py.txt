@@ -97,8 +97,6 @@ class TechAresExecutorTick(BaseTask):
         structures = self._read_structures(raw_structures)
 
         sig = self._sig(enable=enable, upgrades=[str(x.name) for x in upgrades], structures={str(k.name): int(v) for k, v in structures.items()})
-        if sig == self._last_sig:
-            return TaskResult.running("tech_executor_no_change")
         if now < float(self._next_apply_at):
             return TaskResult.running("tech_executor_throttled")
         if not upgrades and not structures:
@@ -142,4 +140,3 @@ class TechAresExecutorTick(BaseTask):
                 },
             )
         return TaskResult.running("tech_executor_plan_registered")
-
