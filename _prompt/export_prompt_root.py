@@ -32,6 +32,7 @@ ROOT_FILES: List[str] = [
     "run.py",
     "ARCHITECTURE.md",
     "_prompt/root.txt",
+    "_tools/check_macro_executor_uniqueness.py",
 ]
 INCLUDE_ROOT_FILES: bool = True
 

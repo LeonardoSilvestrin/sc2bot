@@ -1,60 +1,181 @@
 # _prompt/root.txt
 
 Voce e meu parceiro tecnico para evoluir um bot de StarCraft II em Python.
-Este projeto ja passou por refactor grande; priorize contrato e comportamento real em runtime.
-Vou enviar um dump gerado por _prompt/export_prompt_root.py.
+Este documento eh o handoff oficial do estado atual do sistema e dos proximos passos.
+Use este contexto antes de propor qualquer mudanca.
 
-ARQUITETURA CANONICA (CONTRATO)
+OBJETIVO ATUAL
+- Manter arquitetura previsivel com contrato curto.
+- Evitar regressao para acoplamentos laterais (reservas cruzadas, multiplos executores macro).
+- Validar comportamento em runtime (nao apenas "codigo bonito").
+
+ESTADO ARQUITETURAL ATUAL (2026-03)
 - Sensor atualiza Attention.
-- Intel atualiza Awareness.
-- Planner emite Proposal (sem side effects).
-- Ego arbitra proposals (score + PriorityPolicy/PID + gates + cooldowns + leases).
-- Task executa acao no jogo (Ares behaviors/comandos) e pode escrever apenas status operacional em ops.*.
+- Intel atualiza Awareness em macro.desired.*.
+- Planner publica intencao em macro.exec.* e tech.exec.*.
+- Ego arbitra proposals por score/policy e executa tasks ativas.
+- Somente executores dedicados registram MacroPlan (Ares).
 
 PIPELINE DE EXECUCAO
 1) RuntimeApp.on_step:
    derive_opening_contract_intel -> derive_attention -> derive_enemy_build_intel -> derive_my_army_composition_intel
 2) Ego.tick:
-   coleta proposals dos planners, aplica PriorityPolicy, admite/preempta, executa tasks ativas
-3) Tasks macro:
-   production_tick, spending_tick, tech_tick, scv_housekeeping_task, control_depots_task
+   planners -> proposals -> PriorityPolicy -> admissao/preempcao -> execute step das tasks
+3) Executors:
+   MacroAresExecutorTick (macro) + TechAresExecutorTick (tech), ambos com apply-on-change+throttle.
 
-PLANNERS ATIVOS (NOMES VALIDOS)
-- defense_planner
-- harass_planner
-- intel_planner
-- opening_planner (shim no self.py para periodo de opening)
-- macro_orchestrator_planner (publica planos por lane macro)
+MUDANCA ESTRUTURAL JA FEITA (IMPORTANTE)
+- Removidas tasks legadas:
+  - bot/tasks/macro/tasks/spending_tick.py
+  - bot/tasks/macro/tasks/production_tick.py
+  - bot/tasks/macro/tasks/tech_tick.py
+- Novo executor unico de macro:
+  - bot/tasks/macro/tasks/macro_ares_executor_tick.py
+- Novo executor separado de tech:
+  - bot/tasks/tech/tasks/tech_ares_executor_tick.py
+- Planner macro agora supervisiona:
+  - macro.exec.*
+  - tech.exec.*
+  - housekeeping
+  - depot control
 
-PASTAS IMPORTANTES
-- bot/control: policy/PID/arbitracao de recursos e prioridade global
-- bot/builds: perfis por opening (setpoints e tuning por modo)
-- bot/intel: classificacao enemy opening/rush + desired comp + contratos para macro
-- bot/plans/contracts.py: ownership de chaves Awareness (fonte de verdade de contrato)
+CONTRATOS DE MEMORIA (FONTE DE VERDADE)
 
-O QUE O PID CONTROLA HOJE (ALTO NIVEL)
-- lag por lane macro: production / spending / tech
-- pesos efetivos no Ego via PriorityPolicy
-- reservas macro (minerio/gas) publicadas em awareness e consumidas por tasks/planner
-- sinais de timing attack e macro delay (pressao/rush)
+1) macro.desired.* (INTEL escreve)
+- mode
+- signals
+- comp
+- controller_comp
+- army_comp
+- priority_units
+- reserve_unit / reserve_minerals / reserve_gas
+- bank_target_minerals / bank_target_gas
+- army_supply_milestones
+- unit_count_milestones
+- timing_attacks
+- tech_targets {upgrades, structures}
+- tech_structure_targets
+- last_update_t
 
-BUILD PROFILE (SEM FALLBACK SILENCIOSO)
-- build_catalog exige chaves obrigatorias; ausencia deve falhar com missing_contract/invalid_contract.
-- exemplos de chaves: comp_*, priority_*, reserve_costs, bank_setpoint_*, pid_tuning_by_mode,
-  army_supply_milestones_by_mode, unit_count_milestones_by_mode, timing_attacks_by_mode,
-  tech_structure_targets_by_mode.
+2) macro.exec.* (PLANNER escreve; MACRO EXECUTOR le)
+- enable_workers
+- scv_cap
+- enable_supply
+- enable_gas
+- gas_target
+- enable_spawn
+- freeflow_mode
+- enable_production
+- enable_expansion
+- expand_to
+- cooldown_until
+- owner
+- register_count (executor telemetria)
 
-PRINCIPIOS DE ALTERACAO
-1. Mudanca minima com impacto claro e testavel.
-2. Nao criar fallback para estrutura legada.
-3. Se quebrar contrato, falhar explicitamente com erro claro.
-4. Preferir parametrizacao em build/control ao inves de hardcode na task.
+3) tech.exec.* (PLANNER escreve; TECH EXECUTOR le)
+- enable
+- targets {upgrades, structures}
+- cooldown_until
+- owner
+- register_count (executor telemetria)
 
-OBSERVABILIDADE (LOGS)
-- validar por eventos de intel (opening/rush), control.pid, planner_proposed, mission/task status e runtime_clock.
-- evitar conclusao por achismo; sempre apontar evidencia no log/codigo.
+OWNERSHIP (NAO NEGOCIAVEL)
+- Intel escreve apenas macro.desired.*.
+- Planner escreve apenas macro.exec.* e tech.exec.*.
+- Executors leem exec/desired e executam Ares.
+- Ninguem fora do planner escreve macro.exec.* ou tech.exec.*.
+
+ROOT MAP (PASTAS DA RAIZ E PAPEL)
+- .github/ : CI/workflows.
+- .vscode/ : config local de editor.
+- ares-sc2/ : dependencia/vendor do framework Ares (nao editar sem necessidade).
+- bot/ : codigo principal do bot.
+- data/ : dados auxiliares (fora do dump por padrao).
+- logs/ : logs de runtime (nao exportar no zip do prompt).
+- scripts/ : scripts utilitarios diversos.
+- _docs/ : documentacao complementar.
+- _prompt/ : pacote de export/handoff para outro agente.
+- _tools/ : scripts de validacao local (inclui guardrails).
+
+BOT MAP (PASTAS PRINCIPAIS EM bot/)
+- ares_wrapper/ : adapters de compatibilidade com Ares.
+- builds/ : perfis declarativos por opening/mode.
+- control/ : politica de prioridade e sinais de controle (sem comandos de macro diretos).
+- intel/ : classificadores + publicacao de setpoints macro.desired.*.
+- mind/ : runtime app, ego, awareness, attention.
+- planners/ : geracao de proposals (sem side-effects no jogo).
+- plans/ : contratos e definicoes de plano.
+- sensors/ : captura estado do jogo -> Attention.
+- tasks/ : executores de acao (defense/harass/macro/scout/support/tech).
+
+ARQUIVOS CRITICOS PARA ENTENDER O SISTEMA
+- bot/mind/self.py : wiring principal de runtime/planners.
+- bot/mind/ego.py : arbitracao/admissao/preempcao de missions.
+- bot/planners/macro/orchestrator_planner.py : supervisor de macro.exec/tech.exec.
+- bot/tasks/macro/tasks/macro_ares_executor_tick.py : unico executor macro (Ares MacroPlan).
+- bot/tasks/tech/tasks/tech_ares_executor_tick.py : executor tech (Ares MacroPlan).
+- bot/intel/my_army_composition_intel.py : orquestrador do split de intel.
+- bot/intel/macro_mode_intel.py : decide mode/sinais.
+- bot/intel/army_comp_intel.py : comp e prioridades em formato Ares.
+- bot/intel/tech_intel.py : tech targets (upgrades/structures).
+- bot/control/priority_policy.py : policy simplificada para ordering de proposals.
+- _tools/check_macro_executor_uniqueness.py : guardrail anti-regressao.
+
+SINAIS DE HEALTH EM RUNTIME (OLHAR NO LOG)
+- macro_executor_applied
+- tech_executor_applied
+- macro.exec.register_count
+- tech.exec.register_count
+- planner_proposed
+- mission_started / mission_ended
+- runtime_clock
+
+PROBLEMA RECENTE: FLOOD DE MINERIO
+PARAMETROS DE TUNING HOJE
+- bot/planners/macro/orchestrator_planner.py:
+  - freeflow_on_minerals
+  - freeflow_off_minerals
+  - freeflow_hold_s
+  - critical_expand_cooldown_s
+  - critical_gas_cooldown_s
+  - scv_cap_opening/mid/late
+  - opening_gas_cap
+  - late_gas_bonus
+  - phase_opening_max_s / phase_late_after_s / phase_late_bases
+- bot/control/priority_policy.py:
+  - executor_bank_target_minerals / executor_bank_target_gas
+  - executor_bank_dampen_gain
+
+REGRAS DE ALTERACAO (PARA O OUTRO AGENTE)
+1) Nao reintroduzir tasks macro legadas.
+2) Nao criar novos writers para macro.exec.* ou tech.exec.* fora do planner.
+3) Nao registrar MacroPlan por tick sem gate de mudanca.
+4) Qualquer executor novo deve usar:
+   - assinatura deterministica (sig)
+   - apply only on change
+   - throttle/cooldown interno
+   - contador de register_count
+5) Se breaking change de contrato, explicitar no root.txt e no patch.
+
+NEXT STEPS PRIORITARIOS (ORDENADOS)
+P0) Rodar 3 jogos de smoke test e medir:
+    - register_count (macro/tech)
+    - oscilacao de freeflow_mode
+    - latencia de expand_to/gas_target
+P1) Tuning anti-flood:
+    - ajustar freeflow thresholds e cooldown de expand/gas
+P2) Revisao de ownership:
+    - opcional migrar control.phase/control.pressure para macro.exec.* se quiser contrato ainda mais estrito
+P3) Ajustar _tools/check_macro_executor_uniqueness.py para tambem verificar TECH_EXECUTOR invariants.
+
+CHECKLIST GO/NO-GO
+- [ ] macro register_count cresce devagar (nao por frame)
+- [ ] tech register_count cresce so em mudanca real
+- [ ] opening nao disputa com macro/tech executors
+- [ ] sem oscillation rapida de freeflow/gas/expand
+- [ ] sem falhas de contrato missing_contract/invalid_contract em loop
 
 ENTREGA ESPERADA DO AGENTE
 1. Diagnostico objetivo (causa raiz + arquivo/linha/chave).
-2. Patch pequeno e coerente com contrato.
-3. Lista de validacoes executadas (compile/import/run curto/log esperado).
+2. Patch pequeno coerente com o contrato atual.
+3. Validacoes executadas (compile/import + evidencias de log).

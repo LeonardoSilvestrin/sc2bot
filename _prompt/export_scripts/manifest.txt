@@ -1,7 +1,7 @@
 EXPORT META
-generated_at_utc: 2026-03-02T06:21:48.704027+00:00
+generated_at_utc: 2026-03-02T10:30:17.461943+00:00
 repo_root: C:\Users\Asus\Documents\projetos\sc2bot\ares\ares-sc2-bot-template
-files_total: 84
+files_total: 89
 
 FILES
 - bot/__init__.py -> files/bot/__init__.py.txt
@@ -17,13 +17,16 @@ FILES
 - bot/control/__init__.py -> files/bot/control/__init__.py.txt
 - bot/control/macro_resource_controller.py -> files/bot/control/macro_resource_controller.py.txt
 - bot/control/priority_policy.py -> files/bot/control/priority_policy.py.txt
+- bot/intel/army_comp_intel.py -> files/bot/intel/army_comp_intel.py.txt
 - bot/intel/build_catalog.py -> files/bot/intel/build_catalog.py.txt
 - bot/intel/config/opening_timing_rules.py -> files/bot/intel/config/opening_timing_rules.py.txt
 - bot/intel/enemy_build_intel.py -> files/bot/intel/enemy_build_intel.py.txt
 - bot/intel/game_parity_intel.py -> files/bot/intel/game_parity_intel.py.txt
+- bot/intel/macro_mode_intel.py -> files/bot/intel/macro_mode_intel.py.txt
 - bot/intel/my_army_composition_intel.py -> files/bot/intel/my_army_composition_intel.py.txt
 - bot/intel/opening_contract_intel.py -> files/bot/intel/opening_contract_intel.py.txt
 - bot/intel/opening_intel.py -> files/bot/intel/opening_intel.py.txt
+- bot/intel/tech_intel.py -> files/bot/intel/tech_intel.py.txt
 - bot/intel/utils/__init__.py -> files/bot/intel/utils/__init__.py.txt
 - bot/intel/utils/enemy_econ_estimates.py -> files/bot/intel/utils/enemy_econ_estimates.py.txt
 - bot/intel/utils/opening_policy.py -> files/bot/intel/utils/opening_policy.py.txt
@@ -73,11 +76,9 @@ FILES
 - bot/tasks/macro/support/__init__.py -> files/bot/tasks/macro/support/__init__.py.txt
 - bot/tasks/macro/support/state_store.py -> files/bot/tasks/macro/support/state_store.py.txt
 - bot/tasks/macro/tasks/__init__.py -> files/bot/tasks/macro/tasks/__init__.py.txt
+- bot/tasks/macro/tasks/macro_ares_executor_tick.py -> files/bot/tasks/macro/tasks/macro_ares_executor_tick.py.txt
 - bot/tasks/macro/tasks/opening.py -> files/bot/tasks/macro/tasks/opening.py.txt
-- bot/tasks/macro/tasks/production_tick.py -> files/bot/tasks/macro/tasks/production_tick.py.txt
 - bot/tasks/macro/tasks/scv_housekeeping_task.py -> files/bot/tasks/macro/tasks/scv_housekeeping_task.py.txt
-- bot/tasks/macro/tasks/spending_tick.py -> files/bot/tasks/macro/tasks/spending_tick.py.txt
-- bot/tasks/macro/tasks/tech_tick.py -> files/bot/tasks/macro/tasks/tech_tick.py.txt
 - bot/tasks/macro/utils/__init__.py -> files/bot/tasks/macro/utils/__init__.py.txt
 - bot/tasks/macro/utils/desired_comp.py -> files/bot/tasks/macro/utils/desired_comp.py.txt
 - bot/tasks/macro/utils/wall_mapper.py -> files/bot/tasks/macro/utils/wall_mapper.py.txt
@@ -85,6 +86,10 @@ FILES
 - bot/tasks/scout/scan_task.py -> files/bot/tasks/scout/scan_task.py.txt
 - bot/tasks/support/control_depots_task.py -> files/bot/tasks/support/control_depots_task.py.txt
 - bot/tasks/support/support_mission_task.py -> files/bot/tasks/support/support_mission_task.py.txt
+- bot/tasks/tech/__init__.py -> files/bot/tasks/tech/__init__.py.txt
+- bot/tasks/tech/tasks/__init__.py -> files/bot/tasks/tech/tasks/__init__.py.txt
+- bot/tasks/tech/tasks/tech_ares_executor_tick.py -> files/bot/tasks/tech/tasks/tech_ares_executor_tick.py.txt
 - terran_builds.yml -> files/terran_builds.yml.txt
 - run.py -> files/run.py.txt
 - _prompt/root.txt -> files/_prompt/root.txt.txt
+- _tools/check_macro_executor_uniqueness.py -> files/_tools/check_macro_executor_uniqueness.py.txt

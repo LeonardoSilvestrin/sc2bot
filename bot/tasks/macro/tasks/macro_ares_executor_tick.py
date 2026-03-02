@@ -1,0 +1,221 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from ares.behaviors.macro.auto_supply import AutoSupply
+from ares.behaviors.macro.build_workers import BuildWorkers
+from ares.behaviors.macro.expansion_controller import ExpansionController
+from ares.behaviors.macro.gas_building_controller import GasBuildingController
+from ares.behaviors.macro.macro_plan import MacroPlan
+from ares.behaviors.macro.production_controller import ProductionController
+from ares.behaviors.macro.spawn_controller import SpawnController
+from sc2.ids.unit_typeid import UnitTypeId as U
+
+from bot.devlog import DevLogger
+from bot.mind.attention import Attention
+from bot.mind.awareness import Awareness, K
+from bot.tasks.base_task import BaseTask, TaskResult, TaskTick
+
+
+@dataclass
+class MacroAresExecutorTick(BaseTask):
+    awareness: Awareness
+    log: DevLogger | None = None
+    log_every_iters: int = 22
+    apply_min_interval_s: float = 1.0
+
+    _last_sig: str = ""
+    _next_apply_at: float = 0.0
+    _apply_count: int = 0
+
+    def __init__(
+        self,
+        *,
+        awareness: Awareness,
+        log: DevLogger | None = None,
+        log_every_iters: int = 22,
+        apply_min_interval_s: float = 1.0,
+    ):
+        super().__init__(task_id="macro_ares_executor", domain="MACRO_EXECUTOR", commitment=10)
+        self.awareness = awareness
+        self.log = log
+        self.log_every_iters = int(log_every_iters)
+        self.apply_min_interval_s = float(apply_min_interval_s)
+        self._last_sig = ""
+        self._next_apply_at = 0.0
+        self._apply_count = 0
+
+    def _army_comp(self, *, now: float):
+        raw = self.awareness.mem.get(K("macro", "desired", "army_comp"), now=now, default=None)
+        if not isinstance(raw, dict):
+            raise RuntimeError("missing_contract:macro.desired.army_comp")
+        out: dict[U, dict[str, float | int]] = {}
+        for name, cfg in raw.items():
+            if not isinstance(name, str) or not isinstance(cfg, dict):
+                continue
+            try:
+                uid = getattr(U, str(name))
+                proportion = float(cfg.get("proportion", 0.0))
+                priority = int(cfg.get("priority", 0))
+            except Exception:
+                continue
+            if proportion <= 0.0:
+                continue
+            out[uid] = {"proportion": float(proportion), "priority": int(priority)}
+        if not out:
+            raise RuntimeError("invalid_contract:macro.desired.army_comp.empty")
+        return out
+
+    @staticmethod
+    def _sig_from_plan(
+        *,
+        army_comp: dict[U, dict[str, float | int]],
+        enable_workers: bool,
+        scv_cap: int,
+        enable_supply: bool,
+        enable_gas: bool,
+        gas_target: int,
+        enable_spawn: bool,
+        freeflow_mode: bool,
+        enable_production: bool,
+        enable_expansion: bool,
+        expand_to: int,
+    ) -> str:
+        comp_items = sorted(
+            ((u.name, float(cfg.get("proportion", 0.0)), int(cfg.get("priority", 0))) for u, cfg in army_comp.items()),
+            key=lambda x: x[0],
+        )
+        return "|".join(
+            [
+                f"w:{int(enable_workers)}:{int(scv_cap)}",
+                f"s:{int(enable_supply)}",
+                f"g:{int(enable_gas)}:{int(gas_target)}",
+                f"sp:{int(enable_spawn)}:{int(freeflow_mode)}",
+                f"pr:{int(enable_production)}",
+                f"ex:{int(enable_expansion)}:{int(expand_to)}",
+                "comp:" + ",".join([f"{n}:{p:.4f}:{pri}" for (n, p, pri) in comp_items]),
+            ]
+        )
+
+    async def on_step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult:
+        bound_err = self.require_mission_bound()
+        if bound_err is not None:
+            return bound_err
+
+        now = float(tick.time)
+        bor = getattr(bot, "build_order_runner", None)
+        if bor is not None and not bool(getattr(bor, "build_completed", False)):
+            return TaskResult.running("opening_buildorder_active")
+
+        cooldown_until = float(self.awareness.mem.get(K("macro", "exec", "cooldown_until"), now=now, default=0.0) or 0.0)
+        if now < cooldown_until:
+            return TaskResult.running("executor_cooldown")
+
+        try:
+            army_comp = self._army_comp(now=now)
+        except Exception:
+            return TaskResult.running("missing_army_comp")
+
+        enable_workers = bool(self.awareness.mem.get(K("macro", "exec", "enable_workers"), now=now, default=True))
+        scv_cap = int(self.awareness.mem.get(K("macro", "exec", "scv_cap"), now=now, default=66) or 66)
+        enable_supply = bool(self.awareness.mem.get(K("macro", "exec", "enable_supply"), now=now, default=True))
+        enable_gas = bool(self.awareness.mem.get(K("macro", "exec", "enable_gas"), now=now, default=True))
+        gas_target = int(
+            self.awareness.mem.get(
+                K("macro", "exec", "gas_target"),
+                now=now,
+                default=max(0, int(attention.macro.bases_total) * 2),
+            )
+            or 0
+        )
+        enable_spawn = bool(self.awareness.mem.get(K("macro", "exec", "enable_spawn"), now=now, default=True))
+        freeflow_mode = bool(self.awareness.mem.get(K("macro", "exec", "freeflow_mode"), now=now, default=False))
+        enable_production = bool(self.awareness.mem.get(K("macro", "exec", "enable_production"), now=now, default=True))
+        enable_expansion = bool(self.awareness.mem.get(K("macro", "exec", "enable_expansion"), now=now, default=True))
+        expand_to = int(
+            self.awareness.mem.get(
+                K("macro", "exec", "expand_to"),
+                now=now,
+                default=max(1, int(attention.macro.bases_total)),
+            )
+            or 1
+        )
+
+        sig = self._sig_from_plan(
+            army_comp=army_comp,
+            enable_workers=enable_workers,
+            scv_cap=scv_cap,
+            enable_supply=enable_supply,
+            enable_gas=enable_gas,
+            gas_target=gas_target,
+            enable_spawn=enable_spawn,
+            freeflow_mode=freeflow_mode,
+            enable_production=enable_production,
+            enable_expansion=enable_expansion,
+            expand_to=expand_to,
+        )
+        if sig == self._last_sig:
+            return TaskResult.running("macro_executor_no_change")
+        if now < float(self._next_apply_at):
+            return TaskResult.running("macro_executor_throttled")
+
+        plan = MacroPlan()
+        if enable_workers:
+            plan.add(BuildWorkers(to_count=max(0, int(scv_cap))))
+        if enable_supply:
+            plan.add(
+                AutoSupply(
+                    base_location=bot.start_location,
+                    return_true_if_supply_required=False,
+                )
+            )
+        if enable_gas:
+            plan.add(GasBuildingController(to_count=max(0, int(gas_target))))
+        if enable_spawn:
+            plan.add(
+                SpawnController(
+                    army_composition_dict=army_comp,
+                    freeflow_mode=bool(freeflow_mode),
+                    ignore_proportions_below_unit_count=8,
+                    over_produce_on_low_tech=True,
+                )
+            )
+        if enable_production:
+            plan.add(
+                ProductionController(
+                    army_composition_dict=army_comp,
+                    base_location=bot.start_location,
+                )
+            )
+        if enable_expansion:
+            plan.add(ExpansionController(to_count=max(1, int(expand_to))))
+
+        bot.register_behavior(plan)
+        self._last_sig = str(sig)
+        self._next_apply_at = float(now) + max(0.1, float(self.apply_min_interval_s))
+        self._apply_count += 1
+        self.awareness.mem.set(K("macro", "exec", "register_count"), value=int(self._apply_count), now=now, ttl=None)
+
+        if self.log is not None:
+            self.log.emit(
+                "macro_executor_applied",
+                {
+                    "iter": int(tick.iteration),
+                    "t": round(float(now), 2),
+                    "apply_count": int(self._apply_count),
+                    "apply_min_interval_s": float(self.apply_min_interval_s),
+                    "enable_workers": bool(enable_workers),
+                    "scv_cap": int(scv_cap),
+                    "enable_supply": bool(enable_supply),
+                    "enable_gas": bool(enable_gas),
+                    "gas_target": int(gas_target),
+                    "enable_spawn": bool(enable_spawn),
+                    "freeflow_mode": bool(freeflow_mode),
+                    "enable_production": bool(enable_production),
+                    "enable_expansion": bool(enable_expansion),
+                    "expand_to": int(expand_to),
+                    "army_comp_count": int(len(army_comp)),
+                },
+            )
+
+        return TaskResult.running("macro_executor_plan_registered")

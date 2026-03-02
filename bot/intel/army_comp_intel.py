@@ -1,0 +1,239 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any
+
+from sc2.ids.unit_typeid import UnitTypeId as U
+
+from bot.mind.attention import Attention
+from bot.mind.awareness import Awareness, K
+
+
+@dataclass(frozen=True)
+class ArmyCompIntelConfig:
+    ttl_s: float = 25.0
+    log_interval_s: float = 8.0
+
+
+def _normalize(comp: dict[str, float]) -> dict[str, float]:
+    total = float(sum(float(v) for v in comp.values()))
+    if total <= 0.0:
+        return dict(comp)
+    return {str(k): float(v) / total for k, v in comp.items()}
+
+
+def _prepend_unique(items: list[str], head: str) -> list[str]:
+    if not head:
+        return list(items)
+    out = [str(head)]
+    for it in items:
+        s = str(it)
+        if s == str(head):
+            continue
+        out.append(s)
+    return out
+
+
+def _inject_unit_comp_bias(comp: dict[str, float], *, unit_name: str, weight: float = 0.12) -> dict[str, float]:
+    out = dict(comp)
+    if unit_name in out:
+        return out
+    out[str(unit_name)] = float(weight)
+    return _normalize(out)
+
+
+def _controller_comp(comp: dict[str, float], priority_units: list[str]) -> dict[str, dict[str, float | int]]:
+    ordered = sorted(comp.items(), key=lambda kv: float(kv[1]), reverse=True)
+    if priority_units:
+        idx = {str(name): i for i, name in enumerate(priority_units)}
+        ordered.sort(key=lambda kv: (idx.get(str(kv[0]), 999), -float(kv[1])))
+    out: dict[str, dict[str, float | int]] = {}
+    for i, (unit_name, proportion) in enumerate(ordered):
+        out[str(unit_name)] = {"proportion": float(proportion), "priority": int(i)}
+    return out
+
+
+def _mode_value(cfg_map: dict[str, Any], *, mode: str, key: str) -> Any:
+    out = cfg_map.get(str(mode))
+    if out is None:
+        raise RuntimeError(f"missing_contract:macro.desired.{key}:{mode}")
+    return out
+
+
+def _harass_missing_unit_from_cooldown(*, awareness: Awareness, now: float) -> str | None:
+    snap = awareness.mem.snapshot(now=now, prefix=K("ops", "cooldown"), max_age=90.0)
+    latest_t = -1.0
+    missing: str | None = None
+    for sk, entry in snap.items():
+        parts = sk.split(":")
+        if len(parts) < 4 or parts[0] != "ops" or parts[1] != "cooldown" or parts[-1] != "reason":
+            continue
+        proposal_id = ":".join(parts[2:-1])
+        if not proposal_id.startswith("harass_planner:"):
+            continue
+        reason = str(entry.get("value") or "")
+        t = float(entry.get("t") or 0.0)
+        unit = ""
+        if "reaper" in reason:
+            unit = "REAPER"
+        elif "hellion" in reason:
+            unit = "HELLION"
+        elif "banshee" in reason:
+            unit = "BANSHEE"
+        if unit and t > latest_t:
+            latest_t = t
+            missing = unit
+    return missing
+
+
+def _unit_targets_at_time(*, milestones: list[dict[str, Any]], now: float) -> dict[str, float]:
+    points: list[tuple[float, dict[str, float]]] = []
+    for item in milestones:
+        if not isinstance(item, dict):
+            continue
+        try:
+            t = float(item.get("t", 0.0))
+        except Exception:
+            continue
+        units_raw = item.get("units", {})
+        if not isinstance(units_raw, dict):
+            continue
+        units: dict[str, float] = {}
+        for name, val in units_raw.items():
+            if not isinstance(name, str):
+                continue
+            try:
+                units[str(name)] = max(0.0, float(val))
+            except Exception:
+                continue
+        points.append((t, units))
+    if not points:
+        return {}
+    points.sort(key=lambda x: x[0])
+    t_now = float(now)
+    if t_now <= points[0][0]:
+        return dict(points[0][1])
+    for i in range(1, len(points)):
+        t0, u0 = points[i - 1]
+        t1, u1 = points[i]
+        if t_now <= t1:
+            a = max(0.0, min(1.0, (t_now - t0) / max(1e-6, t1 - t0)))
+            names = set(u0.keys()) | set(u1.keys())
+            out: dict[str, float] = {}
+            for n in names:
+                v0 = float(u0.get(n, 0.0))
+                v1 = float(u1.get(n, 0.0))
+                out[str(n)] = float(v0 + (a * (v1 - v0)))
+            return out
+    return dict(points[-1][1])
+
+
+def _largest_unit_shortfall(*, attention: Attention, unit_targets: dict[str, float]) -> tuple[str | None, float]:
+    if not unit_targets:
+        return None, 0.0
+    ready = dict(attention.economy.units_ready or {})
+    best_name: str | None = None
+    best_gap = 0.0
+    for name, target in unit_targets.items():
+        if float(target) <= 0.0:
+            continue
+        try:
+            uid = getattr(U, str(name))
+            cur = float(int(ready.get(uid, 0) or 0))
+        except Exception:
+            continue
+        gap = max(0.0, float(target) - cur)
+        if gap > best_gap:
+            best_gap = float(gap)
+            best_name = str(name)
+    return best_name, float(best_gap)
+
+
+def derive_army_comp_intel(
+    *,
+    awareness: Awareness,
+    attention: Attention,
+    now: float,
+    profile: dict[str, Any],
+    mode: str,
+    opening_selected: str,
+    transition_target: str,
+    banshee_harass_done: bool,
+    cfg: ArmyCompIntelConfig = ArmyCompIntelConfig(),
+) -> dict[str, Any]:
+    comp_by_mode = {
+        "RUSH_RESPONSE": _normalize(dict(profile["comp_rush_response"])),
+        "DEFENSIVE": _normalize(dict(profile["comp_defensive"])),
+        "PUNISH": _normalize(dict(profile["comp_punish"])),
+        "STANDARD": _normalize(dict(profile["comp_standard"])),
+    }
+    prio_by_mode = {
+        "RUSH_RESPONSE": [str(x) for x in list(profile["priority_rush_response"])],
+        "DEFENSIVE": [str(x) for x in list(profile["priority_defensive"])],
+        "PUNISH": [str(x) for x in list(profile["priority_punish"])],
+        "STANDARD": [str(x) for x in list(profile["priority_standard"])],
+    }
+    comp = dict(comp_by_mode.get(str(mode), comp_by_mode["STANDARD"]))
+    priority_units = list(prio_by_mode.get(str(mode), prio_by_mode["STANDARD"]))
+
+    missing_harass_unit = _harass_missing_unit_from_cooldown(awareness=awareness, now=now)
+    if missing_harass_unit is not None:
+        priority_units = _prepend_unique(priority_units, missing_harass_unit)
+        comp = _inject_unit_comp_bias(comp, unit_name=str(missing_harass_unit), weight=0.12)
+
+    wants_banshee_path = str(opening_selected) == "BansheeHellionOpen" or str(transition_target).upper() == "BANSHEE"
+    if bool(wants_banshee_path) and not bool(banshee_harass_done):
+        priority_units = _prepend_unique(priority_units, "BANSHEE")
+        priority_units = _prepend_unique(priority_units, "HELLION")
+        comp = _inject_unit_comp_bias(comp, unit_name="HELLION", weight=0.16)
+        comp = _inject_unit_comp_bias(comp, unit_name="BANSHEE", weight=0.14)
+
+    unit_milestones = list(_mode_value(dict(profile["unit_count_milestones_by_mode"]), mode=str(mode), key="unit_count_milestones"))
+    unit_targets_now = _unit_targets_at_time(milestones=unit_milestones, now=float(now))
+    lag_unit_name, lag_unit_gap = _largest_unit_shortfall(attention=attention, unit_targets=unit_targets_now)
+    if lag_unit_name is not None and float(lag_unit_gap) > 0.0:
+        priority_units = _prepend_unique(priority_units, str(lag_unit_name))
+        comp = _inject_unit_comp_bias(comp, unit_name=str(lag_unit_name), weight=0.18)
+
+    comp = _normalize(comp)
+    controller_comp = _controller_comp(comp=comp, priority_units=priority_units)
+    top_unit = str(priority_units[0]) if priority_units else ""
+    reserve_costs = dict(profile["reserve_costs"])
+    reserve = reserve_costs.get(top_unit, (0, 0))
+    reserve_m, reserve_g = int(reserve[0]), int(reserve[1])
+
+    bank_setpoint_minerals = dict(profile["bank_setpoint_minerals"])
+    bank_setpoint_gas = dict(profile["bank_setpoint_gas"])
+    bank_target_m = int(bank_setpoint_minerals[str(mode)])
+    bank_target_g = int(bank_setpoint_gas[str(mode)])
+
+    army_supply_milestones = list(_mode_value(dict(profile["army_supply_milestones_by_mode"]), mode=str(mode), key="army_supply_milestones"))
+    timing_attacks = list(_mode_value(dict(profile["timing_attacks_by_mode"]), mode=str(mode), key="timing_attacks"))
+    pid_tuning = dict(_mode_value(dict(profile["pid_tuning_by_mode"]), mode=str(mode), key="pid_tuning"))
+
+    awareness.mem.set(K("macro", "desired", "comp"), value=dict(comp), now=now, ttl=float(cfg.ttl_s))
+    awareness.mem.set(K("macro", "desired", "controller_comp"), value=dict(controller_comp), now=now, ttl=float(cfg.ttl_s))
+    awareness.mem.set(K("macro", "desired", "army_comp"), value=dict(controller_comp), now=now, ttl=float(cfg.ttl_s))
+    awareness.mem.set(K("macro", "desired", "priority_units"), value=list(priority_units), now=now, ttl=float(cfg.ttl_s))
+    awareness.mem.set(K("macro", "desired", "reserve_unit"), value=str(top_unit), now=now, ttl=float(cfg.ttl_s))
+    awareness.mem.set(K("macro", "desired", "reserve_minerals"), value=int(reserve_m), now=now, ttl=float(cfg.ttl_s))
+    awareness.mem.set(K("macro", "desired", "reserve_gas"), value=int(reserve_g), now=now, ttl=float(cfg.ttl_s))
+    awareness.mem.set(K("macro", "desired", "bank_target_minerals"), value=int(bank_target_m), now=now, ttl=float(cfg.ttl_s))
+    awareness.mem.set(K("macro", "desired", "bank_target_gas"), value=int(bank_target_g), now=now, ttl=float(cfg.ttl_s))
+    awareness.mem.set(K("macro", "desired", "pid_tuning"), value=dict(pid_tuning), now=now, ttl=float(cfg.ttl_s))
+    awareness.mem.set(K("macro", "desired", "army_supply_milestones"), value=list(army_supply_milestones), now=now, ttl=float(cfg.ttl_s))
+    awareness.mem.set(K("macro", "desired", "unit_count_milestones"), value=list(unit_milestones), now=now, ttl=float(cfg.ttl_s))
+    awareness.mem.set(K("macro", "desired", "timing_attacks"), value=list(timing_attacks), now=now, ttl=float(cfg.ttl_s))
+
+    return {
+        "comp": dict(comp),
+        "controller_comp": dict(controller_comp),
+        "priority_units": list(priority_units),
+        "top_unit": str(top_unit),
+        "reserve_minerals": int(reserve_m),
+        "reserve_gas": int(reserve_g),
+        "bank_target_minerals": int(bank_target_m),
+        "bank_target_gas": int(bank_target_g),
+        "lagging_unit": str(lag_unit_name or ""),
+        "lagging_unit_gap": float(lag_unit_gap),
+    }

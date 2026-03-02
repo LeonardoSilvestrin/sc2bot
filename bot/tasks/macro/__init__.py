@@ -1,16 +1,12 @@
 from bot.tasks.macro.tasks import (
+    MacroAresExecutorTick,
     MacroOpeningTick,
-    MacroProductionTick,
-    MacroSpendingTick,
-    MacroTechTick,
     ScvHousekeeping,
 )
 
 __all__ = [
+    "MacroAresExecutorTick",
     "MacroOpeningTick",
-    "MacroProductionTick",
-    "MacroSpendingTick",
-    "MacroTechTick",
     "ScvHousekeeping",
 ]
 

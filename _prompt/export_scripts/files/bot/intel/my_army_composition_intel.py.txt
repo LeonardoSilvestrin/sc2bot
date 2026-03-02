@@ -1,205 +1,24 @@
 # bot/intel/my_army_composition_intel.py
 
-# =============================================================================
-# bot/intel/my_army_composition_intel.py  (NEW)
-# =============================================================================
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Dict, List
+from dataclasses import dataclass, field
 
-from sc2.ids.unit_typeid import UnitTypeId as U
-from bot.intel.build_catalog import resolve_build_profile
-from bot.mind.awareness import Awareness, K
+from bot.intel.army_comp_intel import ArmyCompIntelConfig, derive_army_comp_intel
+from bot.intel.macro_mode_intel import MacroModeIntelConfig, derive_macro_mode_intel
+from bot.intel.tech_intel import TechIntelConfig, derive_tech_intel
 from bot.mind.attention import Attention
+from bot.mind.awareness import Awareness, K
 
 
 @dataclass(frozen=True)
 class MyArmyCompositionConfig:
-    """
-    Strategy-level macro reference:
-      - desired mode (discrete)
-      - desired comp (ratios)
-    This is NOT production/spending. It's the setpoint.
-
-    Keep TTL short: consumers should treat it as "recent intent".
-    """
     ttl_s: float = 25.0
     min_confidence: float = 0.55
     log_interval_s: float = 8.0
-
-
-
-def _normalize(comp: Dict[str, float]) -> Dict[str, float]:
-    try:
-        total = float(sum(float(v) for v in comp.values()))
-    except Exception:
-        return dict(comp)
-    if total <= 0:
-        return dict(comp)
-    return {str(k): float(v) / total for k, v in comp.items()}
-
-
-def _prepend_unique(items: List[str], head: str) -> List[str]:
-    if not head:
-        return list(items)
-    out = [str(head)]
-    for it in items:
-        s = str(it)
-        if s == str(head):
-            continue
-        out.append(s)
-    return out
-
-
-def _inject_unit_comp_bias(comp: Dict[str, float], *, unit_name: str, weight: float = 0.12) -> Dict[str, float]:
-    out = dict(comp)
-    if unit_name in out:
-        return out
-    out[str(unit_name)] = float(weight)
-    return _normalize(out)
-
-
-def _controller_comp(comp: Dict[str, float], priority_units: List[str]) -> Dict[str, Dict[str, float | int]]:
-    ordered = sorted(comp.items(), key=lambda kv: float(kv[1]), reverse=True)
-    if priority_units:
-        idx = {str(name): i for i, name in enumerate(priority_units)}
-        ordered.sort(key=lambda kv: (idx.get(str(kv[0]), 999), -float(kv[1])))
-    out: Dict[str, Dict[str, float | int]] = {}
-    for i, (unit_name, proportion) in enumerate(ordered):
-        out[str(unit_name)] = {"proportion": float(proportion), "priority": int(i)}
-    return out
-
-
-def _apply_opening_bias(
-    *,
-    comp: Dict[str, float],
-    priority_units: List[str],
-    opening_selected: str,
-    transition_target: str,
-    banshee_harass_done: bool,
-) -> tuple[Dict[str, float], List[str]]:
-    out_comp = dict(comp)
-    out_prio = list(priority_units)
-    wants_banshee_path = str(opening_selected) == "BansheeHellionOpen" or str(transition_target).upper() == "BANSHEE"
-    if bool(wants_banshee_path) and not bool(banshee_harass_done):
-        out_prio = _prepend_unique(out_prio, "BANSHEE")
-        out_prio = _prepend_unique(out_prio, "HELLION")
-        out_comp = _inject_unit_comp_bias(out_comp, unit_name="HELLION", weight=0.16)
-        out_comp = _inject_unit_comp_bias(out_comp, unit_name="BANSHEE", weight=0.14)
-    return _normalize(out_comp), out_prio
-
-
-def _harass_missing_unit_from_cooldown(*, awareness: Awareness, now: float) -> str | None:
-    """
-    Looks at Ego cooldown rejection traces and returns the missing unit for the
-    reaper-hellion harass proposal when available.
-    """
-    snap = awareness.mem.snapshot(now=now, prefix=K("ops", "cooldown"), max_age=90.0)
-    latest_t = -1.0
-    missing: str | None = None
-
-    for sk, entry in snap.items():
-        parts = sk.split(":")
-        # Expected: ops:cooldown:<proposal_id>:reason
-        if len(parts) < 4:
-            continue
-        if parts[0] != "ops" or parts[1] != "cooldown":
-            continue
-        if parts[-1] != "reason":
-            continue
-
-        proposal_id = ":".join(parts[2:-1])
-        if not proposal_id.startswith("harass_planner:"):
-            continue
-
-        reason = str(entry.get("value") or "")
-        t = float(entry.get("t") or 0.0)
-        unit = ""
-        if "reaper" in reason:
-            unit = "REAPER"
-        elif "hellion" in reason:
-            unit = "HELLION"
-        elif "banshee" in reason:
-            unit = "BANSHEE"
-        if not unit:
-            continue
-
-        if t > latest_t:
-            latest_t = t
-            missing = unit
-
-    return missing
-
-
-def _mode_milestones(cfg_map: Dict[str, Any], *, mode: str, key: str) -> Any:
-    out = cfg_map.get(str(mode))
-    if out is None:
-        raise RuntimeError(f"missing_contract:macro.desired.{key}:{mode}")
-    return out
-
-
-def _unit_targets_at_time(*, milestones: List[Dict[str, Any]], now: float) -> Dict[str, float]:
-    points: list[tuple[float, Dict[str, float]]] = []
-    for item in milestones:
-        if not isinstance(item, dict):
-            continue
-        try:
-            t = float(item.get("t", 0.0))
-        except Exception:
-            continue
-        units_raw = item.get("units", {})
-        if not isinstance(units_raw, dict):
-            continue
-        units: Dict[str, float] = {}
-        for name, val in units_raw.items():
-            if not isinstance(name, str):
-                continue
-            try:
-                units[str(name)] = max(0.0, float(val))
-            except Exception:
-                continue
-        points.append((t, units))
-    if not points:
-        return {}
-    points.sort(key=lambda x: x[0])
-    t_now = float(now)
-    if t_now <= points[0][0]:
-        return dict(points[0][1])
-    for i in range(1, len(points)):
-        t0, u0 = points[i - 1]
-        t1, u1 = points[i]
-        if t_now <= t1:
-            a = max(0.0, min(1.0, (t_now - t0) / max(1e-6, t1 - t0)))
-            names = set(u0.keys()) | set(u1.keys())
-            out: Dict[str, float] = {}
-            for n in names:
-                v0 = float(u0.get(n, 0.0))
-                v1 = float(u1.get(n, 0.0))
-                out[str(n)] = float(v0 + (a * (v1 - v0)))
-            return out
-    return dict(points[-1][1])
-
-
-def _largest_unit_shortfall(*, attention: Attention, unit_targets: Dict[str, float]) -> tuple[str | None, float]:
-    if not unit_targets:
-        return None, 0.0
-    ready = dict(attention.economy.units_ready or {})
-    best_name: str | None = None
-    best_gap = 0.0
-    for name, target in unit_targets.items():
-        if float(target) <= 0.0:
-            continue
-        try:
-            uid = getattr(U, str(name))
-            cur = float(int(ready.get(uid, 0) or 0))
-        except Exception:
-            continue
-        gap = max(0.0, float(target) - cur)
-        if gap > best_gap:
-            best_gap = float(gap)
-            best_name = str(name)
-    return best_name, float(best_gap)
+    mode: MacroModeIntelConfig = field(default_factory=MacroModeIntelConfig)
+    army: ArmyCompIntelConfig = field(default_factory=ArmyCompIntelConfig)
+    tech: TechIntelConfig = field(default_factory=TechIntelConfig)
 
 
 def derive_my_army_composition_intel(
@@ -209,161 +28,45 @@ def derive_my_army_composition_intel(
     now: float,
     cfg: MyArmyCompositionConfig = MyArmyCompositionConfig(),
 ) -> None:
-    """
-    Reads enemy opening belief from Awareness, emits desired mode+comp into Awareness.
-
-    Writes:
-      - macro:desired:mode
-      - macro:desired:comp
-      - macro:desired:last_update_t
-    """
-    enemy_kind = awareness.mem.get(K("enemy", "opening", "kind"), now=now, default="NORMAL")
-    conf = awareness.mem.get(K("enemy", "opening", "confidence"), now=now, default=0.0)
-    rush_state = str(awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
-    opening_selected = str(awareness.mem.get(K("macro", "opening", "selected"), now=now, default="Default") or "Default")
-    transition_target = str(awareness.mem.get(K("macro", "opening", "transition_target"), now=now, default="STIM") or "STIM").upper()
-    banshee_harass_done = bool(awareness.mem.get(K("ops", "harass", "banshee", "done"), now=now, default=False))
-    profile = resolve_build_profile(opening_selected=str(opening_selected), transition_target=str(transition_target))
-
-    comp_defensive = _normalize(dict(profile["comp_defensive"]))
-    comp_standard = _normalize(dict(profile["comp_standard"]))
-    comp_punish = _normalize(dict(profile["comp_punish"]))
-    comp_rush_response = _normalize(dict(profile["comp_rush_response"]))
-    priority_defensive = [str(x) for x in list(profile["priority_defensive"])]
-    priority_standard = [str(x) for x in list(profile["priority_standard"])]
-    priority_punish = [str(x) for x in list(profile["priority_punish"])]
-    priority_rush_response = [str(x) for x in list(profile["priority_rush_response"])]
-    reserve_costs = dict(profile["reserve_costs"])
-    bank_setpoint_minerals = dict(profile["bank_setpoint_minerals"])
-    bank_setpoint_gas = dict(profile["bank_setpoint_gas"])
-    pid_tuning_by_mode = dict(profile["pid_tuning_by_mode"])
-    army_supply_milestones_by_mode = dict(profile["army_supply_milestones_by_mode"])
-    unit_count_milestones_by_mode = dict(profile["unit_count_milestones_by_mode"])
-    timing_attacks_by_mode = dict(profile["timing_attacks_by_mode"])
-    tech_structure_targets_by_mode = dict(profile["tech_structure_targets_by_mode"])
-    mode = "STANDARD"
-    if rush_state in {"CONFIRMED", "HOLDING"}:
-        mode = "RUSH_RESPONSE"
-    elif float(conf) >= float(cfg.min_confidence):
-        if str(enemy_kind) == "AGGRESSIVE":
-            mode = "DEFENSIVE"
-        elif str(enemy_kind) == "GREEDY":
-            mode = "PUNISH"
-        else:
-            mode = "STANDARD"
-
-    pid_tuning = _mode_milestones(
-        dict(pid_tuning_by_mode or {}),
-        mode=str(mode),
-        key="pid_tuning",
-    )
-    if not isinstance(pid_tuning, dict):
-        raise RuntimeError(f"invalid_contract:macro.desired.pid_tuning:{mode}")
-
-    if mode == "RUSH_RESPONSE":
-        comp = _normalize(dict(comp_rush_response))
-        priority_units = list(priority_rush_response)
-    elif mode == "DEFENSIVE":
-        comp = _normalize(dict(comp_defensive))
-        priority_units = list(priority_defensive)
-    elif mode == "PUNISH":
-        comp = _normalize(dict(comp_punish))
-        priority_units = list(priority_punish)
-    else:
-        comp = _normalize(dict(comp_standard))
-        priority_units = list(priority_standard)
-
-    missing_harass_unit = _harass_missing_unit_from_cooldown(awareness=awareness, now=now)
-    if missing_harass_unit is not None:
-        priority_units = _prepend_unique(priority_units, missing_harass_unit)
-        comp = _inject_unit_comp_bias(comp, unit_name=str(missing_harass_unit), weight=0.12)
-
-    comp, priority_units = _apply_opening_bias(
-        comp=comp,
-        priority_units=priority_units,
-        opening_selected=str(opening_selected),
-        transition_target=str(transition_target),
-        banshee_harass_done=bool(banshee_harass_done),
-    )
-
-    army_supply_milestones = _mode_milestones(
-        dict(army_supply_milestones_by_mode or {}),
-        mode=str(mode),
-        key="army_supply_milestones",
-    )
-    unit_count_milestones = _mode_milestones(
-        dict(unit_count_milestones_by_mode or {}),
-        mode=str(mode),
-        key="unit_count_milestones",
-    )
-    timing_attacks = _mode_milestones(
-        dict(timing_attacks_by_mode or {}),
-        mode=str(mode),
-        key="timing_attacks",
-    )
-    tech_structure_targets = _mode_milestones(
-        dict(tech_structure_targets_by_mode or {}),
-        mode=str(mode),
-        key="tech_structure_targets",
-    )
-    if not isinstance(tech_structure_targets, dict):
-        raise RuntimeError(f"invalid_contract:macro.desired.tech_structure_targets:{mode}")
-
-    unit_targets_now = _unit_targets_at_time(milestones=list(unit_count_milestones), now=float(now))
-    lag_unit_name, lag_unit_gap = _largest_unit_shortfall(attention=attention, unit_targets=unit_targets_now)
-    if lag_unit_name is not None and float(lag_unit_gap) > 0.0:
-        priority_units = _prepend_unique(priority_units, str(lag_unit_name))
-        comp = _inject_unit_comp_bias(comp, unit_name=str(lag_unit_name), weight=0.18)
-
-    top_unit = str(priority_units[0]) if priority_units else ""
-    reserve = reserve_costs.get(top_unit, (0, 0))
-    reserve_m, reserve_g = int(reserve[0]), int(reserve[1])
-    controller_comp = _controller_comp(comp=comp, priority_units=priority_units)
-
-    if str(mode) not in bank_setpoint_minerals:
-        raise RuntimeError(f"missing_contract:build_profile.bank_setpoint_minerals:{mode}")
-    if str(mode) not in bank_setpoint_gas:
-        raise RuntimeError(f"missing_contract:build_profile.bank_setpoint_gas:{mode}")
-    bank_target_m = int(bank_setpoint_minerals[str(mode)])
-    bank_target_g = int(bank_setpoint_gas[str(mode)])
-
-    awareness.mem.set(K("macro", "desired", "mode"), value=str(mode), now=now, ttl=float(cfg.ttl_s))
-    awareness.mem.set(K("macro", "desired", "comp"), value=dict(comp), now=now, ttl=float(cfg.ttl_s))
-    awareness.mem.set(K("macro", "desired", "controller_comp"), value=dict(controller_comp), now=now, ttl=float(cfg.ttl_s))
-    awareness.mem.set(K("macro", "desired", "priority_units"), value=list(priority_units), now=now, ttl=float(cfg.ttl_s))
-    awareness.mem.set(K("macro", "desired", "reserve_unit"), value=str(top_unit), now=now, ttl=float(cfg.ttl_s))
-    awareness.mem.set(K("macro", "desired", "reserve_minerals"), value=int(reserve_m), now=now, ttl=float(cfg.ttl_s))
-    awareness.mem.set(K("macro", "desired", "reserve_gas"), value=int(reserve_g), now=now, ttl=float(cfg.ttl_s))
-    awareness.mem.set(K("macro", "desired", "bank_target_minerals"), value=int(bank_target_m), now=now, ttl=float(cfg.ttl_s))
-    awareness.mem.set(K("macro", "desired", "bank_target_gas"), value=int(bank_target_g), now=now, ttl=float(cfg.ttl_s))
-    awareness.mem.set(K("macro", "desired", "pid_tuning"), value=dict(pid_tuning), now=now, ttl=float(cfg.ttl_s))
-    awareness.mem.set(K("macro", "desired", "army_supply_milestones"), value=list(army_supply_milestones), now=now, ttl=float(cfg.ttl_s))
-    awareness.mem.set(K("macro", "desired", "unit_count_milestones"), value=list(unit_count_milestones), now=now, ttl=float(cfg.ttl_s))
-    awareness.mem.set(K("macro", "desired", "timing_attacks"), value=list(timing_attacks), now=now, ttl=float(cfg.ttl_s))
-    awareness.mem.set(K("macro", "desired", "tech_structure_targets"), value=dict(tech_structure_targets), now=now, ttl=float(cfg.ttl_s))
-    awareness.mem.set(
-        K("macro", "desired", "signals"),
-        value={
-            "rush_state": str(rush_state),
-            "enemy_kind": str(enemy_kind),
-            "confidence": float(conf),
-            "opening_selected": str(opening_selected),
-            "transition_target": str(transition_target),
-            "banshee_harass_done": bool(banshee_harass_done),
-            "missing_harass_unit": str(missing_harass_unit or ""),
-            "lagging_unit": str(lag_unit_name or ""),
-            "lagging_unit_gap": float(round(lag_unit_gap, 2)),
-            "bank_target_minerals": int(bank_target_m),
-            "bank_target_gas": int(bank_target_g),
-        },
+    mode_ctx = derive_macro_mode_intel(
+        awareness=awareness,
         now=now,
-        ttl=float(cfg.ttl_s),
+        cfg=MacroModeIntelConfig(ttl_s=float(cfg.ttl_s), min_confidence=float(cfg.min_confidence)),
     )
-    awareness.mem.set(K("macro", "desired", "last_update_t"), value=float(now), now=now, ttl=None)
+    army_ctx = derive_army_comp_intel(
+        awareness=awareness,
+        attention=attention,
+        now=now,
+        profile=dict(mode_ctx["profile"]),
+        mode=str(mode_ctx["mode"]),
+        opening_selected=str(mode_ctx["opening_selected"]),
+        transition_target=str(mode_ctx["transition_target"]),
+        banshee_harass_done=bool(mode_ctx["banshee_harass_done"]),
+        cfg=ArmyCompIntelConfig(ttl_s=float(cfg.ttl_s), log_interval_s=float(cfg.log_interval_s)),
+    )
+    tech_ctx = derive_tech_intel(
+        awareness=awareness,
+        now=now,
+        profile=dict(mode_ctx["profile"]),
+        mode=str(mode_ctx["mode"]),
+        comp=dict(army_ctx["comp"]),
+        reserve_unit=str(army_ctx["top_unit"]),
+        cfg=TechIntelConfig(ttl_s=float(cfg.ttl_s)),
+    )
 
-    last_emit = float(
-        awareness.mem.get(K("intel", "my_comp", "last_emit_t"), now=now, default=0.0) or 0.0
+    signals = dict(awareness.mem.get(K("macro", "desired", "signals"), now=now, default={}) or {})
+    signals.update(
+        {
+            "lagging_unit": str(army_ctx["lagging_unit"]),
+            "lagging_unit_gap": float(round(float(army_ctx["lagging_unit_gap"]), 2)),
+            "bank_target_minerals": int(army_ctx["bank_target_minerals"]),
+            "bank_target_gas": int(army_ctx["bank_target_gas"]),
+            "tech_upgrade_count": int(len(tech_ctx["upgrades"])),
+        }
     )
+    awareness.mem.set(K("macro", "desired", "signals"), value=dict(signals), now=now, ttl=float(cfg.ttl_s))
+
+    last_emit = float(awareness.mem.get(K("intel", "my_comp", "last_emit_t"), now=now, default=0.0) or 0.0)
     if (float(now) - float(last_emit)) >= float(cfg.log_interval_s):
         awareness.mem.set(K("intel", "my_comp", "last_emit_t"), value=float(now), now=now, ttl=None)
         if awareness.log is not None:
@@ -371,20 +74,21 @@ def derive_my_army_composition_intel(
                 "my_comp_intel",
                 {
                     "t": round(float(now), 2),
-                    "mode": str(mode),
-                    "enemy_kind": str(enemy_kind),
-                    "enemy_conf": round(float(conf), 3),
-                    "rush_state": str(rush_state),
-                    "opening_selected": str(opening_selected),
-                    "transition_target": str(transition_target),
-                    "priority_units": list(priority_units[:5]),
-                    "reserve_unit": str(top_unit),
-                    "reserve_minerals": int(reserve_m),
-                    "reserve_gas": int(reserve_g),
-                    "bank_target_minerals": int(bank_target_m),
-                    "bank_target_gas": int(bank_target_g),
-                    "lagging_unit": str(lag_unit_name or ""),
-                    "lagging_unit_gap": round(float(lag_unit_gap), 2),
+                    "mode": str(mode_ctx["mode"]),
+                    "enemy_kind": str(mode_ctx["enemy_kind"]),
+                    "enemy_conf": round(float(mode_ctx["confidence"]), 3),
+                    "rush_state": str(mode_ctx["rush_state"]),
+                    "opening_selected": str(mode_ctx["opening_selected"]),
+                    "transition_target": str(mode_ctx["transition_target"]),
+                    "priority_units": list(army_ctx["priority_units"][:5]),
+                    "reserve_unit": str(army_ctx["top_unit"]),
+                    "reserve_minerals": int(army_ctx["reserve_minerals"]),
+                    "reserve_gas": int(army_ctx["reserve_gas"]),
+                    "bank_target_minerals": int(army_ctx["bank_target_minerals"]),
+                    "bank_target_gas": int(army_ctx["bank_target_gas"]),
+                    "lagging_unit": str(army_ctx["lagging_unit"]),
+                    "lagging_unit_gap": round(float(army_ctx["lagging_unit_gap"]), 2),
+                    "tech_upgrades_head": list(tech_ctx["upgrades"][:5]),
                 },
                 meta={"module": "intel", "component": "intel.my_comp"},
             )
