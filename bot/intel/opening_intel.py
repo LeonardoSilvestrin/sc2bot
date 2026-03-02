@@ -7,7 +7,7 @@ from bot.intel.utils.opening_policy import OpeningIntelPolicy
 from bot.intel.utils.opening_types import OpeningIntelConfig
 from bot.intel.utils.state_store import EnemyRushStateStore
 from bot.mind.attention import Attention
-from bot.mind.awareness import Awareness
+from bot.mind.awareness import Awareness, K
 
 _WORKER_TYPES = (U.SCV, U.PROBE, U.DRONE)
 
@@ -72,3 +72,25 @@ def derive_enemy_opening_intel(
         evidence=dict(decision.rush_math),
         last_seen_pressure_t=float(decision.last_seen_pressure_t),
     )
+
+    # Periodic explicit intel log for rush/greedy classification observability.
+    last_emit = float(
+        awareness.mem.get(K("intel", "opening", "last_emit_t"), now=now, default=0.0) or 0.0
+    )
+    if (float(now) - float(last_emit)) >= float(cfg.log_interval_s):
+        awareness.mem.set(K("intel", "opening", "last_emit_t"), value=float(now), now=now, ttl=None)
+        if awareness.log is not None:
+            awareness.log.emit(
+                "opening_intel",
+                {
+                    "t": round(float(now), 2),
+                    "kind": str(decision.kind),
+                    "confidence": round(float(decision.confidence), 3),
+                    "rush_state": str(decision.rush_state),
+                    "rush_confidence": round(float(decision.rush_confidence), 3),
+                    "rush_score": round(float(decision.rush_score), 3),
+                    "workers_peak_seen": int(workers_peak_seen),
+                    "signals": dict(decision.signals),
+                },
+                meta={"module": "intel", "component": "intel.opening"},
+            )

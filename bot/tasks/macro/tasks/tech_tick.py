@@ -1,11 +1,11 @@
-# bot/tasks/macro/tech_tick.py
-
 from __future__ import annotations
 
 from dataclasses import dataclass
 
+from ares.behaviors.macro.build_structure import BuildStructure
 from ares.behaviors.macro.macro_plan import MacroPlan
 from ares.behaviors.macro.upgrade_controller import UpgradeController
+from sc2.ids.unit_typeid import UnitTypeId as U
 from sc2.ids.upgrade_id import UpgradeId as Up
 
 from bot.devlog import DevLogger
@@ -35,6 +35,33 @@ class MacroTechTick(BaseTask):
                 upgrades.append(up)
         return upgrades
 
+    def _planned_structures(self, now: float) -> dict:
+        raw = self.awareness.mem.get(K("macro", "tech", "plan", "structure_targets"), now=now, default={}) or {}
+        if not isinstance(raw, dict):
+            return {}
+        out: dict = {}
+        for name, count in raw.items():
+            uid = getattr(U, str(name), None)
+            if uid is None:
+                continue
+            try:
+                out[uid] = max(0, int(count))
+            except Exception:
+                continue
+        return out
+
+    @staticmethod
+    def _count_with_pending(bot, uid) -> int:
+        try:
+            ready = int(bot.structures(uid).ready.amount)
+        except Exception:
+            ready = 0
+        try:
+            pending = int(bot.already_pending(uid) or 0)
+        except Exception:
+            pending = 0
+        return int(ready + pending)
+
     async def on_step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult:
         bound_err = self.require_mission_bound()
         if bound_err is not None:
@@ -42,10 +69,22 @@ class MacroTechTick(BaseTask):
 
         now = float(tick.time)
         upgrades = self._planned_upgrades(now)
-        if not upgrades:
+        structure_targets = self._planned_structures(now)
+        if not upgrades and not structure_targets:
             return TaskResult.noop("no_tech_plan")
 
         plan = MacroPlan()
+        for uid, to_count in structure_targets.items():
+            if int(to_count) <= 0:
+                continue
+            plan.add(
+                BuildStructure(
+                    base_location=bot.start_location,
+                    structure_id=uid,
+                    to_count=int(to_count),
+                    upgrade_structure=True,
+                )
+            )
         plan.add(
             UpgradeController(
                 upgrade_list=upgrades,
@@ -70,8 +109,9 @@ class MacroTechTick(BaseTask):
                     "tech_reserve_minerals": int(reserve_m),
                     "tech_reserve_gas": int(reserve_g),
                     "tech_reserve_name": str(reserve_name),
+                    "tech_structure_targets": {str(uid.name): int(v) for uid, v in structure_targets.items()},
+                    "tech_structure_counts": {str(uid.name): int(self._count_with_pending(bot, uid)) for uid in structure_targets.keys()},
                 },
             )
 
         return TaskResult.running("tech_plan_registered")
-

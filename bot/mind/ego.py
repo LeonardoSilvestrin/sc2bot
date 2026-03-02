@@ -94,6 +94,12 @@ class Ego:
                     }
                 )
 
+        proposals = self._pre_filter_proposals(
+            proposals=proposals,
+            awareness=awareness,
+            now=now,
+        )
+
         for prop in proposals:
             prop.validate()
 
@@ -121,6 +127,28 @@ class Ego:
                 meta={"module": "runtime", "component": "runtime.perf"},
             )
             self._last_perf_emit_at = float(now)
+
+    def _pre_filter_proposals(self, *, proposals: List[Proposal], awareness: Awareness, now: float) -> List[Proposal]:
+        """
+        Drop proposals that are guaranteed to be rejected later anyway:
+        - identical proposal already running (non-reinforce)
+        - in cooldown
+        - duplicate proposal keys in same tick
+        This reduces allocator pressure and policy-eval overhead without throttling planners.
+        """
+        best: Dict[Tuple[str, str], Proposal] = {}
+        for prop in proposals:
+            pid = str(prop.proposal_id)
+            reinforce = str(prop.reinforce_mission_id or "")
+            if not reinforce and self._is_proposal_running(pid):
+                continue
+            if self._is_in_cooldown(awareness, now=now, proposal_id=pid):
+                continue
+            key = (pid, reinforce)
+            cur = best.get(key)
+            if cur is None or int(prop.score) > int(cur.score):
+                best[key] = prop
+        return list(best.values())
 
     def _prioritize_proposals(
         self,

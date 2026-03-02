@@ -16,6 +16,7 @@ class OpeningIntelConfig:
     rush_score_confirmed: float = 76.0
     rush_end_clear_s: float = 22.0
     rush_hold_max_s: float = 36.0
+    log_interval_s: float = 8.0
     rush_suspect_decay_s: float = 16.0
     expected_worker_period_s: float = 12.0
     worker_under_count_tolerance: int = 6

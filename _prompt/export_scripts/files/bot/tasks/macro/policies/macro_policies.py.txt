@@ -1,3 +1,5 @@
+# bot/tasks/macro/policies/macro_policies.py
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -5,7 +7,7 @@ from dataclasses import dataclass
 from sc2.ids.unit_typeid import UnitTypeId as U
 from sc2.position import Point2
 
-from bot.control.macro_state_store import MacroStateStore
+from bot.tasks.macro.support.state_store import MacroStateStore
 from bot.tasks.macro.utils.wall_mapper import WallDepotPlan, get_wall_depot_plan, try_build_next_wall_depot
 
 
@@ -136,3 +138,4 @@ class RushFortifyPolicy:
 
         self.state.set_rush_fortify_last(now=now, depots=int(issued["depots"]), bunkers=int(issued["bunkers"]))
         return issued
+

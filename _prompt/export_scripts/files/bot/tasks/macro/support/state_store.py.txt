@@ -1,3 +1,5 @@
+# bot/tasks/macro/support/state_store.py
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -13,12 +15,12 @@ class MacroStateStore:
         return str(self.awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
 
     def set_rush_active(self, *, now: float, active: bool, ttl: float = 30.0) -> None:
-        self.awareness.mem.set(K("macro", "defense", "rush", "active"), value=bool(active), now=now, ttl=float(ttl))
+        self.awareness.mem.set(K("ops", "macro", "defense", "rush", "active"), value=bool(active), now=now, ttl=float(ttl))
 
     def set_rush_fortify_last(self, *, now: float, depots: int, bunkers: int) -> None:
-        self.awareness.mem.set(K("macro", "defense", "rush", "fortify_last_t"), value=float(now), now=now, ttl=None)
+        self.awareness.mem.set(K("ops", "macro", "defense", "rush", "fortify_last_t"), value=float(now), now=now, ttl=None)
         self.awareness.mem.set(
-            K("macro", "defense", "rush", "fortify_last"),
+            K("ops", "macro", "defense", "rush", "fortify_last"),
             value={"depots": int(depots), "bunkers": int(bunkers)},
             now=now,
             ttl=30.0,
@@ -37,7 +39,7 @@ class MacroStateStore:
         natural_inferred: bool,
     ) -> None:
         self.awareness.mem.set(
-            K("macro", "wall", "status"),
+            K("ops", "macro", "wall", "status"),
             value={
                 "main_total": int(main_total),
                 "main_occupied": int(main_occupied),

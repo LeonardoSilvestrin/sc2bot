@@ -356,13 +356,13 @@ class ScvHousekeeping(BaseTask):
         # Mark last done time (planner uses it as interval gate).
         # Avoid ttl=None ambiguity.
         self.awareness.mem.set(
-            K("macro", "scv", "housekeeping", "last_done_at"),
+            K("ops", "macro", "scv", "housekeeping", "last_done_at"),
             value=float(now),
             now=now,
             ttl=3600.0,
         )
         self.awareness.mem.set(
-            K("macro", "scv", "housekeeping", "last_stats"),
+            K("ops", "macro", "scv", "housekeeping", "last_stats"),
             value={
                 "t": float(now),
                 "gas_deficit": int(stats["gas_deficit"]),

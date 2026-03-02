@@ -1,0 +1,52 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from bot.mind.awareness import Awareness, K
+
+
+@dataclass
+class MacroStateStore:
+    awareness: Awareness
+
+    def get_rush_state(self, *, now: float) -> str:
+        return str(self.awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
+
+    def set_rush_active(self, *, now: float, active: bool, ttl: float = 30.0) -> None:
+        self.awareness.mem.set(K("ops", "macro", "defense", "rush", "active"), value=bool(active), now=now, ttl=float(ttl))
+
+    def set_rush_fortify_last(self, *, now: float, depots: int, bunkers: int) -> None:
+        self.awareness.mem.set(K("ops", "macro", "defense", "rush", "fortify_last_t"), value=float(now), now=now, ttl=None)
+        self.awareness.mem.set(
+            K("ops", "macro", "defense", "rush", "fortify_last"),
+            value={"depots": int(depots), "bunkers": int(bunkers)},
+            now=now,
+            ttl=30.0,
+        )
+
+    def set_wall_status(
+        self,
+        *,
+        now: float,
+        main_total: int,
+        main_occupied: int,
+        main_target: int,
+        natural_total: int,
+        natural_occupied: int,
+        natural_target: int,
+        natural_inferred: bool,
+    ) -> None:
+        self.awareness.mem.set(
+            K("ops", "macro", "wall", "status"),
+            value={
+                "main_total": int(main_total),
+                "main_occupied": int(main_occupied),
+                "main_target": int(main_target),
+                "natural_total": int(natural_total),
+                "natural_occupied": int(natural_occupied),
+                "natural_target": int(natural_target),
+                "natural_inferred": bool(natural_inferred),
+            },
+            now=now,
+            ttl=12.0,
+        )

@@ -1,4 +1,4 @@
-# bot/planners/macro_orchestrator_planner.py
+# bot/planners/macro/orchestrator_planner.py
 
 from __future__ import annotations
 
@@ -13,10 +13,10 @@ from bot.mind.attention import Attention
 from bot.mind.awareness import Awareness, K
 from bot.planners.utils.base_planner import BasePlanner
 from bot.planners.utils.proposals import Proposal, TaskSpec
-from bot.tasks.macro.production_tick import MacroProductionTick
-from bot.tasks.macro.scv_housekeeping_task import ScvHousekeeping
-from bot.tasks.macro.spending_tick import MacroSpendingTick
-from bot.tasks.macro.tech_tick import MacroTechTick
+from bot.tasks.macro.tasks.production_tick import MacroProductionTick
+from bot.tasks.macro.tasks.scv_housekeeping_task import ScvHousekeeping
+from bot.tasks.macro.tasks.spending_tick import MacroSpendingTick
+from bot.tasks.macro.tasks.tech_tick import MacroTechTick
 from bot.tasks.macro.utils.desired_comp import desired_controller_dict_names
 from bot.tasks.support.control_depots_task import ControlDepots
 
@@ -62,6 +62,15 @@ class MacroOrchestratorPlanner(BasePlanner):
     depot_supply_left_trigger: int = 2
     _tech_plan_ttl_s: float = 8.0
     _production_plan_ttl_s: float = 8.0
+    addon_balance_enabled: bool = True
+    addon_ratio_gap_threshold: float = 0.18
+    addon_idle_barracks_trigger: int = 1
+    addon_idle_pressure_gap_min: float = 0.08
+    addon_idle_pressure_rush_dampen: float = 0.55
+    tech_plan_min_interval_s: float = 1.5
+    production_plan_min_interval_s: float = 1.0
+    _last_tech_plan_at: float = -9999.0
+    _last_production_plan_at: float = -9999.0
 
     def _pid(self) -> str:
         return self.proposal_id("macro_orchestrator")
@@ -142,21 +151,21 @@ class MacroOrchestratorPlanner(BasePlanner):
             pending = 0
         return int(ready + pending)
 
-    def _upgrade_is_unlocked_by_army(self, bot, *, name: str, awareness: Awareness, now: float) -> bool:
+    def _upgrade_is_unlocked_by_army(self, *, name: str, counts: dict[str, int]) -> bool:
         n = str(name)
-        marines = self._unit_count_with_pending(bot, U.MARINE)
-        marauders = self._unit_count_with_pending(bot, U.MARAUDER)
-        tanks = self._unit_count_with_pending(bot, U.SIEGETANK)
-        hellions = self._unit_count_with_pending(bot, U.HELLION)
+        marines = int(counts.get("MARINE", 0))
+        marauders = int(counts.get("MARAUDER", 0))
+        tanks = int(counts.get("SIEGETANK", 0))
+        hellions = int(counts.get("HELLION", 0))
         air_core = (
-            self._unit_count_with_pending(bot, U.BANSHEE)
-            + self._unit_count_with_pending(bot, U.MEDIVAC)
-            + self._unit_count_with_pending(bot, U.VIKINGFIGHTER)
-            + self._unit_count_with_pending(bot, U.LIBERATOR)
+            int(counts.get("BANSHEE", 0))
+            + int(counts.get("MEDIVAC", 0))
+            + int(counts.get("VIKINGFIGHTER", 0))
+            + int(counts.get("LIBERATOR", 0))
         )
         if n == "BANSHEECLOAK":
             # Do not reserve cloak path before at least one banshee exists/pending.
-            return self._unit_count_with_pending(bot, U.BANSHEE) >= 1
+            return int(counts.get("BANSHEE", 0)) >= 1
         if n == "STIMPACK":
             return (marines + marauders) >= 8
         if n == "SHIELDWALL":
@@ -183,15 +192,42 @@ class MacroOrchestratorPlanner(BasePlanner):
             return air_core >= 9
         return True
 
+    def _collect_unlock_counts(self, bot) -> dict[str, int]:
+        units = (
+            U.MARINE,
+            U.MARAUDER,
+            U.SIEGETANK,
+            U.HELLION,
+            U.BANSHEE,
+            U.MEDIVAC,
+            U.VIKINGFIGHTER,
+            U.LIBERATOR,
+            U.CYCLONE,
+            U.THOR,
+            U.GHOST,
+        )
+        out: dict[str, int] = {}
+        for uid in units:
+            try:
+                out[str(uid.name)] = int(self._unit_count_with_pending(bot, uid))
+            except Exception:
+                out[str(uid.name)] = 0
+        return out
+
     def _publish_tech_plan(self, bot, *, awareness: Awareness, now: float) -> list[str]:
         comp = dict(awareness.mem.get(K("macro", "desired", "comp"), now=now, default={}) or {})
         reserve_unit = str(awareness.mem.get(K("macro", "desired", "reserve_unit"), now=now, default="") or "")
+        structure_targets = dict(
+            awareness.mem.get(K("macro", "desired", "tech_structure_targets"), now=now, default={}) or {}
+        )
         raw_upgrades = self._upgrade_names_from_comp(comp=comp, reserve_unit=reserve_unit)
-        upgrades = [u for u in raw_upgrades if self._upgrade_is_unlocked_by_army(bot, name=str(u), awareness=awareness, now=now)]
+        unlock_counts = self._collect_unlock_counts(bot)
+        upgrades = [u for u in raw_upgrades if self._upgrade_is_unlocked_by_army(name=str(u), counts=unlock_counts)]
 
         reserve_m = 0
         reserve_g = 0
         reserve_name = ""
+        reserve_pending_progress = 0.0
         for name in upgrades:
             up = getattr(Up, str(name), None)
             if up is None:
@@ -201,6 +237,7 @@ class MacroOrchestratorPlanner(BasePlanner):
                 if pending >= 1.0:
                     continue
             except Exception:
+                pending = 0.0
                 pass
             try:
                 cost = bot.calculate_cost(up)
@@ -213,6 +250,7 @@ class MacroOrchestratorPlanner(BasePlanner):
                     reserve_m = int(target_m)
                     reserve_g = int(target_g)
                     reserve_name = str(name)
+                    reserve_pending_progress = max(0.0, min(1.0, float(pending)))
                 break
             except Exception:
                 continue
@@ -223,6 +261,8 @@ class MacroOrchestratorPlanner(BasePlanner):
         awareness.mem.set(K("macro", "tech", "plan", "reserve_minerals"), value=int(reserve_m), now=now, ttl=ttl)
         awareness.mem.set(K("macro", "tech", "plan", "reserve_gas"), value=int(reserve_g), now=now, ttl=ttl)
         awareness.mem.set(K("macro", "tech", "plan", "reserve_name"), value=str(reserve_name), now=now, ttl=ttl)
+        awareness.mem.set(K("macro", "tech", "plan", "reserve_pending_progress"), value=float(reserve_pending_progress), now=now, ttl=ttl)
+        awareness.mem.set(K("macro", "tech", "plan", "structure_targets"), value=dict(structure_targets), now=now, ttl=ttl)
         awareness.mem.set(K("macro", "tech", "plan", "updated_at"), value=float(now), now=now, ttl=None)
         return upgrades
 
@@ -274,6 +314,26 @@ class MacroOrchestratorPlanner(BasePlanner):
         return False
 
     def _publish_production_plan(self, bot, *, awareness: Awareness, attention: Attention, now: float) -> None:
+        def _desired_techlab_ratio(comp: dict[str, float]) -> float:
+            tech_w = (
+                1.30 * float(comp.get("SIEGETANK", 0.0))
+                + 1.20 * float(comp.get("MARAUDER", 0.0))
+                + 1.20 * float(comp.get("GHOST", 0.0))
+                + 1.10 * float(comp.get("CYCLONE", 0.0))
+                + 1.10 * float(comp.get("THOR", 0.0))
+                + 1.30 * float(comp.get("BANSHEE", 0.0))
+                + 1.20 * float(comp.get("RAVEN", 0.0))
+                + 1.10 * float(comp.get("LIBERATOR", 0.0))
+            )
+            reactor_w = (
+                1.00 * float(comp.get("MARINE", 0.0))
+                + 1.00 * float(comp.get("HELLION", 0.0))
+                + 0.80 * float(comp.get("MEDIVAC", 0.0))
+                + 0.80 * float(comp.get("VIKINGFIGHTER", 0.0))
+            )
+            den = max(1e-6, float(tech_w + reactor_w))
+            return max(0.0, min(1.0, float(tech_w / den)))
+
         rush_state = str(awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
         rush_active = rush_state in {"SUSPECTED", "CONFIRMED", "HOLDING"}
         parity_overall = str(awareness.mem.get(K("strategy", "parity", "overall"), now=now, default="EVEN") or "EVEN")
@@ -297,6 +357,33 @@ class MacroOrchestratorPlanner(BasePlanner):
         elif int(army_bias) > 0:
             dynamic_scv_cap = max(30, dynamic_scv_cap - 8)
 
+        desired_comp = dict(awareness.mem.get(K("macro", "desired", "comp"), now=now, default={}) or {})
+        desired_addon_techlab_ratio = _desired_techlab_ratio(desired_comp)
+        current_addon_techlab_ratio = float(attention.macro.addon_techlab_ratio)
+        addon_gap_techlab_ratio = float(desired_addon_techlab_ratio - current_addon_techlab_ratio)
+        idle_barracks = 0
+        try:
+            idle_barracks = int(bot.structures(U.BARRACKS).ready.idle.amount)
+        except Exception:
+            idle_barracks = 0
+        addon_idle_techlab_pressure = bool(
+            int(idle_barracks) >= int(self.addon_idle_barracks_trigger)
+            and float(addon_gap_techlab_ratio) >= float(self.addon_idle_pressure_gap_min)
+        )
+        addon_idle_pressure_score = 0.0
+        if addon_idle_techlab_pressure:
+            addon_idle_pressure_score = min(
+                1.0,
+                (float(addon_gap_techlab_ratio) / max(1e-6, float(self.addon_idle_pressure_gap_min))),
+            )
+            if rush_active:
+                addon_idle_pressure_score *= float(self.addon_idle_pressure_rush_dampen)
+        addon_balance_pressure = bool(
+            bool(self.addon_balance_enabled)
+            and abs(float(addon_gap_techlab_ratio)) >= float(self.addon_ratio_gap_threshold)
+        )
+        addon_balance_pressure = bool(addon_balance_pressure or addon_idle_techlab_pressure)
+
         freeflow_threshold = 900 if int(army_bias) > 0 else 1200
         spawn_dict_names = desired_controller_dict_names(awareness=awareness, now=now)
         ttl = float(self._production_plan_ttl_s)
@@ -304,10 +391,18 @@ class MacroOrchestratorPlanner(BasePlanner):
         awareness.mem.set(K("macro", "production", "plan", "dynamic_scv_cap"), value=int(dynamic_scv_cap), now=now, ttl=ttl)
         awareness.mem.set(
             K("macro", "production", "plan", "freeflow_mode"),
-            value=bool(attention.economy.minerals >= int(freeflow_threshold)),
+            value=bool(attention.economy.minerals >= int(freeflow_threshold) and not bool(addon_balance_pressure)),
             now=now,
             ttl=ttl,
         )
+        awareness.mem.set(K("macro", "production", "plan", "addon_desired_techlab_ratio"), value=float(desired_addon_techlab_ratio), now=now, ttl=ttl)
+        awareness.mem.set(K("macro", "production", "plan", "addon_current_techlab_ratio"), value=float(current_addon_techlab_ratio), now=now, ttl=ttl)
+        awareness.mem.set(K("macro", "production", "plan", "addon_gap_techlab_ratio"), value=float(addon_gap_techlab_ratio), now=now, ttl=ttl)
+        awareness.mem.set(K("macro", "production", "plan", "addon_balance_pressure"), value=bool(addon_balance_pressure), now=now, ttl=ttl)
+        awareness.mem.set(K("macro", "production", "plan", "idle_barracks"), value=int(idle_barracks), now=now, ttl=ttl)
+        awareness.mem.set(K("macro", "production", "plan", "addon_idle_techlab_pressure"), value=bool(addon_idle_techlab_pressure), now=now, ttl=ttl)
+        awareness.mem.set(K("macro", "production", "plan", "addon_idle_pressure_score"), value=float(addon_idle_pressure_score), now=now, ttl=ttl)
+        awareness.mem.set(K("macro", "production", "plan", "addon_ratio_gap_threshold"), value=float(self.addon_ratio_gap_threshold), now=now, ttl=ttl)
         awareness.mem.set(K("macro", "production", "plan", "spawn_dict"), value=dict(spawn_dict_names), now=now, ttl=ttl)
         awareness.mem.set(K("macro", "production", "plan", "parity_overall"), value=str(parity_overall), now=now, ttl=ttl)
         awareness.mem.set(K("macro", "production", "plan", "parity_econ"), value=str(parity_econ), now=now, ttl=ttl)
@@ -352,7 +447,9 @@ class MacroOrchestratorPlanner(BasePlanner):
                 )
             )
 
-        self._publish_production_plan(bot, awareness=awareness, attention=attention, now=now)
+        if (float(now) - float(self._last_production_plan_at)) >= max(0.2, float(self.production_plan_min_interval_s)):
+            self._publish_production_plan(bot, awareness=awareness, attention=attention, now=now)
+            self._last_production_plan_at = float(now)
         production_pid = self.proposal_id("macro_production")
         if not self.is_proposal_running(awareness=awareness, proposal_id=production_pid, now=now):
             def _production_factory(mission_id: str) -> MacroProductionTick:
@@ -377,7 +474,12 @@ class MacroOrchestratorPlanner(BasePlanner):
             )
 
         tech_pid = self.proposal_id("macro_tech")
-        upgrades = self._publish_tech_plan(bot, awareness=awareness, now=now)
+        upgrades: list[str] = []
+        if (float(now) - float(self._last_tech_plan_at)) >= max(0.4, float(self.tech_plan_min_interval_s)):
+            upgrades = self._publish_tech_plan(bot, awareness=awareness, now=now)
+            self._last_tech_plan_at = float(now)
+        else:
+            upgrades = list(awareness.mem.get(K("macro", "tech", "plan", "upgrades"), now=now, default=[]) or [])
         opening_started_at = awareness.mem.get(K("macro", "opening", "started_at"), now=now, default=None)
         if opening_started_at is None:
             awareness.mem.set(K("macro", "opening", "started_at"), value=float(now), now=now, ttl=None)
@@ -418,7 +520,7 @@ class MacroOrchestratorPlanner(BasePlanner):
         housekeeping_pid = self.proposal_id("scv_housekeeping")
         due_housekeeping = self.due_by_last_done(
             awareness=awareness,
-            key=K("macro", "scv", "housekeeping", "last_done_at"),
+            key=K("ops", "macro", "scv", "housekeeping", "last_done_at"),
             now=now,
             interval_s=float(self.housekeeping_interval_s),
         )
@@ -450,7 +552,7 @@ class MacroOrchestratorPlanner(BasePlanner):
         depot_interval = float(self.depot_interval_s_alert if depot_alert else self.depot_interval_s_calm)
         due_depot = self.due_by_last_done(
             awareness=awareness,
-            key=K("macro", "wall", "depot_control", "last_done_at"),
+            key=K("ops", "macro", "wall", "depot_control", "last_done_at"),
             now=now,
             interval_s=float(depot_interval),
         )
@@ -500,3 +602,4 @@ class MacroOrchestratorPlanner(BasePlanner):
         if domain_proposals:
             self.emit_planner_proposed({"count": len(domain_proposals), "children": int(len(self.planners or []))})
         return domain_proposals
+

@@ -68,8 +68,10 @@ class MacroProductionTick(BaseTask):
         )
         eff_spend_m = int(spending_reserve_m) if bool(spending_blocks_production) else 0
         eff_spend_g = int(spending_reserve_g) if bool(spending_blocks_production) else 0
-        reserve_m = max(int(morph_reserve_m), int(tech_reserve_m), int(eff_spend_m))
-        reserve_g = max(int(morph_reserve_g), int(tech_reserve_g), int(eff_spend_g))
+        # Production hold should react to global TECH/SPENDING arbitration only.
+        # Morph reserve is owned by spending/morph flow and must not freeze army spawn.
+        reserve_m = max(int(tech_reserve_m), int(eff_spend_m))
+        reserve_g = max(int(tech_reserve_g), int(eff_spend_g))
         hold_for_reserve = bool(int(attention.economy.minerals) < int(reserve_m) or int(attention.economy.gas) < int(reserve_g))
         workers_enabled = bool(self.awareness.mem.get(K("macro", "production", "plan", "workers_enabled"), now=now, default=True))
         dynamic_scv_cap = int(self.awareness.mem.get(K("macro", "production", "plan", "dynamic_scv_cap"), now=now, default=self.scv_cap) or self.scv_cap)

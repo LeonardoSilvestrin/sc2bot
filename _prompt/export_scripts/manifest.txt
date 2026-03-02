@@ -1,7 +1,7 @@
 EXPORT META
-generated_at_utc: 2026-03-01T19:37:42.079652+00:00
+generated_at_utc: 2026-03-01T23:55:52.990770+00:00
 repo_root: C:\Users\Asus\Documents\projetos\sc2bot\ares\ares-sc2-bot-template
-files_total: 64
+files_total: 84
 
 FILES
 - bot/__init__.py -> files/bot/__init__.py.txt
@@ -10,12 +10,22 @@ FILES
 - bot/ares_wrapper/__init__.py -> files/bot/ares_wrapper/__init__.py.txt
 - bot/ares_wrapper/map.py -> files/bot/ares_wrapper/map.py.txt
 - bot/ares_wrapper/roles.py -> files/bot/ares_wrapper/roles.py.txt
+- bot/builds/__init__.py -> files/bot/builds/__init__.py.txt
+- bot/builds/banshee_hellion_open.py -> files/bot/builds/banshee_hellion_open.py.txt
+- bot/builds/default.py -> files/bot/builds/default.py.txt
+- bot/builds/defensive_opening.py -> files/bot/builds/defensive_opening.py.txt
+- bot/control/__init__.py -> files/bot/control/__init__.py.txt
+- bot/control/macro_resource_controller.py -> files/bot/control/macro_resource_controller.py.txt
+- bot/control/priority_policy.py -> files/bot/control/priority_policy.py.txt
 - bot/intel/build_catalog.py -> files/bot/intel/build_catalog.py.txt
+- bot/intel/config/opening_timing_rules.py -> files/bot/intel/config/opening_timing_rules.py.txt
 - bot/intel/enemy_build_intel.py -> files/bot/intel/enemy_build_intel.py.txt
 - bot/intel/game_parity_intel.py -> files/bot/intel/game_parity_intel.py.txt
 - bot/intel/my_army_composition_intel.py -> files/bot/intel/my_army_composition_intel.py.txt
+- bot/intel/opening_contract_intel.py -> files/bot/intel/opening_contract_intel.py.txt
 - bot/intel/opening_intel.py -> files/bot/intel/opening_intel.py.txt
 - bot/intel/utils/__init__.py -> files/bot/intel/utils/__init__.py.txt
+- bot/intel/utils/enemy_econ_estimates.py -> files/bot/intel/utils/enemy_econ_estimates.py.txt
 - bot/intel/utils/opening_policy.py -> files/bot/intel/utils/opening_policy.py.txt
 - bot/intel/utils/opening_types.py -> files/bot/intel/utils/opening_types.py.txt
 - bot/intel/utils/state_store.py -> files/bot/intel/utils/state_store.py.txt
@@ -28,10 +38,14 @@ FILES
 - bot/mind/body.py -> files/bot/mind/body.py.txt
 - bot/mind/ego.py -> files/bot/mind/ego.py.txt
 - bot/mind/self.py -> files/bot/mind/self.py.txt
+- bot/plans/__init__.py -> files/bot/plans/__init__.py.txt
+- bot/plans/contracts.py -> files/bot/plans/contracts.py.txt
+- bot/plans/macro_plan.py -> files/bot/plans/macro_plan.py.txt
 - bot/planners/defense_planner.py -> files/bot/planners/defense_planner.py.txt
 - bot/planners/harass_planner.py -> files/bot/planners/harass_planner.py.txt
 - bot/planners/intel_planner.py -> files/bot/planners/intel_planner.py.txt
-- bot/planners/macro_orchestrator_planner.py -> files/bot/planners/macro_orchestrator_planner.py.txt
+- bot/planners/macro/__init__.py -> files/bot/planners/macro/__init__.py.txt
+- bot/planners/macro/orchestrator_planner.py -> files/bot/planners/macro/orchestrator_planner.py.txt
 - bot/planners/reinforce_mission_planner.py -> files/bot/planners/reinforce_mission_planner.py.txt
 - bot/planners/utils/__init__.py -> files/bot/planners/utils/__init__.py.txt
 - bot/planners/utils/base_planner.py -> files/bot/planners/utils/base_planner.py.txt
@@ -42,6 +56,7 @@ FILES
 - bot/sensors/enemy_build_sensor.py -> files/bot/sensors/enemy_build_sensor.py.txt
 - bot/sensors/game_state_sensor.py -> files/bot/sensors/game_state_sensor.py.txt
 - bot/sensors/mission_sensor.py -> files/bot/sensors/mission_sensor.py.txt
+- bot/sensors/threat_model.py -> files/bot/sensors/threat_model.py.txt
 - bot/sensors/threat_sensor.py -> files/bot/sensors/threat_sensor.py.txt
 - bot/sensors/unit_threat_sensor.py -> files/bot/sensors/unit_threat_sensor.py.txt
 - bot/tasks/__init__.py -> files/bot/tasks/__init__.py.txt
@@ -51,14 +66,18 @@ FILES
 - bot/tasks/harass/banshee_harass_task.py -> files/bot/tasks/harass/banshee_harass_task.py.txt
 - bot/tasks/harass/reaper_hellion_harass_task.py -> files/bot/tasks/harass/reaper_hellion_harass_task.py.txt
 - bot/tasks/macro/__init__.py -> files/bot/tasks/macro/__init__.py.txt
-- bot/tasks/macro/opening.py -> files/bot/tasks/macro/opening.py.txt
 - bot/tasks/macro/policies/__init__.py -> files/bot/tasks/macro/policies/__init__.py.txt
 - bot/tasks/macro/policies/housekeeping_ops_policies.py -> files/bot/tasks/macro/policies/housekeeping_ops_policies.py.txt
+- bot/tasks/macro/policies/macro_policies.py -> files/bot/tasks/macro/policies/macro_policies.py.txt
 - bot/tasks/macro/policies/scv_housekeeping_policies.py -> files/bot/tasks/macro/policies/scv_housekeeping_policies.py.txt
-- bot/tasks/macro/production_tick.py -> files/bot/tasks/macro/production_tick.py.txt
-- bot/tasks/macro/scv_housekeeping_task.py -> files/bot/tasks/macro/scv_housekeeping_task.py.txt
-- bot/tasks/macro/spending_tick.py -> files/bot/tasks/macro/spending_tick.py.txt
-- bot/tasks/macro/tech_tick.py -> files/bot/tasks/macro/tech_tick.py.txt
+- bot/tasks/macro/support/__init__.py -> files/bot/tasks/macro/support/__init__.py.txt
+- bot/tasks/macro/support/state_store.py -> files/bot/tasks/macro/support/state_store.py.txt
+- bot/tasks/macro/tasks/__init__.py -> files/bot/tasks/macro/tasks/__init__.py.txt
+- bot/tasks/macro/tasks/opening.py -> files/bot/tasks/macro/tasks/opening.py.txt
+- bot/tasks/macro/tasks/production_tick.py -> files/bot/tasks/macro/tasks/production_tick.py.txt
+- bot/tasks/macro/tasks/scv_housekeeping_task.py -> files/bot/tasks/macro/tasks/scv_housekeeping_task.py.txt
+- bot/tasks/macro/tasks/spending_tick.py -> files/bot/tasks/macro/tasks/spending_tick.py.txt
+- bot/tasks/macro/tasks/tech_tick.py -> files/bot/tasks/macro/tasks/tech_tick.py.txt
 - bot/tasks/macro/utils/__init__.py -> files/bot/tasks/macro/utils/__init__.py.txt
 - bot/tasks/macro/utils/desired_comp.py -> files/bot/tasks/macro/utils/desired_comp.py.txt
 - bot/tasks/macro/utils/wall_mapper.py -> files/bot/tasks/macro/utils/wall_mapper.py.txt
@@ -68,3 +87,4 @@ FILES
 - bot/tasks/support/support_mission_task.py -> files/bot/tasks/support/support_mission_task.py.txt
 - terran_builds.yml -> files/terran_builds.yml.txt
 - run.py -> files/run.py.txt
+- _prompt/root.txt -> files/_prompt/root.txt.txt

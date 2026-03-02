@@ -24,6 +24,7 @@ class MyArmyCompositionConfig:
     """
     ttl_s: float = 25.0
     min_confidence: float = 0.55
+    log_interval_s: float = 8.0
 
 
 
@@ -237,6 +238,7 @@ def derive_my_army_composition_intel(
     army_supply_milestones_by_mode = dict(profile["army_supply_milestones_by_mode"])
     unit_count_milestones_by_mode = dict(profile["unit_count_milestones_by_mode"])
     timing_attacks_by_mode = dict(profile["timing_attacks_by_mode"])
+    tech_structure_targets_by_mode = dict(profile["tech_structure_targets_by_mode"])
     mode = "STANDARD"
     if rush_state in {"CONFIRMED", "HOLDING"}:
         mode = "RUSH_RESPONSE"
@@ -297,6 +299,13 @@ def derive_my_army_composition_intel(
         mode=str(mode),
         key="timing_attacks",
     )
+    tech_structure_targets = _mode_milestones(
+        dict(tech_structure_targets_by_mode or {}),
+        mode=str(mode),
+        key="tech_structure_targets",
+    )
+    if not isinstance(tech_structure_targets, dict):
+        raise RuntimeError(f"invalid_contract:macro.desired.tech_structure_targets:{mode}")
 
     unit_targets_now = _unit_targets_at_time(milestones=list(unit_count_milestones), now=float(now))
     lag_unit_name, lag_unit_gap = _largest_unit_shortfall(attention=attention, unit_targets=unit_targets_now)
@@ -329,6 +338,7 @@ def derive_my_army_composition_intel(
     awareness.mem.set(K("macro", "desired", "army_supply_milestones"), value=list(army_supply_milestones), now=now, ttl=float(cfg.ttl_s))
     awareness.mem.set(K("macro", "desired", "unit_count_milestones"), value=list(unit_count_milestones), now=now, ttl=float(cfg.ttl_s))
     awareness.mem.set(K("macro", "desired", "timing_attacks"), value=list(timing_attacks), now=now, ttl=float(cfg.ttl_s))
+    awareness.mem.set(K("macro", "desired", "tech_structure_targets"), value=dict(tech_structure_targets), now=now, ttl=float(cfg.ttl_s))
     awareness.mem.set(
         K("macro", "desired", "signals"),
         value={
@@ -348,3 +358,31 @@ def derive_my_army_composition_intel(
         ttl=float(cfg.ttl_s),
     )
     awareness.mem.set(K("macro", "desired", "last_update_t"), value=float(now), now=now, ttl=None)
+
+    last_emit = float(
+        awareness.mem.get(K("intel", "my_comp", "last_emit_t"), now=now, default=0.0) or 0.0
+    )
+    if (float(now) - float(last_emit)) >= float(cfg.log_interval_s):
+        awareness.mem.set(K("intel", "my_comp", "last_emit_t"), value=float(now), now=now, ttl=None)
+        if awareness.log is not None:
+            awareness.log.emit(
+                "my_comp_intel",
+                {
+                    "t": round(float(now), 2),
+                    "mode": str(mode),
+                    "enemy_kind": str(enemy_kind),
+                    "enemy_conf": round(float(conf), 3),
+                    "rush_state": str(rush_state),
+                    "opening_selected": str(opening_selected),
+                    "transition_target": str(transition_target),
+                    "priority_units": list(priority_units[:5]),
+                    "reserve_unit": str(top_unit),
+                    "reserve_minerals": int(reserve_m),
+                    "reserve_gas": int(reserve_g),
+                    "bank_target_minerals": int(bank_target_m),
+                    "bank_target_gas": int(bank_target_g),
+                    "lagging_unit": str(lag_unit_name or ""),
+                    "lagging_unit_gap": round(float(lag_unit_gap), 2),
+                },
+                meta={"module": "intel", "component": "intel.my_comp"},
+            )

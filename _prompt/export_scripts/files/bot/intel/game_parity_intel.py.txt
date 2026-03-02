@@ -7,6 +7,7 @@ from typing import Dict, Tuple
 
 from sc2.ids.unit_typeid import UnitTypeId as U
 
+from bot.intel.utils.enemy_econ_estimates import count_enemy_bases, expected_workers, sum_units
 from bot.mind.attention import Attention
 from bot.mind.awareness import Awareness, K
 
@@ -20,16 +21,6 @@ class GameParityIntelConfig:
 
 
 _WORKER_TYPES: Tuple[U, ...] = (U.SCV, U.PROBE, U.DRONE)
-_TOWNHALL_TYPES: Tuple[U, ...] = (
-    U.HATCHERY,
-    U.LAIR,
-    U.HIVE,
-    U.NEXUS,
-    U.COMMANDCENTER,
-    U.ORBITALCOMMAND,
-    U.PLANETARYFORTRESS,
-)
-
 _ARMY_WEIGHTS: Dict[U, float] = {
     U.MARINE: 1.0,
     U.MARAUDER: 1.8,
@@ -69,21 +60,6 @@ _ARMY_WEIGHTS: Dict[U, float] = {
     U.TEMPEST: 6.2,
     U.ORACLE: 2.8,
 }
-
-
-def _sum_units(d: Dict[U, int], types: Tuple[U, ...]) -> int:
-    return int(sum(int(d.get(t, 0)) for t in types))
-
-
-def _count_enemy_bases(enemy_structures: Dict[U, int]) -> int:
-    return int(sum(int(enemy_structures.get(t, 0)) for t in _TOWNHALL_TYPES))
-
-
-def _expected_workers(now: float, *, period_s: float, cap: int) -> int:
-    out = 12 + int(max(0.0, float(now)) // max(1.0, float(period_s)))
-    return int(max(12, min(int(cap), out)))
-
-
 def _army_power(units: Dict[U, int]) -> float:
     p = 0.0
     for uid, count in units.items():
@@ -123,16 +99,16 @@ def derive_game_parity_intel(
     own_bases = int(attention.macro.bases_total)
     own_army_power = float(_army_power(own_units))
 
-    enemy_workers_seen = int(_sum_units(enemy_units, _WORKER_TYPES))
-    enemy_bases_seen = int(_count_enemy_bases(enemy_structs))
+    enemy_workers_seen = int(sum_units(enemy_units, _WORKER_TYPES))
+    enemy_bases_seen = int(count_enemy_bases(enemy_structs))
     enemy_army_seen_power = float(_army_power(enemy_units))
 
-    expected_workers = _expected_workers(
+    expected_workers_now = expected_workers(
         float(now),
         period_s=float(cfg.expected_worker_period_s),
         cap=int(cfg.max_enemy_workers_assumed),
     )
-    enemy_workers_now = max(int(enemy_workers_seen), int(expected_workers))
+    enemy_workers_now = max(int(enemy_workers_seen), int(expected_workers_now))
     enemy_bases_now = max(int(enemy_bases_seen), 1)
 
     prev_workers_est = float(

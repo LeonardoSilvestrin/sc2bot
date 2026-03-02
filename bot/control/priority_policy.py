@@ -5,6 +5,7 @@ from typing import List
 
 from sc2.ids.unit_typeid import UnitTypeId as U
 
+from bot.control.macro_resource_controller import MacroResourceController
 from bot.mind.attention import Attention
 from bot.mind.awareness import Awareness, K
 from bot.planners.utils.proposals import Proposal
@@ -71,6 +72,17 @@ class PriorityPolicyConfig:
     timing_attack_spending_dampen: float = 0.48
     timing_attack_tech_dampen: float = 0.40
     timing_attack_production_bias: float = 10.0
+    mineral_flood_soft: int = 900
+    mineral_flood_hard: int = 1400
+    flood_army_shortfall_min: float = 0.25
+    flood_prod_lag_min: float = 0.55
+    flood_production_weight_boost_soft: float = 0.30
+    flood_production_weight_boost_hard: float = 0.75
+    flood_production_bias_hard: float = 10.0
+    flood_spending_dampen_soft: float = 0.92
+    flood_spending_dampen_hard: float = 0.72
+    flood_tech_dampen_soft: float = 0.96
+    flood_tech_dampen_hard: float = 0.84
 
     # Macro timeline delay controller (rush/pressure compensation).
     macro_delay_urgency_threshold: int = 22
@@ -83,6 +95,7 @@ class PriorityPolicyConfig:
     # Hard clamps.
     min_domain_weight: float = 0.45
     max_domain_weight: float = 2.75
+    pid_log_interval_s: float = 8.0
 
 
 @dataclass(frozen=True)
@@ -97,7 +110,9 @@ class PriorityDecision:
 class PriorityPolicy:
     def __init__(self, cfg: PriorityPolicyConfig = PriorityPolicyConfig()):
         self.cfg = cfg
+        self.resource_controller = MacroResourceController()
         self._tick_now: float = -1.0
+        self._last_pid_emit_at: float = -9999.0
         self._cached_bank_pi_output: float = 0.0
         self._cached_lag_tech: float = 0.0
         self._cached_lag_spending: float = 0.0
@@ -230,6 +245,40 @@ class PriorityPolicy:
                 domain_weight *= damp
                 notes.append("timing_attack_dampen_tech")
 
+        # Mineral flood recovery: prioritize unit production over further macro spend.
+        minerals = int(attention.economy.minerals)
+        army_shortfall = float(
+            awareness.mem.get(K("control", "priority", "army_supply", "shortfall"), now=now, default=0.0) or 0.0
+        )
+        flood_recovery_active = bool(
+            int(minerals) >= int(self.cfg.mineral_flood_soft)
+            and float(prod_lag) >= float(self.cfg.flood_prod_lag_min)
+            and float(army_shortfall) >= float(self.cfg.flood_army_shortfall_min)
+        )
+        if flood_recovery_active:
+            if domain == "MACRO_PRODUCTION":
+                if int(minerals) >= int(self.cfg.mineral_flood_hard):
+                    domain_weight += float(self.cfg.flood_production_weight_boost_hard)
+                    proposal_bias += float(self.cfg.flood_production_bias_hard)
+                    notes.append("flood_boost_prod_hard")
+                else:
+                    domain_weight += float(self.cfg.flood_production_weight_boost_soft)
+                    notes.append("flood_boost_prod_soft")
+            elif domain == "MACRO_SPENDING":
+                if int(minerals) >= int(self.cfg.mineral_flood_hard):
+                    domain_weight *= float(self.cfg.flood_spending_dampen_hard)
+                    notes.append("flood_dampen_spending_hard")
+                else:
+                    domain_weight *= float(self.cfg.flood_spending_dampen_soft)
+                    notes.append("flood_dampen_spending_soft")
+            elif domain == "MACRO_TECH":
+                if int(minerals) >= int(self.cfg.mineral_flood_hard):
+                    domain_weight *= float(self.cfg.flood_tech_dampen_hard)
+                    notes.append("flood_dampen_tech_hard")
+                else:
+                    domain_weight *= float(self.cfg.flood_tech_dampen_soft)
+                    notes.append("flood_dampen_tech_soft")
+
         # External overrides (for explicit arbitration experiments without code edits).
         override_domain_weight = awareness.mem.get(
             K("control", "priority", "override", "domain_weight", domain),
@@ -322,17 +371,38 @@ class PriorityPolicy:
         if isinstance(t_prev, (int, float)):
             dt = max(0.0, min(2.0, float(now) - float(t_prev)))
 
-        integ = integ_prev + (error * dt)
-        integ = self._clamp(integ, low=-float(self.cfg.bank_pi_integral_cap), high=float(self.cfg.bank_pi_integral_cap))
+        cap_i = float(self.cfg.bank_pi_integral_cap)
+        cap_out = float(self.cfg.bank_pi_output_cap)
+        kp = float(self.cfg.bank_pi_kp)
+        ki = float(self.cfg.bank_pi_ki)
 
-        out = (float(self.cfg.bank_pi_kp) * error) + (float(self.cfg.bank_pi_ki) * integ)
-        out = self._clamp(out, low=-float(self.cfg.bank_pi_output_cap), high=float(self.cfg.bank_pi_output_cap))
+        integ_candidate = self._clamp(
+            integ_prev + (error * dt),
+            low=-cap_i,
+            high=cap_i,
+        )
+        out_raw = (kp * float(error)) + (ki * float(integ_candidate))
+        out = self._clamp(out_raw, low=-cap_out, high=cap_out)
+        saturated_with_same_error_dir = bool(
+            (float(out) >= float(cap_out) and float(error) > 0.0)
+            or (float(out) <= -float(cap_out) and float(error) < 0.0)
+        )
+        integ = float(integ_prev) if saturated_with_same_error_dir else float(integ_candidate)
+        if float(integ) != float(integ_candidate):
+            out_raw = (kp * float(error)) + (ki * float(integ))
+            out = self._clamp(out_raw, low=-cap_out, high=cap_out)
 
         awareness.mem.set(k_int, value=float(integ), now=now, ttl=None)
         awareness.mem.set(k_last_t, value=float(now), now=now, ttl=None)
         awareness.mem.set(K("control", "priority", "pi", "bank", "error"), value=float(error), now=now, ttl=5.0)
         awareness.mem.set(K("control", "priority", "pi", "bank", "target_minerals"), value=int(target_m), now=now, ttl=5.0)
         awareness.mem.set(K("control", "priority", "pi", "bank", "target_gas"), value=int(target_g), now=now, ttl=5.0)
+        awareness.mem.set(
+            K("control", "priority", "pi", "bank", "anti_windup_active"),
+            value=bool(saturated_with_same_error_dir),
+            now=now,
+            ttl=5.0,
+        )
 
         return float(out)
 
@@ -373,8 +443,10 @@ class PriorityPolicy:
         spending_name = "EXPAND" if int(spending_base_m) > 0 else ""
 
         prod_pressure = float(lag_prod)
-        tech_factor = self._clamp(1.1 + float(lag_tech) - (0.7 * prod_pressure), low=0.35, high=1.6)
-        spend_factor = self._clamp(1.1 + float(lag_spend) - (0.7 * prod_pressure), low=0.25, high=1.6)
+        # Reserve scaling should follow current lane error, not the integrated lag output.
+        # Using lag_* here creates positive feedback (lag -> reserve -> shortfall -> lag).
+        tech_factor = self._clamp(1.0 + (0.80 * float(err_tech)) - (0.70 * prod_pressure), low=0.35, high=1.4)
+        spend_factor = self._clamp(1.0 + (0.80 * float(err_spend)) - (0.70 * prod_pressure), low=0.25, high=1.4)
 
         tech_reserve_m = int(round(float(tech_base_m) * tech_factor))
         tech_reserve_g = int(round(float(tech_base_g) * tech_factor))
@@ -467,6 +539,68 @@ class PriorityPolicy:
             lag_spend=float(lag_spend),
             lag_prod=float(lag_prod),
         )
+        self._emit_pid_snapshot(attention=attention, awareness=awareness, now=now)
+
+    def _emit_pid_snapshot(self, *, attention: Attention, awareness: Awareness, now: float) -> None:
+        if awareness.log is None:
+            return
+        if (float(now) - float(self._last_pid_emit_at)) < float(self.cfg.pid_log_interval_s):
+            return
+        self._last_pid_emit_at = float(now)
+        gas_status = awareness.mem.get(K("macro", "gas", "status"), now=now, default={}) or {}
+        awareness.log.emit(
+            "priority_pid_snapshot",
+            {
+                "t": round(float(now), 2),
+                "bank_pi_output": round(float(self._cached_bank_pi_output), 3),
+                "lag_production": round(float(self._cached_lag_production), 3),
+                "lag_tech": round(float(self._cached_lag_tech), 3),
+                "lag_spending": round(float(self._cached_lag_spending), 3),
+                "lag_error_production": round(
+                    float(awareness.mem.get(K("control", "priority", "lag_error", "production"), now=now, default=0.0) or 0.0), 3
+                ),
+                "lag_error_tech": round(
+                    float(awareness.mem.get(K("control", "priority", "lag_error", "tech"), now=now, default=0.0) or 0.0), 3
+                ),
+                "lag_error_spending": round(
+                    float(awareness.mem.get(K("control", "priority", "lag_error", "spending"), now=now, default=0.0) or 0.0), 3
+                ),
+                "army_supply_now": int(
+                    awareness.mem.get(K("control", "priority", "army_supply", "now"), now=now, default=0) or 0
+                ),
+                "army_supply_target": round(
+                    float(awareness.mem.get(K("control", "priority", "army_supply", "target"), now=now, default=0.0) or 0.0), 2
+                ),
+                "army_supply_shortfall": round(
+                    float(awareness.mem.get(K("control", "priority", "army_supply", "shortfall"), now=now, default=0.0) or 0.0), 3
+                ),
+                "expansion_gap": int(
+                    awareness.mem.get(K("macro", "spending", "status", "expansion_gap"), now=now, default=0) or 0
+                ),
+                "tech_reserve_minerals": int(
+                    awareness.mem.get(K("macro", "reserve", "tech", "minerals"), now=now, default=0) or 0
+                ),
+                "tech_reserve_gas": int(
+                    awareness.mem.get(K("macro", "reserve", "tech", "gas"), now=now, default=0) or 0
+                ),
+                "spending_reserve_minerals": int(
+                    awareness.mem.get(K("macro", "reserve", "spending", "minerals"), now=now, default=0) or 0
+                ),
+                "spending_reserve_gas": int(
+                    awareness.mem.get(K("macro", "reserve", "spending", "gas"), now=now, default=0) or 0
+                ),
+                "minerals": int(attention.economy.minerals),
+                "gas": int(attention.economy.gas),
+                "gas_mode": str(gas_status.get("mode", "")),
+                "gas_target_refineries": int(gas_status.get("target_refineries", 0) or 0),
+                "gas_target_workers_per_refinery": int(gas_status.get("target_workers_per_refinery", 0) or 0),
+                "gas_net_per_s": round(float(gas_status.get("gas_net_per_s", 0.0) or 0.0), 3),
+                "mineral_net_per_s": round(float(gas_status.get("mineral_net_per_s", 0.0) or 0.0), 3),
+                "gas_mix": round(float(gas_status.get("gas_mix", 0.0) or 0.0), 3),
+                "imbalance_slope": round(float(gas_status.get("imbalance_slope", 0.0) or 0.0), 4),
+            },
+            meta={"module": "control", "component": "control.pid"},
+        )
 
     def _publish_gas_arbitration(
         self,
@@ -478,122 +612,49 @@ class PriorityPolicy:
         lag_spend: float,
         lag_prod: float,
     ) -> None:
-        bases = int(attention.macro.bases_total)
-        gas_stock = int(attention.economy.gas)
-        mineral_stock = int(attention.economy.minerals)
-
-        target_refineries_default = max(0, int(bases) * 2)
-        target_refineries = int(target_refineries_default)
-
-        tech_pressure = max(0.0, float(lag_tech))
-        expand_pressure = max(0.0, float(lag_spend))
-        production_pressure = max(0.0, float(lag_prod))
-        workers_per_refinery = int(self.cfg.gas_target_workers_default)
-        mode = "normal"
-
-        # Gas overflow logic:
-        # reduce active gas workers first, then reduce desired refinery count.
-        if gas_stock >= int(self.cfg.gas_overflow_hard) and mineral_stock <= int(self.cfg.mineral_low_soft) and tech_pressure < 0.55:
-            workers_per_refinery = 0
-            target_refineries = max(0, target_refineries - 2)
-            mode = "gas_overflow_hard"
-        elif gas_stock >= int(self.cfg.gas_overflow_soft) and mineral_stock <= int(self.cfg.mineral_low_soft) and tech_pressure < 0.65:
-            workers_per_refinery = 1
-            target_refineries = max(0, target_refineries - 1)
-            mode = "gas_overflow_soft"
-        elif gas_stock >= int(self.cfg.gas_overflow_soft) and mineral_stock <= int(self.cfg.mineral_low_hard) and production_pressure > expand_pressure:
-            workers_per_refinery = 1
-            mode = "gas_shift_to_minerals"
-        elif (
-            gas_stock >= int(self.cfg.gas_ratio_min_stock_hard)
-            and gas_stock >= int(float(self.cfg.gas_to_mineral_ratio_hard) * max(1.0, float(mineral_stock)))
-            and tech_pressure < 0.75
-        ):
-            workers_per_refinery = 0
-            target_refineries = max(0, target_refineries - 2)
-            mode = "gas_ratio_hard"
-        elif (
-            gas_stock >= int(self.cfg.gas_ratio_min_stock_soft)
-            and gas_stock >= int(float(self.cfg.gas_to_mineral_ratio_soft) * max(1.0, float(mineral_stock)))
-            and tech_pressure < 0.85
-        ):
-            workers_per_refinery = 1
-            target_refineries = max(0, target_refineries - 1)
-            mode = "gas_ratio_soft"
-
-        if tech_pressure >= 0.70:
-            workers_per_refinery = max(2, workers_per_refinery)
-            mode = "tech_pressure"
-
-        workers_per_refinery = max(
-            int(self.cfg.gas_target_workers_min),
-            min(3, int(workers_per_refinery)),
+        decision = self.resource_controller.step(
+            attention=attention,
+            awareness=awareness,
+            now=now,
+            lag_tech=float(lag_tech),
+            lag_spend=float(lag_spend),
+            lag_prod=float(lag_prod),
+            cfg=self.cfg,
         )
-
-        # Hysteresis: avoid rapid gas/mineral toggle that causes worker thrash.
-        prev_status = awareness.mem.get(K("macro", "gas", "status"), now=now, default={})
-        prev_mode = ""
-        prev_workers = int(workers_per_refinery)
-        prev_refineries = int(target_refineries)
-        prev_changed_at = float(now)
-        if isinstance(prev_status, dict):
-            try:
-                prev_mode = str(prev_status.get("mode", "") or "")
-                prev_workers = int(prev_status.get("target_workers_per_refinery", workers_per_refinery) or workers_per_refinery)
-                prev_refineries = int(prev_status.get("target_refineries", target_refineries) or target_refineries)
-                prev_changed_at = float(prev_status.get("changed_at", now) or now)
-            except Exception:
-                prev_mode = ""
-                prev_workers = int(workers_per_refinery)
-                prev_refineries = int(target_refineries)
-                prev_changed_at = float(now)
-
-        dt_change = max(0.0, float(now) - float(prev_changed_at))
-        emergency_modes = {"gas_overflow_hard", "gas_ratio_hard", "tech_pressure"}
-        changed = (int(prev_workers) != int(workers_per_refinery)) or (int(prev_refineries) != int(target_refineries))
-        if changed and mode not in emergency_modes:
-            if dt_change < float(self.cfg.gas_mode_hold_s):
-                workers_per_refinery = int(prev_workers)
-                target_refineries = int(prev_refineries)
-                mode = str(prev_mode or mode)
-                changed = False
-            else:
-                if int(prev_workers) != int(workers_per_refinery) and dt_change < float(self.cfg.gas_workers_change_cooldown_s):
-                    workers_per_refinery = int(prev_workers)
-                    mode = str(prev_mode or mode)
-                    changed = False
-                if int(prev_refineries) != int(target_refineries) and dt_change < float(self.cfg.gas_refineries_change_cooldown_s):
-                    target_refineries = int(prev_refineries)
-                    mode = str(prev_mode or mode)
-                    changed = False
-
-        changed_at = float(now) if changed else float(prev_changed_at)
 
         awareness.mem.set(
             K("macro", "gas", "target_refineries"),
-            value=int(target_refineries),
+            value=int(decision.target_refineries),
             now=now,
             ttl=8.0,
         )
         awareness.mem.set(
             K("macro", "gas", "target_workers_per_refinery"),
-            value=int(workers_per_refinery),
+            value=int(decision.target_workers_per_refinery),
             now=now,
             ttl=8.0,
         )
         awareness.mem.set(
             K("macro", "gas", "status"),
             value={
-                "mode": str(mode),
-                "target_refineries": int(target_refineries),
-                "target_refineries_default": int(target_refineries_default),
-                "target_workers_per_refinery": int(workers_per_refinery),
-                "gas_stock": int(gas_stock),
-                "mineral_stock": int(mineral_stock),
+                "mode": str(decision.mode),
+                "target_refineries": int(decision.target_refineries),
+                "target_refineries_default": int(decision.target_refineries_default),
+                "target_workers_per_refinery": int(decision.target_workers_per_refinery),
+                "gas_stock": int(decision.gas_stock),
+                "mineral_stock": int(decision.mineral_stock),
+                "gas_net_per_s": round(float(decision.gas_net_per_s), 3),
+                "mineral_net_per_s": round(float(decision.mineral_net_per_s), 3),
+                "gas_income_per_s": round(float(decision.gas_income_per_s), 3),
+                "gas_spend_per_s": round(float(decision.gas_spend_per_s), 3),
+                "mineral_income_per_s": round(float(decision.mineral_income_per_s), 3),
+                "mineral_spend_per_s": round(float(decision.mineral_spend_per_s), 3),
+                "gas_mix": round(float(decision.gas_mix), 3),
+                "imbalance_slope": round(float(decision.imbalance_slope), 4),
                 "lag_tech": float(lag_tech),
                 "lag_spending": float(lag_spend),
                 "lag_production": float(lag_prod),
-                "changed_at": float(changed_at),
+                "changed_at": float(decision.changed_at),
             },
             now=now,
             ttl=8.0,
@@ -901,6 +962,9 @@ class PriorityPolicy:
             awareness.mem.get(K("macro", "tech", "plan", "reserve_pending_progress"), now=now, default=0.0) or 0.0
         )
         upgrades = list(awareness.mem.get(K("macro", "tech", "plan", "upgrades"), now=now, default=[]) or [])
+        structure_targets = dict(
+            awareness.mem.get(K("macro", "tech", "plan", "structure_targets"), now=now, default={}) or {}
+        )
 
         short_m = max(0, reserve_m - int(attention.economy.minerals))
         short_g = max(0, reserve_g - int(attention.economy.gas))
@@ -913,6 +977,23 @@ class PriorityPolicy:
         if upgrades:
             lag += 0.08
         lag += 0.80 * short
+        if structure_targets:
+            ready = dict(attention.economy.units_ready or {})
+            target_total = 0.0
+            gap_total = 0.0
+            for name, target in structure_targets.items():
+                try:
+                    uid = getattr(U, str(name))
+                    tgt = max(0.0, float(target))
+                except Exception:
+                    continue
+                if tgt <= 0.0:
+                    continue
+                cur = float(int(ready.get(uid, 0) or 0))
+                target_total += tgt
+                gap_total += max(0.0, tgt - cur)
+            if target_total > 0.0:
+                lag += 0.55 * (gap_total / target_total)
         if reserve_pending_progress > 0.0:
             damp_gain = float(self._tuned("tech_lag_inflight_dampen_gain", self.cfg.tech_lag_inflight_dampen_gain))
             damp = 1.0 - (damp_gain * self._clamp(reserve_pending_progress, low=0.0, high=1.0))
@@ -946,19 +1027,55 @@ class PriorityPolicy:
         dt = 0.0
         if isinstance(t_prev, (int, float)):
             dt = max(0.0, min(2.0, float(now) - float(t_prev)))
-
-        integ = integ_prev + (float(error) * dt)
         cap_i = float(self._tuned("lag_pi_integral_cap", self.cfg.lag_pi_integral_cap))
         kp = float(self._tuned("lag_pi_kp", self.cfg.lag_pi_kp))
         ki = float(self._tuned("lag_pi_ki", self.cfg.lag_pi_ki))
         cap_out = float(self._tuned("lag_pi_output_cap", self.cfg.lag_pi_output_cap))
-        integ = self._clamp(integ, low=-cap_i, high=cap_i)
-        out = (kp * float(error)) + (ki * float(integ))
-        out = self._clamp(out, low=0.0, high=cap_out)
+        integrate_blocked = bool(self._lag_integrator_blocked(name=str(name), awareness=awareness, now=now))
+        integ_candidate = float(integ_prev)
+        if not integrate_blocked:
+            integ_candidate = self._clamp(integ_prev + (float(error) * dt), low=-cap_i, high=cap_i)
+        out_raw = (kp * float(error)) + (ki * float(integ_candidate))
+        out = self._clamp(out_raw, low=0.0, high=cap_out)
+        saturated_with_same_error_dir = bool(float(out) >= float(cap_out) and float(error) > 0.0)
+        if saturated_with_same_error_dir:
+            integ = float(integ_prev)
+            out_raw = (kp * float(error)) + (ki * float(integ))
+            out = self._clamp(out_raw, low=0.0, high=cap_out)
+        else:
+            integ = float(integ_candidate)
 
         awareness.mem.set(k_int, value=float(integ), now=now, ttl=None)
         awareness.mem.set(k_last_t, value=float(now), now=now, ttl=None)
+        awareness.mem.set(
+            K("control", "priority", "pi", "lag", str(name), "anti_windup_active"),
+            value=bool(saturated_with_same_error_dir),
+            now=now,
+            ttl=5.0,
+        )
+        awareness.mem.set(
+            K("control", "priority", "pi", "lag", str(name), "integrator_blocked"),
+            value=bool(integrate_blocked),
+            now=now,
+            ttl=5.0,
+        )
         return float(out)
+
+    @staticmethod
+    def _lag_integrator_blocked(*, name: str, awareness: Awareness, now: float) -> bool:
+        lane = str(name).lower()
+        if lane == "tech":
+            inflight = float(
+                awareness.mem.get(K("macro", "tech", "plan", "reserve_pending_progress"), now=now, default=0.0) or 0.0
+            )
+            if inflight >= 0.20:
+                return True
+            return bool(awareness.mem.get(K("macro", "tech", "status", "infeasible"), now=now, default=False))
+        if lane == "spending":
+            return bool(awareness.mem.get(K("macro", "spending", "status", "infeasible"), now=now, default=False))
+        if lane == "production":
+            return bool(awareness.mem.get(K("macro", "production", "status", "infeasible"), now=now, default=False))
+        return False
 
     @staticmethod
     def _tech_shortfall(*, attention: Attention, awareness: Awareness, now: float) -> float:

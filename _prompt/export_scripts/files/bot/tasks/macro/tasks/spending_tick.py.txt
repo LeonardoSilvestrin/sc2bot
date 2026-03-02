@@ -1,4 +1,4 @@
-# bot/tasks/macro/spending_tick.py
+# bot/tasks/macro/tasks/spending_tick.py
 
 from __future__ import annotations
 
@@ -13,11 +13,11 @@ from sc2.ids.ability_id import AbilityId
 from sc2.ids.unit_typeid import UnitTypeId as U
 
 from bot.devlog import DevLogger
-from bot.control.macro_policies import RushFortifyPolicy, WallPlacementPolicy
-from bot.control.macro_state_store import MacroStateStore
 from bot.mind.attention import Attention
 from bot.mind.awareness import Awareness, K
 from bot.tasks.base_task import BaseTask, TaskTick, TaskResult
+from bot.tasks.macro.policies.macro_policies import RushFortifyPolicy, WallPlacementPolicy
+from bot.tasks.macro.support.state_store import MacroStateStore
 from bot.tasks.macro.utils.desired_comp import desired_controller_dict
 from bot.tasks.macro.utils.wall_mapper import next_available_wall_slot, try_build_next_wall_depot
 
@@ -43,6 +43,11 @@ class MacroSpendingTick(BaseTask):
     main_wall_target: int = 2
     natural_wall_target: int = 2
     wall_retry_backoff_s: float = 2.0
+    pre_nat_second_depot_hold_enabled: bool = True
+    pre_nat_second_depot_release_s: float = 110.0
+    pre_nat_second_depot_min_opening_conf: float = 0.52
+    min_replan_interval_s: float = 0.60
+    min_step_interval_s: float = 0.35
 
     def __init__(
         self,
@@ -87,9 +92,40 @@ class MacroSpendingTick(BaseTask):
             state=self.state_store,
             main_wall_target=int(self.main_wall_target),
             natural_wall_target=int(self.natural_wall_target),
+            infer_when_missing=False,
+            min_eval_interval_s=1.0,
         )
         self.rush_fortify_policy = RushFortifyPolicy(state=self.state_store)
         self._next_wall_try_at = 0.0
+        self._next_replan_at = 0.0
+
+    def _should_hold_second_main_depot_pre_natural(
+        self,
+        *,
+        now: float,
+        current_townhalls: int,
+        pending_cc: int,
+        main_occupied: int,
+        effective_rush_active: bool,
+        opening_conf: float,
+    ) -> bool:
+        if not bool(self.pre_nat_second_depot_hold_enabled):
+            return False
+        # Only gate the 2nd main-wall depot before natural is started.
+        pre_natural = bool(int(current_townhalls) < 2 and int(pending_cc) <= 0)
+        if not pre_natural:
+            return False
+        if int(main_occupied) <= 0:
+            return False
+        if bool(effective_rush_active):
+            return False
+
+        first_seen_t = self.awareness.mem.get(K("enemy", "opening", "first_seen_t"), now=now, default=None)
+        scout_ready = bool(first_seen_t is not None)
+        intel_ready = bool(float(opening_conf) >= float(self.pre_nat_second_depot_min_opening_conf))
+        timeout_release = bool(float(now) >= float(self.pre_nat_second_depot_release_s))
+        release = bool(scout_ready or intel_ready or timeout_release)
+        return not bool(release)
 
     def _morph_reserve(self, *, now: float) -> tuple[int, int, int, str]:
         pending = int(self.awareness.mem.get(K("macro", "morph", "pending_count"), now=now, default=0) or 0)
@@ -224,6 +260,9 @@ class MacroSpendingTick(BaseTask):
             return bound_err
 
         now = float(tick.time)
+        if float(now) < float(self._next_replan_at):
+            return TaskResult.running("spending_throttled")
+        self._next_replan_at = float(now) + float(self.min_replan_interval_s)
         rush_state = self._rush_state(now=now)
         rush_active = self._is_rush_active(rush_state)
         rush_confirmed = self._is_rush_confirmed(rush_state)
@@ -364,6 +403,8 @@ class MacroSpendingTick(BaseTask):
             if int(townhalls_total) >= int(self.orbital_target):
                 return TaskResult.running("orbital_priority")
 
+        current_townhalls_pre_wall = int(bot.townhalls.amount)
+        pending_cc_pre_wall = int(bot.already_pending(U.COMMANDCENTER))
         wall = self.wall_policy.evaluate(bot, now=now)
         main_plan = wall.main_plan
         nat_plan = wall.natural_plan
@@ -373,21 +414,61 @@ class MacroSpendingTick(BaseTask):
         nat_occupied = int(nat_plan.occupied)
         nat_total = int(nat_plan.total)
         wall_action = str(wall.action)
+        hold_second_main_depot_pre_nat = self._should_hold_second_main_depot_pre_natural(
+            now=now,
+            current_townhalls=int(current_townhalls_pre_wall),
+            pending_cc=int(pending_cc_pre_wall),
+            main_occupied=int(main_occupied),
+            effective_rush_active=bool(effective_rush_active),
+            opening_conf=float(opening_conf),
+        )
 
         if wall_action == "build_main":
-            if float(now) < float(self._next_wall_try_at):
+            if bool(hold_second_main_depot_pre_nat):
                 wall_action = "none"
-            else:
-                chosen = next_available_wall_slot(bot, plan=main_plan)
-                if try_build_next_wall_depot(bot, plan=main_plan):
+                if self.log is not None and (int(tick.iteration) % self.log_every_iters == 0):
+                    self.log.emit(
+                        "macro_spending",
+                        {
+                            "iter": int(tick.iteration),
+                            "t": round(float(now), 2),
+                            "action": "hold_second_main_depot_for_cc",
+                            "current_townhalls": int(current_townhalls_pre_wall),
+                            "pending_cc": int(pending_cc_pre_wall),
+                            "main_wall_occupied": int(main_occupied),
+                            "opening_conf": round(float(opening_conf), 3),
+                            "release_after_s": float(self.pre_nat_second_depot_release_s),
+                        },
+                    )
+            if wall_action == "build_main":
+                if float(now) < float(self._next_wall_try_at):
+                    wall_action = "none"
+                else:
+                    chosen = next_available_wall_slot(bot, plan=main_plan)
+                    if try_build_next_wall_depot(bot, plan=main_plan):
+                        self._next_wall_try_at = float(now) + float(self.wall_retry_backoff_s)
+                        if self.log is not None:
+                            self.log.emit(
+                                "macro_spending",
+                                {
+                                    "iter": int(tick.iteration),
+                                    "t": round(float(now), 2),
+                                    "action": "wall_main_priority",
+                                    "main_wall_occupied": int(main_occupied),
+                                    "main_wall_target": int(main_target),
+                                    "main_slots": [[round(float(p.x), 1), round(float(p.y), 1)] for p in list(main_plan.slots[:4])],
+                                    "chosen_slot": None if chosen is None else [round(float(chosen.x), 1), round(float(chosen.y), 1)],
+                                    "next_wall_try_at": round(float(self._next_wall_try_at), 2),
+                                },
+                            )
                     self._next_wall_try_at = float(now) + float(self.wall_retry_backoff_s)
-                    if self.log is not None:
+                    if self.log is not None and (int(tick.iteration) % self.log_every_iters == 0):
                         self.log.emit(
                             "macro_spending",
                             {
                                 "iter": int(tick.iteration),
                                 "t": round(float(now), 2),
-                                "action": "wall_main_priority",
+                                "action": "wall_main_waiting_slot",
                                 "main_wall_occupied": int(main_occupied),
                                 "main_wall_target": int(main_target),
                                 "main_slots": [[round(float(p.x), 1), round(float(p.y), 1)] for p in list(main_plan.slots[:4])],
@@ -395,21 +476,6 @@ class MacroSpendingTick(BaseTask):
                                 "next_wall_try_at": round(float(self._next_wall_try_at), 2),
                             },
                         )
-                self._next_wall_try_at = float(now) + float(self.wall_retry_backoff_s)
-                if self.log is not None and (int(tick.iteration) % self.log_every_iters == 0):
-                    self.log.emit(
-                        "macro_spending",
-                        {
-                            "iter": int(tick.iteration),
-                            "t": round(float(now), 2),
-                            "action": "wall_main_waiting_slot",
-                            "main_wall_occupied": int(main_occupied),
-                            "main_wall_target": int(main_target),
-                            "main_slots": [[round(float(p.x), 1), round(float(p.y), 1)] for p in list(main_plan.slots[:4])],
-                            "chosen_slot": None if chosen is None else [round(float(chosen.x), 1), round(float(chosen.y), 1)],
-                            "next_wall_try_at": round(float(self._next_wall_try_at), 2),
-                        },
-                    )
         elif wall_action == "build_natural":
             if float(now) < float(self._next_wall_try_at):
                 wall_action = "none"
@@ -536,21 +602,60 @@ class MacroSpendingTick(BaseTask):
         spending_reserve_g = 0
         spending_reserve_name = "EXPAND" if int(spending_reserve_m) > 0 else ""
         lag_prod = float(self.awareness.mem.get(K("control", "priority", "lag", "production"), now=now, default=0.0) or 0.0)
+        infra_scale_pressure = bool(
+            self.awareness.mem.get(K("control", "priority", "infra_scale_pressure"), now=now, default=False)
+        )
         army_supply_now = int(self.awareness.mem.get(K("control", "priority", "army_supply", "now"), now=now, default=0) or 0)
         army_supply_target = float(self.awareness.mem.get(K("control", "priority", "army_supply", "target"), now=now, default=0.0) or 0.0)
         army_shortfall = float(self.awareness.mem.get(K("control", "priority", "army_supply", "shortfall"), now=now, default=0.0) or 0.0)
+        addon_balance_pressure = bool(
+            self.awareness.mem.get(K("macro", "production", "plan", "addon_balance_pressure"), now=now, default=False)
+        )
+        addon_idle_techlab_pressure = bool(
+            self.awareness.mem.get(K("macro", "production", "plan", "addon_idle_techlab_pressure"), now=now, default=False)
+        )
+        addon_idle_pressure_score = float(
+            self.awareness.mem.get(K("macro", "production", "plan", "addon_idle_pressure_score"), now=now, default=0.0) or 0.0
+        )
+        idle_barracks = int(
+            self.awareness.mem.get(K("macro", "production", "plan", "idle_barracks"), now=now, default=0) or 0
+        )
+        addon_gap_techlab = float(
+            self.awareness.mem.get(K("macro", "production", "plan", "addon_gap_techlab_ratio"), now=now, default=0.0) or 0.0
+        )
         infra_hold_for_natural = bool(
             bool(need_natural_now)
             and int(pending_cc) <= 0
             and int(attention.economy.minerals) < int(max(350, spending_reserve_m))
         )
-        infra_hold_for_army = bool(float(lag_prod) >= 0.72 and float(army_shortfall) >= 0.22 and float(army_supply_target) >= 8.0)
+        infra_hold_for_army = bool(
+            float(lag_prod) >= 0.72
+            and float(army_shortfall) >= 0.22
+            and float(army_supply_target) >= 8.0
+            and not bool(infra_scale_pressure)
+            and int(attention.economy.minerals) < 350
+        )
+        expansion_hold_for_army_recovery = bool(
+            float(lag_prod) >= 0.80
+            and float(army_shortfall) >= 0.30
+            and int(current_townhalls) >= 2
+            and int(attention.economy.minerals) < 1300
+        )
         self.awareness.mem.set(K("macro", "spending", "status", "target_bases"), value=int(target_bases), now=now, ttl=8.0)
         self.awareness.mem.set(K("macro", "spending", "status", "expansion_gap"), value=int(expansion_gap), now=now, ttl=8.0)
         self.awareness.mem.set(K("macro", "spending", "status", "need_natural_now"), value=bool(need_natural_now), now=now, ttl=8.0)
         self.awareness.mem.set(K("macro", "spending", "status", "rush_active"), value=bool(effective_rush_active), now=now, ttl=8.0)
         self.awareness.mem.set(K("macro", "spending", "status", "infra_hold_for_natural"), value=bool(infra_hold_for_natural), now=now, ttl=8.0)
         self.awareness.mem.set(K("macro", "spending", "status", "infra_hold_for_army"), value=bool(infra_hold_for_army), now=now, ttl=8.0)
+        self.awareness.mem.set(
+            K("macro", "spending", "status", "expansion_hold_for_army_recovery"),
+            value=bool(expansion_hold_for_army_recovery),
+            now=now,
+            ttl=8.0,
+        )
+        self.awareness.mem.set(K("macro", "spending", "status", "infra_scale_pressure"), value=bool(infra_scale_pressure), now=now, ttl=8.0)
+        self.awareness.mem.set(K("macro", "spending", "status", "addon_balance_pressure"), value=bool(addon_balance_pressure), now=now, ttl=8.0)
+        self.awareness.mem.set(K("macro", "spending", "status", "addon_gap_techlab_ratio"), value=float(addon_gap_techlab), now=now, ttl=8.0)
         self.awareness.mem.set(K("macro", "spending", "status", "reserve_preview_minerals"), value=int(spending_reserve_m), now=now, ttl=8.0)
         self.awareness.mem.set(K("macro", "spending", "status", "reserve_preview_gas"), value=int(spending_reserve_g), now=now, ttl=8.0)
         self.awareness.mem.set(K("macro", "spending", "status", "reserve_preview_name"), value=str(spending_reserve_name), now=now, ttl=8.0)
@@ -567,20 +672,45 @@ class MacroSpendingTick(BaseTask):
         army_comp = self._army_comp_for_controllers(now)
 
         plan = MacroPlan()
-        plan.add(AutoSupply(base_location=bot.start_location))
-        plan.add(GasBuildingController(to_count=int(gas_target)))
+        can_afford_supply = bool(bot.can_afford(U.SUPPLYDEPOT))
+        can_afford_gas = bool(bot.can_afford(bot.gas_type))
+        # Avoid reserving workers too early: only queue builder behaviors when
+        # the structure can actually be paid now.
+        if can_afford_supply:
+            plan.add(
+                AutoSupply(
+                    base_location=bot.start_location,
+                    return_true_if_supply_required=False,
+                )
+            )
+        if can_afford_gas:
+            plan.add(GasBuildingController(to_count=int(gas_target)))
         # Ownership contract:
         # - TECH owns upgrade/tech prerequisites when reserve is active.
         # - SPENDING owns expansion + production-infra only when not tech-gated.
-        if not tech_hold:
-            plan.add(ExpansionController(to_count=int(target_bases)))
-        if army_comp and not tech_hold and not infra_hold_for_natural and not infra_hold_for_army:
+        # Priority tweak:
+        # - If barracks are idle and techlab ratio is behind, run ProductionController first
+        #   so add-on balancing is attempted before expansion commitments.
+        can_run_production = bool(army_comp and not tech_hold and not infra_hold_for_natural and not infra_hold_for_army)
+        if bool(can_run_production) and bool(addon_idle_techlab_pressure):
             plan.add(
                 ProductionController(
                     army_composition_dict=army_comp,
                     base_location=bot.start_location,
                 )
             )
+            if not tech_hold and not expansion_hold_for_army_recovery:
+                plan.add(ExpansionController(to_count=int(target_bases)))
+        else:
+            if not tech_hold and not expansion_hold_for_army_recovery:
+                plan.add(ExpansionController(to_count=int(target_bases)))
+            if can_run_production:
+                plan.add(
+                    ProductionController(
+                        army_composition_dict=army_comp,
+                        base_location=bot.start_location,
+                    )
+                )
 
         bot.register_behavior(plan)
 
@@ -605,6 +735,13 @@ class MacroSpendingTick(BaseTask):
                     "spending_reserve_name": str(spending_reserve_name),
                     "infra_hold_for_natural": bool(infra_hold_for_natural),
                     "infra_hold_for_army": bool(infra_hold_for_army),
+                    "expansion_hold_for_army_recovery": bool(expansion_hold_for_army_recovery),
+                    "infra_scale_pressure": bool(infra_scale_pressure),
+                    "addon_balance_pressure": bool(addon_balance_pressure),
+                    "addon_idle_techlab_pressure": bool(addon_idle_techlab_pressure),
+                    "addon_idle_pressure_score": round(float(addon_idle_pressure_score), 3),
+                    "idle_barracks": int(idle_barracks),
+                    "addon_gap_techlab_ratio": round(float(addon_gap_techlab), 3),
                     "lag_production": round(float(lag_prod), 3),
                     "army_supply_now": int(army_supply_now),
                     "army_supply_target": round(float(army_supply_target), 2),
@@ -617,6 +754,8 @@ class MacroSpendingTick(BaseTask):
                     "gas_target": int(gas_target),
                     "gas_target_default": int(gas_target_default),
                     "gas_target_workers_per_refinery": int(target_workers_per_refinery),
+                    "can_afford_supply": bool(can_afford_supply),
+                    "can_afford_gas": bool(can_afford_gas),
                     "minerals": int(attention.economy.minerals),
                     "morph_pending": int(pending_morph),
                     "morph_target_kind": str(target_kind),
@@ -641,4 +780,5 @@ class MacroSpendingTick(BaseTask):
             )
 
         return TaskResult.running("spending_plan_registered")
+
 

@@ -21,6 +21,7 @@ _REQUIRED_KEYS = {
     "army_supply_milestones_by_mode",
     "unit_count_milestones_by_mode",
     "timing_attacks_by_mode",
+    "tech_structure_targets_by_mode",
     "pid_tuning_by_mode",
 }
 

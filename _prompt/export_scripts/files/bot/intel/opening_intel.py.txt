@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from sc2.ids.unit_typeid import UnitTypeId as U
 
-from bot.intel.utils.opening_policy import OpeningIntelPolicy, sum_units
+from bot.intel.utils.enemy_econ_estimates import sum_units
+from bot.intel.utils.opening_policy import OpeningIntelPolicy
 from bot.intel.utils.opening_types import OpeningIntelConfig
 from bot.intel.utils.state_store import EnemyRushStateStore
 from bot.mind.attention import Attention
@@ -39,6 +40,7 @@ def derive_enemy_opening_intel(
     decision = policy.evaluate(
         now=now,
         attention=attention,
+        enemy_race=str(getattr(getattr(bot, "enemy_race", None), "name", "UNKNOWN") or "UNKNOWN"),
         prev_rush_state=str(prev_state),
         last_pressure_t=float(last_pressure_t),
         workers_peak_seen=int(workers_peak_seen),
@@ -73,7 +75,24 @@ def derive_enemy_opening_intel(
         last_seen_pressure_t=float(decision.last_seen_pressure_t),
     )
 
-    if str(decision.rush_state).upper() == "CONFIRMED":
-        awareness.mem.set(K("macro", "opening", "forced_done"), value=True, now=now, ttl=None)
-        awareness.mem.set(K("macro", "opening", "forced_done_reason"), value="rush_detected", now=now, ttl=None)
-        awareness.mem.set(K("macro", "opening", "forced_done_at"), value=float(now), now=now, ttl=None)
+    # Periodic explicit intel log for rush/greedy classification observability.
+    last_emit = float(
+        awareness.mem.get(K("intel", "opening", "last_emit_t"), now=now, default=0.0) or 0.0
+    )
+    if (float(now) - float(last_emit)) >= float(cfg.log_interval_s):
+        awareness.mem.set(K("intel", "opening", "last_emit_t"), value=float(now), now=now, ttl=None)
+        if awareness.log is not None:
+            awareness.log.emit(
+                "opening_intel",
+                {
+                    "t": round(float(now), 2),
+                    "kind": str(decision.kind),
+                    "confidence": round(float(decision.confidence), 3),
+                    "rush_state": str(decision.rush_state),
+                    "rush_confidence": round(float(decision.rush_confidence), 3),
+                    "rush_score": round(float(decision.rush_score), 3),
+                    "workers_peak_seen": int(workers_peak_seen),
+                    "signals": dict(decision.signals),
+                },
+                meta={"module": "intel", "component": "intel.opening"},
+            )

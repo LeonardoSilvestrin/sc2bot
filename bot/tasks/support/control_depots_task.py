@@ -72,8 +72,8 @@ class ControlDepots(BaseTask):
                 issued += 1
             action = "lower"
 
-        self.awareness.mem.set(K("macro", "wall", "depot_control", "last_done_at"), value=now, now=now, ttl=None)
-        self.awareness.mem.set(K("macro", "wall", "depot_control", "last_action"), value=action, now=now, ttl=None)
+        self.awareness.mem.set(K("ops", "macro", "wall", "depot_control", "last_done_at"), value=now, now=now, ttl=None)
+        self.awareness.mem.set(K("ops", "macro", "wall", "depot_control", "last_action"), value=action, now=now, ttl=None)
 
         self._done("depots_controlled")
         return TaskResult.done(

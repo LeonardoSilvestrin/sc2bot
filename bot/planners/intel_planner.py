@@ -1,4 +1,4 @@
-﻿# bot/planners/intel_planner.py
+# bot/planners/intel_planner.py
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -146,7 +146,7 @@ class IntelPlanner:
         # -------------------------
         # 1) Scan when threatened and orbital ready
         # -------------------------
-        if int(attention.combat.primary_urgency) > 0 and bool(attention.intel.orbital_ready_to_scan):
+        if (int(attention.combat.primary_urgency) > 0) and bool(attention.intel.orbital_ready_to_scan):
             target = self._enemy_main(bot)
             label = "enemy_main"
 

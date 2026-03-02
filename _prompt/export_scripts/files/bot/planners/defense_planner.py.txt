@@ -8,13 +8,12 @@ from dataclasses import dataclass
 from bot.devlog import DevLogger
 from bot.mind.attention import Attention
 from bot.mind.awareness import Awareness
-from bot.planners.utils.base_planner import BasePlanner
 from bot.planners.utils.proposals import Proposal, TaskSpec
 from bot.tasks.defense.defend_task import Defend
 
 
 @dataclass
-class DefensePlanner(BasePlanner):
+class DefensePlanner:
     """
     Planner reativo de defesa.
     """
@@ -23,17 +22,19 @@ class DefensePlanner(BasePlanner):
     log: DevLogger | None = None
 
     def _pid_defend(self) -> str:
-        return self.proposal_id("defend:bases")
+        return f"{self.planner_id}:defend:bases"
 
     def propose(self, bot, *, awareness: Awareness, attention: Attention) -> list[Proposal]:
-        if int(attention.combat.primary_urgency) <= 0:
+        threatened = int(attention.combat.primary_urgency) > 0
+        threat_pos = attention.combat.primary_threat_pos
+        if (not threatened) or (not threat_pos):
             return []
 
         now = float(attention.time)
         pid = self._pid_defend()
 
         # Avoid planner/log spam while an equal DEFENSE mission is already running.
-        if self.is_proposal_running(awareness=awareness, proposal_id=pid, now=now):
+        if awareness.ops_proposal_running(proposal_id=pid, now=now):
             return []
 
         urg = int(attention.combat.primary_urgency)
@@ -45,16 +46,23 @@ class DefensePlanner(BasePlanner):
         def _factory(mission_id: str) -> Defend:
             return self.defend_task.spawn()
 
-        out = self.make_single_task_proposal(
-            proposal_id=pid,
-            domain="DEFENSE",
-            score=score,
-            task_spec=TaskSpec(task_id="defend_bases", task_factory=_factory, unit_requirements=[]),
-            lease_ttl=6.0,
-            cooldown_s=0.0,
-            risk_level=0,
-            allow_preempt=True,
-        )
-        self.emit_planner_proposed({"count": len(out), "score": int(score)})
+        out = [
+            Proposal(
+                proposal_id=pid,
+                domain="DEFENSE",
+                score=score,
+                tasks=[TaskSpec(task_id="defend_bases", task_factory=_factory, unit_requirements=[])],
+                lease_ttl=6.0,
+                cooldown_s=0.0,
+                risk_level=0,
+                allow_preempt=True,
+            )
+        ]
+        if self.log is not None:
+            self.log.emit(
+                "planner_proposed",
+                {"planner": self.planner_id, "count": len(out), "score": int(score)},
+                meta={"module": "planner", "component": f"planner.{self.planner_id}"},
+            )
         return out
 

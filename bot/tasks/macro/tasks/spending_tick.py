@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from dataclasses import dataclass
 
@@ -11,11 +11,11 @@ from sc2.ids.ability_id import AbilityId
 from sc2.ids.unit_typeid import UnitTypeId as U
 
 from bot.devlog import DevLogger
-from bot.control.macro_policies import RushFortifyPolicy, WallPlacementPolicy
-from bot.control.macro_state_store import MacroStateStore
 from bot.mind.attention import Attention
 from bot.mind.awareness import Awareness, K
 from bot.tasks.base_task import BaseTask, TaskTick, TaskResult
+from bot.tasks.macro.policies.macro_policies import RushFortifyPolicy, WallPlacementPolicy
+from bot.tasks.macro.support.state_store import MacroStateStore
 from bot.tasks.macro.utils.desired_comp import desired_controller_dict
 from bot.tasks.macro.utils.wall_mapper import next_available_wall_slot, try_build_next_wall_depot
 
@@ -46,6 +46,9 @@ class MacroSpendingTick(BaseTask):
     pre_nat_second_depot_min_opening_conf: float = 0.52
     min_replan_interval_s: float = 0.60
     min_step_interval_s: float = 0.35
+    production_infra_idle_barracks_block_min: int = 1
+    expansion_release_on_idle_capacity: bool = True
+    addon_priority_gap_abs_min: float = 0.05
 
     def __init__(
         self,
@@ -609,9 +612,19 @@ class MacroSpendingTick(BaseTask):
         addon_balance_pressure = bool(
             self.awareness.mem.get(K("macro", "production", "plan", "addon_balance_pressure"), now=now, default=False)
         )
+        addon_idle_techlab_pressure = bool(
+            self.awareness.mem.get(K("macro", "production", "plan", "addon_idle_techlab_pressure"), now=now, default=False)
+        )
+        addon_idle_pressure_score = float(
+            self.awareness.mem.get(K("macro", "production", "plan", "addon_idle_pressure_score"), now=now, default=0.0) or 0.0
+        )
+        idle_barracks = int(
+            self.awareness.mem.get(K("macro", "production", "plan", "idle_barracks"), now=now, default=0) or 0
+        )
         addon_gap_techlab = float(
             self.awareness.mem.get(K("macro", "production", "plan", "addon_gap_techlab_ratio"), now=now, default=0.0) or 0.0
         )
+        addon_repair_mode = bool(abs(float(addon_gap_techlab)) >= float(self.addon_priority_gap_abs_min))
         infra_hold_for_natural = bool(
             bool(need_natural_now)
             and int(pending_cc) <= 0
@@ -621,19 +634,50 @@ class MacroSpendingTick(BaseTask):
             float(lag_prod) >= 0.72
             and float(army_shortfall) >= 0.22
             and float(army_supply_target) >= 8.0
-            and not bool(addon_balance_pressure)
             and not bool(infra_scale_pressure)
             and int(attention.economy.minerals) < 350
         )
+        expansion_hold_for_army_recovery = bool(
+            float(lag_prod) >= 0.80
+            and float(army_shortfall) >= 0.30
+            and int(current_townhalls) >= 2
+            and int(attention.economy.minerals) < 1300
+        )
+        infra_blocked_by_idle_capacity = bool(
+            int(idle_barracks) >= int(self.production_infra_idle_barracks_block_min)
+            and float(addon_gap_techlab) <= 0.05
+        )
+        if bool(addon_repair_mode) and int(idle_barracks) > 0:
+            infra_blocked_by_idle_capacity = True
+        if bool(self.expansion_release_on_idle_capacity) and bool(infra_blocked_by_idle_capacity):
+            expansion_hold_for_army_recovery = False
         self.awareness.mem.set(K("macro", "spending", "status", "target_bases"), value=int(target_bases), now=now, ttl=8.0)
         self.awareness.mem.set(K("macro", "spending", "status", "expansion_gap"), value=int(expansion_gap), now=now, ttl=8.0)
         self.awareness.mem.set(K("macro", "spending", "status", "need_natural_now"), value=bool(need_natural_now), now=now, ttl=8.0)
         self.awareness.mem.set(K("macro", "spending", "status", "rush_active"), value=bool(effective_rush_active), now=now, ttl=8.0)
         self.awareness.mem.set(K("macro", "spending", "status", "infra_hold_for_natural"), value=bool(infra_hold_for_natural), now=now, ttl=8.0)
         self.awareness.mem.set(K("macro", "spending", "status", "infra_hold_for_army"), value=bool(infra_hold_for_army), now=now, ttl=8.0)
+        self.awareness.mem.set(
+            K("macro", "spending", "status", "infra_blocked_by_idle_capacity"),
+            value=bool(infra_blocked_by_idle_capacity),
+            now=now,
+            ttl=8.0,
+        )
+        self.awareness.mem.set(
+            K("macro", "spending", "status", "expansion_hold_for_army_recovery"),
+            value=bool(expansion_hold_for_army_recovery),
+            now=now,
+            ttl=8.0,
+        )
         self.awareness.mem.set(K("macro", "spending", "status", "infra_scale_pressure"), value=bool(infra_scale_pressure), now=now, ttl=8.0)
         self.awareness.mem.set(K("macro", "spending", "status", "addon_balance_pressure"), value=bool(addon_balance_pressure), now=now, ttl=8.0)
         self.awareness.mem.set(K("macro", "spending", "status", "addon_gap_techlab_ratio"), value=float(addon_gap_techlab), now=now, ttl=8.0)
+        self.awareness.mem.set(
+            K("macro", "production", "status", "infeasible"),
+            value=bool(infra_blocked_by_idle_capacity),
+            now=now,
+            ttl=8.0,
+        )
         self.awareness.mem.set(K("macro", "spending", "status", "reserve_preview_minerals"), value=int(spending_reserve_m), now=now, ttl=8.0)
         self.awareness.mem.set(K("macro", "spending", "status", "reserve_preview_gas"), value=int(spending_reserve_g), now=now, ttl=8.0)
         self.awareness.mem.set(K("macro", "spending", "status", "reserve_preview_name"), value=str(spending_reserve_name), now=now, ttl=8.0)
@@ -648,6 +692,53 @@ class MacroSpendingTick(BaseTask):
         )
         target_workers_per_refinery = max(0, min(3, int(target_workers_per_refinery)))
         army_comp = self._army_comp_for_controllers(now)
+
+        # Explicit addon correction pass: fix idle Barracks without add-ons before scaling infra.
+        if bool(addon_repair_mode) and int(idle_barracks) > 0:
+            barracks_no_addon = [b for b in bot.structures(U.BARRACKS).ready.idle if not bool(getattr(b, "has_add_on", False))]
+            if barracks_no_addon:
+                want_techlab = bool(float(addon_gap_techlab) > 0.0)
+                issued = 0
+                for rax in barracks_no_addon:
+                    if want_techlab:
+                        if not bot.can_afford(U.BARRACKSTECHLAB):
+                            break
+                        rax(AbilityId.BUILD_TECHLAB_BARRACKS)
+                        issued += 1
+                    else:
+                        if not bot.can_afford(U.BARRACKSREACTOR):
+                            break
+                        rax(AbilityId.BUILD_REACTOR_BARRACKS)
+                        issued += 1
+                    if issued >= 1:
+                        break
+                if issued > 0:
+                    self.awareness.mem.set(
+                        K("macro", "spending", "status", "addon_repair_active"),
+                        value=True,
+                        now=now,
+                        ttl=8.0,
+                    )
+                    if self.log is not None and (int(tick.iteration) % self.log_every_iters == 0):
+                        self.log.emit(
+                            "macro_spending",
+                            {
+                                "iter": int(tick.iteration),
+                                "t": round(float(now), 2),
+                                "action": "addon_priority_issued",
+                                "issued": int(issued),
+                                "addon_gap_techlab_ratio": round(float(addon_gap_techlab), 3),
+                                "idle_barracks": int(idle_barracks),
+                                "addon_target": "TECHLAB" if bool(want_techlab) else "REACTOR",
+                            },
+                        )
+                    return TaskResult.running("addon_priority_issued")
+        self.awareness.mem.set(
+            K("macro", "spending", "status", "addon_repair_active"),
+            value=False,
+            now=now,
+            ttl=8.0,
+        )
 
         plan = MacroPlan()
         can_afford_supply = bool(bot.can_afford(U.SUPPLYDEPOT))
@@ -666,15 +757,35 @@ class MacroSpendingTick(BaseTask):
         # Ownership contract:
         # - TECH owns upgrade/tech prerequisites when reserve is active.
         # - SPENDING owns expansion + production-infra only when not tech-gated.
-        if not tech_hold:
-            plan.add(ExpansionController(to_count=int(target_bases)))
-        if army_comp and not tech_hold and not infra_hold_for_natural and not infra_hold_for_army:
+        # Priority tweak:
+        # - If barracks are idle and techlab ratio is behind, run ProductionController first
+        #   so add-on balancing is attempted before expansion commitments.
+        can_run_production = bool(
+            army_comp
+            and not tech_hold
+            and not infra_hold_for_natural
+            and not infra_hold_for_army
+            and not infra_blocked_by_idle_capacity
+        )
+        if bool(can_run_production) and bool(addon_idle_techlab_pressure):
             plan.add(
                 ProductionController(
                     army_composition_dict=army_comp,
                     base_location=bot.start_location,
                 )
             )
+            if not tech_hold and not expansion_hold_for_army_recovery:
+                plan.add(ExpansionController(to_count=int(target_bases)))
+        else:
+            if not tech_hold and not expansion_hold_for_army_recovery:
+                plan.add(ExpansionController(to_count=int(target_bases)))
+            if can_run_production:
+                plan.add(
+                    ProductionController(
+                        army_composition_dict=army_comp,
+                        base_location=bot.start_location,
+                    )
+                )
 
         bot.register_behavior(plan)
 
@@ -699,8 +810,14 @@ class MacroSpendingTick(BaseTask):
                     "spending_reserve_name": str(spending_reserve_name),
                     "infra_hold_for_natural": bool(infra_hold_for_natural),
                     "infra_hold_for_army": bool(infra_hold_for_army),
+                    "infra_blocked_by_idle_capacity": bool(infra_blocked_by_idle_capacity),
+                    "addon_repair_mode": bool(addon_repair_mode),
+                    "expansion_hold_for_army_recovery": bool(expansion_hold_for_army_recovery),
                     "infra_scale_pressure": bool(infra_scale_pressure),
                     "addon_balance_pressure": bool(addon_balance_pressure),
+                    "addon_idle_techlab_pressure": bool(addon_idle_techlab_pressure),
+                    "addon_idle_pressure_score": round(float(addon_idle_pressure_score), 3),
+                    "idle_barracks": int(idle_barracks),
                     "addon_gap_techlab_ratio": round(float(addon_gap_techlab), 3),
                     "lag_production": round(float(lag_prod), 3),
                     "army_supply_now": int(army_supply_now),
@@ -740,4 +857,5 @@ class MacroSpendingTick(BaseTask):
             )
 
         return TaskResult.running("spending_plan_registered")
+
 

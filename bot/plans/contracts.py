@@ -8,13 +8,13 @@ CONTRACTS: dict[str, dict[str, str]] = {
     "enemy.*": {"writer": "intel", "reader": "control/planners/tasks"},
     "strategy.parity.*": {"writer": "intel.game_parity", "reader": "planners/tasks"},
     "macro.desired.*": {"writer": "intel.my_army_composition", "reader": "control/planners/tasks"},
-    "macro.opening.done*": {"writer": "runtime.self", "reader": "sensors/planners/control"},
+    "macro.opening.done*": {"writer": "intel.opening_contract", "reader": "sensors/planners/control"},
     "macro.production.plan.*": {"writer": "planner.macro_orchestrator", "reader": "task.macro_production"},
     "macro.tech.plan.*": {"writer": "planner.macro_orchestrator", "reader": "task.macro_tech"},
     "macro.gas.*": {"writer": "control.priority_policy", "reader": "tasks.macro_spending/scv_housekeeping"},
     "macro.reserve.*": {"writer": "control.priority_policy", "reader": "macro tasks"},
     "control.priority.*": {"writer": "control.priority_policy", "reader": "ego"},
-    "ops.*": {"writer": "ego", "reader": "sensors/tasks"},
+    "ops.*": {"writer": "ego/tasks", "reader": "sensors/planners/tasks/control"},
 }
 
 

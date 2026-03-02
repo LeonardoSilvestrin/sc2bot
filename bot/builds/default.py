@@ -147,6 +147,12 @@ PROFILE: Dict[str, Any] = {
             }
         ],
     },
+    "tech_structure_targets_by_mode": {
+        "RUSH_RESPONSE": {"ENGINEERINGBAY": 1, "ARMORY": 0},
+        "DEFENSIVE": {"ENGINEERINGBAY": 1, "ARMORY": 0},
+        "STANDARD": {"ENGINEERINGBAY": 2, "ARMORY": 2},
+        "PUNISH": {"ENGINEERINGBAY": 2, "ARMORY": 2},
+    },
     "transition_overrides": {
         "BANSHEE": {
             "priority_standard": ["BANSHEE", "HELLION", "SIEGETANK", "MARINE", "MARAUDER", "MEDIVAC"],

@@ -8,6 +8,8 @@ from typing import List, Optional, Tuple
 from sc2.position import Point2
 from sc2.unit import Unit
 
+from bot.sensors.threat_model import danger_weight, is_ground_threat
+
 
 @dataclass(frozen=True)
 class BaseThreatReport:
@@ -45,41 +47,6 @@ class Threat:
             return list(bot.townhalls)
         except Exception:
             return []
-
-    @staticmethod
-    def _is_ground_threat(enemy: Unit) -> bool:
-        try:
-            return bool(getattr(enemy, "can_attack_ground", False))
-        except Exception:
-            return False
-
-    @staticmethod
-    def _enemy_power(enemy: Unit) -> float:
-        # Lightweight and race-agnostic danger proxy.
-        try:
-            if bool(getattr(enemy, "is_worker", False)):
-                return 0.35
-        except Exception:
-            pass
-
-        try:
-            if bool(getattr(enemy, "is_structure", False)):
-                return 1.25 if bool(getattr(enemy, "can_attack_ground", False)) else 0.0
-        except Exception:
-            pass
-
-        try:
-            rng = float(getattr(enemy, "ground_range", 0.0) or 0.0)
-        except Exception:
-            rng = 0.0
-
-        if rng >= 7.0:
-            return 2.25
-        if rng >= 5.0:
-            return 1.75
-        if rng > 0.0:
-            return 1.20
-        return 0.0
 
     @staticmethod
     def _enemy_centroid(enemies: List[Unit], fallback: Point2) -> Point2:
@@ -129,9 +96,9 @@ class Threat:
         base_reports: list[BaseThreatReport] = []
         for th in ths:
             near = enemies.closer_than(self.defend_radius, th.position)
-            near_threats = [e for e in near if self._is_ground_threat(e)]
+            near_threats = [e for e in near if is_ground_threat(e)]
             enemy_count = int(len(near_threats))
-            enemy_power = float(sum(self._enemy_power(e) for e in near_threats))
+            enemy_power = float(sum(danger_weight(e) for e in near_threats))
             urgency = self._urgency_from(enemy_count=enemy_count, enemy_power=enemy_power)
             threat_pos = self._enemy_centroid(near_threats, fallback=th.position) if enemy_count > 0 else None
 

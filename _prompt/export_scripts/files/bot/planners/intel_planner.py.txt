@@ -148,7 +148,7 @@ class IntelPlanner:
         # -------------------------
         # 1) Scan when threatened and orbital ready
         # -------------------------
-        if int(attention.combat.primary_urgency) > 0 and bool(attention.intel.orbital_ready_to_scan):
+        if (int(attention.combat.primary_urgency) > 0) and bool(attention.intel.orbital_ready_to_scan):
             target = self._enemy_main(bot)
             label = "enemy_main"
 

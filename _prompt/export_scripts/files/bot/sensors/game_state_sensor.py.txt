@@ -31,20 +31,16 @@ def _xy(u) -> tuple[float, float]:
         return 0.0, 0.0
 
 
-def _opening_done(bot, *, awareness=None, now: float = 0.0) -> bool:
-    if awareness is not None:
-        try:
-            forced = bool(awareness.mem.get(K("macro", "opening", "forced_done"), now=now, default=False))
-            if forced:
-                return True
-        except Exception:
-            pass
-    bor = getattr(bot, "build_order_runner", None)
-    if bor is None:
-        return False
-    if not hasattr(bor, "build_completed"):
-        raise AttributeError("Game state sensor requires build_order_runner.build_completed")
-    return bool(bor.build_completed)
+def _opening_done(*, awareness, now: float) -> bool:
+    if awareness is None:
+        raise RuntimeError("missing_contract:awareness")
+    sentinel = "__MISSING__"
+    value = awareness.mem.get(K("macro", "opening", "done"), now=now, default=sentinel)
+    if value == sentinel:
+        raise RuntimeError("missing_contract:macro.opening.done")
+    if not isinstance(value, bool):
+        raise RuntimeError(f"invalid_contract:macro.opening.done:{type(value).__name__}")
+    return bool(value)
 
 
 def _production_counts(bot) -> tuple[int, int, int]:
@@ -56,6 +52,39 @@ def _production_counts(bot) -> tuple[int, int, int]:
         return total, idle, int(total - idle)
     except Exception:
         return 0, 0, 0
+
+
+def _addon_counts(bot) -> dict[str, int | float]:
+    counts = {
+        "barracks_reactor": 0,
+        "barracks_techlab": 0,
+        "factory_reactor": 0,
+        "factory_techlab": 0,
+        "starport_reactor": 0,
+        "starport_techlab": 0,
+    }
+    try:
+        counts["barracks_reactor"] = int(bot.structures.of_type({U.BARRACKSREACTOR}).ready.amount)
+        counts["barracks_techlab"] = int(bot.structures.of_type({U.BARRACKSTECHLAB}).ready.amount)
+        counts["factory_reactor"] = int(bot.structures.of_type({U.FACTORYREACTOR}).ready.amount)
+        counts["factory_techlab"] = int(bot.structures.of_type({U.FACTORYTECHLAB}).ready.amount)
+        counts["starport_reactor"] = int(bot.structures.of_type({U.STARPORTREACTOR}).ready.amount)
+        counts["starport_techlab"] = int(bot.structures.of_type({U.STARPORTTECHLAB}).ready.amount)
+    except Exception:
+        pass
+
+    reactor_total = int(counts["barracks_reactor"] + counts["factory_reactor"] + counts["starport_reactor"])
+    techlab_total = int(counts["barracks_techlab"] + counts["factory_techlab"] + counts["starport_techlab"])
+    addon_total = int(reactor_total + techlab_total)
+    reactor_ratio = (float(reactor_total) / float(addon_total)) if addon_total > 0 else 0.0
+    techlab_ratio = (float(techlab_total) / float(addon_total)) if addon_total > 0 else 0.0
+    out: dict[str, int | float] = dict(counts)
+    out["addon_reactor_total"] = int(reactor_total)
+    out["addon_techlab_total"] = int(techlab_total)
+    out["addon_total"] = int(addon_total)
+    out["addon_reactor_ratio"] = float(reactor_ratio)
+    out["addon_techlab_ratio"] = float(techlab_ratio)
+    return out
 
 
 def _orbital_scan_status(bot) -> Tuple[bool, float]:
@@ -305,23 +334,25 @@ def derive_game_state_snapshot(bot, *, awareness=None) -> GameStateSnapshot:
     )
 
     prod_structures_total, prod_structures_idle, prod_structures_active = _production_counts(bot)
+    add_ons = _addon_counts(bot)
 
     macro = MacroSnapshot(
-        opening_done=bool(_opening_done(bot, awareness=awareness, now=now)),
-        minerals=minerals,
-        vespene=gas,
-        workers_total=workers_total,
-        workers_idle=workers_idle,
+        opening_done=bool(_opening_done(awareness=awareness, now=now)),
         bases_total=int(len(bases_sat_out)),
-        bases_under_saturated=int(bases_under_saturated),
-        bases_over_saturated=int(bases_over_saturated),
         prod_structures_total=int(prod_structures_total),
         prod_structures_idle=int(prod_structures_idle),
         prod_structures_active=int(prod_structures_active),
-        supply_used=int(supply_used),
-        supply_cap=int(supply_cap),
-        supply_left=int(supply_left),
-        supply_blocked=bool(supply_blocked),
+        addon_total=int(add_ons["addon_total"]),
+        addon_reactor_total=int(add_ons["addon_reactor_total"]),
+        addon_techlab_total=int(add_ons["addon_techlab_total"]),
+        addon_reactor_ratio=float(add_ons["addon_reactor_ratio"]),
+        addon_techlab_ratio=float(add_ons["addon_techlab_ratio"]),
+        barracks_reactor=int(add_ons["barracks_reactor"]),
+        barracks_techlab=int(add_ons["barracks_techlab"]),
+        factory_reactor=int(add_ons["factory_reactor"]),
+        factory_techlab=int(add_ons["factory_techlab"]),
+        starport_reactor=int(add_ons["starport_reactor"]),
+        starport_techlab=int(add_ons["starport_techlab"]),
     )
 
     orbital_ready_to_scan, orbital_energy = _orbital_scan_status(bot)

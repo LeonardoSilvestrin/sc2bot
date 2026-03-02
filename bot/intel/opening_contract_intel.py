@@ -1,0 +1,13 @@
+from __future__ import annotations
+
+from bot.mind.awareness import Awareness, K
+
+
+def derive_opening_contract_intel(bot, *, awareness: Awareness, now: float) -> None:
+    """
+    Contract writer for macro opening status consumed by sensors/control/planners.
+    """
+    bor = getattr(bot, "build_order_runner", None)
+    done = bool(getattr(bor, "build_completed", False)) if bor is not None else False
+    awareness.mem.set(K("macro", "opening", "done"), value=bool(done), now=float(now), ttl=5.0)
+    awareness.mem.set(K("macro", "opening", "done_owner"), value="intel.opening_contract", now=float(now), ttl=5.0)
