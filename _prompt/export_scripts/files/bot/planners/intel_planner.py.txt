@@ -10,7 +10,7 @@ from sc2.position import Point2
 
 from bot.devlog import DevLogger
 from bot.mind.attention import Attention
-from bot.mind.awareness import Awareness
+from bot.mind.awareness import Awareness, K
 from bot.planners.utils.proposals import Proposal, TaskSpec, UnitRequirement
 from bot.tasks.scout.scan_task import ScanAt
 from bot.tasks.scout.reaper_scout_task import ReaperScout, ReaperScoutObjective
@@ -44,6 +44,10 @@ class IntelPlanner:
     # Reaper scout (single early dispatch)
     reaper_scout_lease_ttl_s: float = 90.0
     reaper_scout_early_until_s: float = 360.0
+    verify_natural_at_s: float = 300.0
+    verify_main_unseen_after_s: float = 300.0
+    verify_main_stale_after_s: float = 240.0
+    periodic_main_rescan_s: float = 180.0
 
     def _pid_reaper_scout(self) -> str:
         return f"{self.planner_id}:scout:reaper"
@@ -146,9 +150,10 @@ class IntelPlanner:
                     )
 
         # -------------------------
-        # 1) Scan when threatened and orbital ready
+        # 1) Scan controller (threat + timed verification)
         # -------------------------
-        if (int(attention.combat.primary_urgency) > 0) and bool(attention.intel.orbital_ready_to_scan):
+        orbital_ready = bool(attention.intel.orbital_ready_to_scan)
+        if orbital_ready and (int(attention.combat.primary_urgency) > 0):
             target = self._enemy_main(bot)
             label = "enemy_main"
 
@@ -166,6 +171,87 @@ class IntelPlanner:
                     risk_level=1,
                     allow_preempt=True,
                 )
+            )
+
+        if not orbital_ready:
+            return proposals
+
+        # Timed verification: at ~5:00 we should validate natural/main if intel is stale.
+        last_main_seen_t = float(
+            awareness.mem.get(K("enemy", "build", "last_seen_main_t"), now=now, default=0.0) or 0.0
+        )
+        last_main_scan_t = float(
+            awareness.mem.get(K("intel", "scan", "by_label", "enemy_main", "last_t"), now=now, default=0.0) or 0.0
+        )
+        last_nat_scan_t = float(
+            awareness.mem.get(K("intel", "scan", "by_label", "enemy_natural", "last_t"), now=now, default=0.0) or 0.0
+        )
+        have_seen_main = float(last_main_seen_t) > 0.0
+        main_unseen_long = (not have_seen_main) and float(now) >= float(self.verify_main_unseen_after_s)
+        main_stale = have_seen_main and (float(now) - float(last_main_seen_t) >= float(self.verify_main_stale_after_s))
+        main_scan_due = (
+            float(now) - float(last_main_scan_t) >= float(self.periodic_main_rescan_s)
+            and (main_unseen_long or main_stale)
+        )
+
+        nat_scan_due = float(now) >= float(self.verify_natural_at_s) and (
+            float(last_nat_scan_t) <= 0.0 or (float(now) - float(last_nat_scan_t) >= float(self.periodic_main_rescan_s))
+        )
+
+        if nat_scan_due:
+            target = self._enemy_natural(bot)
+            label = "enemy_natural"
+
+            def _scan_nat_factory(mission_id: str) -> ScanAt:
+                return ScanAt(awareness=awareness, target=target, label=label, cooldown=35.0, log=self.log)
+
+            proposals.append(
+                Proposal(
+                    proposal_id=self._pid_scan(label),
+                    domain="INTEL",
+                    score=53,
+                    tasks=[TaskSpec(task_id="scan_at", task_factory=_scan_nat_factory, unit_requirements=[])],
+                    lease_ttl=5.0,
+                    cooldown_s=35.0,
+                    risk_level=1,
+                    allow_preempt=True,
+                )
+            )
+
+        if main_scan_due:
+            target = self._enemy_main(bot)
+            label = "enemy_main"
+
+            def _scan_main_factory(mission_id: str) -> ScanAt:
+                return ScanAt(awareness=awareness, target=target, label=label, cooldown=35.0, log=self.log)
+
+            proposals.append(
+                Proposal(
+                    proposal_id=self._pid_scan(f"{label}:refresh"),
+                    domain="INTEL",
+                    score=56,
+                    tasks=[TaskSpec(task_id="scan_at", task_factory=_scan_main_factory, unit_requirements=[])],
+                    lease_ttl=5.0,
+                    cooldown_s=35.0,
+                    risk_level=1,
+                    allow_preempt=True,
+                )
+            )
+
+        if self.log and (nat_scan_due or main_scan_due):
+            self.log.emit(
+                "intel_scan_policy",
+                {
+                    "t": round(float(now), 2),
+                    "orbital_ready": bool(orbital_ready),
+                    "nat_scan_due": bool(nat_scan_due),
+                    "main_scan_due": bool(main_scan_due),
+                    "main_seen_once": bool(have_seen_main),
+                    "last_main_seen_t": round(float(last_main_seen_t), 2),
+                    "last_main_scan_t": round(float(last_main_scan_t), 2),
+                    "last_nat_scan_t": round(float(last_nat_scan_t), 2),
+                },
+                meta={"module": "planner", "component": f"planner.{self.planner_id}"},
             )
 
         return proposals

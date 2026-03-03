@@ -43,18 +43,38 @@ class WeakPointsDecision:
 @dataclass(frozen=True)
 class WeakPointsPolicy:
     def evaluate(self, bot) -> WeakPointsDecision:
-        townhalls = [s for s in bot.enemy_structures if s.type_id in _TOWNHALL_TYPES]
+        if not hasattr(bot, "mediator"):
+            raise RuntimeError("missing_contract:mediator")
+        all_enemy = list(getattr(bot.mediator, "get_all_enemy", []) or [])
+        enemy_structures = [u for u in all_enemy if bool(getattr(u, "is_structure", False))]
+        enemy_units = [u for u in all_enemy if not bool(getattr(u, "is_structure", False))]
+
+        townhalls = [s for s in enemy_structures if s.type_id in _TOWNHALL_TYPES]
         out: list[dict] = []
 
         for th in townhalls:
             base_pos = th.position
-            mobile = [u for u in bot.enemy_units.closer_than(15.0, base_pos) if bool(getattr(u, "can_attack_ground", False))]
+            mobile = [
+                u
+                for u in enemy_units
+                if float(u.position.distance_to(base_pos)) <= 15.0 and bool(getattr(u, "can_attack_ground", False))
+            ]
             static = [
                 s
-                for s in bot.enemy_structures.closer_than(12.0, base_pos)
+                for s in enemy_structures
+                if float(s.position.distance_to(base_pos)) <= 12.0
                 if bool(getattr(s, "can_attack_ground", False))
             ]
-            workers = int(bot.enemy_units.of_type({U.SCV, U.PROBE, U.DRONE, U.MULE}).closer_than(14.0, base_pos).amount)
+            workers = int(
+                len(
+                    [
+                        u
+                        for u in enemy_units
+                        if u.type_id in {U.SCV, U.PROBE, U.DRONE, U.MULE}
+                        and float(u.position.distance_to(base_pos)) <= 14.0
+                    ]
+                )
+            )
             defense_score = float(len(static) * 3.0 + len(mobile) * 1.2)
             vulnerability = float(max(0.0, 18.0 - defense_score) + min(8.0, workers * 0.25))
 

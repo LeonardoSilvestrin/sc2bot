@@ -89,23 +89,14 @@ class HousekeepingPlanner(BasePlanner):
             now=now,
             opening_done=bool(attention.macro.opening_done),
         )
+        # Gas balancing ownership stays in macro executor + Ares ResourceManager.
         gas_deficit = 0
         gas_surplus = 0
-        try:
-            for ref in [g for g in bot.gas_buildings if g.is_ready]:
-                assigned = int(getattr(ref, "assigned_harvesters", 0) or 0)
-                gas_deficit += max(0, int(desired_wpg) - int(assigned))
-                gas_surplus += max(0, int(assigned) - int(desired_wpg))
-        except Exception:
-            gas_deficit = 0
-            gas_surplus = 0
 
         need = bool(
             idle_local >= int(self.housekeeping_idle_trigger)
             or (has_over and has_under)
             or mineral_skew >= int(self.housekeeping_skew_trigger)
-            or gas_deficit > 0
-            or gas_surplus > 0
         )
         return need, {
             "idle_workers": int(idle_workers),

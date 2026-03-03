@@ -5,6 +5,7 @@ from typing import Any
 
 from sc2.ids.upgrade_id import UpgradeId as Up
 
+from bot.intel.utils.upgrade_catalog import derive_upgrades_from_comp
 from bot.mind.awareness import Awareness, K
 
 
@@ -14,62 +15,7 @@ class TechIntelConfig:
 
 
 def _upgrade_names_from_comp(*, comp: dict[str, float], reserve_unit: str) -> list[str]:
-    infantry = float(comp.get("MARINE", 0.0)) + float(comp.get("MARAUDER", 0.0)) + float(comp.get("GHOST", 0.0))
-    mech = float(comp.get("HELLION", 0.0)) + float(comp.get("SIEGETANK", 0.0)) + float(comp.get("CYCLONE", 0.0)) + float(comp.get("THOR", 0.0))
-    air = (
-        float(comp.get("MEDIVAC", 0.0))
-        + float(comp.get("VIKINGFIGHTER", 0.0))
-        + float(comp.get("LIBERATOR", 0.0))
-        + float(comp.get("BANSHEE", 0.0))
-        + float(comp.get("RAVEN", 0.0))
-    )
-    banshee_pressure = float(comp.get("BANSHEE", 0.0) or 0.0) >= 0.15 or str(reserve_unit) == "BANSHEE"
-
-    names: list[str] = []
-    if banshee_pressure:
-        names.extend(["BANSHEECLOAK"])
-    if infantry >= 0.35:
-        names.extend(
-            [
-                "STIMPACK",
-                "SHIELDWALL",
-                "PUNISHERGRENADES",
-                "TERRANINFANTRYWEAPONSLEVEL1",
-                "TERRANINFANTRYARMORSLEVEL1",
-                "TERRANINFANTRYWEAPONSLEVEL2",
-                "TERRANINFANTRYARMORSLEVEL2",
-            ]
-        )
-    if mech >= 0.30:
-        names.extend(
-            [
-                "TERRANVEHICLEWEAPONSLEVEL1",
-                "TERRANVEHICLEANDSHIPARMORSLEVEL1",
-                "TERRANVEHICLEWEAPONSLEVEL2",
-                "TERRANVEHICLEANDSHIPARMORSLEVEL2",
-            ]
-        )
-    if air >= 0.25:
-        names.extend(
-            [
-                "TERRANSHIPWEAPONSLEVEL1",
-                "TERRANVEHICLEANDSHIPARMORSLEVEL1",
-                "TERRANSHIPWEAPONSLEVEL2",
-                "TERRANVEHICLEANDSHIPARMORSLEVEL2",
-            ]
-        )
-    if not names:
-        names.extend(["STIMPACK", "SHIELDWALL", "TERRANINFANTRYWEAPONSLEVEL1", "TERRANINFANTRYARMORSLEVEL1"])
-
-    seen: set[str] = set()
-    out: list[str] = []
-    for name in names:
-        s = str(name)
-        if s in seen or getattr(Up, s, None) is None:
-            continue
-        seen.add(s)
-        out.append(s)
-    return out
+    return derive_upgrades_from_comp(comp=dict(comp), reserve_unit=str(reserve_unit))
 
 
 def derive_tech_intel(
@@ -82,6 +28,17 @@ def derive_tech_intel(
     reserve_unit: str,
     cfg: TechIntelConfig = TechIntelConfig(),
 ) -> dict[str, Any]:
+    def _merge_upgrade_lists(primary: list[str], secondary: list[str]) -> list[str]:
+        seen: set[str] = set()
+        out: list[str] = []
+        for name in list(primary) + list(secondary):
+            s = str(name)
+            if s in seen or getattr(Up, s, None) is None:
+                continue
+            seen.add(s)
+            out.append(s)
+        return out
+
     production_structure_targets = dict(dict(profile["production_structure_targets_by_mode"]).get(str(mode), {}))
     if not isinstance(production_structure_targets, dict):
         raise RuntimeError(f"invalid_contract:macro.desired.production_structure_targets:{mode}")
@@ -96,6 +53,38 @@ def derive_tech_intel(
         raise RuntimeError(f"invalid_contract:macro.desired.tech_timing_milestones:{mode}")
 
     upgrades = _upgrade_names_from_comp(comp=dict(comp), reserve_unit=str(reserve_unit))
+    milestone_upgrades: list[str] = []
+    for step in tech_timing_milestones:
+        if not isinstance(step, dict):
+            continue
+        raw = step.get("upgrades", [])
+        if not isinstance(raw, list):
+            continue
+        milestone_upgrades.extend([str(x) for x in raw if isinstance(x, str)])
+    upgrades = _merge_upgrade_lists(upgrades, milestone_upgrades)
+    opening_selected = str(
+        awareness.mem.get(K("macro", "opening", "selected"), now=now, default="BansheeHellionOpen") or "BansheeHellionOpen"
+    )
+    if opening_selected == "BansheeHellionOpen":
+        blocked_bio = {
+            "STIMPACK",
+            "SHIELDWALL",
+            "PUNISHERGRENADES",
+            "TERRANINFANTRYWEAPONSLEVEL1",
+            "TERRANINFANTRYARMORSLEVEL1",
+            "TERRANINFANTRYWEAPONSLEVEL2",
+            "TERRANINFANTRYARMORSLEVEL2",
+            "TERRANINFANTRYWEAPONSLEVEL3",
+            "TERRANINFANTRYARMORSLEVEL3",
+        }
+        upgrades = [u for u in list(upgrades) if str(u) not in blocked_bio]
+        if not upgrades:
+            upgrades = [
+                "BANSHEECLOAK",
+                "TERRANVEHICLEWEAPONSLEVEL1",
+                "TERRANVEHICLEANDSHIPARMORSLEVEL1",
+                "TERRANSHIPWEAPONSLEVEL1",
+            ]
     tech_targets = {"upgrades": list(upgrades), "structures": dict(tech_structure_targets)}
     construction_targets = {
         "production_structures": dict(production_structure_targets),

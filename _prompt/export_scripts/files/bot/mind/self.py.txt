@@ -8,6 +8,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from ares.behaviors.macro.mining import Mining
 from sc2.data import Result
 
 from bot.devlog import DevLogger
@@ -15,6 +16,7 @@ from bot.sensors.threat_sensor import Threat
 from bot.intel.enemy_build_intel import EnemyBuildIntelConfig, derive_enemy_build_intel
 from bot.intel.game_parity_intel import GameParityIntelConfig, derive_game_parity_intel
 from bot.intel.my_army_composition_intel import MyArmyCompositionConfig, derive_my_army_composition_intel
+from bot.intel.opening_intel import OpeningIntelConfig, derive_enemy_opening_intel
 from bot.intel.opening_contract_intel import derive_opening_contract_intel
 from bot.mind.attention import derive_attention
 from bot.mind.awareness import Awareness, K
@@ -69,6 +71,7 @@ class RuntimeApp:
     body: UnitLeases
     ego: Ego
     enemy_build_cfg: EnemyBuildIntelConfig
+    opening_cfg: OpeningIntelConfig
     my_comp_cfg: MyArmyCompositionConfig
     parity_cfg: GameParityIntelConfig
     debug: bool = True
@@ -87,9 +90,15 @@ class RuntimeApp:
     _chat_last_transition: str = ""
     _chat_last_enemy_kind: str = ""
     _chat_last_rush_state: str = ""
+    _chat_last_aggression_state: str = ""
+    _chat_last_phase: str = ""
+    _chat_last_status_sig: str = ""
+    _chat_seen_early_rush: bool = False
+    _chat_rush_held_announced: bool = False
     _chat_last_sent_t: float = -9999.0
     chat_enabled: bool = True
-    chat_min_interval_s: float = 10.0
+    chat_min_interval_s: float = 20.0
+    chat_status_interval_s: float = 45.0
     _wall_start_s: float = 0.0
 
     @classmethod
@@ -103,7 +112,16 @@ class RuntimeApp:
             log=log,
             cfg=EgoConfig(
                 # Singleton macro domains after macro executor unification.
-                singleton_domains=frozenset({"MACRO_EXECUTOR", "TECH_EXECUTOR", "MACRO_HOUSEKEEPING", "MACRO_DEPOT_CONTROL"}),
+                singleton_domains=frozenset(
+                    {
+                        "MACRO_EXECUTOR",
+                        "MACRO_ARMY_EXECUTOR",
+                        "MACRO_ECON_EXECUTOR",
+                        "TECH_EXECUTOR",
+                        "MACRO_HOUSEKEEPING",
+                        "MACRO_DEPOT_CONTROL",
+                    }
+                ),
                 threat_block_start_at=70,
                 threat_force_preempt_at=90,
                 non_preemptible_grace_s=2.5,
@@ -191,6 +209,7 @@ class RuntimeApp:
             body=body,
             ego=ego,
             enemy_build_cfg=EnemyBuildIntelConfig(),
+            opening_cfg=OpeningIntelConfig(),
             my_comp_cfg=MyArmyCompositionConfig(),
             parity_cfg=GameParityIntelConfig(),
             debug=bool(debug),
@@ -202,6 +221,13 @@ class RuntimeApp:
             self.body.reset()
         except Exception:
             pass
+        self._chat_last_enemy_kind = ""
+        self._chat_last_rush_state = ""
+        self._chat_last_aggression_state = ""
+        self._chat_last_phase = ""
+        self._chat_last_status_sig = ""
+        self._chat_seen_early_rush = False
+        self._chat_rush_held_announced = False
         self._wall_start_s = float(time.perf_counter())
         derive_opening_contract_intel(
             bot,
@@ -213,10 +239,20 @@ class RuntimeApp:
 
     async def on_step(self, bot, *, iteration: int) -> None:
         now = float(getattr(bot, "time", 0.0))
+        # Keep Ares resource-manager bookkeeping actively applied each frame.
+        bot.register_behavior(Mining())
         derive_opening_contract_intel(bot, awareness=self.awareness, now=now)
+        self._sync_opening_selection_from_runner(bot=bot, now=now)
 
         attention = derive_attention(bot, awareness=self.awareness, threat=self.threat, log=self.log)
 
+        derive_enemy_opening_intel(
+            bot,
+            awareness=self.awareness,
+            attention=attention,
+            now=now,
+            cfg=self.opening_cfg,
+        )
         derive_enemy_build_intel(
             bot,
             awareness=self.awareness,
@@ -263,6 +299,17 @@ class RuntimeApp:
         tick = TaskTick(iteration=int(iteration), time=now)
         await self.ego.tick(bot, tick=tick, attention=attention, awareness=self.awareness)
         self._emit_runtime_clock(iteration=int(iteration), now=now)
+
+    def _sync_opening_selection_from_runner(self, *, bot, now: float) -> None:
+        bor = getattr(bot, "build_order_runner", None)
+        if bor is None:
+            return
+        opening = str(getattr(bor, "chosen_opening", "") or "").strip()
+        if not opening:
+            return
+        self.awareness.mem.set(K("macro", "opening", "selected"), value=str(opening), now=float(now), ttl=30.0)
+        transition = "BANSHEE" if str(opening) == "BansheeHellionOpen" else "STIM"
+        self.awareness.mem.set(K("macro", "opening", "transition_target"), value=str(transition), now=float(now), ttl=30.0)
 
     async def on_end(self, bot, game_result: Result) -> None:
         if self.log:
@@ -335,6 +382,7 @@ class RuntimeApp:
         target = None
         start_condition_ok = None
         end_condition_ok = None
+        blocked_reason = ""
 
         if 0 <= step_idx < total_steps:
             step = build_order[step_idx]
@@ -349,6 +397,23 @@ class RuntimeApp:
                 end_condition_ok = bool(step.end_condition())
             except Exception as e:
                 end_condition_ok = f"error:{type(e).__name__}"
+
+            # Lightweight explainability for why current step is not advancing.
+            if not bool(build_completed) and not blocked_reason:
+                if not bool(current_step_started):
+                    if int(getattr(bot, "supply_used", 0.0) or 0.0) < int(start_at_supply or 0):
+                        blocked_reason = f"waiting_supply:{int(getattr(bot, 'supply_used', 0.0) or 0)}/{int(start_at_supply or 0)}"
+                    elif isinstance(start_condition_ok, str):
+                        blocked_reason = f"start_condition_{start_condition_ok}"
+                    elif start_condition_ok is False:
+                        blocked_reason = "start_condition_false"
+                elif bool(current_step_started) and not bool(current_step_complete):
+                    if isinstance(end_condition_ok, str):
+                        blocked_reason = f"end_condition_{end_condition_ok}"
+                    elif end_condition_ok is False:
+                        blocked_reason = "waiting_end_condition"
+                if not blocked_reason:
+                    blocked_reason = "progressing"
 
         if int(iteration) % max(1, int(self.bo_diag_every_iters)) == 0:
             self.log.emit(
@@ -368,6 +433,7 @@ class RuntimeApp:
                     "target": target,
                     "start_condition_ok": start_condition_ok,
                     "end_condition_ok": end_condition_ok,
+                    "blocked_reason": str(blocked_reason),
                     "supply_used": float(getattr(bot, "supply_used", 0.0) or 0.0),
                     "minerals": int(getattr(bot, "minerals", 0) or 0),
                     "vespene": int(getattr(bot, "vespene", 0) or 0),
@@ -393,6 +459,7 @@ class RuntimeApp:
                     "start_at_supply": start_at_supply,
                     "start_condition_ok": start_condition_ok,
                     "end_condition_ok": end_condition_ok,
+                    "blocked_reason": str(blocked_reason),
                     "current_step_started": bool(current_step_started),
                     "current_step_complete": bool(current_step_complete),
                     "stall_s_on_step": round(float(stall_s), 2),
@@ -410,6 +477,9 @@ class RuntimeApp:
         wall_elapsed = max(1e-6, float(time.perf_counter()) - float(self._wall_start_s))
         speed_x = float(now) / float(wall_elapsed)
         lag_prod = float(self.awareness.mem.get(K("control", "priority", "lag", "production"), now=now, default=0.0) or 0.0)
+        lag_construction = float(
+            self.awareness.mem.get(K("control", "priority", "lag", "construction"), now=now, default=0.0) or 0.0
+        )
         lag_spend = float(self.awareness.mem.get(K("control", "priority", "lag", "spending"), now=now, default=0.0) or 0.0)
         lag_tech = float(self.awareness.mem.get(K("control", "priority", "lag", "tech"), now=now, default=0.0) or 0.0)
         lag_army = float(self.awareness.mem.get(K("control", "priority", "lag", "army_supply"), now=now, default=0.0) or 0.0)
@@ -417,12 +487,24 @@ class RuntimeApp:
         macro_budget_enabled = bool(self.awareness.mem.get(K("ego", "exec_budget", "macro_enabled"), now=now, default=True))
         macro_budget_reason = str(self.awareness.mem.get(K("ego", "exec_budget", "macro_reason"), now=now, default="normal") or "normal")
         bank_pi_output = float(self.awareness.mem.get(K("control", "priority", "bank_pi_output"), now=now, default=0.0) or 0.0)
+        parity_state = str(
+            self.awareness.mem.get(K("strategy", "parity", "state"), now=now, default="TRADEOFF_MIXED")
+            or "TRADEOFF_MIXED"
+        )
+        parity_army_behind = float(
+            self.awareness.mem.get(K("strategy", "parity", "severity", "army_behind"), now=now, default=0.0) or 0.0
+        )
+        parity_econ_behind = float(
+            self.awareness.mem.get(K("strategy", "parity", "severity", "econ_behind"), now=now, default=0.0) or 0.0
+        )
+        rush_state = str(self.awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
         payload = {
             "iter": int(iteration),
             "game_t": round(float(now), 2),
             "wall_t": round(float(wall_elapsed), 2),
             "speed_x": round(float(speed_x), 3),
             "lag_production": round(float(lag_prod), 3),
+            "lag_construction": round(float(lag_construction), 3),
             "lag_spending": round(float(lag_spend), 3),
             "lag_tech": round(float(lag_tech), 3),
             "lag_army_supply": round(float(lag_army), 3),
@@ -430,6 +512,10 @@ class RuntimeApp:
             "macro_budget_enabled": bool(macro_budget_enabled),
             "macro_budget_reason": str(macro_budget_reason),
             "bank_pi_output": round(float(bank_pi_output), 3),
+            "parity_state": str(parity_state),
+            "parity_army_behind": round(float(parity_army_behind), 3),
+            "parity_econ_behind": round(float(parity_econ_behind), 3),
+            "rush_state": str(rush_state),
         }
         self.log.emit(
             "runtime_clock",
@@ -445,42 +531,128 @@ class RuntimeApp:
                 f"bank_pi={payload['bank_pi_output']:.3f}"
             )
 
-    async def _safe_chat_send(self, bot, *, now: float, message: str) -> None:
+    async def _safe_chat_send(self, bot, *, now: float, message: str) -> bool:
         if not bool(self.chat_enabled):
-            return
+            return False
         if not str(message).strip():
-            return
+            return False
         if (float(now) - float(self._chat_last_sent_t)) < float(self.chat_min_interval_s):
-            return
+            return False
         try:
             await bot.chat_send(str(message))
             self._chat_last_sent_t = float(now)
+            return True
         except Exception:
-            return
+            return False
+
+    def _enemy_inference_line(self, *, now: float) -> str:
+        enemy_kind = str(self.awareness.mem.get(K("enemy", "opening", "kind"), now=now, default="NORMAL") or "NORMAL").upper()
+        aggression_state = str(
+            self.awareness.mem.get(K("enemy", "aggression", "state"), now=now, default="NONE") or "NONE"
+        ).upper()
+        snapshot = self.awareness.mem.get(K("enemy", "build", "snapshot"), now=now, default={}) or {}
+        if not isinstance(snapshot, dict):
+            snapshot = {}
+        top = snapshot.get("army_comp_top", [])
+        top_unit = "unknown"
+        top_count = 0
+        if isinstance(top, list) and top:
+            first = top[0] if isinstance(top[0], dict) else {}
+            top_unit = str(first.get("unit", "unknown"))
+            top_count = int(first.get("count", 0) or 0)
+        bases_visible = int(snapshot.get("bases_visible", 0) or 0)
+
+        if enemy_kind == "AGGRESSIVE" or aggression_state in {"RUSH", "AGGRESSION"}:
+            return f"Intel: faca nos dentes ({top_unit} x{top_count}). Segura o tranco."
+        if enemy_kind == "GREEDY":
+            return f"Intel: greed detectado, eco aberto ({bases_visible} bases vistas). Hora de cobrar."
+        return f"Intel: plano padrao estranho, sem caos por enquanto ({top_unit} x{top_count})."
+
+    def _rush_held_summary_line(self, *, now: float) -> str:
+        parity_state = str(
+            self.awareness.mem.get(K("strategy", "parity", "state"), now=now, default="TRADEOFF_MIXED") or "TRADEOFF_MIXED"
+        ).upper()
+        parity_signals = self.awareness.mem.get(K("strategy", "parity", "signals"), now=now, default={}) or {}
+        if not isinstance(parity_signals, dict):
+            parity_signals = {}
+        own_army = float(parity_signals.get("own_army_power", 0.0) or 0.0)
+        enemy_army = float(parity_signals.get("enemy_army_power_est", 0.0) or 0.0)
+        delta = float(own_army - enemy_army)
+
+        if delta >= 6.0 or parity_state in {"AHEAD_BOTH", "AHEAD_ARMY_BEHIND_ECON"}:
+            verdict = "foi bem"
+        elif delta <= -6.0 or parity_state in {"BEHIND_BOTH", "BEHIND_ARMY_AHEAD_ECON"}:
+            verdict = "foi mal"
+        else:
+            verdict = "foi ok"
+        return (
+            f"Rush segurado. Resultado: {verdict}. "
+            f"Army power nosso/inimigo {own_army:.1f}/{enemy_army:.1f}, parity={parity_state}."
+        )
 
     async def _emit_chat_updates(self, bot, *, now: float) -> None:
-        # Build/opening selected
+        # Always announce selected build/transition once (or if changed).
         opening_selected = str(self.awareness.mem.get(K("macro", "opening", "selected"), now=now, default="") or "")
-        if opening_selected and opening_selected != str(self._chat_last_opening):
-            self._chat_last_opening = str(opening_selected)
-            await self._safe_chat_send(bot, now=now, message=f"BO: {opening_selected}")
-
+        if not opening_selected:
+            bor = getattr(bot, "build_order_runner", None)
+            if bor is not None:
+                opening_selected = str(getattr(bor, "chosen_opening", "") or "")
         transition_target = str(
             self.awareness.mem.get(K("macro", "opening", "transition_target"), now=now, default="") or ""
         ).upper()
+        if opening_selected and opening_selected != str(self._chat_last_opening):
+            self._chat_last_opening = str(opening_selected)
+            msg = f"Build: {opening_selected}"
+            if transition_target:
+                msg = f"{msg} -> {transition_target}"
+            await self._safe_chat_send(bot, now=now, message=msg)
         if transition_target and transition_target != str(self._chat_last_transition):
             self._chat_last_transition = str(transition_target)
-            await self._safe_chat_send(bot, now=now, message=f"Transition: {transition_target}")
+            if not opening_selected:
+                await self._safe_chat_send(bot, now=now, message=f"Transition: {transition_target}")
 
-        # Enemy opening classifier
-        enemy_kind = str(self.awareness.mem.get(K("enemy", "opening", "kind"), now=now, default="") or "").upper()
-        if enemy_kind and enemy_kind != str(self._chat_last_enemy_kind):
-            self._chat_last_enemy_kind = str(enemy_kind)
-            await self._safe_chat_send(bot, now=now, message=f"Intel: {enemy_kind}")
-
-        # Rush state transitions
         rush_state = str(self.awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
-        if rush_state and rush_state != str(self._chat_last_rush_state):
+        aggression_state = str(
+            self.awareness.mem.get(K("enemy", "aggression", "state"), now=now, default="NONE") or "NONE"
+        ).upper()
+        rush_active = rush_state in {"SUSPECTED", "CONFIRMED", "HOLDING"}
+        aggression_active = aggression_state in {"RUSH", "AGGRESSION"}
+
+        phase = str(self.awareness.mem.get(K("control", "phase"), now=now, default="MID") or "MID").upper()
+        desired_signals = self.awareness.mem.get(K("macro", "desired", "signals"), now=now, default={}) or {}
+        if isinstance(desired_signals, dict):
+            phase = str(desired_signals.get("build_phase", phase) or phase).upper()
+        if phase and phase != str(self._chat_last_phase):
+            self._chat_last_phase = str(phase)
+            await self._safe_chat_send(bot, now=now, message=f"Fase: {phase}")
+
+        if not (rush_active or aggression_active):
             self._chat_last_rush_state = str(rush_state)
-            await self._safe_chat_send(bot, now=now, message=f"Rush: {rush_state}")
+            self._chat_last_aggression_state = str(aggression_state)
+            return
+
+        parity_overall = str(self.awareness.mem.get(K("strategy", "parity", "overall"), now=now, default="EVEN") or "EVEN").upper()
+
+        snapshot = self.awareness.mem.get(K("enemy", "build", "snapshot"), now=now, default={}) or {}
+        if not isinstance(snapshot, dict):
+            snapshot = {}
+        top = snapshot.get("army_comp_top", [])
+        top_unit = "unknown"
+        top_count = 0
+        if isinstance(top, list) and top:
+            first = top[0] if isinstance(top[0], dict) else {}
+            top_unit = str(first.get("unit", "unknown"))
+            top_count = int(first.get("count", 0) or 0)
+
+        msg = (
+            f"Alerta: rush={rush_state} aggr={aggression_state} "
+            f"parity={parity_overall} enemy={top_unit}x{top_count} phase={phase}"
+        )
+        sig = f"{rush_state}|{aggression_state}|{parity_overall}|{top_unit}|{top_count}|{phase}"
+        can_periodic = (float(now) - float(self._chat_last_sent_t)) >= float(self.chat_status_interval_s)
+        if sig != str(self._chat_last_status_sig) or can_periodic:
+            if await self._safe_chat_send(bot, now=now, message=msg):
+                self._chat_last_status_sig = str(sig)
+        self._chat_last_rush_state = str(rush_state)
+        self._chat_last_aggression_state = str(aggression_state)
 

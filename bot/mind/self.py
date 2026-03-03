@@ -89,11 +89,14 @@ class RuntimeApp:
     _chat_last_enemy_kind: str = ""
     _chat_last_rush_state: str = ""
     _chat_last_aggression_state: str = ""
+    _chat_last_phase: str = ""
+    _chat_last_status_sig: str = ""
     _chat_seen_early_rush: bool = False
     _chat_rush_held_announced: bool = False
     _chat_last_sent_t: float = -9999.0
     chat_enabled: bool = True
-    chat_min_interval_s: float = 10.0
+    chat_min_interval_s: float = 20.0
+    chat_status_interval_s: float = 45.0
     _wall_start_s: float = 0.0
 
     @classmethod
@@ -219,6 +222,8 @@ class RuntimeApp:
         self._chat_last_enemy_kind = ""
         self._chat_last_rush_state = ""
         self._chat_last_aggression_state = ""
+        self._chat_last_phase = ""
+        self._chat_last_status_sig = ""
         self._chat_seen_early_rush = False
         self._chat_rush_held_announced = False
         self._wall_start_s = float(time.perf_counter())
@@ -235,6 +240,7 @@ class RuntimeApp:
         # Keep Ares resource-manager bookkeeping actively applied each frame.
         bot.register_behavior(Mining())
         derive_opening_contract_intel(bot, awareness=self.awareness, now=now)
+        self._sync_opening_selection_from_runner(bot=bot, now=now)
 
         attention = derive_attention(bot, awareness=self.awareness, threat=self.threat, log=self.log)
 
@@ -291,6 +297,17 @@ class RuntimeApp:
         tick = TaskTick(iteration=int(iteration), time=now)
         await self.ego.tick(bot, tick=tick, attention=attention, awareness=self.awareness)
         self._emit_runtime_clock(iteration=int(iteration), now=now)
+
+    def _sync_opening_selection_from_runner(self, *, bot, now: float) -> None:
+        bor = getattr(bot, "build_order_runner", None)
+        if bor is None:
+            return
+        opening = str(getattr(bor, "chosen_opening", "") or "").strip()
+        if not opening:
+            return
+        self.awareness.mem.set(K("macro", "opening", "selected"), value=str(opening), now=float(now), ttl=30.0)
+        transition = "BANSHEE" if str(opening) == "BansheeHellionOpen" else "STIM"
+        self.awareness.mem.set(K("macro", "opening", "transition_target"), value=str(transition), now=float(now), ttl=30.0)
 
     async def on_end(self, bot, game_result: Result) -> None:
         if self.log:
@@ -572,56 +589,68 @@ class RuntimeApp:
         )
 
     async def _emit_chat_updates(self, bot, *, now: float) -> None:
-        # Build/opening selected
+        # Always announce selected build/transition once (or if changed).
         opening_selected = str(self.awareness.mem.get(K("macro", "opening", "selected"), now=now, default="") or "")
         if not opening_selected:
             bor = getattr(bot, "build_order_runner", None)
             if bor is not None:
                 opening_selected = str(getattr(bor, "chosen_opening", "") or "")
-        if opening_selected and opening_selected != str(self._chat_last_opening):
-            self._chat_last_opening = str(opening_selected)
-            await self._safe_chat_send(bot, now=now, message=f"BO: {opening_selected}")
-
         transition_target = str(
             self.awareness.mem.get(K("macro", "opening", "transition_target"), now=now, default="") or ""
         ).upper()
+        if opening_selected and opening_selected != str(self._chat_last_opening):
+            self._chat_last_opening = str(opening_selected)
+            msg = f"Build: {opening_selected}"
+            if transition_target:
+                msg = f"{msg} -> {transition_target}"
+            await self._safe_chat_send(bot, now=now, message=msg)
         if transition_target and transition_target != str(self._chat_last_transition):
             self._chat_last_transition = str(transition_target)
-            await self._safe_chat_send(bot, now=now, message=f"Transition: {transition_target}")
+            if not opening_selected:
+                await self._safe_chat_send(bot, now=now, message=f"Transition: {transition_target}")
 
-        # Enemy opening classifier
-        enemy_kind = str(self.awareness.mem.get(K("enemy", "opening", "kind"), now=now, default="") or "").upper()
+        rush_state = str(self.awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
         aggression_state = str(
             self.awareness.mem.get(K("enemy", "aggression", "state"), now=now, default="NONE") or "NONE"
         ).upper()
-        if (
-            enemy_kind
-            and (
-                enemy_kind != str(self._chat_last_enemy_kind)
-                or aggression_state != str(self._chat_last_aggression_state)
-            )
-        ):
-            self._chat_last_enemy_kind = str(enemy_kind)
-            self._chat_last_aggression_state = str(aggression_state)
-            await self._safe_chat_send(bot, now=now, message=self._enemy_inference_line(now=now))
-
-        # Rush state transitions
-        prev_rush_state = str(self._chat_last_rush_state or "NONE").upper()
-        rush_state = str(self.awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
-        rush_is_early = bool(float(now) <= float(self.opening_cfg.rush_phase_max_s))
         rush_active = rush_state in {"SUSPECTED", "CONFIRMED", "HOLDING"}
-        prev_rush_active = prev_rush_state in {"SUSPECTED", "CONFIRMED", "HOLDING"}
-        if rush_is_early and rush_active:
-            self._chat_seen_early_rush = True
-        if (
-            self._chat_seen_early_rush
-            and (not self._chat_rush_held_announced)
-            and prev_rush_active
-            and rush_state in {"ENDED", "NONE"}
-        ):
-            if await self._safe_chat_send(bot, now=now, message=self._rush_held_summary_line(now=now)):
-                self._chat_rush_held_announced = True
-        if rush_state and rush_state != str(self._chat_last_rush_state):
+        aggression_active = aggression_state in {"RUSH", "AGGRESSION"}
+
+        phase = str(self.awareness.mem.get(K("control", "phase"), now=now, default="MID") or "MID").upper()
+        desired_signals = self.awareness.mem.get(K("macro", "desired", "signals"), now=now, default={}) or {}
+        if isinstance(desired_signals, dict):
+            phase = str(desired_signals.get("build_phase", phase) or phase).upper()
+        if phase and phase != str(self._chat_last_phase):
+            self._chat_last_phase = str(phase)
+            await self._safe_chat_send(bot, now=now, message=f"Fase: {phase}")
+
+        if not (rush_active or aggression_active):
             self._chat_last_rush_state = str(rush_state)
-            await self._safe_chat_send(bot, now=now, message=f"Rush: {rush_state}")
+            self._chat_last_aggression_state = str(aggression_state)
+            return
+
+        parity_overall = str(self.awareness.mem.get(K("strategy", "parity", "overall"), now=now, default="EVEN") or "EVEN").upper()
+
+        snapshot = self.awareness.mem.get(K("enemy", "build", "snapshot"), now=now, default={}) or {}
+        if not isinstance(snapshot, dict):
+            snapshot = {}
+        top = snapshot.get("army_comp_top", [])
+        top_unit = "unknown"
+        top_count = 0
+        if isinstance(top, list) and top:
+            first = top[0] if isinstance(top[0], dict) else {}
+            top_unit = str(first.get("unit", "unknown"))
+            top_count = int(first.get("count", 0) or 0)
+
+        msg = (
+            f"Alerta: rush={rush_state} aggr={aggression_state} "
+            f"parity={parity_overall} enemy={top_unit}x{top_count} phase={phase}"
+        )
+        sig = f"{rush_state}|{aggression_state}|{parity_overall}|{top_unit}|{top_count}|{phase}"
+        can_periodic = (float(now) - float(self._chat_last_sent_t)) >= float(self.chat_status_interval_s)
+        if sig != str(self._chat_last_status_sig) or can_periodic:
+            if await self._safe_chat_send(bot, now=now, message=msg):
+                self._chat_last_status_sig = str(sig)
+        self._chat_last_rush_state = str(rush_state)
+        self._chat_last_aggression_state = str(aggression_state)
 

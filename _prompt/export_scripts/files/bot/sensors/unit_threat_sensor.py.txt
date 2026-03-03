@@ -7,17 +7,21 @@ from sc2.position import Point2
 from sc2.units import Units
 
 from bot.mind.attention import MissionSnapshot, MissionUnitThreatSnapshot, UnitThreatSnapshot, UnitThreatsSnapshot
-from bot.sensors.threat_model import danger_weight, is_ground_threat
 
 
 def _can_win_value(bot, own_units: list, enemy_units: Units) -> int | None:
-    if not own_units:
-        return None
     if enemy_units.amount <= 0:
-        return None
+        return 10
+    if not own_units:
+        return 0
+    if not hasattr(bot, "mediator"):
+        raise RuntimeError("missing_contract:mediator")
+    can_win_fight = getattr(bot.mediator, "can_win_fight", None)
+    if not callable(can_win_fight):
+        raise RuntimeError("missing_contract:mediator.can_win_fight")
     try:
         own = Units(own_units, bot)
-        res = bot.mediator.can_win_fight(
+        res = can_win_fight(
             own_units=own,
             enemy_units=enemy_units,
             timing_adjust=True,
@@ -25,8 +29,8 @@ def _can_win_value(bot, own_units: list, enemy_units: Units) -> int | None:
             workers_do_no_damage=True,
         )
         return int(getattr(res, "value", int(res)))
-    except Exception:
-        return None
+    except Exception as exc:
+        raise RuntimeError("invalid_contract:mediator.can_win_fight") from exc
 
 
 def derive_unit_threat_snapshot(
@@ -39,8 +43,12 @@ def derive_unit_threat_snapshot(
     units_out: list[UnitThreatSnapshot] = []
     missions_out: list[MissionUnitThreatSnapshot] = []
 
-    enemy_units = bot.enemy_units
-    if enemy_units is None or enemy_units.amount == 0:
+    if not hasattr(bot, "mediator"):
+        raise RuntimeError("missing_contract:mediator")
+    enemy_units = getattr(bot.mediator, "get_all_enemy", None)
+    if enemy_units is None:
+        raise RuntimeError("missing_contract:mediator.get_all_enemy")
+    if enemy_units.amount == 0:
         return UnitThreatsSnapshot()
 
     worker_types = {U.SCV, U.PROBE, U.DRONE, U.MULE}
@@ -56,9 +64,9 @@ def derive_unit_threat_snapshot(
         center = Point2((cx, cy))
 
         enemy_near_mission = enemy_units.closer_than(float(mission_radius), center)
-        ground_threats_mission = enemy_near_mission.filter(lambda e: is_ground_threat(e))
+        ground_threats_mission = enemy_near_mission.filter(lambda e: bool(getattr(e, "can_attack_ground", False)))
         can_win_val = _can_win_value(bot, live_units, ground_threats_mission)
-        can_win = None if can_win_val is None else bool(can_win_val >= 5)
+        can_win = bool(int(can_win_val) >= 5)
         worker_targets = int(enemy_near_mission.of_type(worker_types).amount)
 
         units_in_danger = 0
@@ -66,8 +74,12 @@ def derive_unit_threat_snapshot(
             near = ground_threats_mission.closer_than(float(unit_radius), unit.position)
             enemy_count_local = int(near.amount)
             hp_frac = float(getattr(unit, "health_percentage", 1.0) or 1.0)
-            danger = float(sum(danger_weight(e) for e in near)) / max(0.25, hp_frac)
-            in_danger = bool(danger >= 7.5 or (hp_frac <= 0.35 and enemy_count_local > 0))
+            local_can_win = int(_can_win_value(bot, [unit], near))
+            lose_pressure = max(0.0, float(5 - local_can_win)) * 1.8
+            local_density = float(enemy_count_local) * 0.9
+            hp_pressure = max(0.0, (1.0 - float(hp_frac)) * 3.0)
+            danger = float(lose_pressure + local_density + hp_pressure)
+            in_danger = bool(danger >= 6.0 or (local_can_win <= 2 and enemy_count_local > 0))
             if in_danger:
                 units_in_danger += 1
             units_out.append(
@@ -89,8 +101,8 @@ def derive_unit_threat_snapshot(
                 units_in_danger=int(units_in_danger),
                 enemy_count_local=int(ground_threats_mission.amount),
                 worker_targets=int(worker_targets),
-                can_win_value=None if can_win_val is None else int(can_win_val),
-                can_win_fight=can_win,
+                can_win_value=int(can_win_val),
+                can_win_fight=bool(can_win),
             )
         )
 

@@ -1,7 +1,7 @@
 EXPORT META
-generated_at_utc: 2026-03-02T19:05:42.087019+00:00
+generated_at_utc: 2026-03-03T00:08:15.549477+00:00
 repo_root: C:\Users\Asus\Documents\projetos\sc2bot\ares\ares-sc2-bot-template
-files_total: 89
+files_total: 91
 
 FILES
 - bot/__init__.py -> files/bot/__init__.py.txt
@@ -12,8 +12,10 @@ FILES
 - bot/ares_wrapper/roles.py -> files/bot/ares_wrapper/roles.py.txt
 - bot/builds/__init__.py -> files/bot/builds/__init__.py.txt
 - bot/builds/banshee_hellion_open.py -> files/bot/builds/banshee_hellion_open.py.txt
+- bot/builds/compact_example.py -> files/bot/builds/compact_example.py.txt
 - bot/builds/default.py -> files/bot/builds/default.py.txt
 - bot/builds/defensive_opening.py -> files/bot/builds/defensive_opening.py.txt
+- bot/builds/profile_compact.py -> files/bot/builds/profile_compact.py.txt
 - bot/control/__init__.py -> files/bot/control/__init__.py.txt
 - bot/control/macro_resource_controller.py -> files/bot/control/macro_resource_controller.py.txt
 - bot/control/priority_policy.py -> files/bot/control/priority_policy.py.txt
@@ -32,6 +34,7 @@ FILES
 - bot/intel/utils/opening_policy.py -> files/bot/intel/utils/opening_policy.py.txt
 - bot/intel/utils/opening_types.py -> files/bot/intel/utils/opening_types.py.txt
 - bot/intel/utils/state_store.py -> files/bot/intel/utils/state_store.py.txt
+- bot/intel/utils/upgrade_catalog.py -> files/bot/intel/utils/upgrade_catalog.py.txt
 - bot/intel/utils/weak_points_policy.py -> files/bot/intel/utils/weak_points_policy.py.txt
 - bot/intel/utils/weak_points_types.py -> files/bot/intel/utils/weak_points_types.py.txt
 - bot/intel/weak_points_intel.py -> files/bot/intel/weak_points_intel.py.txt
@@ -59,7 +62,6 @@ FILES
 - bot/sensors/enemy_build_sensor.py -> files/bot/sensors/enemy_build_sensor.py.txt
 - bot/sensors/game_state_sensor.py -> files/bot/sensors/game_state_sensor.py.txt
 - bot/sensors/mission_sensor.py -> files/bot/sensors/mission_sensor.py.txt
-- bot/sensors/threat_model.py -> files/bot/sensors/threat_model.py.txt
 - bot/sensors/threat_sensor.py -> files/bot/sensors/threat_sensor.py.txt
 - bot/sensors/unit_threat_sensor.py -> files/bot/sensors/unit_threat_sensor.py.txt
 - bot/tasks/__init__.py -> files/bot/tasks/__init__.py.txt

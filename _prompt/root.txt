@@ -7,6 +7,24 @@ OBJETIVO ATUAL
 - Melhorar gasto macro (evitar flood de mineral/gas sem producao).
 - Tornar timing e expansao mais controlaveis por sinais de awareness.
 
+ATUALIZACOES RECENTES (RUN ATUAL)
+- Build BansheeHellionOpen com perfis por fase no mesmo arquivo:
+  - bot/builds/banshee_hellion_open.py
+  - STAGED_PROFILES_BY_PHASE: OPENING / MIDGAME / LATEGAME
+- Selecao de perfil por fase no macro mode:
+  - bot/intel/macro_mode_intel.py (build_phase por tempo)
+  - bot/intel/build_catalog.py (resolve_build_profile com phase)
+- Opening completion generalista (preempcao de opening):
+  - bot/intel/opening_contract_intel.py
+  - regra default + override por opening (nao hardcode unico)
+- Tech pipeline robusto para upgrades:
+  - bot/intel/utils/upgrade_catalog.py (catalogo por unidade + filtro runtime)
+  - bot/intel/tech_intel.py consome catalogo (menos hardcode por build)
+  - bot/tasks/tech/tasks/tech_ares_executor_tick.py filtra upgrades nao pesquisaveis
+- Chat menos spam e mais sinal:
+  - bot/mind/self.py
+  - anuncia build/fase e alerta tatico apenas em estado de agressao/rush
+
 ESTADO ARQUITETURAL ATUAL (2026-03)
 - Sensor atualiza Attention.
 - Intel atualiza Awareness em macro.desired.* e strategy.parity.*.

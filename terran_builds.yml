@@ -5,16 +5,16 @@ MinGamesWinrateBased: 3
 BuildChoices:
   Protoss:
     BotName: MyBot
-    Cycle: [Default]
+    Cycle: [BansheeHellionOpen]
   Terran:
     BotName: MyBot
-    Cycle: [BansheeHellionOpen, StimDropTankOpen]
+    Cycle: [BansheeHellionOpen]
   Zerg:
     BotName: MyBot
-    Cycle: [Default]
+    Cycle: [BansheeHellionOpen]
   Random:
     BotName: MyBot
-    Cycle: [Default]
+    Cycle: [BansheeHellionOpen]
 
 Builds:
   Default:
@@ -36,6 +36,7 @@ Builds:
       - 21 starport
       - 21 addonswap factory barracksreactor
       - 23 hellion *4
+      - 0 orbital
 
   DefensiveOpening:
     AutoSupplyAtSupply: 30
@@ -67,12 +68,9 @@ Builds:
       - 19 expand
       - 20 supply @ ramp
       - 21 factory
-      - 21 gas
-      - 22 starport
-      - 26 hellion *4
-      - 30 starporttechlab
-      - 34 expand
-      - 34 factory *2
+      - 21 barracksreactor
+      - 21 addonswap factory barracksreactor
+      - 23 hellion *2
       
   StimDropTankOpen:
     AutoSupplyAtSupply: 25

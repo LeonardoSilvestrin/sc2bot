@@ -3,7 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any, Dict
 
-from bot.builds import PROFILES_BY_OPENING
+from bot.builds import PROFILES_BY_OPENING, STAGED_PROFILES_BY_OPENING
 from bot.builds.profile_compact import expand_compact_profile
 
 
@@ -37,14 +37,21 @@ def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any
     return out
 
 
-def resolve_build_profile(*, opening_selected: str, transition_target: str) -> Dict[str, Any]:
+def resolve_build_profile(*, opening_selected: str, transition_target: str, phase: str = "") -> Dict[str, Any]:
     opening = str(opening_selected or "").strip()
     if not opening:
         raise RuntimeError("missing_contract:macro.opening.selected")
     if opening not in PROFILES_BY_OPENING:
         raise RuntimeError(f"missing_contract:build_profile:{opening}")
 
-    profile = expand_compact_profile(deepcopy(PROFILES_BY_OPENING[opening]))
+    phase_name = str(phase or "").strip().upper()
+    staged_by_phase = dict(STAGED_PROFILES_BY_OPENING.get(opening, {}) or {})
+    if phase_name and phase_name in staged_by_phase:
+        selected_profile = deepcopy(staged_by_phase[phase_name])
+    else:
+        selected_profile = deepcopy(PROFILES_BY_OPENING[opening])
+
+    profile = expand_compact_profile(selected_profile)
     if "bank_setpoint_minerals" in profile or "bank_setpoint_gas" in profile:
         raise RuntimeError(f"invalid_contract:build_profile:{opening}:deprecated_bank_fields")
     transition_overrides = dict(profile.pop("transition_overrides", {}) or {})

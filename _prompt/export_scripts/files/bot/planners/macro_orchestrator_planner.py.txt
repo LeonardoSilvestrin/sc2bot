@@ -27,10 +27,15 @@ class MacroOrchestratorPlanner(BasePlanner):
     log: DevLogger | None = None
     log_every_iters: int = 22
 
-    executor_score: int = 60
+    army_executor_score: int = 60
+    econ_executor_score: int = 58
     exec_min_interval_s: float = 1.2
     tech_executor_score: int = 44
     tech_exec_min_interval_s: float = 1.2
+    tech_pause_prod_lag_threshold: float = 0.58
+    tech_pause_army_lag_threshold: float = 0.40
+    tech_pause_idle_structures_min: int = 3
+    tech_priority_upgrade_release: tuple[str, ...] = ("STIMPACK",)
     critical_expand_cooldown_s: float = 12.0
     critical_gas_cooldown_s: float = 10.0
 
@@ -40,6 +45,9 @@ class MacroOrchestratorPlanner(BasePlanner):
 
     pressure_urgency_high: int = 18
     pressure_enemy_count_high: int = 3
+    aggression_urgency_high: int = 14
+    aggression_enemy_count_high: int = 2
+    rush_phase_max_s: float = 180.0
 
     freeflow_on_minerals: int = 700
     freeflow_off_minerals: int = 450
@@ -51,7 +59,7 @@ class MacroOrchestratorPlanner(BasePlanner):
 
     opening_gas_cap: int = 1
     late_gas_bonus: int = 1
-    gas_target_workers_default: int = 2
+    gas_target_workers_default: int = 3
     gas_target_workers_min: int = 0
     gas_overflow_hard: int = 650
     gas_overflow_soft: int = 420
@@ -65,14 +73,23 @@ class MacroOrchestratorPlanner(BasePlanner):
     gas_refineries_change_cooldown_s: float = 12.0
     bank_target_minerals: int = 650
     bank_target_gas: int = 220
+    production_overflow_minerals: int = 350
+    production_overflow_gas: int = 200
+    production_overflow_off_minerals: int = 160
+    production_overflow_off_gas: int = 80
+    production_boost_utilization_min: float = 0.66
+    production_boost_change_cooldown_s: float = 18.0
+    production_boost_max: int = 2
     lane_switch_margin: float = 0.12
     lane_min_hold_s: float = 6.0
-    lane_watchdog_expand_minerals: int = 900
-    lane_watchdog_expand_no_progress_s: float = 42.0
+    lane_watchdog_expand_minerals: int = 760
+    lane_watchdog_expand_no_progress_s: float = 30.0
     emergency_dump_on_minerals: int = 1400
     emergency_dump_off_minerals: int = 1000
     emergency_dump_hold_s: float = 8.0
     ahead_expand_min_army_supply: float = 24.0
+    rush_army_dump_minerals: int = 500
+    aggression_army_dump_minerals: int = 900
 
     housekeeping_score: int = 18
     housekeeping_interval_s: float = 4.0
@@ -167,12 +184,15 @@ class MacroOrchestratorPlanner(BasePlanner):
         attention: Attention,
         now: float,
         desired_expand_to: int,
+        scv_cap: int,
     ) -> tuple[float, float, float]:
         units_ready = dict(attention.economy.units_ready or {})
         minerals = int(attention.economy.minerals)
+        gas = int(attention.economy.gas)
         bases_now = int(attention.macro.bases_total)
+        workers_total = int(attention.economy.workers_total)
 
-        # Production lag: use lagging-unit gap + idle-factory pressure + army supply timing shortfall.
+        # Production lag: unit-gap + idle pressure + army supply timing + structure-target deficit.
         signals = awareness.mem.get(K("macro", "desired", "signals"), now=now, default={}) or {}
         if not isinstance(signals, dict):
             signals = {}
@@ -197,10 +217,130 @@ class MacroOrchestratorPlanner(BasePlanner):
             actual_army_supply = 0.0
         army_supply_gap = max(0.0, float(expected_army_supply) - float(actual_army_supply))
         army_supply_pressure = self._clamp01(army_supply_gap / 18.0)
+        desired_prod_structures_abs = awareness.mem.get(
+            K("macro", "desired", "production_structure_targets"),
+            now=now,
+            default={},
+        ) or {}
+        if not isinstance(desired_prod_structures_abs, dict):
+            desired_prod_structures_abs = {}
+        desired_prod_scale = awareness.mem.get(
+            K("macro", "desired", "production_scale"),
+            now=now,
+            default={},
+        ) or {}
+        if not isinstance(desired_prod_scale, dict):
+            desired_prod_scale = {}
+
+        # Build baseline: max(absolute target from build, per-base scaled target).
+        desired_prod_structures: dict[str, int] = {}
+        for n in {"BARRACKS", "FACTORY", "STARPORT"}:
+            abs_target = max(0, int(desired_prod_structures_abs.get(n, 0) or 0))
+            scale = max(0.0, float(desired_prod_scale.get(n, 0.0) or 0.0))
+            scaled_target = int((scale * float(max(1, bases_now))) + 0.999)
+            desired_prod_structures[n] = max(abs_target, scaled_target)
+
+        # Overflow boost (cooldown + hysteresis) to avoid barracks spam/chattering.
+        bank_target_m = int(
+            awareness.mem.get(
+                K("macro", "desired", "bank_target_minerals"),
+                now=now,
+                default=int(self.bank_target_minerals),
+            )
+            or int(self.bank_target_minerals)
+        )
+        bank_target_g = int(
+            awareness.mem.get(
+                K("macro", "desired", "bank_target_gas"),
+                now=now,
+                default=int(self.bank_target_gas),
+            )
+            or int(self.bank_target_gas)
+        )
+        over_m = int(minerals) - int(bank_target_m)
+        over_g = int(gas) - int(bank_target_g)
+        util = 1.0 - float(idle_pressure)
+        expand_gap = max(0, int(desired_expand_to) - int(bases_now))
+        workers_stable = bool(int(workers_total) >= max(1, int(scv_cap) - 1))
+        can_boost = bool(
+            workers_stable
+            and int(expand_gap) <= 0
+            and float(util) >= float(self.production_boost_utilization_min)
+        )
+        boost_target = 0
+        if can_boost and (int(over_m) >= int(self.production_overflow_minerals) or int(over_g) >= int(self.production_overflow_gas)):
+            boost_target = 1
+            if int(over_m) >= int(self.production_overflow_minerals) * 2:
+                boost_target = 2
+        elif (int(over_m) <= int(self.production_overflow_off_minerals) and int(over_g) <= int(self.production_overflow_off_gas)):
+            boost_target = 0
+
+        boost_target = max(0, min(int(self.production_boost_max), int(boost_target)))
+        boost_prev = int(awareness.mem.get(K("macro", "exec", "production_boost_level"), now=now, default=0) or 0)
+        boost_changed_at = float(
+            awareness.mem.get(K("macro", "exec", "production_boost_changed_at"), now=now, default=-9999.0) or -9999.0
+        )
+        boost_level = int(boost_prev)
+        if int(boost_target) != int(boost_prev):
+            if (float(now) - float(boost_changed_at)) >= float(self.production_boost_change_cooldown_s):
+                boost_level = int(boost_target)
+                awareness.mem.set(K("macro", "exec", "production_boost_changed_at"), value=float(now), now=now, ttl=30.0)
+        awareness.mem.set(K("macro", "exec", "production_boost_level"), value=int(boost_level), now=now, ttl=30.0)
+
+        # Choose primary structure for boost by current comp.
+        desired_comp = awareness.mem.get(K("macro", "desired", "comp"), now=now, default={}) or {}
+        if not isinstance(desired_comp, dict):
+            desired_comp = {}
+        air_w = sum(float(desired_comp.get(n, 0.0) or 0.0) for n in ("MEDIVAC", "VIKINGFIGHTER", "LIBERATOR", "BANSHEE", "RAVEN"))
+        mech_w = sum(float(desired_comp.get(n, 0.0) or 0.0) for n in ("HELLION", "SIEGETANK", "CYCLONE", "THOR"))
+        bio_w = sum(float(desired_comp.get(n, 0.0) or 0.0) for n in ("MARINE", "MARAUDER", "GHOST"))
+        if air_w >= mech_w and air_w >= bio_w:
+            boost_order = ["STARPORT", "FACTORY", "BARRACKS"]
+        elif mech_w >= bio_w:
+            boost_order = ["FACTORY", "STARPORT", "BARRACKS"]
+        else:
+            boost_order = ["BARRACKS", "FACTORY", "STARPORT"]
+        for i in range(int(boost_level)):
+            desired_prod_structures[boost_order[i % len(boost_order)]] = int(desired_prod_structures.get(boost_order[i % len(boost_order)], 0)) + 1
+
+        awareness.mem.set(
+            K("macro", "desired", "production_structure_targets_dynamic"),
+            value=dict(desired_prod_structures),
+            now=now,
+            ttl=15.0,
+        )
+        awareness.mem.set(
+            K("macro", "desired", "production_structure_boost_status"),
+            value={
+                "level": int(boost_level),
+                "target": int(boost_target),
+                "can_boost": bool(can_boost),
+                "over_m": int(over_m),
+                "over_g": int(over_g),
+                "utilization": float(util),
+            },
+            now=now,
+            ttl=15.0,
+        )
+        prod_structure_missing = 0
+        prod_structure_target_total = 0
+        for name, target in desired_prod_structures.items():
+            try:
+                uid = getattr(U, str(name))
+                tgt = max(0, int(target))
+            except Exception:
+                continue
+            cur = int(units_ready.get(uid, 0) or 0)
+            prod_structure_target_total += int(tgt)
+            prod_structure_missing += max(0, int(tgt - cur))
+        construction_pressure = self._clamp01(
+            float(prod_structure_missing) / float(max(1, prod_structure_target_total))
+        )
         lag_prod = self._clamp01(
-            (0.52 * self._clamp01(lagging_gap / 24.0))
-            + (0.18 * idle_pressure)
-            + (0.30 * army_supply_pressure)
+            (0.44 * self._clamp01(lagging_gap / 24.0))
+            + (0.14 * idle_pressure)
+            + (0.24 * army_supply_pressure)
+            + (0.18 * construction_pressure)
         )
 
         # Spending lag: bank high while still below desired base count.
@@ -264,6 +404,7 @@ class MacroOrchestratorPlanner(BasePlanner):
 
         ttl = 12.0
         awareness.mem.set(K("control", "priority", "lag", "production"), value=float(lag_prod), now=now, ttl=ttl)
+        awareness.mem.set(K("control", "priority", "lag", "construction"), value=float(construction_pressure), now=now, ttl=ttl)
         awareness.mem.set(K("control", "priority", "lag", "spending"), value=float(lag_spend), now=now, ttl=ttl)
         awareness.mem.set(K("control", "priority", "lag", "tech"), value=float(lag_tech), now=now, ttl=ttl)
         awareness.mem.set(K("control", "priority", "lag", "army_supply"), value=float(army_supply_pressure), now=now, ttl=ttl)
@@ -288,6 +429,7 @@ class MacroOrchestratorPlanner(BasePlanner):
         expand_to: int,
         emergency_dump: bool,
         ahead_expand_push: bool,
+        rush_army_dump: bool,
     ) -> tuple[list[str], dict[str, float], str]:
         minerals = int(attention.economy.minerals)
         gas = int(attention.economy.gas)
@@ -298,6 +440,9 @@ class MacroOrchestratorPlanner(BasePlanner):
         lag_spend = float(awareness.mem.get(K("control", "priority", "lag", "spending"), now=now, default=0.0) or 0.0)
         lag_tech = float(awareness.mem.get(K("control", "priority", "lag", "tech"), now=now, default=0.0) or 0.0)
         lag_army = float(awareness.mem.get(K("control", "priority", "lag", "army_supply"), now=now, default=0.0) or 0.0)
+        prod_idle = int(attention.macro.prod_structures_idle)
+        prod_total = int(attention.macro.prod_structures_total)
+        idle_ratio = self._clamp01(float(prod_idle) / float(max(1, prod_total)))
 
         # Expansion watchdog: if base count hasn't progressed for too long with high bank,
         # push expansion lane to the top.
@@ -342,12 +487,18 @@ class MacroOrchestratorPlanner(BasePlanner):
             + (0.36 * bank_m)
             + (0.12 * bank_g)
         ) if enable_production else -1.0
+        if enable_spawn and prod_idle >= 2:
+            scores["spawn"] += 0.24 + (0.36 * float(idle_ratio))
+        if enable_production and prod_idle >= 2:
+            scores["production"] -= 0.20 + (0.35 * float(idle_ratio))
         if float(lag_army) >= 0.35 and enable_spawn:
             scores["spawn"] += 0.10
+        if float(lag_army) >= 0.45 and enable_production:
+            scores["production"] -= 0.18
         scores["expand"] = (
-            (0.46 * float(lag_spend))
-            + (0.34 * bank_m)
-            + (0.20 * self._clamp01(expand_need / 2.0))
+            (0.50 * float(lag_spend))
+            + (0.42 * bank_m)
+            + (0.25 * self._clamp01(expand_need / 2.0))
         ) if enable_expansion else -1.0
 
         if emergency_dump:
@@ -355,11 +506,17 @@ class MacroOrchestratorPlanner(BasePlanner):
             scores["production"] += 0.42
             scores["expand"] += 0.25
 
+        if rush_army_dump:
+            scores["spawn"] += 0.75
+            scores["production"] += 0.12
+            scores["expand"] -= 0.65
+            scores["workers"] -= 0.20
+
         if ahead_expand_push and enable_expansion:
             scores["expand"] += 0.48
 
         if pressure_high:
-            scores["expand"] -= 0.45
+            scores["expand"] -= 0.35
             scores["spawn"] += 0.12
             scores["production"] += 0.05
 
@@ -402,10 +559,19 @@ class MacroOrchestratorPlanner(BasePlanner):
 
     def _pressure_high(self, *, awareness: Awareness, attention: Attention, now: float) -> bool:
         rush_state = str(awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
+        aggression_state = str(
+            awareness.mem.get(K("enemy", "aggression", "state"), now=now, default="NONE") or "NONE"
+        ).upper()
+        rush_is_early = bool(float(now) <= float(self.rush_phase_max_s))
         return bool(
             int(attention.combat.primary_urgency) >= int(self.pressure_urgency_high)
             or int(attention.combat.primary_enemy_count) >= int(self.pressure_enemy_count_high)
-            or rush_state in {"SUSPECTED", "CONFIRMED", "HOLDING"}
+            or (rush_is_early and rush_state in {"SUSPECTED", "CONFIRMED", "HOLDING"})
+            or (
+                aggression_state in {"AGGRESSION", "RUSH"}
+                and int(attention.combat.primary_urgency) >= int(self.aggression_urgency_high)
+                and int(attention.combat.primary_enemy_count) >= int(self.aggression_enemy_count_high)
+            )
         )
 
     def _freeflow_hysteresis(self, *, awareness: Awareness, now: float, minerals: int, pressure_high: bool) -> bool:
@@ -538,6 +704,7 @@ class MacroOrchestratorPlanner(BasePlanner):
             attention=attention,
             now=now,
             desired_expand_to=max(1, int(base_expand)),
+            scv_cap=int(scv_cap),
         )
         gas_decision = self._resource_controller.step(
             attention=attention,
@@ -552,6 +719,9 @@ class MacroOrchestratorPlanner(BasePlanner):
         workers_per_refinery = int(gas_decision.target_workers_per_refinery)
         if phase == "OPENING":
             gas_target = min(int(gas_target), int(self.opening_gas_cap))
+            workers_per_refinery = 3
+        elif phase == "MID":
+            workers_per_refinery = 3
         elif phase == "LATE" and not pressure_high:
             gas_target += int(self.late_gas_bonus)
         workers_per_refinery = max(0, min(3, int(workers_per_refinery)))
@@ -576,6 +746,20 @@ class MacroOrchestratorPlanner(BasePlanner):
         if phase == "OPENING":
             freeflow_mode = False
 
+        rush_state = str(awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
+        aggression_state = str(
+            awareness.mem.get(K("enemy", "aggression", "state"), now=now, default="NONE") or "NONE"
+        ).upper()
+        rush_is_early = bool(float(now) <= float(self.rush_phase_max_s))
+        rush_active = bool(rush_is_early and rush_state in {"SUSPECTED", "CONFIRMED", "HOLDING"})
+        aggression_active = bool(aggression_state == "AGGRESSION")
+        rush_army_dump = bool(
+            (rush_active and int(attention.economy.minerals) >= int(self.rush_army_dump_minerals))
+            or (aggression_active and int(attention.economy.minerals) >= int(self.aggression_army_dump_minerals))
+        )
+        if rush_army_dump:
+            freeflow_mode = True
+
         expand_to = self._cooldown_value(
             awareness=awareness,
             now=now,
@@ -599,6 +783,9 @@ class MacroOrchestratorPlanner(BasePlanner):
             enable_expansion = True
         if ahead_expand_push:
             enable_expansion = True
+        if rush_army_dump:
+            enable_expansion = False
+            expand_to = min(int(expand_to), int(bases_now))
 
         lane_order, lane_scores, lane_top = self._lane_order(
             awareness=awareness,
@@ -617,6 +804,7 @@ class MacroOrchestratorPlanner(BasePlanner):
             expand_to=max(1, int(expand_to)),
             emergency_dump=bool(emergency_dump),
             ahead_expand_push=bool(ahead_expand_push),
+            rush_army_dump=bool(rush_army_dump),
         )
 
         ttl = 12.0
@@ -658,8 +846,10 @@ class MacroOrchestratorPlanner(BasePlanner):
             ttl=ttl,
         )
         awareness.mem.set(K("macro", "exec", "enable_spawn"), value=True, now=now, ttl=ttl)
+        awareness.mem.set(K("macro", "exec", "enable_orbital_morph"), value=True, now=now, ttl=ttl)
         awareness.mem.set(K("macro", "exec", "freeflow_mode"), value=bool(freeflow_mode), now=now, ttl=ttl)
         awareness.mem.set(K("macro", "exec", "emergency_mineral_dump"), value=bool(emergency_dump), now=now, ttl=ttl)
+        awareness.mem.set(K("macro", "exec", "rush_army_dump"), value=bool(rush_army_dump), now=now, ttl=ttl)
         awareness.mem.set(K("macro", "exec", "ahead_expand_push"), value=bool(ahead_expand_push), now=now, ttl=ttl)
         awareness.mem.set(K("macro", "exec", "enable_production"), value=True, now=now, ttl=ttl)
         awareness.mem.set(K("macro", "exec", "enable_expansion"), value=bool(enable_expansion), now=now, ttl=ttl)
@@ -682,8 +872,10 @@ class MacroOrchestratorPlanner(BasePlanner):
                 "gas_target": int(gas_target),
                 "gas_workers_per_refinery": int(workers_per_refinery),
                 "enable_spawn": True,
+                "enable_orbital_morph": True,
                 "freeflow_mode": bool(freeflow_mode),
                 "emergency_mineral_dump": bool(emergency_dump),
+                "rush_army_dump": bool(rush_army_dump),
                 "enable_production": True,
                 "enable_expansion": bool(enable_expansion),
                 "expand_to": int(expand_to),
@@ -703,13 +895,75 @@ class MacroOrchestratorPlanner(BasePlanner):
             desired_targets = {}
         upgrades = list(desired_targets.get("upgrades", [])) if isinstance(desired_targets.get("upgrades", []), list) else []
         structures = dict(desired_targets.get("structures", {})) if isinstance(desired_targets.get("structures", {}), dict) else {}
-        enable = bool((not opening_active) and (bool(upgrades) or bool(structures)))
+        lag_prod = float(awareness.mem.get(K("control", "priority", "lag", "production"), now=now, default=0.0) or 0.0)
+        lag_army = float(awareness.mem.get(K("control", "priority", "lag", "army_supply"), now=now, default=0.0) or 0.0)
+        prod_idle = int(attention.macro.prod_structures_idle)
+        pressure_high = self._pressure_high(awareness=awareness, attention=attention, now=now)
+        emergency_dump = bool(awareness.mem.get(K("macro", "exec", "emergency_mineral_dump"), now=now, default=False))
+        tech_pause_for_army = bool(
+            int(prod_idle) >= int(self.tech_pause_idle_structures_min)
+            and (
+                float(lag_prod) >= float(self.tech_pause_prod_lag_threshold)
+                or float(lag_army) >= float(self.tech_pause_army_lag_threshold)
+            )
+        )
+        completed_upgrades = set(getattr(getattr(bot, "state", None), "upgrades", set()) or set())
+        priority_upgrade_pending = False
+        priority_upgrade_names = {str(x).upper() for x in self.tech_priority_upgrade_release}
+        for up_name in list(upgrades):
+            name_u = str(up_name).upper()
+            if name_u not in priority_upgrade_names:
+                continue
+            try:
+                from sc2.ids.upgrade_id import UpgradeId as Up
+
+                up_id = getattr(Up, name_u)
+                if up_id not in completed_upgrades:
+                    priority_upgrade_pending = True
+                    break
+            except Exception:
+                continue
+        if priority_upgrade_pending and int(attention.economy.minerals) >= 220:
+            tech_pause_for_army = False
+        enable = bool(
+            (not opening_active)
+            and (bool(upgrades) or bool(structures))
+            and (not pressure_high)
+            and (not emergency_dump)
+            and (not tech_pause_for_army)
+        )
+        if pressure_high:
+            reason = "paused_pressure_high"
+        elif emergency_dump:
+            reason = "paused_emergency_mineral_dump"
+        elif tech_pause_for_army:
+            reason = "paused_army_production_lag"
+        elif opening_active:
+            reason = "paused_opening_active"
+        elif not (bool(upgrades) or bool(structures)):
+            reason = "paused_no_targets"
+        else:
+            reason = "enabled"
 
         ttl = 12.0
         awareness.mem.set(K("tech", "exec", "enable"), value=bool(enable), now=now, ttl=ttl)
         awareness.mem.set(
             K("tech", "exec", "targets"),
             value={"upgrades": list(upgrades), "structures": dict(structures)},
+            now=now,
+            ttl=ttl,
+        )
+        awareness.mem.set(
+            K("tech", "exec", "status"),
+            value={
+                "enabled": bool(enable),
+                "reason": str(reason),
+                "lag_prod": float(lag_prod),
+                "lag_army": float(lag_army),
+                "prod_idle": int(prod_idle),
+                "pressure_high": bool(pressure_high),
+                "emergency_mineral_dump": bool(emergency_dump),
+            },
             now=now,
             ttl=ttl,
         )
@@ -727,22 +981,63 @@ class MacroOrchestratorPlanner(BasePlanner):
             self._publish_tech_exec(bot, awareness=awareness, attention=attention, now=now)
             self._last_tech_exec_publish_at = float(now)
 
-        executor_pid = self.proposal_id("macro_ares_executor")
-        if not self.is_proposal_running(awareness=awareness, proposal_id=executor_pid, now=now):
+        army_executor_pid = self.proposal_id("macro_army_executor")
+        if not self.is_proposal_running(awareness=awareness, proposal_id=army_executor_pid, now=now):
 
-            def _executor_factory(mission_id: str) -> MacroAresExecutorTick:
+            def _army_executor_factory(mission_id: str) -> MacroAresExecutorTick:
                 return MacroAresExecutorTick(
                     awareness=awareness,
                     log=self.log,
                     log_every_iters=int(self.log_every_iters),
+                    task_id="macro_army_executor",
+                    domain="MACRO_ARMY_EXECUTOR",
+                    commitment=10,
+                    lane_whitelist=("workers", "supply", "gas", "spawn"),
+                    force_front_lanes=("spawn", "supply"),
                 )
 
             out.extend(
                 self.make_single_task_proposal(
-                    proposal_id=executor_pid,
-                    domain="MACRO_EXECUTOR",
-                    score=int(self.executor_score),
-                    task_spec=TaskSpec(task_id="macro_ares_executor", task_factory=_executor_factory, unit_requirements=[]),
+                    proposal_id=army_executor_pid,
+                    domain="MACRO_ARMY_EXECUTOR",
+                    score=int(self.army_executor_score),
+                    task_spec=TaskSpec(
+                        task_id="macro_army_executor",
+                        task_factory=_army_executor_factory,
+                        unit_requirements=[],
+                    ),
+                    lease_ttl=None,
+                    cooldown_s=0.0,
+                    risk_level=0,
+                    allow_preempt=True,
+                )
+            )
+
+        econ_executor_pid = self.proposal_id("macro_econ_executor")
+        if not self.is_proposal_running(awareness=awareness, proposal_id=econ_executor_pid, now=now):
+
+            def _econ_executor_factory(mission_id: str) -> MacroAresExecutorTick:
+                return MacroAresExecutorTick(
+                    awareness=awareness,
+                    log=self.log,
+                    log_every_iters=int(self.log_every_iters),
+                    task_id="macro_econ_executor",
+                    domain="MACRO_ECON_EXECUTOR",
+                    commitment=10,
+                    lane_whitelist=("expand", "production"),
+                    force_front_lanes=("expand", "production"),
+                )
+
+            out.extend(
+                self.make_single_task_proposal(
+                    proposal_id=econ_executor_pid,
+                    domain="MACRO_ECON_EXECUTOR",
+                    score=int(self.econ_executor_score),
+                    task_spec=TaskSpec(
+                        task_id="macro_econ_executor",
+                        task_factory=_econ_executor_factory,
+                        unit_requirements=[],
+                    ),
                     lease_ttl=None,
                     cooldown_s=0.0,
                     risk_level=0,

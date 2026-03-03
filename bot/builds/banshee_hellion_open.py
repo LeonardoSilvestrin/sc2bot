@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any, Dict
 
 
@@ -160,4 +161,97 @@ PROFILE: Dict[str, Any] = {
             ],
         },
     },
+}
+
+
+def _apply_phase(
+    *,
+    profile: Dict[str, Any],
+    comp: Dict[str, float],
+    priority: list[str],
+    production_targets: Dict[str, int],
+    production_scale: Dict[str, float],
+    tech_targets: Dict[str, int],
+    tech_milestones: list[Dict[str, Any]],
+) -> Dict[str, Any]:
+    out: Dict[str, Any] = deepcopy(profile)
+    for mode in ("STANDARD", "PUNISH", "DEFENSIVE", "RUSH_RESPONSE"):
+        cfg = out["modes"][mode]
+        cfg["comp"] = dict(comp)
+        cfg["priority"] = list(priority)
+        cfg["production_structure_targets"] = dict(production_targets)
+        cfg["production_scale"] = dict(production_scale)
+        cfg["tech_structure_targets"] = dict(tech_targets)
+        cfg["tech_timing_milestones"] = list(tech_milestones)
+    return out
+
+
+STAGED_PROFILES_BY_PHASE: Dict[str, Dict[str, Any]] = {
+    "OPENING": _apply_phase(
+        profile=PROFILE,
+        comp={
+            "CYCLONE": 0.34,
+            "HELLION": 0.28,
+            "BANSHEE": 0.22,
+            "SIEGETANK": 0.12,
+            "LIBERATOR": 0.04,
+        },
+        priority=["CYCLONE", "HELLION", "BANSHEE", "SIEGETANK", "LIBERATOR"],
+        production_targets={"BARRACKS": 1, "FACTORY": 1, "STARPORT": 1},
+        production_scale={"BARRACKS": 0.0, "FACTORY": 0.70, "STARPORT": 0.30},
+        tech_targets={"ENGINEERINGBAY": 1, "ARMORY": 2},
+        tech_milestones=[
+            {"t": 180.0, "structures": {"ENGINEERINGBAY": 1, "ARMORY": 2}, "upgrades": []},
+            {"t": 230.0, "structures": {}, "upgrades": ["BANSHEECLOAK"]},
+            {"t": 260.0, "structures": {}, "upgrades": ["SMARTSERVOS"]},
+            {"t": 300.0, "structures": {}, "upgrades": ["DRILLCLAWS"]},
+            {"t": 360.0, "structures": {"ENGINEERINGBAY": 1, "ARMORY": 2}, "upgrades": ["TERRANVEHICLEWEAPONSLEVEL1"]},
+        ],
+    ),
+    "MIDGAME": _apply_phase(
+        profile=PROFILE,
+        comp={
+            "SIEGETANK": 0.34,
+            "HELLION": 0.24,
+            "BANSHEE": 0.14,
+            "LIBERATOR": 0.16,
+            "CYCLONE": 0.12,
+            "WIDOWMINE": 0.08,
+        },
+        priority=["SIEGETANK", "LIBERATOR", "HELLION", "BANSHEE", "CYCLONE", "WIDOWMINE"],
+        production_targets={"BARRACKS": 1, "FACTORY": 2, "STARPORT": 1},
+        production_scale={"BARRACKS": 0.0, "FACTORY": 0.80, "STARPORT": 0.45},
+        tech_targets={"ENGINEERINGBAY": 1, "ARMORY": 2},
+        tech_milestones=[
+            {"t": 180.0, "structures": {"ENGINEERINGBAY": 1, "ARMORY": 2}, "upgrades": []},
+            {"t": 230.0, "structures": {}, "upgrades": ["BANSHEECLOAK"]},
+            {"t": 260.0, "structures": {}, "upgrades": ["SMARTSERVOS"]},
+            {"t": 300.0, "structures": {}, "upgrades": ["DRILLCLAWS"]},
+            {"t": 420.0, "structures": {"ENGINEERINGBAY": 1, "ARMORY": 2}, "upgrades": ["TERRANVEHICLEWEAPONSLEVEL1"]},
+            {"t": 560.0, "structures": {"ENGINEERINGBAY": 1, "ARMORY": 2}, "upgrades": ["TERRANVEHICLEWEAPONSLEVEL2", "TERRANSHIPWEAPONSLEVEL1"]},
+        ],
+    ),
+    "LATEGAME": _apply_phase(
+        profile=PROFILE,
+        comp={
+            "SIEGETANK": 0.36,
+            "LIBERATOR": 0.24,
+            "THOR": 0.14,
+            "HELLION": 0.14,
+            "WIDOWMINE": 0.04,
+            "BANSHEE": 0.08,
+            "CYCLONE": 0.00,
+        },
+        priority=["SIEGETANK", "LIBERATOR", "THOR", "HELLION", "BANSHEE", "WIDOWMINE", "CYCLONE"],
+        production_targets={"BARRACKS": 1, "FACTORY": 3, "STARPORT": 2},
+        production_scale={"BARRACKS": 0.0, "FACTORY": 0.95, "STARPORT": 0.60},
+        tech_targets={"ENGINEERINGBAY": 1, "ARMORY": 2},
+        tech_milestones=[
+            {"t": 180.0, "structures": {"ENGINEERINGBAY": 1, "ARMORY": 2}, "upgrades": []},
+            {"t": 260.0, "structures": {}, "upgrades": ["SMARTSERVOS"]},
+            {"t": 300.0, "structures": {}, "upgrades": ["DRILLCLAWS"]},
+            {"t": 520.0, "structures": {"ENGINEERINGBAY": 1, "ARMORY": 2}, "upgrades": ["TERRANVEHICLEWEAPONSLEVEL2", "TERRANSHIPWEAPONSLEVEL1"]},
+            {"t": 700.0, "structures": {"ENGINEERINGBAY": 1, "ARMORY": 2}, "upgrades": ["TERRANVEHICLEWEAPONSLEVEL3", "TERRANSHIPWEAPONSLEVEL2"]},
+        ],
+    ),
 }

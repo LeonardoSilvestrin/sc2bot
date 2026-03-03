@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from ares.behaviors.macro.build_structure import BuildStructure
 from ares.behaviors.macro.macro_plan import MacroPlan
 from ares.behaviors.macro.upgrade_controller import UpgradeController
+from sc2.dicts.unit_research_abilities import RESEARCH_INFO
+from sc2.dicts.upgrade_researched_from import UPGRADE_RESEARCHED_FROM
 from sc2.ids.unit_typeid import UnitTypeId as U
 from sc2.ids.upgrade_id import UpgradeId as Up
 
@@ -46,8 +48,16 @@ class TechAresExecutorTick(BaseTask):
         out: list = []
         for name in raw:
             up = getattr(Up, str(name), None)
-            if up is not None:
-                out.append(up)
+            if up is None:
+                continue
+            researched_from = UPGRADE_RESEARCHED_FROM.get(up, None)
+            if researched_from is None:
+                continue
+            if researched_from not in RESEARCH_INFO:
+                continue
+            if up not in RESEARCH_INFO[researched_from]:
+                continue
+            out.append(up)
         return out
 
     @staticmethod
@@ -97,11 +107,10 @@ class TechAresExecutorTick(BaseTask):
         structures = self._read_structures(raw_structures)
 
         sig = self._sig(enable=enable, upgrades=[str(x.name) for x in upgrades], structures={str(k.name): int(v) for k, v in structures.items()})
-        if now < float(self._next_apply_at):
-            return TaskResult.running("tech_executor_throttled")
         if not upgrades and not structures:
             return TaskResult.running("tech_targets_empty")
 
+        sig_changed = str(sig) != str(self._last_sig)
         plan = MacroPlan()
         for uid, to_count in structures.items():
             plan.add(
@@ -128,7 +137,9 @@ class TechAresExecutorTick(BaseTask):
         self._apply_count += 1
         self.awareness.mem.set(K("tech", "exec", "register_count"), value=int(self._apply_count), now=now, ttl=None)
 
-        if self.log is not None:
+        if self.log is not None and (
+            (int(tick.iteration) % 22 == 0) or bool(sig_changed)
+        ):
             self.log.emit(
                 "tech_executor_applied",
                 {

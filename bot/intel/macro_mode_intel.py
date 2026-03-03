@@ -11,6 +11,8 @@ from bot.mind.awareness import Awareness, K
 class MacroModeIntelConfig:
     ttl_s: float = 25.0
     min_confidence: float = 0.65
+    midgame_at_s: float = 220.0
+    lategame_at_s: float = 540.0
 
 
 def derive_macro_mode_intel(
@@ -27,11 +29,25 @@ def derive_macro_mode_intel(
     if not isinstance(aggression_source, dict):
         aggression_source = {}
     rush_is_early = bool(aggression_source.get("rush_is_early", False))
-    opening_selected = str(awareness.mem.get(K("macro", "opening", "selected"), now=now, default="Default") or "Default")
-    transition_target = str(awareness.mem.get(K("macro", "opening", "transition_target"), now=now, default="STIM") or "STIM").upper()
+    opening_selected = str(
+        awareness.mem.get(K("macro", "opening", "selected"), now=now, default="BansheeHellionOpen") or "BansheeHellionOpen"
+    )
+    transition_target = str(
+        awareness.mem.get(K("macro", "opening", "transition_target"), now=now, default="BANSHEE") or "BANSHEE"
+    ).upper()
     banshee_harass_done = bool(awareness.mem.get(K("ops", "harass", "banshee", "done"), now=now, default=False))
 
-    profile = resolve_build_profile(opening_selected=str(opening_selected), transition_target=str(transition_target))
+    phase = "OPENING"
+    if float(now) >= float(cfg.lategame_at_s):
+        phase = "LATEGAME"
+    elif float(now) >= float(cfg.midgame_at_s):
+        phase = "MIDGAME"
+
+    profile = resolve_build_profile(
+        opening_selected=str(opening_selected),
+        transition_target=str(transition_target),
+        phase=str(phase),
+    )
     mode = "STANDARD"
     if (rush_is_early and rush_state in {"CONFIRMED", "HOLDING"}) or aggression_state == "RUSH":
         mode = "RUSH_RESPONSE"
@@ -54,6 +70,7 @@ def derive_macro_mode_intel(
             "opening_selected": str(opening_selected),
             "transition_target": str(transition_target),
             "banshee_harass_done": bool(banshee_harass_done),
+            "build_phase": str(phase),
         },
         now=now,
         ttl=float(cfg.ttl_s),
@@ -66,6 +83,7 @@ def derive_macro_mode_intel(
         "opening_selected": str(opening_selected),
         "transition_target": str(transition_target),
         "banshee_harass_done": bool(banshee_harass_done),
+        "build_phase": str(phase),
         "enemy_kind": str(enemy_kind),
         "confidence": float(conf),
         "rush_state": str(rush_state),

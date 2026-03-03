@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from ares.behaviors.macro.build_structure import BuildStructure
 from ares.behaviors.macro.macro_plan import MacroPlan
 from ares.behaviors.macro.upgrade_controller import UpgradeController
+from sc2.dicts.unit_research_abilities import RESEARCH_INFO
+from sc2.dicts.upgrade_researched_from import UPGRADE_RESEARCHED_FROM
 from sc2.ids.unit_typeid import UnitTypeId as U
 from sc2.ids.upgrade_id import UpgradeId as Up
 
@@ -44,8 +46,16 @@ class TechAresExecutorTick(BaseTask):
         out: list = []
         for name in raw:
             up = getattr(Up, str(name), None)
-            if up is not None:
-                out.append(up)
+            if up is None:
+                continue
+            researched_from = UPGRADE_RESEARCHED_FROM.get(up, None)
+            if researched_from is None:
+                continue
+            if researched_from not in RESEARCH_INFO:
+                continue
+            if up not in RESEARCH_INFO[researched_from]:
+                continue
+            out.append(up)
         return out
 
     @staticmethod

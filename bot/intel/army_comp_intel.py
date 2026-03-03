@@ -238,7 +238,11 @@ def derive_army_comp_intel(
     unit_milestones = list(_mode_value(dict(profile["unit_count_milestones_by_mode"]), mode=str(mode), key="unit_count_milestones"))
     unit_targets_now = _unit_targets_at_time(milestones=unit_milestones, now=float(now))
     lag_unit_name, lag_unit_gap = _largest_unit_shortfall(attention=attention, unit_targets=unit_targets_now)
-    if lag_unit_name is not None and float(lag_unit_gap) > 0.0:
+    allow_lagging_bias = True
+    if str(opening_selected) == "BansheeHellionOpen":
+        allowed_mech_air_lag_units = {"CYCLONE", "HELLION", "SIEGETANK", "BANSHEE", "LIBERATOR", "THOR"}
+        allow_lagging_bias = str(lag_unit_name or "") in allowed_mech_air_lag_units
+    if allow_lagging_bias and lag_unit_name is not None and float(lag_unit_gap) > 0.0:
         priority_units = _prepend_unique(priority_units, str(lag_unit_name))
         comp = _inject_unit_comp_bias(comp, unit_name=str(lag_unit_name), weight=0.18)
 
