@@ -7,7 +7,7 @@ from typing import Any
 
 from sc2.ids.unit_typeid import UnitTypeId as U
 
-from bot.control import MacroResourceController
+from bot.control.macro_resource_controller import MacroResourceController
 from bot.devlog import DevLogger
 from bot.mind.attention import Attention
 from bot.mind.awareness import Awareness, K
@@ -223,7 +223,7 @@ class MacroOrchestratorPlanner(BasePlanner):
         if not isinstance(desired_prod_structures_abs, dict):
             desired_prod_structures_abs = {}
         desired_prod_scale = awareness.mem.get(
-            K("macro", "desired", "production_scale"),
+            K("macro", "control", "production_scale"),
             now=now,
             default={},
         ) or {}
@@ -241,7 +241,7 @@ class MacroOrchestratorPlanner(BasePlanner):
         # Overflow boost (cooldown + hysteresis) to avoid barracks spam/chattering.
         bank_target_m = int(
             awareness.mem.get(
-                K("macro", "desired", "bank_target_minerals"),
+                K("macro", "control", "bank_target_minerals"),
                 now=now,
                 default=int(self.bank_target_minerals),
             )
@@ -249,7 +249,7 @@ class MacroOrchestratorPlanner(BasePlanner):
         )
         bank_target_g = int(
             awareness.mem.get(
-                K("macro", "desired", "bank_target_gas"),
+                K("macro", "control", "bank_target_gas"),
                 now=now,
                 default=int(self.bank_target_gas),
             )
@@ -302,13 +302,13 @@ class MacroOrchestratorPlanner(BasePlanner):
             desired_prod_structures[boost_order[i % len(boost_order)]] = int(desired_prod_structures.get(boost_order[i % len(boost_order)], 0)) + 1
 
         awareness.mem.set(
-            K("macro", "desired", "production_structure_targets_dynamic"),
+            K("macro", "exec", "production_structure_targets_dynamic"),
             value=dict(desired_prod_structures),
             now=now,
             ttl=15.0,
         )
         awareness.mem.set(
-            K("macro", "desired", "production_structure_boost_status"),
+            K("macro", "exec", "production_structure_boost_status"),
             value={
                 "level": int(boost_level),
                 "target": int(boost_target),

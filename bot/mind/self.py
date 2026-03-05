@@ -10,6 +10,7 @@ from ares.behaviors.macro.mining import Mining
 from sc2.data import Result
 
 from bot.devlog import DevLogger
+from bot.control.advantage_supervisor import AdvantageSupervisor, AdvantageSupervisorConfig
 from bot.sensors.threat_sensor import Threat
 from bot.intel.enemy_build_intel import EnemyBuildIntelConfig, derive_enemy_build_intel
 from bot.intel.game_parity_intel import GameParityIntelConfig, derive_game_parity_intel
@@ -72,6 +73,7 @@ class RuntimeApp:
     opening_cfg: OpeningIntelConfig
     my_comp_cfg: MyArmyCompositionConfig
     parity_cfg: GameParityIntelConfig
+    advantage_supervisor: AdvantageSupervisor
     debug: bool = True
     attention_full_every_iters: int = 25
     awareness_full_every_iters: int = 50
@@ -210,6 +212,7 @@ class RuntimeApp:
             opening_cfg=OpeningIntelConfig(),
             my_comp_cfg=MyArmyCompositionConfig(),
             parity_cfg=GameParityIntelConfig(),
+            advantage_supervisor=AdvantageSupervisor(AdvantageSupervisorConfig()),
             debug=bool(debug),
         )
 
@@ -272,6 +275,11 @@ class RuntimeApp:
             attention=attention,
             now=now,
             cfg=self.parity_cfg,
+        )
+        self.advantage_supervisor.step(
+            attention=attention,
+            awareness=self.awareness,
+            now=now,
         )
         await self._emit_chat_updates(bot, now=now)
 

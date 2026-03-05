@@ -9,27 +9,31 @@ OBJETIVO ATUAL
 - Melhorar gasto macro (evitar flood de mineral/gas sem producao).
 - Tornar timing e expansao mais controlaveis por sinais de awareness.
 
-ATUALIZACOES RECENTES (RUN ATUAL)
-- Build BansheeHellionOpen com perfis por fase no mesmo arquivo:
-  - bot/builds/banshee_hellion_open.py
-  - STAGED_PROFILES_BY_PHASE: OPENING / MIDGAME / LATEGAME
-- Selecao de perfil por fase no macro mode:
-  - bot/intel/macro_mode_intel.py (build_phase por tempo)
-  - bot/intel/build_catalog.py (resolve_build_profile com phase)
-- Opening completion generalista (preempcao de opening):
-  - bot/intel/opening_contract_intel.py
-  - regra default + override por opening (nao hardcode unico)
-- Tech pipeline robusto para upgrades:
-  - bot/intel/utils/upgrade_catalog.py (catalogo por unidade + filtro runtime)
-  - bot/intel/tech_intel.py consome catalogo (menos hardcode por build)
-  - bot/tasks/tech/tasks/tech_ares_executor_tick.py filtra upgrades nao pesquisaveis
-- Chat menos spam e mais sinal:
+ATUALIZACOES RECENTES (2026-03-05)
+- Supervisor de vantagem integrado no runtime:
+  - bot/control/advantage_supervisor.py
   - bot/mind/self.py
-  - anuncia build/fase e alerta tatico apenas em estado de agressao/rush
+- Ownership separado por namespace (sem overlap de escrita):
+  - macro.desired.* = Intel
+  - macro.control.* = Control (AdvantageSupervisor)
+  - macro.exec.* / tech.exec.* = Planner
+- PriorityPolicy passou a consumir sinais de controle:
+  - strategic_mode e bank targets vindos de macro.control.*
+  - bot/control/priority_policy.py
+- MacroOrchestrator passou a consumir targets de controle:
+  - production_scale e bank targets vindos de macro.control.*
+  - sinais dinamicos de producao movidos para macro.exec.*
+  - bot/planners/macro_orchestrator_planner.py
+- Contrato de ownership atualizado:
+  - bot/plans/contracts.py
+- Correcoes de import para evitar ciclo em inicializacao:
+  - bot/control/__init__.py
+  - bot/planners/macro_orchestrator_planner.py
 
 ESTADO ARQUITETURAL ATUAL (2026-03)
 - Sensor atualiza Attention.
 - Intel atualiza Awareness em macro.desired.* e strategy.parity.*.
+- AdvantageSupervisor atualiza macro.control.* (pesos/setpoints globais).
 - MacroOrchestratorPlanner publica plano em macro.exec.* e tech.exec.*.
 - Ego arbitra proposals por score/policy e executa tasks ativas.
 - Somente executores dedicados registram MacroPlan (Ares).
@@ -40,7 +44,8 @@ PIPELINE DE EXECUCAO
    derive_attention ->
    derive_enemy_build_intel ->
    derive_my_army_composition_intel ->
-   derive_game_parity_intel
+   derive_game_parity_intel ->
+   advantage_supervisor.step
 2) Ego.tick:
    planners -> proposals -> PriorityPolicy -> admissao/preempcao -> execute step das tasks
 3) Executors:
@@ -96,7 +101,16 @@ CONTRATOS DE MEMORIA (FONTE DE VERDADE)
 - signals
 - last_update_t
 
-3) macro.exec.* (PLANNER escreve; MACRO EXECUTOR le)
+3) macro.control.* (CONTROL escreve; CONTROL/PLANNERS leem)
+- strategic_mode
+- attack_posture
+- weights {army, tech, expand, harass}
+- bank_target_minerals / bank_target_gas
+- reserve_minerals / reserve_gas
+- production_scale
+- supervisor.status / supervisor.regime / supervisor.last_update_t / supervisor.next_update_t
+
+4) macro.exec.* (PLANNER escreve; MACRO EXECUTOR le)
 - enable_workers
 - scv_cap
 - enable_supply
@@ -114,7 +128,7 @@ CONTRATOS DE MEMORIA (FONTE DE VERDADE)
 - owner
 - register_count (executor telemetria)
 
-4) tech.exec.* (PLANNER escreve; TECH EXECUTOR le)
+5) tech.exec.* (PLANNER escreve; TECH EXECUTOR le)
 - enable
 - targets {upgrades, structures}
 - cooldown_until
@@ -123,6 +137,7 @@ CONTRATOS DE MEMORIA (FONTE DE VERDADE)
 
 OWNERSHIP (NAO NEGOCIAVEL)
 - Intel escreve apenas macro.desired.* e strategy.parity.*.
+- Control escreve apenas macro.control.*.
 - Planner escreve apenas macro.exec.* e tech.exec.*.
 - Executors leem exec/desired e executam Ares.
 - Ninguem fora do planner escreve macro.exec.* ou tech.exec.*.
@@ -142,6 +157,7 @@ ROOT MAP (PASTAS DA RAIZ E PAPEL)
 ARQUIVOS CRITICOS PARA ENTENDER O MACRO
 - bot/mind/self.py : wiring principal de runtime/planners/intel.
 - bot/mind/ego.py : arbitracao/admissao/preempcao de missions.
+- bot/control/advantage_supervisor.py : controlador global de vantagem (pesos e setpoints).
 - bot/planners/macro_orchestrator_planner.py : supervisor de macro.exec/tech.exec.
 - bot/control/macro_resource_controller.py : decisao de gas workers/refineries por stock+flow.
 - bot/tasks/macro/tasks/macro_ares_executor_tick.py : executor macro (Ares MacroPlan).
@@ -166,12 +182,14 @@ SINAIS DE HEALTH EM RUNTIME (OLHAR NO LOG)
 REGRAS DE ALTERACAO (PARA O OUTRO AGENTE)
 1) Nao reintroduzir tasks macro legadas.
 2) Nao criar novos writers para macro.exec.* ou tech.exec.* fora do planner.
-3) Nao duplicar ownership do gas (planner decide; task executa).
-4) Qualquer executor novo deve usar:
+3) Nao criar writes em macro.desired.* fora de intel.*.
+4) Nao criar writes em macro.control.* fora de control.*.
+5) Nao duplicar ownership do gas (planner decide; task executa).
+6) Qualquer executor novo deve usar:
    - assinatura deterministica
    - throttle/cooldown interno
    - telemetria clara de aplicacao
-5) Se breaking change de contrato, explicitar no root.txt e no patch.
+7) Se breaking change de contrato, explicitar no root.txt e no patch.
 
 NEXT STEPS PRIORITARIOS (ORDENADOS)
 P0) Validar em 3-5 jogos de smoke:

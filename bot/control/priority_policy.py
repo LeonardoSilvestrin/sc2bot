@@ -89,7 +89,7 @@ class PriorityPolicy:
         parity_state = str(
             awareness.mem.get(K("strategy", "parity", "state"), now=now, default="TRADEOFF_MIXED") or "TRADEOFF_MIXED"
         ).upper()
-        macro_mode = str(awareness.mem.get(K("macro", "desired", "mode"), now=now, default="STANDARD") or "STANDARD").upper()
+        macro_mode = str(awareness.mem.get(K("macro", "control", "strategic_mode"), now=now, default="STANDARD") or "STANDARD").upper()
         rush_state = str(awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
         aggression_state = str(awareness.mem.get(K("enemy", "aggression", "state"), now=now, default="NONE") or "NONE").upper()
         aggression_source = awareness.mem.get(K("enemy", "aggression", "source"), now=now, default={}) or {}
@@ -273,7 +273,7 @@ class PriorityPolicy:
     def _bank_pressure(self, *, attention: Attention, awareness: Awareness, now: float) -> float:
         target_m = int(
             awareness.mem.get(
-                K("macro", "desired", "bank_target_minerals"),
+                K("macro", "control", "bank_target_minerals"),
                 now=now,
                 default=self.cfg.executor_bank_target_minerals,
             )
@@ -281,7 +281,7 @@ class PriorityPolicy:
         )
         target_g = int(
             awareness.mem.get(
-                K("macro", "desired", "bank_target_gas"),
+                K("macro", "control", "bank_target_gas"),
                 now=now,
                 default=self.cfg.executor_bank_target_gas,
             )

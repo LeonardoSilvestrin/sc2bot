@@ -1,7 +1,7 @@
 EXPORT META
-generated_at_utc: 2026-03-03T06:40:10.809846+00:00
+generated_at_utc: 2026-03-05T04:40:47.314682+00:00
 repo_root: C:\Users\Asus\Documents\projetos\sc2bot\ares\ares-sc2-bot-template
-files_total: 91
+files_total: 88
 
 FILES
 - bot/__init__.py -> files/bot/__init__.py.txt
@@ -17,6 +17,7 @@ FILES
 - bot/builds/defensive_opening.py -> files/bot/builds/defensive_opening.py.txt
 - bot/builds/profile_compact.py -> files/bot/builds/profile_compact.py.txt
 - bot/control/__init__.py -> files/bot/control/__init__.py.txt
+- bot/control/advantage_supervisor.py -> files/bot/control/advantage_supervisor.py.txt
 - bot/control/macro_resource_controller.py -> files/bot/control/macro_resource_controller.py.txt
 - bot/control/priority_policy.py -> files/bot/control/priority_policy.py.txt
 - bot/intel/army_comp_intel.py -> files/bot/intel/army_comp_intel.py.txt
@@ -73,17 +74,13 @@ FILES
 - bot/tasks/macro/__init__.py -> files/bot/tasks/macro/__init__.py.txt
 - bot/tasks/macro/policies/__init__.py -> files/bot/tasks/macro/policies/__init__.py.txt
 - bot/tasks/macro/policies/housekeeping_ops_policies.py -> files/bot/tasks/macro/policies/housekeeping_ops_policies.py.txt
-- bot/tasks/macro/policies/macro_policies.py -> files/bot/tasks/macro/policies/macro_policies.py.txt
 - bot/tasks/macro/policies/scv_housekeeping_policies.py -> files/bot/tasks/macro/policies/scv_housekeeping_policies.py.txt
-- bot/tasks/macro/support/__init__.py -> files/bot/tasks/macro/support/__init__.py.txt
-- bot/tasks/macro/support/state_store.py -> files/bot/tasks/macro/support/state_store.py.txt
 - bot/tasks/macro/tasks/__init__.py -> files/bot/tasks/macro/tasks/__init__.py.txt
 - bot/tasks/macro/tasks/macro_ares_executor_tick.py -> files/bot/tasks/macro/tasks/macro_ares_executor_tick.py.txt
 - bot/tasks/macro/tasks/opening.py -> files/bot/tasks/macro/tasks/opening.py.txt
 - bot/tasks/macro/tasks/scv_housekeeping_task.py -> files/bot/tasks/macro/tasks/scv_housekeeping_task.py.txt
 - bot/tasks/macro/utils/__init__.py -> files/bot/tasks/macro/utils/__init__.py.txt
 - bot/tasks/macro/utils/desired_comp.py -> files/bot/tasks/macro/utils/desired_comp.py.txt
-- bot/tasks/macro/utils/wall_mapper.py -> files/bot/tasks/macro/utils/wall_mapper.py.txt
 - bot/tasks/scout/reaper_scout_task.py -> files/bot/tasks/scout/reaper_scout_task.py.txt
 - bot/tasks/scout/scan_task.py -> files/bot/tasks/scout/scan_task.py.txt
 - bot/tasks/support/control_depots_task.py -> files/bot/tasks/support/control_depots_task.py.txt
