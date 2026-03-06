@@ -75,6 +75,21 @@ MUDANCAS RECENTES IMPORTANTES
 - Expansao oportunista:
   - ahead_expand_push quando parity diz AHEAD + army minima
 
+ATUALIZACOES RECENTES (2026-03-06)
+- Defesa por base consolidada:
+  - DefensePlanner gera proposta por base (sem TTL) e Task de defesa orquestra unidade por unidade.
+  - siege tank/widowmine com comportamento dedicado em defesa de base.
+- Reforco de missoes ativo para DEFENSE/HARASS:
+  - ReinforceMissionPlanner passou a crescer missoes de defesa tambem.
+- Distribuicao de defesa melhor:
+  - score de vulnerabilidade considera defesa propria perto da base (evita stack em uma base so).
+- Macro sob rush/hard pressure nao pode parar:
+  - Ego libera macro em hard pressure quando rush ativo ou banco alto.
+  - admissao sob ameaca alta nao bloqueia MACRO_ARMY_EXECUTOR/MACRO_ECON_EXECUTOR.
+  - MacroAresExecutorTick pode sair do gate do opening BO em rush/pressao/overflow de recursos.
+- Fix de crash conhecido:
+  - removido retorno invalido em `ares-sc2/src/ares/main.py` (`return le` -> NameError).
+
 CONTRATOS DE MEMORIA (FONTE DE VERDADE)
 
 1) macro.desired.* (INTEL escreve)
