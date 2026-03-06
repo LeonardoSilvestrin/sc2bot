@@ -10,13 +10,17 @@ from ares.behaviors.macro.mining import Mining
 from sc2.data import Result
 
 from bot.devlog import DevLogger
-from bot.control.advantage_supervisor import AdvantageSupervisor, AdvantageSupervisorConfig
+from bot.intel.strategy.i2_CTRL_advantage_game_status_intel import AdvantageGameStatusIntel, AdvantageGameStatusIntelConfig
+from bot.intel.locations.i1_pathing_flow_intel import PathingFlowIntelConfig, derive_pathing_flow_intel
+from bot.intel.locations.i2_pathing_route_intel import PathingRouteIntelConfig, derive_pathing_route_intel
+from bot.intel.mission.i1_mission_unit_threat_intel import MissionUnitThreatIntelConfig, derive_mission_unit_threat_intel
+from bot.intel.mission.i2_mission_value_intel import MissionValueIntelConfig, derive_mission_value_intel
 from bot.sensors.threat_sensor import Threat
-from bot.intel.enemy_build_intel import EnemyBuildIntelConfig, derive_enemy_build_intel
-from bot.intel.game_parity_intel import GameParityIntelConfig, derive_game_parity_intel
-from bot.intel.my_army_composition_intel import MyArmyCompositionConfig, derive_my_army_composition_intel
-from bot.intel.opening_intel import OpeningIntelConfig, derive_enemy_opening_intel
-from bot.intel.opening_contract_intel import derive_opening_contract_intel
+from bot.sensors.pathing_sensor import GroundAvoidanceSensorConfig, publish_ground_avoidance_sensor
+from bot.intel.enemy.enemy_build_intel import EnemyBuildIntelConfig, derive_enemy_build_intel
+from bot.intel.strategy.i1_game_parity_intel import GameParityIntelConfig, derive_game_parity_intel
+from bot.intel.macro.desired_intel import MyArmyCompositionConfig, derive_my_army_composition_intel
+from bot.intel.enemy.opening_intel import OpeningIntelConfig, derive_enemy_opening_intel, derive_opening_contract_intel
 from bot.mind.attention import derive_attention
 from bot.mind.awareness import Awareness, K
 from bot.mind.body import UnitLeases
@@ -30,6 +34,7 @@ from bot.planners.defense_planner import DefensePlanner
 from bot.planners.harass_planner import HarassPlanner
 from bot.planners.housekeeping_planner import HousekeepingPlanner
 from bot.planners.intel_planner import IntelPlanner
+from bot.planners.reinforce_mission_planner import ReinforceMissionPlanner
 
 from bot.planners.macro_orchestrator_planner import MacroOrchestratorPlanner
 
@@ -73,7 +78,12 @@ class RuntimeApp:
     opening_cfg: OpeningIntelConfig
     my_comp_cfg: MyArmyCompositionConfig
     parity_cfg: GameParityIntelConfig
-    advantage_supervisor: AdvantageSupervisor
+    pathing_sensor_cfg: GroundAvoidanceSensorConfig
+    pathing_flow_cfg: PathingFlowIntelConfig
+    pathing_route_cfg: PathingRouteIntelConfig
+    mission_unit_threat_cfg: MissionUnitThreatIntelConfig
+    mission_value_cfg: MissionValueIntelConfig
+    advantage_game_status_intel: AdvantageGameStatusIntel
     debug: bool = True
     attention_full_every_iters: int = 25
     awareness_full_every_iters: int = 50
@@ -136,6 +146,7 @@ class RuntimeApp:
 
         defense_planner = DefensePlanner(defend_task=defend_task, log=log)
         harass_planner = HarassPlanner(log=log)
+        reinforce_mission_planner = ReinforceMissionPlanner(log=log)
         intel_planner = IntelPlanner(awareness=awareness, log=log)
         housekeeping_planner = HousekeepingPlanner(log=log)
         macro_orchestrator_planner = MacroOrchestratorPlanner(log=log)
@@ -195,6 +206,7 @@ class RuntimeApp:
             [
                 defense_planner,
                 harass_planner,
+                reinforce_mission_planner,
                 intel_planner,
                 housekeeping_planner,
                 opening_planner,
@@ -212,7 +224,12 @@ class RuntimeApp:
             opening_cfg=OpeningIntelConfig(),
             my_comp_cfg=MyArmyCompositionConfig(),
             parity_cfg=GameParityIntelConfig(),
-            advantage_supervisor=AdvantageSupervisor(AdvantageSupervisorConfig()),
+            pathing_sensor_cfg=GroundAvoidanceSensorConfig(),
+            pathing_flow_cfg=PathingFlowIntelConfig(),
+            pathing_route_cfg=PathingRouteIntelConfig(),
+            mission_unit_threat_cfg=MissionUnitThreatIntelConfig(),
+            mission_value_cfg=MissionValueIntelConfig(),
+            advantage_game_status_intel=AdvantageGameStatusIntel(AdvantageGameStatusIntelConfig()),
             debug=bool(debug),
         )
 
@@ -244,6 +261,12 @@ class RuntimeApp:
         bot.register_behavior(Mining())
         derive_opening_contract_intel(bot, awareness=self.awareness, now=now)
         self._sync_opening_selection_from_runner(bot=bot, now=now)
+        publish_ground_avoidance_sensor(
+            bot,
+            awareness=self.awareness,
+            now=now,
+            cfg=self.pathing_sensor_cfg,
+        )
 
         attention = derive_attention(bot, awareness=self.awareness, threat=self.threat, log=self.log)
 
@@ -276,7 +299,35 @@ class RuntimeApp:
             now=now,
             cfg=self.parity_cfg,
         )
-        self.advantage_supervisor.step(
+        derive_pathing_flow_intel(
+            bot,
+            awareness=self.awareness,
+            attention=attention,
+            now=now,
+            cfg=self.pathing_flow_cfg,
+        )
+        derive_pathing_route_intel(
+            bot,
+            awareness=self.awareness,
+            attention=attention,
+            now=now,
+            cfg=self.pathing_route_cfg,
+        )
+        derive_mission_unit_threat_intel(
+            bot,
+            awareness=self.awareness,
+            attention=attention,
+            now=now,
+            cfg=self.mission_unit_threat_cfg,
+        )
+        derive_mission_value_intel(
+            bot,
+            awareness=self.awareness,
+            attention=attention,
+            now=now,
+            cfg=self.mission_value_cfg,
+        )
+        self.advantage_game_status_intel.step(
             attention=attention,
             awareness=self.awareness,
             now=now,
@@ -314,7 +365,7 @@ class RuntimeApp:
         if not opening:
             return
         self.awareness.mem.set(K("macro", "opening", "selected"), value=str(opening), now=float(now), ttl=30.0)
-        transition = "BANSHEE" if str(opening) == "BansheeHellionOpen" else "STIM"
+        transition = "BANSHEE" if str(opening) == "MechaOpen" else "STIM"
         self.awareness.mem.set(K("macro", "opening", "transition_target"), value=str(transition), now=float(now), ttl=30.0)
 
     async def on_end(self, bot, game_result: Result) -> None:
@@ -504,6 +555,9 @@ class RuntimeApp:
             self.awareness.mem.get(K("strategy", "parity", "severity", "econ_behind"), now=now, default=0.0) or 0.0
         )
         rush_state = str(self.awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
+        pathing_flow_conf = float(self.awareness.mem.get(K("enemy", "pathing", "flow", "confidence"), now=now, default=0.0) or 0.0)
+        pathing_route = str(self.awareness.mem.get(K("enemy", "pathing", "route", "label"), now=now, default="") or "")
+        pathing_pressure = int(self.awareness.mem.get(K("enemy", "pathing", "route", "pressure_on_us"), now=now, default=0) or 0)
         payload = {
             "iter": int(iteration),
             "game_t": round(float(now), 2),
@@ -522,6 +576,9 @@ class RuntimeApp:
             "parity_army_behind": round(float(parity_army_behind), 3),
             "parity_econ_behind": round(float(parity_econ_behind), 3),
             "rush_state": str(rush_state),
+            "pathing_flow_conf": round(float(pathing_flow_conf), 3),
+            "pathing_route": str(pathing_route),
+            "pathing_pressure_on_us": int(pathing_pressure),
         }
         self.log.emit(
             "runtime_clock",
@@ -597,7 +654,7 @@ class RuntimeApp:
         )
 
     async def _emit_chat_updates(self, bot, *, now: float) -> None:
-        # Always announce selected build/transition once (or if changed).
+        # Keep chat minimal: opening announcement + rush/build alert only.
         opening_selected = str(self.awareness.mem.get(K("macro", "opening", "selected"), now=now, default="") or "")
         if not opening_selected:
             bor = getattr(bot, "build_order_runner", None)
@@ -608,37 +665,20 @@ class RuntimeApp:
         ).upper()
         if opening_selected and opening_selected != str(self._chat_last_opening):
             self._chat_last_opening = str(opening_selected)
-            msg = f"Build: {opening_selected}"
+            msg = f"Opening: {opening_selected}"
             if transition_target:
                 msg = f"{msg} -> {transition_target}"
             await self._safe_chat_send(bot, now=now, message=msg)
-        if transition_target and transition_target != str(self._chat_last_transition):
-            self._chat_last_transition = str(transition_target)
-            if not opening_selected:
-                await self._safe_chat_send(bot, now=now, message=f"Transition: {transition_target}")
+        self._chat_last_transition = str(transition_target)
 
         rush_state = str(self.awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
-        aggression_state = str(
-            self.awareness.mem.get(K("enemy", "aggression", "state"), now=now, default="NONE") or "NONE"
-        ).upper()
         rush_active = rush_state in {"SUSPECTED", "CONFIRMED", "HOLDING"}
-        aggression_active = aggression_state in {"RUSH", "AGGRESSION"}
-
-        phase = str(self.awareness.mem.get(K("control", "phase"), now=now, default="MID") or "MID").upper()
-        desired_signals = self.awareness.mem.get(K("macro", "desired", "signals"), now=now, default={}) or {}
-        if isinstance(desired_signals, dict):
-            phase = str(desired_signals.get("build_phase", phase) or phase).upper()
-        if phase and phase != str(self._chat_last_phase):
-            self._chat_last_phase = str(phase)
-            await self._safe_chat_send(bot, now=now, message=f"Fase: {phase}")
-
-        if not (rush_active or aggression_active):
+        if not rush_active:
             self._chat_last_rush_state = str(rush_state)
-            self._chat_last_aggression_state = str(aggression_state)
+            self._chat_last_status_sig = ""
             return
 
-        parity_overall = str(self.awareness.mem.get(K("strategy", "parity", "overall"), now=now, default="EVEN") or "EVEN").upper()
-
+        enemy_kind = str(self.awareness.mem.get(K("enemy", "opening", "kind"), now=now, default="NORMAL") or "NORMAL").upper()
         snapshot = self.awareness.mem.get(K("enemy", "build", "snapshot"), now=now, default={}) or {}
         if not isinstance(snapshot, dict):
             snapshot = {}
@@ -649,16 +689,13 @@ class RuntimeApp:
             first = top[0] if isinstance(top[0], dict) else {}
             top_unit = str(first.get("unit", "unknown"))
             top_count = int(first.get("count", 0) or 0)
+        bases_visible = int(snapshot.get("bases_visible", 0) or 0)
 
-        msg = (
-            f"Alerta: rush={rush_state} aggr={aggression_state} "
-            f"parity={parity_overall} enemy={top_unit}x{top_count} phase={phase}"
-        )
-        sig = f"{rush_state}|{aggression_state}|{parity_overall}|{top_unit}|{top_count}|{phase}"
-        can_periodic = (float(now) - float(self._chat_last_sent_t)) >= float(self.chat_status_interval_s)
-        if sig != str(self._chat_last_status_sig) or can_periodic:
+        msg = f"Rush {rush_state}: build={enemy_kind}, enemy={top_unit}x{top_count}, bases={bases_visible}"
+        sig = f"{rush_state}|{enemy_kind}|{top_unit}|{top_count}|{bases_visible}"
+        if sig != str(self._chat_last_status_sig):
             if await self._safe_chat_send(bot, now=now, message=msg):
                 self._chat_last_status_sig = str(sig)
         self._chat_last_rush_state = str(rush_state)
-        self._chat_last_aggression_state = str(aggression_state)
+        self._chat_last_aggression_state = ""
 

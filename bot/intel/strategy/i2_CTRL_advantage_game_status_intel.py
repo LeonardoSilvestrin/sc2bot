@@ -10,7 +10,7 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
-class AdvantageSupervisorConfig:
+class AdvantageGameStatusIntelConfig:
     update_interval_s: float = 6.0
     ttl_s: float = 24.0
     uncertainty_penalty_gain: float = 0.30
@@ -33,8 +33,8 @@ class AdvantageSupervisorConfig:
     error_to_weight_gain: float = 0.55
 
 
-class AdvantageSupervisor:
-    def __init__(self, cfg: AdvantageSupervisorConfig = AdvantageSupervisorConfig()):
+class AdvantageGameStatusIntel:
+    def __init__(self, cfg: AdvantageGameStatusIntelConfig = AdvantageGameStatusIntelConfig()):
         self.cfg = cfg
 
     @staticmethod
@@ -128,18 +128,28 @@ class AdvantageSupervisor:
         if regime == "STABILIZE":
             bank_m = int(max(280, round(float(base_bank_m) * 0.86)))
             bank_g = int(max(90, round(float(base_bank_g) * 0.90)))
-            desired_mode = "DEFENSIVE"
+            regime_mode = "DEFENSIVE"
             posture = "DEFENSIVE"
         elif regime == "PRESS":
             bank_m = int(max(300, round(float(base_bank_m) * 1.18)))
             bank_g = int(max(100, round(float(base_bank_g) * 1.12)))
-            desired_mode = "PUNISH"
+            regime_mode = "PUNISH"
             posture = "PRESSURE"
         else:
             bank_m = int(base_bank_m)
             bank_g = int(base_bank_g)
-            desired_mode = "STANDARD"
+            regime_mode = "STANDARD"
             posture = "STANDARD"
+
+        desired_mode_raw = str(awareness.mem.get(K("macro", "desired", "mode"), now=now, default="") or "").upper()
+        desired_phase = str(awareness.mem.get(K("macro", "desired", "phase"), now=now, default="OPENING") or "OPENING").upper()
+        desired_scenario = str(awareness.mem.get(K("macro", "desired", "scenario"), now=now, default="NORMAL") or "NORMAL").upper()
+        if desired_mode_raw in {"RUSH_RESPONSE", "DEFENSIVE", "STANDARD", "PUNISH"}:
+            strategic_mode = str(desired_mode_raw)
+            strategic_mode_source = "macro.desired"
+        else:
+            strategic_mode = str(regime_mode)
+            strategic_mode_source = "advantage.regime"
 
         reserve_m = int(self._clamp((weights["tech"] * 230.0) + (weights["army"] * 140.0), 60.0, 280.0))
         reserve_g = int(self._clamp((weights["tech"] * 170.0) + (weights["army"] * 70.0), 25.0, 210.0))
@@ -163,7 +173,10 @@ class AdvantageSupervisor:
         awareness.mem.set(K("macro", "control", "bank_target_gas"), value=int(bank_g), now=now, ttl=ttl)
         awareness.mem.set(K("macro", "control", "reserve_minerals"), value=int(reserve_m), now=now, ttl=ttl)
         awareness.mem.set(K("macro", "control", "reserve_gas"), value=int(reserve_g), now=now, ttl=ttl)
-        awareness.mem.set(K("macro", "control", "strategic_mode"), value=str(desired_mode), now=now, ttl=ttl)
+        awareness.mem.set(K("macro", "control", "strategic_mode"), value=str(strategic_mode), now=now, ttl=ttl)
+        awareness.mem.set(K("macro", "control", "strategic_mode_source"), value=str(strategic_mode_source), now=now, ttl=ttl)
+        awareness.mem.set(K("macro", "control", "phase"), value=str(desired_phase), now=now, ttl=ttl)
+        awareness.mem.set(K("macro", "control", "scenario"), value=str(desired_scenario), now=now, ttl=ttl)
         awareness.mem.set(K("macro", "control", "attack_posture"), value=str(posture), now=now, ttl=ttl)
         awareness.mem.set(K("macro", "control", "production_scale"), value=dict(scaled_prod), now=now, ttl=ttl)
         awareness.mem.set(
@@ -179,6 +192,10 @@ class AdvantageSupervisor:
                 "confidence": float(confidence),
                 "observation_ratio": float(obs_ratio),
                 "threat_urgency": int(threat_urgency),
+                "strategic_mode": str(strategic_mode),
+                "strategic_mode_source": str(strategic_mode_source),
+                "desired_phase": str(desired_phase),
+                "desired_scenario": str(desired_scenario),
             },
             now=now,
             ttl=ttl,

@@ -46,6 +46,7 @@ class ReinforceMissionPlanner(BasePlanner):
     lease_ttl_s: float = 8.0
     score: int = 72
     min_remaining_s: float = 3.0
+    banshee_harass_target_size: int = 2
 
     def _proposal_id(self, mission_id: str, unit_type_name: str) -> str:
         return f"{self.planner_id}:{mission_id}:{unit_type_name}"
@@ -67,11 +68,20 @@ class ReinforceMissionPlanner(BasePlanner):
             counts[ut_name] = int(counts.get(ut_name, 0)) + 1
         return counts
 
+    @staticmethod
+    def _is_banshee_harass_mission(mission: MissionStatusSnapshot) -> bool:
+        return str(mission.domain) == "HARASS" and str(mission.proposal_id).startswith("harass_planner:banshee")
+
     def _requirements_for_mission(self, bot, mission: MissionStatusSnapshot) -> list[UnitRequirement]:
         objective = self._mission_objective(bot, mission)
         desired_counts = {str(k): int(v) for k, v in mission.original_type_counts}
         if not desired_counts:
             return []
+        if self._is_banshee_harass_mission(mission):
+            desired_counts["BANSHEE"] = max(
+                int(desired_counts.get("BANSHEE", 0)),
+                int(self.banshee_harass_target_size),
+            )
         alive_counts = self._alive_type_counts(bot, mission)
 
         reqs: list[UnitRequirement] = []
@@ -111,7 +121,11 @@ class ReinforceMissionPlanner(BasePlanner):
         allowed = {str(d) for d in self.allowed_domains}
 
         for mission in attention.missions.ongoing:
-            if not bool(mission.can_reinforce):
+            banshee_growth_candidate = bool(
+                self._is_banshee_harass_mission(mission)
+                and int(mission.alive_count) > 0
+            )
+            if not bool(mission.can_reinforce) and not banshee_growth_candidate:
                 continue
             if not self._domain_allowed(str(mission.domain), allowed):
                 continue

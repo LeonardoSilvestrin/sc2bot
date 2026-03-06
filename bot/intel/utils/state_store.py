@@ -94,3 +94,34 @@ class EnemyWeakPointsStateStore:
         self.awareness.mem.set(K("enemy", "weak_points", "primary"), value=primary, now=now, ttl=float(ttl_s))
         self.awareness.mem.set(K("enemy", "weak_points", "bases_visible"), value=int(len(points)), now=now, ttl=float(ttl_s))
         self.awareness.mem.set(K("enemy", "weak_points", "last_update_t"), value=float(now), now=now, ttl=None)
+        # New canonical location-scoped publication for planners/tasks.
+        self.awareness.mem.set(
+            K("intel", "locations", "enemy_weak_points", "snapshot"),
+            value=dict(payload),
+            now=now,
+            ttl=float(ttl_s),
+        )
+        self.awareness.mem.set(
+            K("intel", "locations", "enemy_weak_points", "points"),
+            value=list(points),
+            now=now,
+            ttl=float(ttl_s),
+        )
+        self.awareness.mem.set(
+            K("intel", "locations", "enemy_weak_points", "primary"),
+            value=primary,
+            now=now,
+            ttl=float(ttl_s),
+        )
+        self.awareness.mem.set(
+            K("intel", "locations", "enemy_weak_points", "targets"),
+            value=list(points),
+            now=now,
+            ttl=float(ttl_s),
+        )
+        self.awareness.mem.set(
+            K("intel", "locations", "enemy_weak_points", "last_update_t"),
+            value=float(now),
+            now=now,
+            ttl=None,
+        )

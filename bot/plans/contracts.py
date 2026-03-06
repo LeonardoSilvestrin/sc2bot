@@ -8,13 +8,13 @@ CONTRACTS: dict[str, dict[str, str]] = {
     "enemy.*": {"writer": "intel", "reader": "control/planners/tasks"},
     "strategy.parity.*": {"writer": "intel.game_parity", "reader": "control/planners/tasks"},
     "macro.desired.*": {"writer": "intel.*", "reader": "control/planners/tasks"},
-    "macro.control.*": {"writer": "control.advantage_supervisor", "reader": "control/planners/tasks"},
+    "macro.control.*": {"writer": "intel.advantage_game_status", "reader": "intel/planners/tasks"},
     "macro.opening.done*": {"writer": "intel.opening_contract", "reader": "sensors/planners/control"},
     "macro.production.plan.*": {"writer": "planner.macro_orchestrator", "reader": "task.macro_production"},
     "macro.tech.plan.*": {"writer": "planner.macro_orchestrator", "reader": "task.macro_tech"},
     "macro.gas.*": {"writer": "planner.macro_orchestrator", "reader": "tasks.macro_executor/scv_housekeeping"},
     "macro.plan.*": {"writer": "planner.macro_orchestrator", "reader": "task.macro_executor"},
-    "control.priority.*": {"writer": "control.priority_policy", "reader": "ego"},
+    "control.priority.*": {"writer": "intel.prioritization", "reader": "ego"},
     "ego.exec_budget.*": {"writer": "ego", "reader": "tasks"},
     "ops.*": {"writer": "ego/tasks", "reader": "sensors/planners/tasks/control"},
 }
@@ -22,7 +22,7 @@ CONTRACTS: dict[str, dict[str, str]] = {
 
 INVARIANTS: tuple[str, ...] = (
     "intel functions are pure and never issue game commands",
-    "control modules compute priorities/reserves and never issue game commands",
+    "intel modules compute priorities/reserves and never issue game commands",
     "planners emit proposals and never issue game commands",
     "tasks execute commands and must not write control.* keys",
 )

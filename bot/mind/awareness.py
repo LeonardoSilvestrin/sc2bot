@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 
 Key = Tuple[str, ...]
@@ -163,6 +163,9 @@ class Awareness:
 
     _events: List[Dict[str, Any]] = field(default_factory=list)
     _events_cap: int = 200
+    _running_mission_proposal: Dict[str, str] = field(default_factory=dict)
+    _running_missions_by_proposal: Dict[str, Set[str]] = field(default_factory=dict)
+    _running_index_ready: bool = False
 
     def emit(self, name: str, *, now: float, data: Optional[Dict[str, Any]] = None) -> None:
         evt = {"t": round(float(now), 2), "name": str(name)}
@@ -186,23 +189,62 @@ class Awareness:
     def ops_proposal_running(self, *, proposal_id: str, now: float) -> bool:
         if not isinstance(proposal_id, str) or not proposal_id:
             raise ValueError("proposal_id must be a non-empty string")
+        if not bool(self._running_index_ready):
+            self._rebuild_running_mission_index(now=now)
+        return bool(self._running_missions_by_proposal.get(str(proposal_id)))
 
+    def _rebuild_running_mission_index(self, *, now: float) -> None:
+        self._running_mission_proposal.clear()
+        self._running_missions_by_proposal.clear()
+        # One full scan to bootstrap index; all subsequent updates are incremental.
         for k, f in self.mem._facts.items():
-            if len(k) < 4:
+            if len(k) != 4:
                 continue
-            if k[0] != "ops" or k[1] != "mission":
+            if k[0] != "ops" or k[1] != "mission" or k[3] != "proposal_id":
                 continue
-            if k[-1] != "proposal_id":
+            mission_id = str(k[2])
+            proposal_id = str(f.value or "")
+            if not proposal_id:
                 continue
-            if f.value != proposal_id:
-                continue
-
-            mission_id = k[2]
             st = str(self.mem.get(K("ops", "mission", mission_id, "status"), now=now, default=""))
-            if st == "RUNNING":
-                return True
+            if st != "RUNNING":
+                continue
+            self._running_mission_proposal[mission_id] = proposal_id
+            self._running_missions_by_proposal.setdefault(proposal_id, set()).add(mission_id)
+        self._running_index_ready = True
 
-        return False
+    def mark_mission_running(self, *, mission_id: str, proposal_id: str) -> None:
+        mid = str(mission_id or "")
+        pid = str(proposal_id or "")
+        if not mid or not pid:
+            return
+        prev_pid = self._running_mission_proposal.get(mid)
+        if prev_pid and prev_pid != pid:
+            prev_set = self._running_missions_by_proposal.get(prev_pid)
+            if prev_set is not None:
+                prev_set.discard(mid)
+                if not prev_set:
+                    self._running_missions_by_proposal.pop(prev_pid, None)
+        self._running_mission_proposal[mid] = pid
+        self._running_missions_by_proposal.setdefault(pid, set()).add(mid)
+        self._running_index_ready = True
+
+    def mark_mission_ended(self, *, mission_id: str, proposal_id: Optional[str] = None) -> None:
+        mid = str(mission_id or "")
+        if not mid:
+            return
+        pid = str(proposal_id or "")
+        if not pid:
+            pid = str(self._running_mission_proposal.get(mid) or "")
+        self._running_mission_proposal.pop(mid, None)
+        if not pid:
+            return
+        running = self._running_missions_by_proposal.get(pid)
+        if running is None:
+            return
+        running.discard(mid)
+        if not running:
+            self._running_missions_by_proposal.pop(pid, None)
 
     # -----------------------
     # Convenience “intel” API

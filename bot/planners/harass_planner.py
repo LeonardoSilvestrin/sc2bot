@@ -68,6 +68,9 @@ class HarassPlanner:
     idle_log_every_s: float = 10.0
     block_urgency_min: int = 18
     block_enemy_count_min: int = 2
+    avoid_heavy_fortification: bool = True
+    max_target_path_danger: float = 2.6
+    path_hotspot_radius: float = 12.0
     _next_idle_log_at: float = 0.0
 
     def _pid_reaper_hellion(self) -> str:
@@ -94,16 +97,72 @@ class HarassPlanner:
         return bot.enemy_start_locations[0]
 
     @staticmethod
-    def _weak_point_objective(bot, *, awareness: Awareness, now: float) -> Point2:
-        primary = awareness.mem.get(K("enemy", "weak_points", "primary"), now=now, default=None)
+    def _weak_point_targets(*, awareness: Awareness, now: float) -> list[dict]:
+        pts = awareness.mem.get(K("intel", "locations", "enemy_weak_points", "targets"), now=now, default=None)
+        if not isinstance(pts, list):
+            pts = awareness.mem.get(K("enemy", "weak_points", "points"), now=now, default=[]) or []
+        out = [p for p in pts if isinstance(p, dict)]
+        return list(out)
+
+    def _estimate_path_danger(self, *, awareness: Awareness, now: float, target: Point2) -> float:
+        snap = awareness.mem.get(K("intel", "pathing", "ground_avoidance", "snapshot"), now=now, default={}) or {}
+        if not isinstance(snap, dict):
+            return 0.0
+        hotspots = snap.get("hotspots", [])
+        if not isinstance(hotspots, list) or not hotspots:
+            return 0.0
+        near_vals: list[float] = []
+        for h in hotspots:
+            if not isinstance(h, dict):
+                continue
+            try:
+                hp = Point2((float(h.get("x", 0.0) or 0.0), float(h.get("y", 0.0) or 0.0)))
+                if float(target.distance_to(hp)) <= float(self.path_hotspot_radius):
+                    near_vals.append(float(h.get("value", 0.0) or 0.0))
+            except Exception:
+                continue
+        if not near_vals:
+            return 0.0
+        return float(sum(near_vals) / float(len(near_vals)))
+
+    def _pick_harass_target(self, bot, *, awareness: Awareness, now: float) -> tuple[Point2, list[dict]]:
+        points = self._weak_point_targets(awareness=awareness, now=now)
+        candidates: list[dict] = []
+        for p in points:
+            try:
+                pos = Point2((float(p.get("x")), float(p.get("y"))))
+            except Exception:
+                continue
+            fort = str(p.get("fortification", "MEDIUM") or "MEDIUM").upper()
+            vulnerability = float(p.get("vulnerability", 0.0) or 0.0)
+            path_danger = self._estimate_path_danger(awareness=awareness, now=now, target=pos)
+            if bool(self.avoid_heavy_fortification) and fort == "HEAVY":
+                continue
+            if float(path_danger) > float(self.max_target_path_danger):
+                continue
+            candidates.append(
+                {
+                    "x": float(pos.x),
+                    "y": float(pos.y),
+                    "fortification": str(fort),
+                    "vulnerability": float(round(vulnerability, 2)),
+                    "path_danger": float(round(path_danger, 3)),
+                    "score": float(round(vulnerability - (0.9 * path_danger), 3)),
+                }
+            )
+        candidates.sort(key=lambda c: float(c.get("score", 0.0)), reverse=True)
+        if candidates:
+            best = candidates[0]
+            return Point2((float(best["x"]), float(best["y"]))), candidates
+        primary = awareness.mem.get(K("intel", "locations", "enemy_weak_points", "primary"), now=now, default=None)
+        if not isinstance(primary, dict):
+            primary = awareness.mem.get(K("enemy", "weak_points", "primary"), now=now, default=None)
         if isinstance(primary, dict):
             try:
-                x = float(primary.get("x"))
-                y = float(primary.get("y"))
-                return Point2((x, y))
+                return Point2((float(primary.get("x")), float(primary.get("y")))), candidates
             except Exception:
                 pass
-        return bot.enemy_start_locations[0]
+        return bot.enemy_start_locations[0], candidates
 
     def propose(self, bot, *, awareness: Awareness, attention: Attention) -> list[Proposal]:
         now = float(attention.time)
@@ -137,7 +196,14 @@ class HarassPlanner:
                 )
                 self._next_idle_log_at = float(now) + float(self.idle_log_every_s)
             return []
-        objective = self._weak_point_objective(bot, awareness=awareness, now=now)
+        objective, target_candidates = self._pick_harass_target(bot, awareness=awareness, now=now)
+        awareness.mem.set(K("ops", "harass", "targets", "candidates"), value=list(target_candidates), now=now, ttl=10.0)
+        awareness.mem.set(
+            K("ops", "harass", "targets", "selected"),
+            value={"x": float(objective.x), "y": float(objective.y)},
+            now=now,
+            ttl=10.0,
+        )
         prefer_hellion_only = float(now) <= float(self.propose_hellions_until_s)
 
         if not awareness.ops_proposal_running(proposal_id=pid_rh, now=now) and self._due(awareness=awareness, now=now, pid=pid_rh):
@@ -260,9 +326,18 @@ class HarassPlanner:
 
         reaper_hellion_done = bool(awareness.mem.get(K("ops", "harass", "reaper_hellion", "done"), now=now, default=False))
         banshee_ready_window = bool(float(now) >= float(self.propose_banshee_from_s))
-        selected_opening = str(awareness.mem.get(K("macro", "opening", "selected"), now=now, default="") or "")
-        transition_target = str(awareness.mem.get(K("macro", "opening", "transition_target"), now=now, default="STIM") or "STIM").upper()
-        banshee_opening_enabled = selected_opening == "BansheeHellionOpen" or transition_target == "BANSHEE"
+        desired_comp = awareness.mem.get(K("macro", "desired", "comp"), now=now, default={}) or {}
+        if not isinstance(desired_comp, dict):
+            desired_comp = {}
+        desired_priority = awareness.mem.get(K("macro", "desired", "priority_units"), now=now, default=[]) or []
+        if not isinstance(desired_priority, list):
+            desired_priority = []
+        desired_phase = str(awareness.mem.get(K("macro", "desired", "phase"), now=now, default="OPENING") or "OPENING").upper()
+        desired_scenario = str(awareness.mem.get(K("macro", "desired", "scenario"), now=now, default="NORMAL") or "NORMAL").upper()
+        banshee_opening_enabled = bool(
+            "BANSHEE" in {str(x).upper() for x in desired_priority}
+            or float(desired_comp.get("BANSHEE", 0.0) or 0.0) >= 0.08
+        )
         banshee_seeded = bool(awareness.mem.get(K("ops", "harass", "banshee", "seeded"), now=now, default=False))
         should_seed_banshee = bool(
             banshee_opening_enabled
@@ -270,7 +345,7 @@ class HarassPlanner:
             and not banshee_seeded
             and not awareness.ops_proposal_running(proposal_id=pid_b, now=now)
         )
-        if (
+        should_propose_banshee = bool(
             should_seed_banshee
             or (
                 banshee_opening_enabled
@@ -278,7 +353,9 @@ class HarassPlanner:
                 and not awareness.ops_proposal_running(proposal_id=pid_b, now=now)
                 and self._due(awareness=awareness, now=now, pid=pid_b)
             )
-        ):
+        )
+
+        if should_propose_banshee:
             banshee_idle = int(bot.units.of_type(U.BANSHEE).ready.idle.amount)
 
             class BansheeHarassPickPolicy:
@@ -345,11 +422,13 @@ class HarassPlanner:
                     "reaper_hellion_done": bool(reaper_hellion_done),
                     "prefer_hellion_only": bool(prefer_hellion_only),
                     "banshee_ready_window": bool(banshee_ready_window),
-                    "selected_opening": str(selected_opening),
-                    "transition_target": str(transition_target),
+                    "desired_phase": str(desired_phase),
+                    "desired_scenario": str(desired_scenario),
+                    "desired_banshee_share": float(round(float(desired_comp.get("BANSHEE", 0.0) or 0.0), 3)),
                     "banshee_opening_enabled": bool(banshee_opening_enabled),
                     "banshee_seeded": bool(banshee_seeded),
                     "banshee_seed_proposed": bool(should_seed_banshee),
+                    "banshee_proposed": bool(should_propose_banshee),
                     "blocked_by_threat": bool(blocked_by_threat),
                     "primary_urgency": int(primary_urgency),
                     "primary_enemy_count": int(primary_enemy_count),

@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 import time
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from bot.control.priority_policy import PriorityPolicy
+from bot.intel.ego.i1_PI_prioritization_intel import PrioritizationIntel
 from bot.mind.attention import Attention
 from bot.mind.awareness import Awareness, K
 from bot.mind.body import UnitLeases
@@ -48,7 +48,7 @@ class Ego:
         self.body = body
         self.log = log
         self.cfg = cfg
-        self.priority_policy = PriorityPolicy()
+        self.priority_policy = PrioritizationIntel()
 
         self._planners: List[Any] = []
         self._active: Dict[str, Commitment] = {}
@@ -249,7 +249,14 @@ class Ego:
                 continue
 
             if reinforce_commitment is None and domain in self.cfg.singleton_domains:
-                self._preempt_domain(now=now, awareness=awareness, domain=domain, reason=f"preempted_by:{prop.proposal_id}")
+                self._preempt_domain(
+                    now=now,
+                    awareness=awareness,
+                    domain=domain,
+                    reason=f"preempted_by:{prop.proposal_id}",
+                    incoming_score=int(prop.score),
+                    incoming_proposal_id=str(prop.proposal_id),
+                )
 
             mission_id = reinforce_mission_id if reinforce_commitment is not None else f"{prop.proposal_id}:{int(now * 1000)}"
             spec: TaskSpec = prop.task()
@@ -469,12 +476,46 @@ class Ego:
     def _is_proposal_running(self, proposal_id: str) -> bool:
         return any(c.proposal_id == proposal_id for c in self._active.values())
 
-    def _preempt_domain(self, *, now: float, awareness: Awareness, domain: str, reason: str) -> None:
+    def _preempt_domain(
+        self,
+        *,
+        now: float,
+        awareness: Awareness,
+        domain: str,
+        reason: str,
+        incoming_score: int = 0,
+        incoming_proposal_id: str = "",
+    ) -> None:
         mids = list(self._active_by_domain.get(domain, []))
         for mid in mids:
             c = self._active.get(mid)
             if c is None:
                 continue
+            # Only apply mission-value guardrails to missions that actually lease units.
+            if c.assigned_tags:
+                value = awareness.mem.get(K("intel", "mission", c.mission_id, "value", "snapshot"), now=now, default={}) or {}
+                if isinstance(value, dict):
+                    preserve = float(value.get("preserve_score", 0.0) or 0.0)
+                    gain = float(value.get("gain_score", 0.0) or 0.0)
+                    risk = float(value.get("risk_score", 0.0) or 0.0)
+                    keep_threshold = 35.0 + (preserve * 35.0) + (gain * 20.0) + (risk * 10.0)
+                    if float(incoming_score) < float(keep_threshold):
+                        awareness.mem.set(
+                            K("ego", "preempt", "blocked", c.mission_id),
+                            value={
+                                "t": float(now),
+                                "domain": str(domain),
+                                "incoming_score": int(incoming_score),
+                                "incoming_proposal_id": str(incoming_proposal_id),
+                                "keep_threshold": float(round(keep_threshold, 2)),
+                                "preserve_score": float(round(preserve, 3)),
+                                "gain_score": float(round(gain, 3)),
+                                "risk_score": float(round(risk, 3)),
+                            },
+                            now=now,
+                            ttl=12.0,
+                        )
+                        continue
             self._finish_mission(awareness, now=now, c=c, status="DONE", reason=reason)
 
     def _validate_task(self, task_obj: Any, *, spec: TaskSpec) -> None:
@@ -633,11 +674,14 @@ class Ego:
         awareness.mem.set(K("ops", "mission", c.mission_id, "assigned_tags"), value=list(c.assigned_tags), now=now, ttl=None)
         awareness.mem.set(K("ops", "mission", c.mission_id, "original_assigned_tags"), value=list(c.assigned_tags), now=now, ttl=None)
         awareness.mem.set(K("ops", "mission", c.mission_id, "original_type_counts"), value=dict(original_type_counts), now=now, ttl=None)
+        awareness.mark_mission_running(mission_id=str(c.mission_id), proposal_id=str(c.proposal_id))
 
     def _awareness_end_mission(self, awareness: Awareness, *, now: float, mission_id: str, status: str, reason: str) -> None:
         awareness.mem.set(K("ops", "mission", mission_id, "status"), value=str(status), now=now, ttl=None)
         awareness.mem.set(K("ops", "mission", mission_id, "reason"), value=str(reason), now=now, ttl=None)
         awareness.mem.set(K("ops", "mission", mission_id, "ended_at"), value=float(now), now=now, ttl=None)
+        proposal_id = awareness.mem.get(K("ops", "mission", mission_id, "proposal_id"), now=now, default="")
+        awareness.mark_mission_ended(mission_id=str(mission_id), proposal_id=str(proposal_id or ""))
 
     def _should_emit_mission_step(self, awareness: Awareness, *, now: float, c: Commitment, status: str) -> bool:
         if str(status) != "NOOP":

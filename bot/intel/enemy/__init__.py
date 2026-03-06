@@ -1,0 +1,2 @@
+"""Enemy-facing intel modules."""
+

@@ -7,8 +7,8 @@ from typing import Any
 
 from sc2.ids.unit_typeid import UnitTypeId as U
 
-from bot.control.macro_resource_controller import MacroResourceController
 from bot.devlog import DevLogger
+from bot.intel.macro.control_intel import SpendingIntel
 from bot.mind.attention import Attention
 from bot.mind.awareness import Awareness, K
 from bot.planners.utils.base_planner import BasePlanner
@@ -107,7 +107,7 @@ class MacroOrchestratorPlanner(BasePlanner):
     _last_tech_exec_publish_at: float = -9999.0
     _last_plan_hash: str = ""
     _plan_version: int = 0
-    _resource_controller: MacroResourceController = field(default_factory=MacroResourceController)
+    _resource_controller: SpendingIntel = field(default_factory=SpendingIntel)
 
     @staticmethod
     def _clamp01(x: float) -> float:
@@ -366,7 +366,8 @@ class MacroOrchestratorPlanner(BasePlanner):
             milestones=tech_milestones,
             now=float(now),
         )
-        desired_structures = dict(due_structures) if due_structures else dict(desired_structures_all)
+        # Respect timing milestones: only due structures should influence immediate tech pressure.
+        desired_structures = dict(due_structures)
         desired_upgrades = (
             [u for u in due_upgrades if u in set(str(x) for x in desired_upgrades_all)]
             if due_upgrades
@@ -717,8 +718,6 @@ class MacroOrchestratorPlanner(BasePlanner):
         workers_per_refinery = int(gas_decision.target_workers_per_refinery)
         if phase == "OPENING":
             gas_target = min(int(gas_target), int(self.opening_gas_cap))
-            workers_per_refinery = 3
-        elif phase == "MID":
             workers_per_refinery = 3
         elif phase == "LATE" and not pressure_high:
             gas_target += int(self.late_gas_bonus)

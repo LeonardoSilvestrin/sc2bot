@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from sc2.ids.unit_typeid import UnitTypeId as U
 
 from bot.intel.utils.enemy_econ_estimates import count_enemy_bases
-from bot.intel.weak_points_intel import WeakPointsIntelConfig, derive_enemy_weak_points_intel
+from bot.intel.enemy.weak_points_intel import WeakPointsIntelConfig, derive_enemy_weak_points_intel
 from bot.mind.attention import Attention
 from bot.mind.awareness import Awareness, K
 

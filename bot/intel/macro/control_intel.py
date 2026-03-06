@@ -7,7 +7,7 @@ from bot.mind.awareness import Awareness, K
 
 
 @dataclass(frozen=True)
-class MacroResourceDecision:
+class SpendingIntelDecision:
     mode: str
     target_refineries: int
     target_refineries_default: int
@@ -25,7 +25,7 @@ class MacroResourceDecision:
     changed_at: float
 
 
-class MacroResourceController:
+class SpendingIntel:
     """
     Economic arbitration for worker gas/mineral split.
     Uses stock + flow (first derivative) so housekeeping can react to sustained imbalance.
@@ -44,7 +44,7 @@ class MacroResourceController:
         lag_spend: float,
         lag_prod: float,
         cfg,
-    ) -> MacroResourceDecision:
+    ) -> SpendingIntelDecision:
         bases = int(attention.macro.bases_total)
         gas_stock = int(attention.economy.gas)
         mineral_stock = int(attention.economy.minerals)
@@ -53,7 +53,6 @@ class MacroResourceController:
         workers_per_refinery = int(getattr(cfg, "gas_target_workers_default", 3))
         mode = "normal"
 
-        # Flow estimate from resource deltas.
         prev = awareness.mem.get(K("control", "resource", "flow", "prev"), now=now, default={}) or {}
         prev_t = float(prev.get("t", now) or now)
         prev_m = float(prev.get("minerals", mineral_stock) or mineral_stock)
@@ -80,7 +79,6 @@ class MacroResourceController:
         spend_sum = max(1e-3, m_spend_ema + g_spend_ema)
         gas_mix = g_spend_ema / spend_sum
 
-        # Imbalance derivative: positive means gas drifting away from mineral usage.
         target_m = max(1.0, float(getattr(cfg, "bank_target_minerals", 650)))
         target_g = max(1.0, float(getattr(cfg, "bank_target_gas", 220)))
         norm_m = float(mineral_stock) / target_m
@@ -92,7 +90,6 @@ class MacroResourceController:
         expand_pressure = max(0.0, float(lag_spend))
         production_pressure = max(0.0, float(lag_prod))
 
-        # Hard guards (existing behavior).
         if gas_stock >= int(cfg.gas_overflow_hard) and mineral_stock <= int(cfg.mineral_low_soft) and tech_pressure < 0.55:
             workers_per_refinery = 0
             target_refineries = max(0, target_refineries - 2)
@@ -118,8 +115,6 @@ class MacroResourceController:
             target_refineries = max(0, target_refineries - 1)
             mode = "gas_ratio_soft"
 
-        # Flow-aware correction:
-        # if production is late, gas keeps increasing, and gas spend mix is low, shift workers to minerals.
         flow_shift_soft = (
             production_pressure >= 0.65
             and tech_pressure < 0.70
@@ -146,14 +141,12 @@ class MacroResourceController:
             target_refineries = max(0, target_refineries - 1)
             mode = "flow_shift_soft_to_minerals"
 
-        # Respect tech pressure to avoid starving gas when tech timing is active.
         if tech_pressure >= 0.70:
             workers_per_refinery = max(2, int(workers_per_refinery))
             mode = "tech_pressure"
 
         workers_per_refinery = max(int(cfg.gas_target_workers_min), min(3, int(workers_per_refinery)))
 
-        # Hysteresis/cooldowns.
         prev_status = awareness.mem.get(K("macro", "gas", "status"), now=now, default={}) or {}
         prev_mode = str(prev_status.get("mode", "") or "")
         prev_workers = int(prev_status.get("target_workers_per_refinery", workers_per_refinery) or workers_per_refinery)
@@ -195,7 +188,7 @@ class MacroResourceController:
             ttl=20.0,
         )
 
-        return MacroResourceDecision(
+        return SpendingIntelDecision(
             mode=str(mode),
             target_refineries=int(target_refineries),
             target_refineries_default=int(target_refineries_default),

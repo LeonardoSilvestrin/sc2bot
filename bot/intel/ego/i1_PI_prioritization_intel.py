@@ -9,7 +9,7 @@ from bot.planners.utils.proposals import Proposal
 
 
 @dataclass(frozen=True)
-class PriorityPolicyConfig:
+class PrioritizationIntelConfig:
     defense_threat_start_at: int = 65
     defense_threat_full_at: int = 90
     defense_weight_boost: float = 1.35
@@ -45,7 +45,7 @@ class PriorityPolicyConfig:
 
 
 @dataclass(frozen=True)
-class PriorityDecision:
+class PrioritizationDecision:
     effective_score: float
     domain_weight: float
     proposal_bias: float
@@ -53,8 +53,8 @@ class PriorityDecision:
     notes: List[str] = field(default_factory=list)
 
 
-class PriorityPolicy:
-    def __init__(self, cfg: PriorityPolicyConfig = PriorityPolicyConfig()):
+class PrioritizationIntel:
+    def __init__(self, cfg: PrioritizationIntelConfig = PrioritizationIntelConfig()):
         self.cfg = cfg
         self._tick_now: float = -1.0
         self._cached_bank_pressure: float = 0.0
@@ -67,7 +67,7 @@ class PriorityPolicy:
         self._cached_bank_pressure = self._bank_pressure(attention=attention, awareness=awareness, now=nowf)
         awareness.mem.set(K("control", "priority", "bank_pi_output"), value=float(self._cached_bank_pressure), now=nowf, ttl=5.0)
 
-    def evaluate(self, *, proposal: Proposal, attention: Attention, awareness: Awareness, now: float) -> PriorityDecision:
+    def evaluate(self, *, proposal: Proposal, attention: Attention, awareness: Awareness, now: float) -> PrioritizationDecision:
         self.begin_tick(attention=attention, awareness=awareness, now=now)
         domain = str(proposal.domain)
         proposal_id = str(proposal.proposal_id)
@@ -143,8 +143,6 @@ class PriorityPolicy:
                 domain_weight *= damp
                 notes.append("macro_army_dampen_from_parity_econ_behind")
 
-        # Mode-conditioned response for mixed parity:
-        # AHEAD_ARMY_BEHIND_ECON => aggressive modes pressure, macro modes catch up eco.
         if parity_state == "AHEAD_ARMY_BEHIND_ECON":
             if macro_mode in {"PUNISH", "RUSH_RESPONSE"}:
                 if domain == "MACRO_ARMY_EXECUTOR":
@@ -172,7 +170,6 @@ class PriorityPolicy:
                     domain_weight *= damp
                     notes.append("mode_macro_army_dampen")
         elif parity_state == "BEHIND_ARMY_AHEAD_ECON":
-            # We can trade eco lead for army stabilization.
             if domain == "MACRO_ARMY_EXECUTOR":
                 domain_weight += float(self.cfg.parity_mode_aggressive_army_boost) * float(parity_army_behind)
                 notes.append("mode_trade_eco_for_army")
@@ -262,7 +259,7 @@ class PriorityPolicy:
         )
         awareness.mem.set(K("control", "priority", "notes", proposal_id), value=list(notes), now=now, ttl=5.0)
 
-        return PriorityDecision(
+        return PrioritizationDecision(
             effective_score=float(effective_score),
             domain_weight=float(domain_weight),
             proposal_bias=float(proposal_bias),

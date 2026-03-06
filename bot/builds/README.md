@@ -26,6 +26,19 @@ PROFILE = {
             "priority_standard": ["BANSHEE", "HELLION", "SIEGETANK", "MARINE", "MARAUDER", "MEDIVAC"]
         }
     },
+    "scenario_overrides_by_phase": {
+        "OPENING": {
+            "AGGRESSIVE": {
+                "comp_rush_response": {"MARINE": 0.60, "SIEGETANK": 0.22, "HELLION": 0.12, "MEDIVAC": 0.06}
+            },
+            "NORMAL": {},
+            "GREEDY": {
+                "comp_punish": {"MARINE": 0.46, "MARAUDER": 0.22, "SIEGETANK": 0.18, "MEDIVAC": 0.14}
+            }
+        },
+        "MIDGAME": {"AGGRESSIVE": {}, "NORMAL": {}, "GREEDY": {}},
+        "LATEGAME": {"AGGRESSIVE": {}, "NORMAL": {}, "GREEDY": {}}
+    },
 }
 ```
 
@@ -42,6 +55,17 @@ The engine auto-expands this into the legacy schema expected by `build_catalog`.
 - `modes.<MODE>.production_structure_targets`: hard baseline of Barracks/Factory/Starport.
 - `modes.<MODE>.production_scale`: per-base soft growth for production structures.
 - `modes.<MODE>.tech_timing_milestones`: desired upgrades/tech by time (`t` in seconds).
+- `scenario_overrides_by_phase.<PHASE>.<SCENARIO>`: optional deep-override applied after transition, with `PHASE in {OPENING, MIDGAME, LATEGAME}` and `SCENARIO in {AGGRESSIVE, NORMAL, GREEDY}`.
+
+## Runtime Contract
+
+- Intel resolves build phase as `OPENING | EARLY | MID | LATE`.
+- Intel resolves enemy scenario as `AGGRESSIVE | NORMAL | GREEDY`.
+- Build profile phase mapping:
+  - `OPENING -> OPENING`
+  - `EARLY/MID -> MIDGAME`
+  - `LATE -> LATEGAME`
+- Build resolver can apply optional scenario override by mapped phase + scenario.
 
 Practical tuning:
 - If third base is late, reduce early combat pressure (`unit_count_milestones`) and/or increase `production_scale` for Barracks slightly.

@@ -154,22 +154,40 @@ class IntelPlanner:
         if orbital_ready and (int(attention.combat.primary_urgency) > 0):
             target = self._enemy_main(bot)
             label = "enemy_main"
-
-            def _scan_factory(mission_id: str) -> ScanAt:
-                return ScanAt(awareness=awareness, target=target, label=label, cooldown=20.0, log=self.log)
-
-            proposals.append(
-                Proposal(
-                    proposal_id=self._pid_scan(label),
-                    domain="INTEL",
-                    score=55,
-                    tasks=[TaskSpec(task_id="scan_at", task_factory=_scan_factory, unit_requirements=[])],
-                    lease_ttl=5.0,
-                    cooldown_s=20.0,
-                    risk_level=1,
-                    allow_preempt=True,
-                )
+            scan_cooldown = 20.0
+            pathing_target = awareness.mem.get(K("intel", "locations", "next_scan_target"), now=now, default={}) or {}
+            if isinstance(pathing_target, dict):
+                try:
+                    px = float(pathing_target.get("x", 0.0) or 0.0)
+                    py = float(pathing_target.get("y", 0.0) or 0.0)
+                    score = float(pathing_target.get("score", 0.0) or 0.0)
+                    if score >= 0.2:
+                        target = Point2((px, py))
+                        label = "pathing_flow"
+                except Exception:
+                    pass
+            last_scan_label_t = float(
+                awareness.mem.get(K("intel", "scan", "by_label", str(label), "last_t"), now=now, default=0.0) or 0.0
             )
+            if (float(now) - float(last_scan_label_t)) < float(scan_cooldown):
+                label = ""
+
+            if label:
+                def _scan_factory(mission_id: str) -> ScanAt:
+                    return ScanAt(awareness=awareness, target=target, label=label, cooldown=20.0, log=self.log)
+
+                proposals.append(
+                    Proposal(
+                        proposal_id=self._pid_scan(label),
+                        domain="INTEL",
+                        score=55,
+                        tasks=[TaskSpec(task_id="scan_at", task_factory=_scan_factory, unit_requirements=[])],
+                        lease_ttl=5.0,
+                        cooldown_s=20.0,
+                        risk_level=1,
+                        allow_preempt=True,
+                    )
+                )
 
         if not orbital_ready:
             return proposals

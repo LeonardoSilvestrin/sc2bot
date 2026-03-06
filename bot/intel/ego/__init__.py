@@ -1,0 +1,2 @@
+"""Ego-facing intel modules."""
+
