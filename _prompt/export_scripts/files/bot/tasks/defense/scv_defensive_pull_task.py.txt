@@ -1,0 +1,106 @@
+# bot/tasks/defense/scv_defensive_pull_task.py
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from sc2.ids.unit_typeid import UnitTypeId as U
+from sc2.position import Point2
+
+from bot.devlog import DevLogger
+from bot.mind.attention import Attention
+from bot.tasks.base_task import BaseTask, TaskResult, TaskTick
+
+
+@dataclass
+class ScvDefensivePullTask(BaseTask):
+    base_tag: int
+    base_pos: Point2
+    threat_pos: Point2 | None = None
+    log: DevLogger | None = None
+
+    def __init__(
+        self,
+        *,
+        base_tag: int,
+        base_pos: Point2,
+        threat_pos: Point2 | None = None,
+        log: DevLogger | None = None,
+    ) -> None:
+        super().__init__(task_id="scv_defensive_pull", domain="DEFENSE", commitment=70)
+        self.base_tag = int(base_tag)
+        self.base_pos = base_pos
+        self.threat_pos = threat_pos
+        self.log = log
+
+    def _resolve_base_pos(self, bot) -> Point2:
+        th = bot.townhalls.find_by_tag(int(self.base_tag))
+        if th is not None:
+            return th.position
+        return self.base_pos
+
+    @staticmethod
+    def _enemy_priority(unit) -> tuple[int, float]:
+        tid = getattr(unit, "type_id", None)
+        if tid in {U.PROBE, U.SCV, U.DRONE, U.PYLON, U.PHOTONCANNON}:
+            return (4, float(getattr(unit, "health", 999.0) or 999.0))
+        if tid in {U.ZEALOT, U.ZERGLING, U.MARINE, U.REAPER, U.ADEPT}:
+            return (3, float(getattr(unit, "health", 999.0) or 999.0))
+        if tid in {U.STALKER, U.ROACH, U.MARAUDER, U.HELLION}:
+            return (2, float(getattr(unit, "health", 999.0) or 999.0))
+        return (1, float(getattr(unit, "health", 999.0) or 999.0))
+
+    async def on_step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult:
+        bound_err = self.require_mission_bound(min_tags=1)
+        if bound_err is not None:
+            return bound_err
+
+        units = [bot.units.find_by_tag(int(t)) for t in self.assigned_tags]
+        units = [u for u in units if u is not None and u.type_id == U.SCV]
+        if not units:
+            return TaskResult.failed("no_scvs_alive")
+
+        base_pos = self._resolve_base_pos(bot)
+        threat = self.threat_pos or attention.combat.primary_threat_pos or base_pos
+        enemy_near = bot.enemy_units.closer_than(16.0, base_pos)
+        if enemy_near.amount <= 0:
+            self._done("pull_no_enemy_near_base")
+            return TaskResult.done("pull_no_enemy_near_base")
+
+        priority_targets = sorted(
+            list(enemy_near),
+            key=lambda e: (
+                -self._enemy_priority(e)[0],
+                float(base_pos.distance_to(e)),
+                self._enemy_priority(e)[1],
+            ),
+        )
+        issued = False
+        fallback_hold = threat.towards(base_pos, 3.0) if threat != base_pos else base_pos
+        for scv in units:
+            close_enemy = enemy_near.closer_than(5.5, scv.position)
+            if close_enemy.amount > 0:
+                target = min(
+                    list(close_enemy),
+                    key=lambda e: (
+                        -self._enemy_priority(e)[0],
+                        float(scv.distance_to(e)),
+                        self._enemy_priority(e)[1],
+                    ),
+                )
+                scv.attack(target)
+                issued = True
+                continue
+            if priority_targets:
+                scv.attack(priority_targets[0])
+                issued = True
+                continue
+            if float(scv.distance_to(fallback_hold)) > 2.0:
+                scv.move(fallback_hold)
+                issued = True
+
+        if issued:
+            self._active("scv_pull_active")
+            return TaskResult.running("scv_pull_active")
+        self._active("scv_pull_hold")
+        return TaskResult.noop("scv_pull_hold")

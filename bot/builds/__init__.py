@@ -7,17 +7,21 @@ from bot.builds.bio_open import PROFILE as BIO_OPEN_PROFILE
 from bot.builds.bio_open import STAGED_PROFILES_BY_PHASE as BIO_OPEN_STAGED_BY_PHASE
 from bot.builds.mecha_open import PROFILE as MECHA_OPEN_PROFILE
 from bot.builds.mecha_open import STAGED_PROFILES_BY_PHASE as MECHA_OPEN_STAGED_BY_PHASE
+from bot.builds.rush_defense_open import PROFILE as RUSH_DEFENSE_OPEN_PROFILE
+from bot.builds.rush_defense_open import STAGED_PROFILES_BY_PHASE as RUSH_DEFENSE_OPEN_STAGED_BY_PHASE
 
 
 PROFILES_BY_OPENING: Dict[str, Dict[str, Any]] = {
     "BioOpen": BIO_OPEN_PROFILE,
     "MechaOpen": MECHA_OPEN_PROFILE,
+    "RushDefenseOpen": RUSH_DEFENSE_OPEN_PROFILE,
 }
 
 
 STAGED_PROFILES_BY_OPENING: Dict[str, Dict[str, Dict[str, Any]]] = {
     "BioOpen": BIO_OPEN_STAGED_BY_PHASE,
     "MechaOpen": MECHA_OPEN_STAGED_BY_PHASE,
+    "RushDefenseOpen": RUSH_DEFENSE_OPEN_STAGED_BY_PHASE,
 }
 
 

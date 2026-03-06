@@ -22,29 +22,24 @@ Builds:
     ConstantWorkerProductionTill: 60
     OpeningBuildOrder:
       - 14 supply @ ramp
-      - 12 worker_scout:
-          [enemy_spawn, enemy_nat, enemy_ramp, map_center]
       - 16 barracks @ ramp
       - 16 gas
       - 0 orbital
       - 19 expand
       - 20 supply @ ramp
-      - 20 barrackstechlab
-      - 22 marine *3
-      - 23 stimpack
+      - 20 barracksreactor
       - 24 factory @ ramp
       - 24 gas
+      - 24 marine *2
       - 26 starport
+      - 24 factorytechlab
       - 30 siegetank
-      - 32 medivac *2
 
   MechaOpen:
     AutoSupplyAtSupply: 25
     ConstantWorkerProductionTill: 60
     OpeningBuildOrder:
       - 14 supply @ ramp
-      - 12 worker_scout:
-          [enemy_spawn, enemy_nat, enemy_ramp, map_center]
       - 16 barracks @ ramp
       - 16 gas
       - 0 orbital
@@ -58,7 +53,22 @@ Builds:
       - 23 hellion *2
       - 24 factory @ ramp
       - 24 factorytechlab
-      - 25 widowmine *2
-      - 27 siegetank *2
-      - 30 starport
-      - 30 starporttechlab
+
+  RushDefenseOpen:
+    AutoSupplyAtSupply: 23
+    ConstantWorkerProductionTill: 60
+    OpeningBuildOrder:
+      - 14 supply @ ramp
+      - 16 barracks @ ramp
+      - 16 gas
+      - 0 orbital
+      - 19 barracks
+      - 20 marine *2
+      - 20 supply @ ramp
+      - 20 factory @ ramp
+      - 21 barracksreactor
+      - 21 factorytechlab
+      - 22 marine *2
+      - 24 siegetank
+      - 24 marine *4
+      - 30 expand

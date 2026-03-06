@@ -49,6 +49,8 @@ class ReinforceMissionPlanner(BasePlanner):
     banshee_harass_target_size: int = 2
     defense_tank_target_size: int = 2
     defense_mine_target_size: int = 2
+    defense_marine_target_size: int = 4
+    defense_bunker_marine_target_size: int = 6
 
     def _proposal_id(self, mission_id: str, unit_type_name: str) -> str:
         return f"{self.planner_id}:{mission_id}:{unit_type_name}"
@@ -78,7 +80,28 @@ class ReinforceMissionPlanner(BasePlanner):
     def _is_defense_base_mission(mission: MissionStatusSnapshot) -> bool:
         return str(mission.domain) == "DEFENSE" and str(mission.proposal_id).startswith("defense_planner:defend:base:")
 
-    def _requirements_for_mission(self, bot, mission: MissionStatusSnapshot) -> list[UnitRequirement]:
+    @staticmethod
+    def _defense_base_pos(bot, mission: MissionStatusSnapshot) -> Point2 | None:
+        try:
+            proposal_id = str(mission.proposal_id or "")
+            base_tag = int(proposal_id.rsplit(":", 1)[-1])
+            th = bot.townhalls.find_by_tag(base_tag)
+            if th is not None:
+                return th.position
+        except Exception:
+            return None
+        return None
+
+    @staticmethod
+    def _bunker_near_base(bot, *, base_pos: Point2 | None) -> bool:
+        if base_pos is None:
+            return False
+        try:
+            return any(float(b.distance_to(base_pos)) <= 16.0 for b in bot.structures(U.BUNKER))
+        except Exception:
+            return False
+
+    def _requirements_for_mission(self, bot, mission: MissionStatusSnapshot, *, awareness: Awareness, now: float) -> list[UnitRequirement]:
         objective = self._mission_objective(bot, mission)
         desired_counts = {str(k): int(v) for k, v in mission.original_type_counts}
         if not desired_counts:
@@ -89,6 +112,17 @@ class ReinforceMissionPlanner(BasePlanner):
                 int(self.banshee_harass_target_size),
             )
         if self._is_defense_base_mission(mission):
+            base_pos = self._defense_base_pos(bot, mission)
+            rush_tier = str(awareness.mem.get(("enemy", "rush", "tier"), now=now, default="NONE") or "NONE").upper()
+            marine_target = int(self.defense_marine_target_size)
+            if self._bunker_near_base(bot, base_pos=base_pos):
+                marine_target = int(self.defense_bunker_marine_target_size)
+            if rush_tier in {"HEAVY", "EXTREME"}:
+                marine_target = max(int(marine_target), 6 if rush_tier == "HEAVY" else 8)
+            desired_counts["MARINE"] = max(
+                int(desired_counts.get("MARINE", 0)),
+                int(marine_target),
+            )
             desired_counts["SIEGETANK"] = max(
                 int(desired_counts.get("SIEGETANK", 0)),
                 int(self.defense_tank_target_size),
@@ -151,7 +185,7 @@ class ReinforceMissionPlanner(BasePlanner):
             if mission.remaining_s is not None and float(mission.remaining_s) < float(self.min_remaining_s):
                 continue
 
-            reqs = self._requirements_for_mission(bot, mission)
+            reqs = self._requirements_for_mission(bot, mission, awareness=awareness, now=now)
             if not reqs:
                 continue
 

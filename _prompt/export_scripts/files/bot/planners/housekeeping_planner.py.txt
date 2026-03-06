@@ -36,6 +36,24 @@ class HousekeepingPlanner(BasePlanner):
     depot_supply_left_trigger: int = 2
 
     @staticmethod
+    def _main_wall_lowered_depots(bot) -> int:
+        try:
+            ramp = getattr(bot, "main_base_ramp", None)
+            if ramp is None:
+                return 0
+            depot_positions = list(getattr(ramp, "corner_depots", []) or [])
+        except Exception:
+            return 0
+        lowered = 0
+        for depot in list(bot.structures.of_type({U.SUPPLYDEPOTLOWERED}).ready):
+            try:
+                if any(float(depot.distance_to(pos)) <= 1.8 for pos in depot_positions):
+                    lowered += 1
+            except Exception:
+                continue
+        return int(lowered)
+
+    @staticmethod
     def _phase(*, awareness: Awareness, now: float, opening_done: bool) -> str:
         plan_active = awareness.mem.get(K("macro", "plan", "active"), now=now, default={}) or {}
         if isinstance(plan_active, dict):
@@ -143,8 +161,20 @@ class HousekeepingPlanner(BasePlanner):
         supply_left = int(attention.economy.supply_left)
         urgency = int(attention.combat.primary_urgency)
         enemy_count = int(attention.combat.primary_enemy_count)
+        rush_state = str(awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
+        rush_active = rush_state in {"SUSPECTED", "CONFIRMED", "HOLDING"}
+        threat_pos = attention.combat.primary_threat_pos
+        main_wall_enemy_near = ControlDepots._enemy_near_main_wall(
+            bot, radius=max(14.0, float(self.depot_raise_radius) + 4.0)
+        )
+        main_wall_target_near = ControlDepots._point_near_main_wall(
+            bot, threat_pos, radius=max(14.0, float(self.depot_raise_radius) + 4.0)
+        )
         depot_alert = bool(
             (urgency >= int(self.depot_raise_urgency_min) and enemy_count >= int(self.depot_raise_enemy_count_min))
+            or (rush_active and enemy_count > 0)
+            or main_wall_enemy_near
+            or main_wall_target_near
             or supply_left <= int(self.depot_supply_left_trigger)
         )
         depot_interval = float(self.depot_interval_s_alert if depot_alert else self.depot_interval_s_calm)
@@ -155,11 +185,13 @@ class HousekeepingPlanner(BasePlanner):
             interval_s=float(depot_interval),
         )
         if due_depot and not self.is_proposal_running(awareness=awareness, proposal_id=depot_pid, now=now):
-            threat_pos = attention.combat.primary_threat_pos
             actionable = False
             try:
                 if depot_alert:
-                    if threat_pos is not None:
+                    lowered_wall = int(self._main_wall_lowered_depots(bot))
+                    if lowered_wall > 0 and (rush_active or main_wall_enemy_near or main_wall_target_near):
+                        actionable = True
+                    elif threat_pos is not None:
                         lowered = bot.structures.of_type({U.SUPPLYDEPOTLOWERED}).ready
                         actionable = any(float(d.distance_to(threat_pos)) <= float(self.depot_raise_radius) for d in lowered)
                 else:

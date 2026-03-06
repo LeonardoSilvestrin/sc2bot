@@ -151,7 +151,22 @@ Formato de chave: tupla `("a","b","c")`, documentada como `a:b:c`.
 - `enemy:weak_points:last_update_t`
 
 ### 2.6 Macro / housekeeping
+- `macro:opening:selected`
+- `macro:opening:transition_target`
+- `macro:opening:build_selected`
+- `macro:opening:build_transition_target`
+- `macro:opening:requested`
+- `macro:opening:requested_transition_target`
+- `macro:opening:request_reason`
+- `macro:opening:switch_t`
+- `macro:opening:switch_reason`
 - `macro:scv:housekeeping:last_done_at`
+- `macro:gas:status`
+- `macro:gas:target_workers_per_refinery`
+- `macro:exec:*`
+- `tech:exec:*`
+- `control:phase`
+- `control:pressure:*`
 - `macro:morph:*`
 - `macro:mules:*`
 

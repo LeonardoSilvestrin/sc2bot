@@ -1,0 +1,212 @@
+# bot/intel/strategy/i2_CTRL_advantage_game_status_intel.py
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+from bot.mind.awareness import Awareness, K
+
+if TYPE_CHECKING:
+    from bot.mind.attention import Attention
+
+
+@dataclass(frozen=True)
+class AdvantageGameStatusIntelConfig:
+    update_interval_s: float = 6.0
+    ttl_s: float = 24.0
+    uncertainty_penalty_gain: float = 0.30
+    confidence_floor_for_greed: float = 0.45
+    threat_block_greed_urgency: int = 24
+    target_opening: float = 0.00
+    target_midgame: float = 0.10
+    target_lategame: float = 0.06
+    base_bank_target_minerals: int = 650
+    base_bank_target_gas: int = 220
+    base_production_scale: tuple[tuple[str, float], ...] = (
+        ("BARRACKS", 1.0),
+        ("FACTORY", 1.0),
+        ("STARPORT", 1.0),
+    )
+    enter_stabilize: float = -0.20
+    exit_stabilize: float = -0.08
+    enter_press: float = 0.22
+    exit_press: float = 0.10
+    error_to_weight_gain: float = 0.55
+
+
+class AdvantageGameStatusIntel:
+    def __init__(self, cfg: AdvantageGameStatusIntelConfig = AdvantageGameStatusIntelConfig()):
+        self.cfg = cfg
+
+    @staticmethod
+    def _clamp(x: float, low: float, high: float) -> float:
+        return max(float(low), min(float(high), float(x)))
+
+    def _target_advantage(self, *, awareness: Awareness, now: float) -> float:
+        signals = awareness.mem.get(K("macro", "desired", "signals"), now=now, default={}) or {}
+        phase = str(signals.get("build_phase", "MIDGAME") if isinstance(signals, dict) else "MIDGAME").upper()
+        if phase == "OPENING":
+            return float(self.cfg.target_opening)
+        if phase == "LATEGAME":
+            return float(self.cfg.target_lategame)
+        return float(self.cfg.target_midgame)
+
+    def _uncertainty(self, *, awareness: Awareness, now: float) -> tuple[float, float, float]:
+        conf = float(awareness.mem.get(K("enemy", "opening", "confidence"), now=now, default=0.0) or 0.0)
+        conf = self._clamp(conf, 0.0, 1.0)
+        parity_signals = awareness.mem.get(K("strategy", "parity", "signals"), now=now, default={}) or {}
+        if not isinstance(parity_signals, dict):
+            parity_signals = {}
+        army_seen = float(parity_signals.get("enemy_army_power_seen", 0.0) or 0.0)
+        army_est = float(parity_signals.get("enemy_army_power_est", 0.0) or 0.0)
+        obs_ratio = self._clamp(army_seen / max(1.0, army_est), 0.0, 1.0)
+        uncertainty = self._clamp(1.0 - ((0.5 * conf) + (0.5 * obs_ratio)), 0.0, 1.0)
+        return float(uncertainty), float(conf), float(obs_ratio)
+
+    def _regime(self, *, awareness: Awareness, now: float, score_adj: float) -> str:
+        prev = str(awareness.mem.get(K("macro", "control", "supervisor", "regime"), now=now, default="STANDARD") or "STANDARD").upper()
+        if prev == "STABILIZE":
+            return "STABILIZE" if float(score_adj) < float(self.cfg.exit_stabilize) else "STANDARD"
+        if prev == "PRESS":
+            return "PRESS" if float(score_adj) > float(self.cfg.exit_press) else "STANDARD"
+        if float(score_adj) <= float(self.cfg.enter_stabilize):
+            return "STABILIZE"
+        if float(score_adj) >= float(self.cfg.enter_press):
+            return "PRESS"
+        return "STANDARD"
+
+    def step(self, *, attention: "Attention", awareness: Awareness, now: float) -> None:
+        next_allowed = float(awareness.mem.get(K("macro", "control", "supervisor", "next_update_t"), now=now, default=0.0) or 0.0)
+        if float(now) < float(next_allowed):
+            return
+
+        adv_score = float(awareness.mem.get(K("strategy", "advantage", "score"), now=now, default=0.0) or 0.0)
+        adv_trend = float(awareness.mem.get(K("strategy", "advantage", "trend"), now=now, default=0.0) or 0.0)
+        uncertainty, confidence, obs_ratio = self._uncertainty(awareness=awareness, now=now)
+        risk_penalty = float(self.cfg.uncertainty_penalty_gain) * float(uncertainty)
+        adv_adjusted = self._clamp(float(adv_score) - float(risk_penalty), -1.0, 1.0)
+        target_adv = self._target_advantage(awareness=awareness, now=now)
+        err = self._clamp(float(target_adv) - float(adv_adjusted), -1.5, 1.5)
+        regime = self._regime(awareness=awareness, now=now, score_adj=float(adv_adjusted))
+
+        threat_urgency = int(attention.combat.primary_urgency)
+        if threat_urgency >= int(self.cfg.threat_block_greed_urgency):
+            regime = "STABILIZE"
+        if float(confidence) < float(self.cfg.confidence_floor_for_greed) and regime == "PRESS":
+            regime = "STANDARD"
+
+        k = max(0.0, float(self.cfg.error_to_weight_gain))
+        base = {"army": 0.40, "tech": 0.20, "expand": 0.25, "harass": 0.15}
+        army_w = float(base["army"]) + (k * err)
+        expand_w = float(base["expand"]) - (0.8 * k * err)
+        tech_w = float(base["tech"]) - (0.35 * k * err)
+        harass_w = float(base["harass"]) - (0.25 * k * err)
+        if regime == "STABILIZE":
+            army_w += 0.12
+            expand_w -= 0.10
+            tech_w -= 0.05
+        elif regime == "PRESS":
+            army_w -= 0.08
+            expand_w += 0.10
+            tech_w += 0.04
+            harass_w += 0.04
+        army_w = self._clamp(army_w, 0.08, 0.82)
+        expand_w = self._clamp(expand_w, 0.05, 0.65)
+        tech_w = self._clamp(tech_w, 0.05, 0.45)
+        harass_w = self._clamp(harass_w, 0.04, 0.45)
+        ws = army_w + tech_w + expand_w + harass_w
+        if ws <= 1e-6:
+            ws = 1.0
+        weights = {
+            "army": float(army_w / ws),
+            "tech": float(tech_w / ws),
+            "expand": float(expand_w / ws),
+            "harass": float(harass_w / ws),
+        }
+
+        base_bank_m = int(self.cfg.base_bank_target_minerals)
+        base_bank_g = int(self.cfg.base_bank_target_gas)
+        if regime == "STABILIZE":
+            bank_m = int(max(280, round(float(base_bank_m) * 0.86)))
+            bank_g = int(max(90, round(float(base_bank_g) * 0.90)))
+            regime_mode = "DEFENSIVE"
+            posture = "DEFENSIVE"
+        elif regime == "PRESS":
+            bank_m = int(max(300, round(float(base_bank_m) * 1.18)))
+            bank_g = int(max(100, round(float(base_bank_g) * 1.12)))
+            regime_mode = "PUNISH"
+            posture = "PRESSURE"
+        else:
+            bank_m = int(base_bank_m)
+            bank_g = int(base_bank_g)
+            regime_mode = "STANDARD"
+            posture = "STANDARD"
+
+        desired_mode_raw = str(awareness.mem.get(K("macro", "desired", "mode"), now=now, default="") or "").upper()
+        desired_phase = str(awareness.mem.get(K("macro", "desired", "phase"), now=now, default="OPENING") or "OPENING").upper()
+        desired_scenario = str(awareness.mem.get(K("macro", "desired", "scenario"), now=now, default="NORMAL") or "NORMAL").upper()
+        if desired_mode_raw in {"RUSH_RESPONSE", "DEFENSIVE", "STANDARD", "PUNISH"}:
+            strategic_mode = str(desired_mode_raw)
+            strategic_mode_source = "macro.desired"
+        else:
+            strategic_mode = str(regime_mode)
+            strategic_mode_source = "advantage.regime"
+
+        reserve_m = int(self._clamp((weights["tech"] * 230.0) + (weights["army"] * 140.0), 60.0, 280.0))
+        reserve_g = int(self._clamp((weights["tech"] * 170.0) + (weights["army"] * 70.0), 25.0, 210.0))
+
+        production_scale = {str(name): float(value) for name, value in self.cfg.base_production_scale}
+        scale_mul = 1.0
+        if regime == "STABILIZE":
+            scale_mul = 1.10
+        elif regime == "PRESS":
+            scale_mul = 1.06
+        scaled_prod = {}
+        for k_name, v in production_scale.items():
+            try:
+                scaled_prod[str(k_name)] = float(self._clamp(float(v) * float(scale_mul), 0.0, 8.0))
+            except Exception:
+                continue
+
+        ttl = float(self.cfg.ttl_s)
+        awareness.mem.set(K("macro", "control", "weights"), value=dict(weights), now=now, ttl=ttl)
+        awareness.mem.set(K("macro", "control", "bank_target_minerals"), value=int(bank_m), now=now, ttl=ttl)
+        awareness.mem.set(K("macro", "control", "bank_target_gas"), value=int(bank_g), now=now, ttl=ttl)
+        awareness.mem.set(K("macro", "control", "reserve_minerals"), value=int(reserve_m), now=now, ttl=ttl)
+        awareness.mem.set(K("macro", "control", "reserve_gas"), value=int(reserve_g), now=now, ttl=ttl)
+        awareness.mem.set(K("macro", "control", "strategic_mode"), value=str(strategic_mode), now=now, ttl=ttl)
+        awareness.mem.set(K("macro", "control", "strategic_mode_source"), value=str(strategic_mode_source), now=now, ttl=ttl)
+        awareness.mem.set(K("macro", "control", "phase"), value=str(desired_phase), now=now, ttl=ttl)
+        awareness.mem.set(K("macro", "control", "scenario"), value=str(desired_scenario), now=now, ttl=ttl)
+        awareness.mem.set(K("macro", "control", "attack_posture"), value=str(posture), now=now, ttl=ttl)
+        awareness.mem.set(K("macro", "control", "production_scale"), value=dict(scaled_prod), now=now, ttl=ttl)
+        awareness.mem.set(
+            K("macro", "control", "supervisor", "status"),
+            value={
+                "regime": str(regime),
+                "target_advantage": float(target_adv),
+                "advantage_score": float(adv_score),
+                "advantage_adjusted": float(adv_adjusted),
+                "advantage_trend": float(adv_trend),
+                "error": float(err),
+                "uncertainty": float(uncertainty),
+                "confidence": float(confidence),
+                "observation_ratio": float(obs_ratio),
+                "threat_urgency": int(threat_urgency),
+                "strategic_mode": str(strategic_mode),
+                "strategic_mode_source": str(strategic_mode_source),
+                "desired_phase": str(desired_phase),
+                "desired_scenario": str(desired_scenario),
+            },
+            now=now,
+            ttl=ttl,
+        )
+        awareness.mem.set(K("macro", "control", "supervisor", "regime"), value=str(regime), now=now, ttl=ttl)
+        awareness.mem.set(K("macro", "control", "supervisor", "last_update_t"), value=float(now), now=now, ttl=None)
+        awareness.mem.set(
+            K("macro", "control", "supervisor", "next_update_t"),
+            value=float(now) + max(1.0, float(self.cfg.update_interval_s)),
+            now=now,
+            ttl=None,
+        )

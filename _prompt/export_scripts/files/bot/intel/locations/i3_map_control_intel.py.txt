@@ -1,0 +1,313 @@
+# bot/intel/locations/i3_map_control_intel.py
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from sc2.ids.unit_typeid import UnitTypeId as U
+from sc2.position import Point2
+
+from bot.mind.attention import Attention
+from bot.mind.awareness import Awareness, K
+
+_WORKER_TYPES = {U.SCV, U.PROBE, U.DRONE, U.MULE, U.LARVA, U.EGG}
+_OWN_ARMY_WEIGHTS = {
+    U.SIEGETANK: 3.0,
+    U.SIEGETANKSIEGED: 4.5,
+    U.WIDOWMINE: 2.0,
+    U.WIDOWMINEBURROWED: 3.2,
+    U.CYCLONE: 1.5,
+    U.MARAUDER: 1.35,
+    U.MARINE: 1.0,
+    U.HELLION: 0.85,
+    U.THOR: 3.2,
+    U.THORAP: 3.2,
+    U.MEDIVAC: 0.6,
+    U.BUNKER: 4.0,
+}
+_ENEMY_WEIGHTS = {
+    U.SIEGETANK: 3.0,
+    U.SIEGETANKSIEGED: 4.5,
+    U.WIDOWMINE: 2.0,
+    U.WIDOWMINEBURROWED: 3.2,
+    U.CYCLONE: 1.6,
+    U.MARAUDER: 1.35,
+    U.MARINE: 1.0,
+    U.HELLION: 0.9,
+    U.THOR: 3.2,
+    U.THORAP: 3.2,
+    U.BUNKER: 4.0,
+    U.PHOTONCANNON: 3.6,
+    U.SPINECRAWLER: 3.6,
+}
+
+
+@dataclass(frozen=True)
+class MapControlIntelConfig:
+    ttl_s: float = 6.0
+    release_clear_s: float = 7.0
+    recent_window_s: float = 55.0
+    min_total_power: float = 6.0
+    min_main_power: float = 4.0
+    max_enemy_power_at_nat: float = 2.6
+    rush_refresh_scan_stale_s: float = 12.0
+    rush_refresh_min_interval_s: float = 12.0
+
+
+def _point_payload(pos: Point2 | None) -> dict[str, float] | None:
+    if pos is None:
+        return None
+    return {"x": float(pos.x), "y": float(pos.y)}
+
+
+def _pathable(bot, pos: Point2) -> bool:
+    try:
+        return bool(bot.in_pathing_grid(pos))
+    except Exception:
+        return True
+
+
+def _our_natural(bot) -> Point2 | None:
+    try:
+        return bot.mediator.get_own_nat
+    except Exception:
+        pass
+    exps = list(getattr(bot, "expansion_locations_list", []) or [])
+    if not exps:
+        return None
+    try:
+        ordered = sorted(
+            [p for p in exps if float(p.distance_to(bot.start_location)) > 2.0],
+            key=lambda p: float(bot.start_location.distance_to(p)),
+        )
+    except Exception:
+        ordered = exps
+    return ordered[0] if ordered else None
+
+
+def _main_townhall(bot):
+    ths = list(getattr(bot, "townhalls", []) or [])
+    if not ths:
+        return None
+    try:
+        ths.sort(key=lambda th: float(th.distance_to(bot.start_location)))
+    except Exception:
+        return ths[0]
+    return ths[0]
+
+
+def _enemy_combat_near(bot, *, center: Point2, radius: float) -> list:
+    out = []
+    for unit in list(getattr(bot, "enemy_units", []) or []):
+        try:
+            if unit.type_id in _WORKER_TYPES:
+                continue
+            if float(unit.distance_to(center)) <= float(radius):
+                out.append(unit)
+        except Exception:
+            continue
+    for struct in list(getattr(bot, "enemy_structures", []) or []):
+        try:
+            if float(struct.distance_to(center)) > float(radius):
+                continue
+            if struct.type_id in _WORKER_TYPES:
+                continue
+            if struct.type_id in {U.COMMANDCENTER, U.ORBITALCOMMAND, U.PLANETARYFORTRESS, U.HATCHERY, U.LAIR, U.HIVE, U.NEXUS}:
+                continue
+            out.append(struct)
+        except Exception:
+            continue
+    return out
+
+
+def _own_power_near(bot, *, center: Point2, radius: float) -> float:
+    total = 0.0
+    for unit in list(getattr(bot, "units", []) or []) + list(getattr(bot, "structures", []) or []):
+        try:
+            weight = float(_OWN_ARMY_WEIGHTS.get(unit.type_id, 0.0))
+            if weight <= 0.0:
+                continue
+            if not bool(getattr(unit, "is_ready", True)):
+                continue
+            if float(unit.distance_to(center)) <= float(radius):
+                total += float(weight)
+        except Exception:
+            continue
+    return float(total)
+
+
+def _own_total_power(bot) -> float:
+    total = 0.0
+    for unit in list(getattr(bot, "units", []) or []) + list(getattr(bot, "structures", []) or []):
+        try:
+            if not bool(getattr(unit, "is_ready", True)):
+                continue
+            total += float(_OWN_ARMY_WEIGHTS.get(unit.type_id, 0.0))
+        except Exception:
+            continue
+    return float(total)
+
+
+def _enemy_power(units: list) -> float:
+    total = 0.0
+    for unit in list(units or []):
+        try:
+            total += float(_ENEMY_WEIGHTS.get(unit.type_id, 1.0))
+        except Exception:
+            total += 1.0
+    return float(total)
+
+
+def derive_map_control_intel(
+    bot,
+    *,
+    awareness: Awareness,
+    attention: Attention,
+    now: float,
+    cfg: MapControlIntelConfig = MapControlIntelConfig(),
+) -> None:
+    nat = _our_natural(bot)
+    if nat is None:
+        return
+
+    try:
+        enemy_main = bot.enemy_start_locations[0]
+    except Exception:
+        enemy_main = nat
+
+    hold_pos = nat.towards(enemy_main, 4.5)
+    staging_pos = nat.towards(bot.start_location, 3.0)
+    if not _pathable(bot, hold_pos):
+        hold_pos = nat
+    if not _pathable(bot, staging_pos):
+        staging_pos = nat
+
+    main_th = _main_townhall(bot)
+    main_th_tag = int(getattr(main_th, "tag", -1) or -1)
+    main_threat_active = False
+    for th in list(getattr(attention.combat, "base_threats", ()) or ()):
+        try:
+            if int(th.th_tag) == int(main_th_tag) and int(th.urgency) > 0:
+                main_threat_active = True
+                break
+        except Exception:
+            continue
+
+    main_enemy = _enemy_combat_near(bot, center=bot.start_location, radius=18.0)
+    nat_enemy = _enemy_combat_near(bot, center=nat, radius=18.0)
+    nat_enemy_power = _enemy_power(nat_enemy)
+
+    nat_taken = False
+    for th in list(getattr(bot, "townhalls", []) or []):
+        try:
+            if float(th.distance_to(nat)) <= 8.0:
+                nat_taken = True
+                break
+        except Exception:
+            continue
+
+    rush_state = str(awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
+    rush_active = rush_state in {"SUSPECTED", "CONFIRMED", "HOLDING"}
+    last_confirmed_t = float(
+        awareness.mem.get(K("enemy", "rush", "last_confirmed_t"), now=now, default=0.0) or 0.0
+    )
+    ended_t = float(awareness.mem.get(K("enemy", "rush", "ended_t"), now=now, default=0.0) or 0.0)
+    last_pressure_t = float(
+        awareness.mem.get(K("enemy", "rush", "last_seen_pressure_t"), now=now, default=0.0) or 0.0
+    )
+    rush_recent_mark = max(float(last_confirmed_t), float(ended_t))
+    rush_recent = bool(rush_active or (rush_recent_mark > 0.0 and (float(now) - float(rush_recent_mark)) <= float(cfg.recent_window_s)))
+    had_rush_context = bool(max(float(last_confirmed_t), float(ended_t), float(last_pressure_t)) > 0.0)
+    clear_for = max(0.0, float(now) - float(last_pressure_t)) if float(last_pressure_t) > 0.0 else 9999.0
+
+    own_total_power = _own_total_power(bot)
+    own_main_power = _own_power_near(bot, center=bot.start_location, radius=18.0)
+    own_nat_power = _own_power_near(bot, center=nat, radius=16.0)
+    no_direct_pressure = bool(not main_threat_active and len(main_enemy) <= 0 and int(attention.combat.primary_enemy_count) <= 0)
+
+    nat_scan_t = float(awareness.mem.get(K("intel", "scan", "by_label", "enemy_natural", "last_t"), now=now, default=0.0) or 0.0)
+    main_scan_t = float(awareness.mem.get(K("intel", "scan", "by_label", "enemy_main", "last_t"), now=now, default=0.0) or 0.0)
+    nat_scan_stale = (float(now) - float(nat_scan_t)) >= float(cfg.rush_refresh_scan_stale_s)
+    main_scan_stale = (float(now) - float(main_scan_t)) >= float(cfg.rush_refresh_scan_stale_s)
+    natural_seen_on_ground = bool(getattr(attention.enemy_build, "enemy_natural_on_ground", False))
+
+    refresh_label = ""
+    refresh_target = None
+    if rush_recent and no_direct_pressure:
+        if not natural_seen_on_ground and nat_scan_stale:
+            refresh_label = "enemy_natural"
+            refresh_target = getattr(attention.enemy_build, "enemy_natural_pos", None)
+        elif main_scan_stale:
+            refresh_label = "enemy_main"
+            refresh_target = getattr(attention.enemy_build, "enemy_main_pos", None)
+        elif nat_scan_stale:
+            refresh_label = "enemy_natural"
+            refresh_target = getattr(attention.enemy_build, "enemy_natural_pos", None)
+
+    if refresh_target is None:
+        refresh_label = ""
+
+    defer_reason = ""
+    should_secure = False
+    if nat_taken:
+        defer_reason = "nat_taken"
+    elif not bool(rush_recent or had_rush_context):
+        defer_reason = "no_rush_context"
+    elif not no_direct_pressure:
+        defer_reason = "main_under_pressure"
+    elif float(clear_for) < float(cfg.release_clear_s):
+        defer_reason = "pressure_not_clear_long_enough"
+    elif float(own_total_power) < float(cfg.min_total_power):
+        defer_reason = "army_too_small"
+    elif float(own_main_power) < float(cfg.min_main_power):
+        defer_reason = "main_hold_too_thin"
+    elif float(nat_enemy_power) > float(cfg.max_enemy_power_at_nat):
+        defer_reason = "enemy_still_controls_nat"
+    else:
+        should_secure = True
+        defer_reason = "commit_lowground"
+
+    payload = {
+        "updated_at": float(now),
+        "rush_state": str(rush_state),
+        "rush_active": bool(rush_active),
+        "rush_recent": bool(rush_recent),
+        "had_rush_context": bool(had_rush_context),
+        "clear_for": float(clear_for),
+        "nat_taken": bool(nat_taken),
+        "main_under_pressure": bool(not no_direct_pressure),
+        "main_threat_active": bool(main_threat_active),
+        "enemy_main_count": int(len(main_enemy)),
+        "enemy_nat_count": int(len(nat_enemy)),
+        "enemy_nat_power": float(round(float(nat_enemy_power), 3)),
+        "own_total_power": float(round(float(own_total_power), 3)),
+        "own_main_power": float(round(float(own_main_power), 3)),
+        "own_nat_power": float(round(float(own_nat_power), 3)),
+        "should_secure": bool(should_secure),
+        "defer_reason": str(defer_reason),
+        "need_refresh": bool(refresh_label),
+        "refresh_label": str(refresh_label),
+        "refresh_target": _point_payload(refresh_target),
+        "refresh_min_interval_s": float(cfg.rush_refresh_min_interval_s),
+        "target": _point_payload(nat),
+        "staging": _point_payload(staging_pos),
+        "hold": _point_payload(hold_pos),
+    }
+    awareness.mem.set(
+        K("intel", "map_control", "our_nat", "snapshot"),
+        value=dict(payload),
+        now=now,
+        ttl=float(cfg.ttl_s),
+    )
+    awareness.mem.set(
+        K("intel", "map_control", "our_nat", "should_secure"),
+        value=bool(should_secure),
+        now=now,
+        ttl=float(cfg.ttl_s),
+    )
+    awareness.mem.set(
+        K("intel", "map_control", "our_nat", "last_update_t"),
+        value=float(now),
+        now=now,
+        ttl=None,
+    )

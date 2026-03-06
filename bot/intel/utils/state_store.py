@@ -53,12 +53,16 @@ class EnemyRushStateStore:
         state: str,
         confidence: float,
         score: float,
+        severity: float,
+        tier: str,
         evidence: dict[str, Any],
         last_seen_pressure_t: float,
     ) -> None:
         self.awareness.mem.set(K("enemy", "rush", "state"), value=str(state), now=now, ttl=float(ttl_s))
         self.awareness.mem.set(K("enemy", "rush", "confidence"), value=float(confidence), now=now, ttl=float(ttl_s))
         self.awareness.mem.set(K("enemy", "rush", "score"), value=float(score), now=now, ttl=float(ttl_s))
+        self.awareness.mem.set(K("enemy", "rush", "severity"), value=float(severity), now=now, ttl=float(ttl_s))
+        self.awareness.mem.set(K("enemy", "rush", "tier"), value=str(tier), now=now, ttl=float(ttl_s))
         self.awareness.mem.set(K("enemy", "rush", "evidence"), value=dict(evidence), now=now, ttl=float(ttl_s))
         self.awareness.mem.set(
             K("enemy", "rush", "last_seen_pressure_t"),

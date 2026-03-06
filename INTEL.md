@@ -38,7 +38,7 @@ Racional da ordem:
 
 ## 1) Opening Contract Intel
 
-Arquivo: `bot/intel/opening_contract_intel.py`
+Arquivo: `bot/intel/enemy/opening_contract.py`
 
 Responsabilidade:
 - publicar status contratual do opening para sensores/planners/controls
@@ -243,7 +243,7 @@ Se outro modulo precisar escrever no mesmo prefixo, documentar override explicit
 2. Intel escreve em `Awareness.mem` com TTL adequado ao sinal.
 3. Sinais de decisao persistente ficam em Awareness, nao em Attention.
 4. Chaves `last_update_t` e `*_last_emit_t` devem ficar sem TTL.
-5. Falha de um intel nao deve quebrar o tick inteiro; degradar para default seguro.
+5. Violacao de contrato deve falhar rapido; nao mascarar com fallback implicito.
 
 ---
 

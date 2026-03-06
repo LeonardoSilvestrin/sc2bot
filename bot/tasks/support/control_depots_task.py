@@ -41,35 +41,160 @@ class ControlDepots(BaseTask):
         self.raise_urgency_min = int(raise_urgency_min)
         self.raise_enemy_count_min = int(raise_enemy_count_min)
 
+    @staticmethod
+    def _main_wall_depots(bot) -> list:
+        try:
+            ramp = getattr(bot, "main_base_ramp", None)
+            if ramp is None:
+                return []
+            depot_positions = list(getattr(ramp, "corner_depots", []) or [])
+        except Exception:
+            return []
+        out = []
+        for depot in list(bot.structures.of_type({U.SUPPLYDEPOT, U.SUPPLYDEPOTLOWERED}).ready):
+            try:
+                if any(float(depot.distance_to(pos)) <= 1.8 for pos in depot_positions):
+                    out.append(depot)
+            except Exception:
+                continue
+        return out
+
+    @staticmethod
+    def _enemy_near_main_wall(bot, *, radius: float = 10.0) -> bool:
+        try:
+            ramp = getattr(bot, "main_base_ramp", None)
+            if ramp is None:
+                return False
+            anchors = list(getattr(ramp, "corner_depots", []) or [])
+            top = getattr(ramp, "top_center", None)
+            if top is not None:
+                anchors.append(top)
+            bottom = getattr(ramp, "bottom_center", None)
+            if bottom is not None:
+                anchors.append(bottom)
+        except Exception:
+            return False
+        if not anchors:
+            return False
+        enemies = list(getattr(bot, "enemy_units", []) or [])
+        for enemy in enemies:
+            try:
+                if bool(getattr(enemy, "is_flying", False)):
+                    continue
+                if any(float(enemy.distance_to(anchor)) <= float(radius) for anchor in anchors):
+                    return True
+            except Exception:
+                continue
+        return False
+
+    @staticmethod
+    def _point_near_main_wall(bot, point: Point2 | None, *, radius: float = 12.0) -> bool:
+        if point is None:
+            return False
+        try:
+            ramp = getattr(bot, "main_base_ramp", None)
+            if ramp is None:
+                return False
+            anchors = list(getattr(ramp, "corner_depots", []) or [])
+            top = getattr(ramp, "top_center", None)
+            if top is not None:
+                anchors.append(top)
+            bottom = getattr(ramp, "bottom_center", None)
+            if bottom is not None:
+                anchors.append(bottom)
+        except Exception:
+            return False
+        if not anchors:
+            return False
+        try:
+            return any(float(point.distance_to(anchor)) <= float(radius) for anchor in anchors)
+        except Exception:
+            return False
+
+    @staticmethod
+    def _should_raise_depot(
+        depot,
+        *,
+        main_wall_tags: set[int],
+        main_wall_threatened: bool,
+        target: Point2 | None,
+        raise_radius: float,
+    ) -> bool:
+        try:
+            tag = int(depot.tag)
+        except Exception:
+            return False
+        if tag in main_wall_tags:
+            return bool(main_wall_threatened)
+        if target is None:
+            return False
+        try:
+            return float(depot.distance_to(target)) <= float(raise_radius)
+        except Exception:
+            return False
+
     async def on_step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult:
         now = float(tick.time)
         urgency = int(attention.combat.primary_urgency)
         enemy_count = int(attention.combat.primary_enemy_count)
+        rush_state = str(self.awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
+        rush_active = rush_state in {"SUSPECTED", "CONFIRMED", "HOLDING"}
+        target = attention.combat.primary_threat_pos if attention.combat.primary_threat_pos is not None else self.threat_pos
+        main_wall_enemy_near = self._enemy_near_main_wall(bot, radius=max(14.0, float(self.raise_radius) + 4.0))
+        main_wall_target_near = self._point_near_main_wall(bot, target, radius=max(14.0, float(self.raise_radius) + 4.0))
         threatened = urgency >= int(self.raise_urgency_min) and enemy_count >= int(self.raise_enemy_count_min)
+        threatened = bool(threatened or main_wall_enemy_near or main_wall_target_near or (rush_active and enemy_count > 0))
 
         issued = 0
         action = "none"
-        target = attention.combat.primary_threat_pos if attention.combat.primary_threat_pos is not None else self.threat_pos
+        main_wall_threatened = bool(
+            main_wall_enemy_near
+            or main_wall_target_near
+            or (rush_active and enemy_count > 0)
+        )
+        main_wall_tags = {int(d.tag) for d in self._main_wall_depots(bot)}
+        all_depots = list(bot.structures.of_type({U.SUPPLYDEPOT, U.SUPPLYDEPOTLOWERED}).ready)
+
+        any_non_wall_raised = False
+        for depot in all_depots:
+            desired_raised = bool(
+                threatened
+                and self._should_raise_depot(
+                    depot,
+                    main_wall_tags=main_wall_tags,
+                    main_wall_threatened=main_wall_threatened,
+                    target=target,
+                    raise_radius=float(self.raise_radius),
+                )
+            )
+            try:
+                tag = int(depot.tag)
+            except Exception:
+                tag = -1
+            try:
+                is_lowered = depot.type_id == U.SUPPLYDEPOTLOWERED
+                is_raised = depot.type_id == U.SUPPLYDEPOT
+                if desired_raised and is_lowered:
+                    depot(AbilityId.MORPH_SUPPLYDEPOT_RAISE)
+                    issued += 1
+                elif (not desired_raised) and is_raised:
+                    depot(AbilityId.MORPH_SUPPLYDEPOT_LOWER)
+                    issued += 1
+                if desired_raised and tag not in main_wall_tags:
+                    any_non_wall_raised = True
+            except Exception:
+                continue
 
         if threatened:
-            if target is None:
-                self._done("depots_no_threat_pos")
-                return TaskResult.done(
-                    "depots_no_threat_pos",
-                    telemetry={"threatened": True, "urgency": int(urgency), "orders": 0, "radius": float(self.raise_radius)},
-                )
-            lowered = bot.structures.of_type({U.SUPPLYDEPOTLOWERED}).ready
-            for depot in lowered:
-                if float(depot.distance_to(target)) > float(self.raise_radius):
-                    continue
-                depot(AbilityId.MORPH_SUPPLYDEPOT_RAISE)
-                issued += 1
-            action = "raise_local"
+            if main_wall_threatened and any_non_wall_raised:
+                action = "raise_main_wall_and_local"
+            elif main_wall_threatened:
+                action = "raise_main_wall_only"
+            elif any_non_wall_raised:
+                action = "raise_local_lower_main_wall"
+            else:
+                action = "lower"
         else:
-            raised = bot.structures.of_type({U.SUPPLYDEPOT}).ready
-            for depot in raised:
-                depot(AbilityId.MORPH_SUPPLYDEPOT_LOWER)
-                issued += 1
             action = "lower"
 
         self.awareness.mem.set(K("ops", "macro", "wall", "depot_control", "last_done_at"), value=now, now=now, ttl=None)
@@ -82,6 +207,10 @@ class ControlDepots(BaseTask):
                 "threatened": bool(threatened),
                 "urgency": int(urgency),
                 "enemy_count": int(enemy_count),
+                "rush_active": bool(rush_active),
+                "main_wall_enemy_near": bool(main_wall_enemy_near),
+                "main_wall_target_near": bool(main_wall_target_near),
+                "main_wall_threatened": bool(main_wall_threatened),
                 "action": str(action),
                 "orders": int(issued),
                 "radius": float(self.raise_radius),

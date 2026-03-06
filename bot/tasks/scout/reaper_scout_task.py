@@ -63,6 +63,7 @@ class ReaperScout(BaseTask):
     avoid_enemy_near_bases: int = 6
     arrive_radius_main: float = 4.5
     arrive_radius_nat: float = 7.0
+    commit_main_waypoints_min: int = 2
 
     _last_log_t: float = field(default=0.0, init=False)
     _phase: int = field(default=0, init=False)
@@ -79,6 +80,7 @@ class ReaperScout(BaseTask):
         retreat_hp_frac: float = 0.40,
         arrive_radius_main: float = 4.5,
         arrive_radius_nat: float = 7.0,
+        commit_main_waypoints_min: int = 2,
     ):
         super().__init__(task_id="reaper_scout", domain="INTEL", commitment=7)
         self.awareness = awareness
@@ -91,6 +93,7 @@ class ReaperScout(BaseTask):
         self.retreat_hp_frac = float(retreat_hp_frac)
         self.arrive_radius_main = float(arrive_radius_main)
         self.arrive_radius_nat = float(arrive_radius_nat)
+        self.commit_main_waypoints_min = max(1, int(commit_main_waypoints_min))
         self._last_log_t = 0.0
         self._phase = 0
         self._waypoints = []
@@ -160,8 +163,7 @@ class ReaperScout(BaseTask):
 
     def _build_main_sweep_waypoints(self, bot) -> list[Point2]:
         enemy_main = self._enemy_main(bot)
-        _, landing = self._enemy_ramp_points(bot)
-        out: list[Point2] = [enemy_main, landing]
+        out: list[Point2] = [enemy_main]
         try:
             gases = list(bot.vespene_geyser.closer_than(14.0, enemy_main))
             gases.sort(key=lambda g: float(g.distance_to(enemy_main)))
@@ -225,7 +227,10 @@ class ReaperScout(BaseTask):
             enemy_nat = self._enemy_natural(bot)
             approach, landing = self._enemy_ramp_points(bot)
 
-            if self._phase < 3 and not self._is_locally_safe(bot, unit):
+            committed_main_sweep = bool(self._phase == 2 and self._wp_index >= int(self.commit_main_waypoints_min))
+            if self._phase < 2 and not self._is_locally_safe(bot, unit):
+                self._phase = 3
+            elif self._phase == 2 and committed_main_sweep and not self._is_locally_safe(bot, unit):
                 self._phase = 3
 
             if self._phase == 0:

@@ -136,6 +136,7 @@ class Ego:
         minerals = int(getattr(attention.economy, "minerals", 0) or 0)
         gas = int(getattr(attention.economy, "gas", 0) or 0)
         rush_state = str(awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
+        rush_tier = str(awareness.mem.get(K("enemy", "rush", "tier"), now=now, default="NONE") or "NONE").upper()
         rush_active = rush_state in {"SUSPECTED", "CONFIRMED", "HOLDING"}
         bank_overflow = bool(minerals >= 360 or (minerals >= 260 and gas >= 140))
         macro_enabled = True
@@ -144,7 +145,7 @@ class Ego:
             # or floating resources; otherwise all production can stall.
             if rush_active or bank_overflow:
                 reason = "hard_micro_pressure_but_macro_forced"
-                cadence = 0.35
+                cadence = 0.72 if rush_tier in {"HEAVY", "EXTREME"} else 0.60
             else:
                 reason = "hard_micro_pressure"
                 cadence = 0.0

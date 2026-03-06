@@ -12,6 +12,7 @@ from bot.mind.awareness import Awareness, K
 from bot.planners.utils.proposals import Proposal, TaskSpec, UnitRequirement
 from bot.tasks.scout.scan_task import ScanAt
 from bot.tasks.scout.reaper_scout_task import ReaperScout, ReaperScoutObjective
+from bot.tasks.scout.worker_expansion_scout_task import WorkerExpansionScoutTask
 
 
 @dataclass(frozen=True)
@@ -32,6 +33,31 @@ class ReaperScoutPickPolicy:
         return -dist
 
 
+@dataclass(frozen=True)
+class WorkerScoutPickPolicy:
+    objective: Point2
+    name: str = "intel.worker_scout.nearest_healthy_worker.v1"
+
+    def allow(self, unit, *, bot, attention, now: float) -> bool:
+        if unit is None or unit.type_id != U.SCV:
+            return False
+        if not bool(getattr(unit, "is_ready", False)):
+            return False
+        if float(getattr(unit, "health_percentage", 1.0) or 1.0) < 0.70:
+            return False
+        if bool(getattr(unit, "is_carrying_resource", False)):
+            return False
+        return True
+
+    def score(self, unit, *, bot, attention, now: float) -> float:
+        try:
+            dist = float(unit.distance_to(self.objective))
+        except Exception:
+            dist = 9999.0
+        hp = float(getattr(unit, "health_percentage", 1.0) or 1.0)
+        return (hp * 10.0) - dist
+
+
 @dataclass
 class IntelPlanner:
     planner_id: str = "intel_planner"
@@ -46,12 +72,23 @@ class IntelPlanner:
     verify_main_unseen_after_s: float = 300.0
     verify_main_stale_after_s: float = 240.0
     periodic_main_rescan_s: float = 180.0
+    worker_scout_min_workers: int = 16
+    worker_scout_lease_ttl_s: float = 70.0
+    worker_scout_route_len: int = 3
+    worker_scout_after_s: float = 240.0
+    worker_scout_stale_s: float = 90.0
+    worker_scout_post_rush_stale_s: float = 45.0
+    worker_scout_cadence_s: float = 65.0
+    worker_scout_post_rush_cadence_s: float = 30.0
 
     def _pid_reaper_scout(self) -> str:
         return f"{self.planner_id}:scout:reaper"
 
     def _pid_scan(self, label: str) -> str:
         return f"{self.planner_id}:scan:{label}"
+
+    def _pid_worker_scout(self, label: str) -> str:
+        return f"{self.planner_id}:scout:worker:{label}"
 
     def _enemy_main(self, bot) -> Point2:
         return bot.enemy_start_locations[0]
@@ -81,9 +118,86 @@ class IntelPlanner:
                 return gi.map_center
         return bot.start_location
 
+    def _enemy_expansion_candidates(self, bot) -> list[tuple[str, Point2]]:
+        enemy_main = self._enemy_main(bot)
+        exps = list(getattr(bot, "expansion_locations_list", []) or [])
+        if not exps:
+            return []
+        try:
+            exps_sorted = sorted(exps, key=lambda p: float(p.distance_to(enemy_main)))
+        except Exception:
+            exps_sorted = list(exps)
+        if len(exps_sorted) <= 1:
+            return []
+        names = {
+            1: "enemy_natural",
+            2: "enemy_third",
+            3: "enemy_fourth",
+            4: "enemy_fifth",
+            5: "enemy_sixth",
+        }
+        out: list[tuple[str, Point2]] = []
+        for idx, pos in enumerate(exps_sorted[1:], start=1):
+            out.append((str(names.get(idx, f"enemy_expand_{idx + 1}")), pos))
+        return out
+
+    def _worker_scout_route(self, *, bot, awareness: Awareness, attention: Attention, now: float) -> tuple[list[str], list[Point2], bool]:
+        if int(attention.economy.workers_total) < int(self.worker_scout_min_workers):
+            return [], [], False
+        if int(attention.combat.primary_urgency) > 0 or int(attention.combat.primary_enemy_count) > 0:
+            return [], [], False
+        rush_state = str(awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
+        last_confirmed_t = float(awareness.mem.get(K("enemy", "rush", "last_confirmed_t"), now=now, default=0.0) or 0.0)
+        ended_t = float(awareness.mem.get(K("enemy", "rush", "ended_t"), now=now, default=0.0) or 0.0)
+        last_pressure_t = float(awareness.mem.get(K("enemy", "rush", "last_seen_pressure_t"), now=now, default=0.0) or 0.0)
+        had_rush_context = max(float(last_confirmed_t), float(ended_t), float(last_pressure_t)) > 0.0
+        post_rush = bool(had_rush_context and rush_state not in {"SUSPECTED", "CONFIRMED", "HOLDING"})
+        if (not post_rush) and float(now) < float(self.worker_scout_after_s):
+            return [], [], False
+
+        enemy_build_snapshot = awareness.mem.get(K("enemy", "build", "snapshot"), now=now, default={}) or {}
+        if not isinstance(enemy_build_snapshot, dict):
+            enemy_build_snapshot = {}
+        bases_visible = int(enemy_build_snapshot.get("bases_visible", 0) or 0)
+
+        stale_s = float(self.worker_scout_post_rush_stale_s if post_rush else self.worker_scout_stale_s)
+        cadence_s = float(self.worker_scout_post_rush_cadence_s if post_rush else self.worker_scout_cadence_s)
+        last_route_t = float(awareness.mem.get(K("intel", "worker_scout", "last_route_t"), now=now, default=0.0) or 0.0)
+        if (float(now) - float(last_route_t)) < float(cadence_s):
+            return [], [], post_rush
+
+        labels: list[str] = []
+        route: list[Point2] = []
+        for label, pos in self._enemy_expansion_candidates(bot):
+            last_t = float(
+                awareness.mem.get(K("intel", "worker_scout", "by_label", str(label), "last_t"), now=now, default=0.0) or 0.0
+            )
+            if float(last_t) > 0.0 and (float(now) - float(last_t)) < float(stale_s):
+                continue
+            labels.append(str(label))
+            route.append(pos)
+            if len(route) >= int(self.worker_scout_route_len):
+                break
+
+        if not route:
+            return [], [], post_rush
+        if (not post_rush) and int(bases_visible) >= 3:
+            return [], [], post_rush
+        return labels, route, post_rush
+
+    @staticmethod
+    def _point_from_payload(payload) -> Point2 | None:
+        if not isinstance(payload, dict):
+            return None
+        try:
+            return Point2((float(payload.get("x", 0.0) or 0.0), float(payload.get("y", 0.0) or 0.0)))
+        except Exception:
+            return None
+
     def propose(self, bot, *, awareness: Awareness, attention: Attention) -> list[Proposal]:
         now = float(attention.time)
         proposals: list[Proposal] = []
+        proposed_scan_labels: set[str] = set()
 
         if self.awareness is None:
             raise TypeError("IntelPlanner requires awareness injected")
@@ -148,6 +262,64 @@ class IntelPlanner:
                     )
 
         # -------------------------
+        # 0.5) Worker expansion scout
+        # -------------------------
+        worker_labels, worker_route, worker_post_rush = self._worker_scout_route(
+            bot=bot,
+            awareness=awareness,
+            attention=attention,
+            now=now,
+        )
+        worker_pid = self._pid_worker_scout("enemy_expansions")
+        if worker_route and not awareness.ops_proposal_running(proposal_id=worker_pid, now=now):
+            objective = worker_route[0]
+            pick_policy = WorkerScoutPickPolicy(objective=objective)
+
+            def _worker_scout_factory(mission_id: str) -> WorkerExpansionScoutTask:
+                return WorkerExpansionScoutTask(
+                    awareness=awareness,
+                    route=worker_route,
+                    labels=worker_labels,
+                    log=self.log,
+                )
+
+            proposals.append(
+                Proposal(
+                    proposal_id=worker_pid,
+                    domain="INTEL",
+                    score=76 if bool(worker_post_rush) else 58,
+                    tasks=[
+                        TaskSpec(
+                            task_id="worker_expansion_scout",
+                            task_factory=_worker_scout_factory,
+                            unit_requirements=[
+                                UnitRequirement(
+                                    unit_type=U.SCV,
+                                    count=1,
+                                    pick_policy=pick_policy,
+                                )
+                            ],
+                        )
+                    ],
+                    lease_ttl=float(self.worker_scout_lease_ttl_s),
+                    cooldown_s=float(self.worker_scout_post_rush_cadence_s if bool(worker_post_rush) else self.worker_scout_cadence_s),
+                    risk_level=1,
+                    allow_preempt=True,
+                )
+            )
+            if self.log:
+                self.log.emit(
+                    "intel_worker_scout_proposed",
+                    {
+                        "t": round(float(now), 2),
+                        "proposal_id": str(worker_pid),
+                        "post_rush": bool(worker_post_rush),
+                        "labels": list(worker_labels),
+                    },
+                    meta={"module": "planner", "component": f"planner.{self.planner_id}"},
+                )
+
+        # -------------------------
         # 1) Scan controller (threat + timed verification)
         # -------------------------
         orbital_ready = bool(attention.intel.orbital_ready_to_scan)
@@ -188,9 +360,51 @@ class IntelPlanner:
                         allow_preempt=True,
                     )
                 )
+                proposed_scan_labels.add(str(label))
 
         if not orbital_ready:
             return proposals
+
+        map_control_snapshot = awareness.mem.get(
+            K("intel", "map_control", "our_nat", "snapshot"),
+            now=now,
+            default={},
+        ) or {}
+        if isinstance(map_control_snapshot, dict) and bool(map_control_snapshot.get("need_refresh", False)):
+            label = str(map_control_snapshot.get("refresh_label", "") or "")
+            target = self._point_from_payload(map_control_snapshot.get("refresh_target"))
+            min_interval = float(map_control_snapshot.get("refresh_min_interval_s", 12.0) or 12.0)
+            last_scan_t = float(
+                awareness.mem.get(K("intel", "scan", "by_label", str(label), "last_t"), now=now, default=0.0) or 0.0
+            )
+            if (
+                label
+                and target is not None
+                and str(label) not in proposed_scan_labels
+                and (float(now) - float(last_scan_t)) >= float(min_interval)
+            ):
+                def _rush_refresh_factory(mission_id: str) -> ScanAt:
+                    return ScanAt(
+                        awareness=awareness,
+                        target=target,
+                        label=label,
+                        cooldown=float(min_interval),
+                        log=self.log,
+                    )
+
+                proposals.append(
+                    Proposal(
+                        proposal_id=self._pid_scan(f"rush_refresh:{label}"),
+                        domain="INTEL",
+                        score=74,
+                        tasks=[TaskSpec(task_id="scan_at", task_factory=_rush_refresh_factory, unit_requirements=[])],
+                        lease_ttl=5.0,
+                        cooldown_s=float(min_interval),
+                        risk_level=1,
+                        allow_preempt=True,
+                    )
+                )
+                proposed_scan_labels.add(str(label))
 
         # Timed verification: at ~5:00 we should validate natural/main if intel is stale.
         last_main_seen_t = float(
@@ -214,7 +428,7 @@ class IntelPlanner:
             float(last_nat_scan_t) <= 0.0 or (float(now) - float(last_nat_scan_t) >= float(self.periodic_main_rescan_s))
         )
 
-        if nat_scan_due:
+        if nat_scan_due and "enemy_natural" not in proposed_scan_labels:
             target = self._enemy_natural(bot)
             label = "enemy_natural"
 
@@ -233,8 +447,9 @@ class IntelPlanner:
                     allow_preempt=True,
                 )
             )
+            proposed_scan_labels.add(str(label))
 
-        if main_scan_due:
+        if main_scan_due and "enemy_main" not in proposed_scan_labels:
             target = self._enemy_main(bot)
             label = "enemy_main"
 
@@ -253,8 +468,9 @@ class IntelPlanner:
                     allow_preempt=True,
                 )
             )
+            proposed_scan_labels.add(str(label))
 
-        if self.log and (nat_scan_due or main_scan_due):
+        if self.log and (nat_scan_due or main_scan_due or bool(map_control_snapshot.get("need_refresh", False))):
             self.log.emit(
                 "intel_scan_policy",
                 {
@@ -266,6 +482,8 @@ class IntelPlanner:
                     "last_main_seen_t": round(float(last_main_seen_t), 2),
                     "last_main_scan_t": round(float(last_main_scan_t), 2),
                     "last_nat_scan_t": round(float(last_nat_scan_t), 2),
+                    "rush_refresh": bool(map_control_snapshot.get("need_refresh", False)),
+                    "rush_refresh_label": str(map_control_snapshot.get("refresh_label", "") or ""),
                 },
                 meta={"module": "planner", "component": f"planner.{self.planner_id}"},
             )

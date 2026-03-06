@@ -13,15 +13,18 @@ from bot.devlog import DevLogger
 from bot.intel.strategy.i2_CTRL_advantage_game_status_intel import AdvantageGameStatusIntel, AdvantageGameStatusIntelConfig
 from bot.intel.locations.i1_pathing_flow_intel import PathingFlowIntelConfig, derive_pathing_flow_intel
 from bot.intel.locations.i2_pathing_route_intel import PathingRouteIntelConfig, derive_pathing_route_intel
+from bot.intel.locations.i3_map_control_intel import MapControlIntelConfig, derive_map_control_intel
 from bot.intel.mission.i1_mission_unit_threat_intel import MissionUnitThreatIntelConfig, derive_mission_unit_threat_intel
 from bot.intel.mission.i2_mission_value_intel import MissionValueIntelConfig, derive_mission_value_intel
 from bot.sensors.threat_sensor import Threat
 from bot.sensors.pathing_sensor import GroundAvoidanceSensorConfig, publish_ground_avoidance_sensor
 from bot.intel.enemy.enemy_build_intel import EnemyBuildIntelConfig, derive_enemy_build_intel
+from bot.intel.enemy.opening_contract import derive_opening_contract_intel
 from bot.intel.strategy.i1_game_parity_intel import GameParityIntelConfig, derive_game_parity_intel
 from bot.intel.macro.desired_intel import MyArmyCompositionConfig, derive_my_army_composition_intel
-from bot.intel.enemy.opening_intel import OpeningIntelConfig, derive_enemy_opening_intel, derive_opening_contract_intel
+from bot.intel.enemy.opening_intel import OpeningIntelConfig, derive_enemy_opening_intel
 from bot.mind.attention import derive_attention
+from bot.mind.opening_state import apply_opening_request, require_active_opening_state, sync_opening_selection_from_runner
 from bot.mind.awareness import Awareness, K
 from bot.mind.body import UnitLeases
 from bot.mind.ego import Ego, EgoConfig
@@ -34,7 +37,9 @@ from bot.planners.defense_planner import DefensePlanner
 from bot.planners.harass_planner import HarassPlanner
 from bot.planners.housekeeping_planner import HousekeepingPlanner
 from bot.planners.intel_planner import IntelPlanner
+from bot.planners.map_control_planner import MapControlPlanner
 from bot.planners.reinforce_mission_planner import ReinforceMissionPlanner
+from bot.planners.wall_planner import WallPlanner
 
 from bot.planners.macro_orchestrator_planner import MacroOrchestratorPlanner
 
@@ -81,6 +86,7 @@ class RuntimeApp:
     pathing_sensor_cfg: GroundAvoidanceSensorConfig
     pathing_flow_cfg: PathingFlowIntelConfig
     pathing_route_cfg: PathingRouteIntelConfig
+    map_control_cfg: MapControlIntelConfig
     mission_unit_threat_cfg: MissionUnitThreatIntelConfig
     mission_value_cfg: MissionValueIntelConfig
     advantage_game_status_intel: AdvantageGameStatusIntel
@@ -148,8 +154,10 @@ class RuntimeApp:
         harass_planner = HarassPlanner(log=log)
         reinforce_mission_planner = ReinforceMissionPlanner(log=log)
         intel_planner = IntelPlanner(awareness=awareness, log=log)
+        wall_planner = WallPlanner(log=log)
         housekeeping_planner = HousekeepingPlanner(log=log)
         macro_orchestrator_planner = MacroOrchestratorPlanner(log=log)
+        map_control_planner = MapControlPlanner(log=log)
 
         # Keep opening as a "pre-macro" handled by its own planner.
         # For now: register opening via a tiny planner-inline shim inside runtime:
@@ -208,6 +216,8 @@ class RuntimeApp:
                 harass_planner,
                 reinforce_mission_planner,
                 intel_planner,
+                map_control_planner,
+                wall_planner,
                 housekeeping_planner,
                 opening_planner,
                 macro_orchestrator_planner,
@@ -227,6 +237,7 @@ class RuntimeApp:
             pathing_sensor_cfg=GroundAvoidanceSensorConfig(),
             pathing_flow_cfg=PathingFlowIntelConfig(),
             pathing_route_cfg=PathingRouteIntelConfig(),
+            map_control_cfg=MapControlIntelConfig(),
             mission_unit_threat_cfg=MissionUnitThreatIntelConfig(),
             mission_value_cfg=MissionValueIntelConfig(),
             advantage_game_status_intel=AdvantageGameStatusIntel(AdvantageGameStatusIntelConfig()),
@@ -252,6 +263,11 @@ class RuntimeApp:
             awareness=self.awareness,
             now=float(getattr(bot, "time", 0.0) or 0.0),
         )
+        sync_opening_selection_from_runner(
+            bot=bot,
+            awareness=self.awareness,
+            now=float(getattr(bot, "time", 0.0) or 0.0),
+        )
         if self.log:
             self.log.emit("runtime_start", {})
 
@@ -260,7 +276,7 @@ class RuntimeApp:
         # Keep Ares resource-manager bookkeeping actively applied each frame.
         bot.register_behavior(Mining())
         derive_opening_contract_intel(bot, awareness=self.awareness, now=now)
-        self._sync_opening_selection_from_runner(bot=bot, now=now)
+        sync_opening_selection_from_runner(bot=bot, awareness=self.awareness, now=now)
         publish_ground_avoidance_sensor(
             bot,
             awareness=self.awareness,
@@ -277,6 +293,8 @@ class RuntimeApp:
             now=now,
             cfg=self.opening_cfg,
         )
+        apply_opening_request(bot=bot, awareness=self.awareness, now=now, log=self.log)
+        sync_opening_selection_from_runner(bot=bot, awareness=self.awareness, now=now)
         derive_enemy_build_intel(
             bot,
             awareness=self.awareness,
@@ -312,6 +330,13 @@ class RuntimeApp:
             attention=attention,
             now=now,
             cfg=self.pathing_route_cfg,
+        )
+        derive_map_control_intel(
+            bot,
+            awareness=self.awareness,
+            attention=attention,
+            now=now,
+            cfg=self.map_control_cfg,
         )
         derive_mission_unit_threat_intel(
             bot,
@@ -356,17 +381,6 @@ class RuntimeApp:
         tick = TaskTick(iteration=int(iteration), time=now)
         await self.ego.tick(bot, tick=tick, attention=attention, awareness=self.awareness)
         self._emit_runtime_clock(iteration=int(iteration), now=now)
-
-    def _sync_opening_selection_from_runner(self, *, bot, now: float) -> None:
-        bor = getattr(bot, "build_order_runner", None)
-        if bor is None:
-            return
-        opening = str(getattr(bor, "chosen_opening", "") or "").strip()
-        if not opening:
-            return
-        self.awareness.mem.set(K("macro", "opening", "selected"), value=str(opening), now=float(now), ttl=30.0)
-        transition = "BANSHEE" if str(opening) == "MechaOpen" else "STIM"
-        self.awareness.mem.set(K("macro", "opening", "transition_target"), value=str(transition), now=float(now), ttl=30.0)
 
     async def on_end(self, bot, game_result: Result) -> None:
         if self.log:
@@ -655,14 +669,7 @@ class RuntimeApp:
 
     async def _emit_chat_updates(self, bot, *, now: float) -> None:
         # Keep chat minimal: opening announcement + rush/build alert only.
-        opening_selected = str(self.awareness.mem.get(K("macro", "opening", "selected"), now=now, default="") or "")
-        if not opening_selected:
-            bor = getattr(bot, "build_order_runner", None)
-            if bor is not None:
-                opening_selected = str(getattr(bor, "chosen_opening", "") or "")
-        transition_target = str(
-            self.awareness.mem.get(K("macro", "opening", "transition_target"), now=now, default="") or ""
-        ).upper()
+        opening_selected, transition_target = require_active_opening_state(awareness=self.awareness, now=now)
         if opening_selected and opening_selected != str(self._chat_last_opening):
             self._chat_last_opening = str(opening_selected)
             msg = f"Opening: {opening_selected}"

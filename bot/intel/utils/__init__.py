@@ -1,4 +1,3 @@
-from bot.intel.utils.opening_policy import OpeningDecision, OpeningIntelPolicy
 from bot.intel.utils.opening_types import OpeningIntelConfig
 from bot.intel.utils.state_store import EnemyRushStateStore, EnemyWeakPointsStateStore
 from bot.intel.utils.weak_points_policy import WeakPointsDecision, WeakPointsPolicy
@@ -6,8 +5,6 @@ from bot.intel.utils.weak_points_types import WeakPointsIntelConfig
 
 __all__ = [
     "OpeningIntelConfig",
-    "OpeningDecision",
-    "OpeningIntelPolicy",
     "EnemyRushStateStore",
     "WeakPointsIntelConfig",
     "WeakPointsDecision",

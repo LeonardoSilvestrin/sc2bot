@@ -13,6 +13,7 @@ from bot.builds.profile_compact import expand_compact_profile
 from bot.intel.utils.upgrade_catalog import derive_upgrades_from_comp
 from bot.mind.attention import Attention
 from bot.mind.awareness import Awareness, K
+from bot.mind.opening_state import require_active_opening_state, set_requested_opening_state
 
 
 # ===== BEGIN build_catalog.py =====
@@ -71,14 +72,6 @@ def resolve_build_profile(*, opening_selected: str, transition_target: str, phas
         root_transition_overrides = dict(selected_profile.get("transition_overrides", {}) or {})
         root_scenario_overrides = dict(selected_profile.get("scenario_overrides_by_phase", {}) or {})
         chosen = scenarios.get(scenario_name)
-        if not isinstance(chosen, dict):
-            chosen = scenarios.get("NORMAL")
-        if not isinstance(chosen, dict):
-            # deterministic fallback: first dict entry
-            for _k, _v in scenarios.items():
-                if isinstance(_v, dict):
-                    chosen = dict(_v)
-                    break
         if not isinstance(chosen, dict):
             raise RuntimeError(f"invalid_contract:build_profile:{opening}:missing_scenario:{scenario_name or 'UNKNOWN'}")
         selected_profile = dict(chosen)
@@ -295,16 +288,59 @@ def derive_macro_mode_intel(
     if not isinstance(aggression_source, dict):
         aggression_source = {}
     rush_is_early = bool(aggression_source.get("rush_is_early", False))
-    opening_selected = str(awareness.mem.get(K("macro", "opening", "selected"), now=now, default="MechaOpen") or "MechaOpen")
-    transition_target = str(
-        awareness.mem.get(K("macro", "opening", "transition_target"), now=now, default="BANSHEE") or "BANSHEE"
-    ).upper()
+    rush_state = str(awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
+    rush_state = str(awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
+    rush_state = str(awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
+    rush_tier = str(awareness.mem.get(K("enemy", "rush", "tier"), now=now, default="NONE") or "NONE").upper()
+    rush_severity = float(awareness.mem.get(K("enemy", "rush", "severity"), now=now, default=0.0) or 0.0)
+    opening_selected, transition_target = require_active_opening_state(awareness=awareness, now=now)
+    scout_no_natural_confirmed = bool(
+        awareness.mem.get(K("enemy", "rush", "scout_no_natural_confirmed"), now=now, default=False)
+    )
+    no_natural_structural_confirmed = bool(
+        awareness.mem.get(K("enemy", "rush", "no_natural_structural_confirmed"), now=now, default=False)
+    )
+    rush_last_seen_pressure_t = float(
+        awareness.mem.get(K("enemy", "rush", "last_seen_pressure_t"), now=now, default=0.0) or 0.0
+    )
+    requested_opening = str(opening_selected)
+    requested_transition_target = str(transition_target)
+    opening_request_reason = "follow_current_opening"
     banshee_harass_done = bool(awareness.mem.get(K("ops", "harass", "banshee", "done"), now=now, default=False))
     opening_done = bool(attention.macro.opening_done)
     phase = _phase_for_build(now=float(now), opening_done=bool(opening_done), cfg=cfg)
     phase_profile = _phase_profile_key(str(phase))
     # Build profile is phase-seeded only. Runtime adaptation handles pressure/flood dynamics.
     scenario = "NORMAL"
+
+    if str(opening_selected) == "MechaOpen" and bool(
+        scout_no_natural_confirmed
+        or no_natural_structural_confirmed
+        or rush_state == "CONFIRMED"
+        or (rush_state == "HOLDING" and rush_tier in {"HEAVY", "EXTREME"})
+    ):
+        requested_opening = "RushDefenseOpen"
+        requested_transition_target = "STIM"
+        opening_request_reason = "enemy_rush_confirmed"
+    rush_stable_clear = bool(
+        str(opening_selected) == "RushDefenseOpen"
+        and bool(attention.macro.opening_done)
+        and rush_state in {"NONE", "ENDED"}
+        and (float(now) - float(rush_last_seen_pressure_t)) >= 28.0
+    )
+    if rush_stable_clear:
+        requested_opening = "BioOpen"
+        requested_transition_target = "STIM"
+        opening_request_reason = "rush_stable_clear"
+
+    set_requested_opening_state(
+        awareness=awareness,
+        now=now,
+        opening=str(requested_opening),
+        transition_target=str(requested_transition_target),
+        reason=str(opening_request_reason),
+        ttl_s=float(cfg.ttl_s),
+    )
 
     profile = resolve_build_profile(
         opening_selected=str(opening_selected),
@@ -323,7 +359,9 @@ def derive_macro_mode_intel(
     rush_detected = bool((rush_is_early and rush_state in {"CONFIRMED", "HOLDING", "SUSPECTED"}) or aggression_state == "RUSH")
     pressure = float(adaptive.get("pressure", 0.0) or 0.0)
     flood = float(adaptive.get("flood", 0.0) or 0.0)
-    if rush_detected and float(pressure) >= 0.70:
+    if rush_tier in {"HEAVY", "EXTREME"}:
+        mode = "RUSH_RESPONSE"
+    elif rush_detected and float(pressure) >= 0.70:
         mode = "RUSH_RESPONSE"
     elif float(pressure) >= 0.52:
         mode = "DEFENSIVE"
@@ -340,12 +378,18 @@ def derive_macro_mode_intel(
         K("macro", "desired", "signals"),
         value={
             "rush_state": str(rush_state),
+            "rush_tier": str(rush_tier),
+            "rush_severity": float(rush_severity),
             "aggression_state": str(aggression_state),
             "enemy_kind": str(enemy_kind),
             "scenario": str(scenario),
             "confidence": float(conf),
             "opening_selected": str(opening_selected),
             "transition_target": str(transition_target),
+            "requested_opening": str(requested_opening),
+            "requested_transition_target": str(requested_transition_target),
+            "opening_request_reason": str(opening_request_reason),
+            "rush_stable_clear": bool(rush_stable_clear),
             "banshee_harass_done": bool(banshee_harass_done),
             "build_phase": str(phase),
             "phase_profile": str(phase_profile),
@@ -362,6 +406,8 @@ def derive_macro_mode_intel(
         "profile": dict(profile),
         "opening_selected": str(opening_selected),
         "transition_target": str(transition_target),
+        "requested_opening": str(requested_opening),
+        "requested_transition_target": str(requested_transition_target),
         "banshee_harass_done": bool(banshee_harass_done),
         "build_phase": str(phase),
         "phase_profile": str(phase_profile),
@@ -370,6 +416,8 @@ def derive_macro_mode_intel(
         "enemy_kind": str(enemy_kind),
         "confidence": float(conf),
         "rush_state": str(rush_state),
+        "rush_tier": str(rush_tier),
+        "rush_severity": float(rush_severity),
         "aggression_state": str(aggression_state),
         "adaptive": dict(adaptive),
     }
@@ -412,6 +460,12 @@ def _inject_unit_comp_bias(comp: dict[str, float], *, unit_name: str, weight: fl
     if unit_name in out:
         return out
     out[str(unit_name)] = float(weight)
+    return _normalize(out)
+
+
+def _boost_unit_comp_bias(comp: dict[str, float], *, unit_name: str, weight: float) -> dict[str, float]:
+    out = dict(comp)
+    out[str(unit_name)] = float(out.get(str(unit_name), 0.0) or 0.0) + float(weight)
     return _normalize(out)
 
 
@@ -576,7 +630,6 @@ def derive_army_comp_intel(
     profile: dict[str, Any],
     mode: str,
     opening_selected: str,
-    transition_target: str,
     banshee_harass_done: bool,
     cfg: ArmyCompIntelConfig = ArmyCompIntelConfig(),
 ) -> dict[str, Any]:
@@ -600,6 +653,19 @@ def derive_army_comp_intel(
         priority_units = _prepend_unique(priority_units, missing_harass_unit)
         comp = _inject_unit_comp_bias(comp, unit_name=str(missing_harass_unit), weight=0.12)
 
+    rush_state = str(awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
+    rush_tier = str(awareness.mem.get(K("enemy", "rush", "tier"), now=now, default="NONE") or "NONE").upper()
+    rush_severity = float(awareness.mem.get(K("enemy", "rush", "severity"), now=now, default=0.0) or 0.0)
+    if str(opening_selected) == "MechaOpen" and rush_tier in {"HEAVY", "EXTREME"}:
+        priority_units = _prepend_unique(priority_units, "MARINE")
+        comp = _boost_unit_comp_bias(
+            comp,
+            unit_name="MARINE",
+            weight=(0.22 if rush_tier == "HEAVY" else 0.34),
+        )
+        if float(rush_severity) >= 0.90:
+            priority_units = _prepend_unique(priority_units, "MARAUDER")
+
     wants_banshee_path = bool("BANSHEE" in set(str(x) for x in priority_units) or float(comp.get("BANSHEE", 0.0) or 0.0) >= 0.08)
     if bool(wants_banshee_path) and not bool(banshee_harass_done):
         priority_units = _prepend_unique(priority_units, "BANSHEE")
@@ -617,6 +683,17 @@ def derive_army_comp_intel(
     if allow_lagging_bias and lag_unit_name is not None and float(lag_unit_gap) > 0.0:
         priority_units = _prepend_unique(priority_units, str(lag_unit_name))
         comp = _inject_unit_comp_bias(comp, unit_name=str(lag_unit_name), weight=0.18)
+
+    if str(opening_selected) == "RushDefenseOpen" and rush_state in {"SUSPECTED", "CONFIRMED", "HOLDING"}:
+        allowed_units = {"MARINE", "MARAUDER", "SIEGETANK"}
+        comp = {str(name): float(weight) for name, weight in comp.items() if str(name) in allowed_units and float(weight) > 0.0}
+        comp = _boost_unit_comp_bias(comp, unit_name="SIEGETANK", weight=0.16)
+        comp = _boost_unit_comp_bias(comp, unit_name="MARINE", weight=0.10)
+        priority_units = ["SIEGETANK", "MARINE", "MARAUDER"] + [
+            str(unit_name)
+            for unit_name in priority_units
+            if str(unit_name) in allowed_units and str(unit_name) not in {"SIEGETANK", "MARINE", "MARAUDER"}
+        ]
 
     comp = _normalize(comp)
     controller_comp = _controller_comp(comp=comp, priority_units=priority_units)
@@ -679,6 +756,7 @@ def derive_tech_intel(
     now: float,
     profile: dict[str, Any],
     mode: str,
+    opening_selected: str,
     comp: dict[str, float],
     reserve_unit: str,
     cfg: TechIntelConfig = TechIntelConfig(),
@@ -743,9 +821,13 @@ def derive_tech_intel(
             continue
         milestone_upgrades.extend([str(x) for x in raw if isinstance(x, str)])
     upgrades = _merge_upgrade_lists(upgrades, milestone_upgrades)
-    opening_selected = str(
-        awareness.mem.get(K("macro", "opening", "selected"), now=now, default="MechaOpen") or "MechaOpen"
-    )
+    rush_tier = str(awareness.mem.get(K("enemy", "rush", "tier"), now=now, default="NONE") or "NONE").upper()
+    rush_state = str(awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
+    addon_targets: dict[str, int] = {}
+    if float(comp.get("SIEGETANK", 0.0) or 0.0) > 0.0 or float(comp.get("CYCLONE", 0.0) or 0.0) > 0.0:
+        addon_targets["FACTORYTECHLAB"] = 1
+    if float(comp.get("BANSHEE", 0.0) or 0.0) > 0.0:
+        addon_targets["STARPORTTECHLAB"] = 1
     if opening_selected == "MechaOpen":
         blocked_bio = {
             "STIMPACK",
@@ -766,6 +848,39 @@ def derive_tech_intel(
                 "TERRANVEHICLEANDSHIPARMORSLEVEL1",
                 "TERRANSHIPWEAPONSLEVEL1",
             ]
+        if rush_tier in {"HEAVY", "EXTREME"}:
+            barracks_floor = 2 if rush_tier == "HEAVY" else 3
+            barracks_scale_floor = 0.55 if rush_tier == "HEAVY" else 0.90
+            production_structure_targets["BARRACKS"] = max(
+                int(production_structure_targets.get("BARRACKS", 0) or 0),
+                int(barracks_floor),
+            )
+            production_scale["BARRACKS"] = max(
+                float(production_scale.get("BARRACKS", 0.0) or 0.0),
+                float(barracks_scale_floor),
+            )
+    if opening_selected == "RushDefenseOpen" and rush_state in {"SUSPECTED", "CONFIRMED", "HOLDING"}:
+        upgrades = []
+        tech_structure_targets = {}
+        tech_timing_milestones = []
+        addon_targets["BARRACKSREACTOR"] = max(1, int(addon_targets.get("BARRACKSREACTOR", 0) or 0))
+        addon_targets["FACTORYTECHLAB"] = max(1, int(addon_targets.get("FACTORYTECHLAB", 0) or 0))
+        barracks_floor = 3 if rush_tier in {"LIGHT", "MEDIUM", "NONE"} else 4
+        barracks_scale_floor = 1.20 if rush_tier in {"LIGHT", "MEDIUM", "NONE"} else 1.55
+        production_structure_targets["BARRACKS"] = max(
+            int(production_structure_targets.get("BARRACKS", 0) or 0),
+            int(barracks_floor),
+        )
+        production_scale["BARRACKS"] = max(
+            float(production_scale.get("BARRACKS", 0.0) or 0.0),
+            float(barracks_scale_floor),
+        )
+        production_structure_targets["FACTORY"] = max(
+            int(production_structure_targets.get("FACTORY", 0) or 0),
+            1,
+        )
+        production_structure_targets["STARPORT"] = 0
+        production_scale["STARPORT"] = 0.0
     due_structures = _due_structures_by_time(milestones=tech_timing_milestones, now_t=float(now))
     # Contract: structures in tech_targets are due-by-time; phase cap stays in tech_structure_targets.
     tech_targets = {"upgrades": list(upgrades), "structures": dict(due_structures)}
@@ -786,6 +901,7 @@ def derive_tech_intel(
         now=now,
         ttl=float(cfg.ttl_s),
     )
+    awareness.mem.set(K("macro", "desired", "addon_targets"), value=dict(addon_targets), now=now, ttl=float(cfg.ttl_s))
     awareness.mem.set(K("macro", "desired", "tech_structure_targets"), value=dict(tech_structure_targets), now=now, ttl=float(cfg.ttl_s))
     awareness.mem.set(K("macro", "desired", "tech_timing_milestones"), value=list(tech_timing_milestones), now=now, ttl=float(cfg.ttl_s))
     awareness.mem.set(K("macro", "desired", "tech_targets"), value=dict(tech_targets), now=now, ttl=float(cfg.ttl_s))
@@ -793,6 +909,7 @@ def derive_tech_intel(
     return {
         "production_structure_targets": dict(production_structure_targets),
         "production_scale": dict(production_scale),
+        "addon_targets": dict(addon_targets),
         "tech_structure_targets": dict(tech_structure_targets),
         "tech_timing_milestones": list(tech_timing_milestones),
         "upgrades": list(upgrades),
@@ -835,7 +952,6 @@ def derive_my_army_composition_intel(
         profile=dict(mode_ctx["profile"]),
         mode=str(mode_ctx["mode"]),
         opening_selected=str(mode_ctx["opening_selected"]),
-        transition_target=str(mode_ctx["transition_target"]),
         banshee_harass_done=bool(mode_ctx["banshee_harass_done"]),
         cfg=ArmyCompIntelConfig(ttl_s=float(cfg.ttl_s), log_interval_s=float(cfg.log_interval_s)),
     )
@@ -844,6 +960,7 @@ def derive_my_army_composition_intel(
         now=now,
         profile=dict(mode_ctx["profile"]),
         mode=str(mode_ctx["mode"]),
+        opening_selected=str(mode_ctx["opening_selected"]),
         comp=dict(army_ctx["comp"]),
         reserve_unit=str(army_ctx["top_unit"]),
         cfg=TechIntelConfig(ttl_s=float(cfg.ttl_s)),

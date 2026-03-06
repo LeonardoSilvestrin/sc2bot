@@ -1,0 +1,186 @@
+# bot/tasks/defense/defense_bunker_task.py
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from sc2.ids.unit_typeid import UnitTypeId as U
+from sc2.position import Point2
+
+from bot.devlog import DevLogger
+from bot.mind.attention import Attention
+from bot.tasks.base_task import BaseTask, TaskResult, TaskTick
+
+
+@dataclass
+class DefenseBunkerTask(BaseTask):
+    base_tag: int
+    base_pos: Point2
+    threat_pos: Point2 | None = None
+    anchor_mode: str = "BASE"
+    log: DevLogger | None = None
+
+    def __init__(
+        self,
+        *,
+        base_tag: int,
+        base_pos: Point2,
+        threat_pos: Point2 | None = None,
+        anchor_mode: str = "BASE",
+        log: DevLogger | None = None,
+    ) -> None:
+        super().__init__(task_id="defense_bunker", domain="DEFENSE", commitment=70)
+        self.base_tag = int(base_tag)
+        self.base_pos = base_pos
+        self.threat_pos = threat_pos
+        self.anchor_mode = str(anchor_mode or "BASE").upper()
+        self.log = log
+
+    def _resolve_base_pos(self, bot) -> Point2:
+        th = bot.townhalls.find_by_tag(int(self.base_tag))
+        if th is not None:
+            return th.position
+        return self.base_pos
+
+    def _bunker_anchor(self, bot, *, base_pos: Point2) -> Point2:
+        mode = str(self.anchor_mode or "BASE").upper()
+        if mode == "MAIN_RAMP":
+            try:
+                ramp = getattr(bot, "main_base_ramp", None)
+                if ramp is not None:
+                    top = getattr(ramp, "top_center", None)
+                    if top is not None:
+                        return top
+            except Exception:
+                pass
+            try:
+                enemy_main = bot.enemy_start_locations[0]
+                return bot.start_location.towards(enemy_main, 8.0)
+            except Exception:
+                return bot.start_location
+        if mode == "NAT_CHOKE":
+            try:
+                return base_pos.towards(bot.start_location, 4.5)
+            except Exception:
+                return base_pos
+        if mode == "PERIMETER":
+            try:
+                if self.threat_pos is not None:
+                    return base_pos.towards(self.threat_pos, 5.0)
+            except Exception:
+                pass
+        try:
+            main_anchor = bot.start_location
+        except Exception:
+            main_anchor = None
+        if main_anchor is None:
+            return base_pos
+        try:
+            return base_pos.towards(main_anchor, 4.5)
+        except Exception:
+            return base_pos
+
+    @staticmethod
+    def _building_tracker(bot) -> dict:
+        try:
+            return dict(bot.mediator.get_building_tracker_dict or {})
+        except Exception:
+            return {}
+
+    def _bunker_started_or_ready(self, bot, *, base_pos: Point2) -> bool:
+        anchor = self._bunker_anchor(bot, base_pos=base_pos)
+        use_anchor = str(self.anchor_mode or "BASE").upper() in {"MAIN_RAMP", "NAT_CHOKE"}
+        ref_pos = anchor if use_anchor else base_pos
+        ref_radius = 9.0 if use_anchor else 16.0
+        try:
+            for b in bot.structures(U.BUNKER):
+                if float(b.distance_to(ref_pos)) <= float(ref_radius):
+                    return True
+        except Exception:
+            pass
+        for entry in self._building_tracker(bot).values():
+            if not isinstance(entry, dict):
+                continue
+            if entry.get("structure_type", None) != U.BUNKER:
+                continue
+            pos = entry.get("target", None) or entry.get("pos", None)
+            if pos is None:
+                continue
+            try:
+                if float(pos.distance_to(ref_pos)) <= float(ref_radius):
+                    return True
+            except Exception:
+                continue
+        return False
+
+    async def _choose_bunker_position(self, bot, *, base_pos: Point2, anchor: Point2) -> Point2 | None:
+        mode = str(self.anchor_mode or "BASE").upper()
+        if mode in {"MAIN_RAMP", "NAT_CHOKE"}:
+            try:
+                pos = await bot.find_placement(U.BUNKER, near=anchor, max_distance=6)
+                if pos is not None:
+                    return pos
+            except Exception:
+                pass
+        try:
+            pos = bot.mediator.request_building_placement(
+                base_location=(bot.start_location if mode == "MAIN_RAMP" else base_pos),
+                structure_type=U.BUNKER,
+                bunker=True,
+                closest_to=anchor,
+                reserve_placement=False,
+            )
+            if pos is not None:
+                return pos
+        except Exception:
+            pass
+        try:
+            pos = bot.mediator.request_building_placement(
+                base_location=base_pos,
+                structure_type=U.BUNKER,
+                bunker=False,
+                closest_to=anchor,
+                reserve_placement=False,
+            )
+            if pos is not None:
+                return pos
+        except Exception:
+            pass
+        try:
+            return await bot.find_placement(U.BUNKER, near=anchor, max_distance=8)
+        except Exception:
+            return None
+
+    async def on_step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult:
+        bound_err = self.require_mission_bound()
+        if bound_err is not None:
+            return bound_err
+
+        base_pos = self._resolve_base_pos(bot)
+        if self._bunker_started_or_ready(bot, base_pos=base_pos):
+            self._done("bunker_ready_or_started")
+            return TaskResult.done("bunker_ready_or_started")
+
+        anchor = self._bunker_anchor(bot, base_pos=base_pos)
+        pos = await self._choose_bunker_position(bot, base_pos=base_pos, anchor=anchor)
+        if pos is None:
+            return TaskResult.noop("bunker_position_unavailable")
+        try:
+            worker = bot.mediator.select_worker(target_position=pos, force_close=True)
+        except Exception:
+            worker = None
+        if worker is None:
+            return TaskResult.noop("bunker_worker_unavailable")
+        try:
+            if bool(
+                bot.mediator.build_with_specific_worker(
+                    worker=worker,
+                    structure_type=U.BUNKER,
+                    pos=pos,
+                )
+            ):
+                self._active("building_defense_bunker")
+                return TaskResult.running("building_defense_bunker")
+        except Exception:
+            return TaskResult.noop("bunker_build_command_failed")
+        return TaskResult.noop("bunker_build_command_rejected")

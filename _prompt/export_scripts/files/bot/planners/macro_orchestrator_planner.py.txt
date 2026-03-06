@@ -9,12 +9,12 @@ from typing import Any
 
 from sc2.ids.unit_typeid import UnitTypeId as U
 
-from bot.control.macro_resource_controller import MacroResourceController
 from bot.devlog import DevLogger
 from bot.mind.attention import Attention
 from bot.mind.awareness import Awareness, K
 from bot.planners.utils.base_planner import BasePlanner
 from bot.planners.utils.proposals import Proposal, TaskSpec
+from bot.planners.utils.spending_policy import SpendingPolicy
 from bot.tasks.macro.tasks.macro_ares_executor_tick import MacroAresExecutorTick
 from bot.tasks.tech.tasks.tech_ares_executor_tick import TechAresExecutorTick
 
@@ -80,6 +80,12 @@ class MacroOrchestratorPlanner(BasePlanner):
     production_boost_utilization_min: float = 0.66
     production_boost_change_cooldown_s: float = 18.0
     production_boost_max: int = 2
+    rush_production_overflow_minerals: int = 180
+    rush_production_overflow_gas: int = 100
+    rush_production_overflow_off_minerals: int = 80
+    rush_production_overflow_off_gas: int = 40
+    rush_production_boost_utilization_min: float = 0.38
+    rush_production_boost_max: int = 3
     lane_switch_margin: float = 0.12
     lane_min_hold_s: float = 6.0
     lane_watchdog_expand_minerals: int = 760
@@ -90,6 +96,10 @@ class MacroOrchestratorPlanner(BasePlanner):
     ahead_expand_min_army_supply: float = 24.0
     rush_army_dump_minerals: int = 500
     aggression_army_dump_minerals: int = 900
+    rush_natural_release_clear_s: float = 16.0
+    rush_natural_release_min_army_supply: float = 14.0
+    rush_natural_release_min_tanks: int = 1
+    rush_natural_release_bunker_ok: bool = True
 
     housekeeping_score: int = 18
     housekeeping_interval_s: float = 4.0
@@ -109,7 +119,7 @@ class MacroOrchestratorPlanner(BasePlanner):
     _last_tech_exec_publish_at: float = -9999.0
     _last_plan_hash: str = ""
     _plan_version: int = 0
-    _resource_controller: MacroResourceController = field(default_factory=MacroResourceController)
+    _resource_controller: SpendingPolicy = field(default_factory=SpendingPolicy)
 
     @staticmethod
     def _clamp01(x: float) -> float:
@@ -262,20 +272,37 @@ class MacroOrchestratorPlanner(BasePlanner):
         util = 1.0 - float(idle_pressure)
         expand_gap = max(0, int(desired_expand_to) - int(bases_now))
         workers_stable = bool(int(workers_total) >= max(1, int(scv_cap) - 1))
+        rush_state = str(awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
+        rush_tier = str(awareness.mem.get(K("enemy", "rush", "tier"), now=now, default="NONE") or "NONE").upper()
+        rush_hard_active = bool(rush_state in {"CONFIRMED", "HOLDING"})
+        rush_heavy_active = bool(rush_hard_active and rush_tier in {"HEAVY", "EXTREME"})
+        rush_workers_stable = bool(int(workers_total) >= max(22, int(scv_cap) - 12))
+        util_min = float(self.rush_production_boost_utilization_min) if rush_hard_active else float(self.production_boost_utilization_min)
         can_boost = bool(
-            workers_stable
-            and int(expand_gap) <= 0
-            and float(util) >= float(self.production_boost_utilization_min)
+            (rush_workers_stable if rush_hard_active else workers_stable)
+            and (int(expand_gap) <= 0 or rush_hard_active)
+            and float(util) >= float(util_min)
         )
+        over_m_on = int(self.rush_production_overflow_minerals) if rush_hard_active else int(self.production_overflow_minerals)
+        over_g_on = int(self.rush_production_overflow_gas) if rush_hard_active else int(self.production_overflow_gas)
+        over_m_off = int(self.rush_production_overflow_off_minerals) if rush_hard_active else int(self.production_overflow_off_minerals)
+        over_g_off = int(self.rush_production_overflow_off_gas) if rush_hard_active else int(self.production_overflow_off_gas)
+        boost_cap = int(self.rush_production_boost_max) if rush_hard_active else int(self.production_boost_max)
         boost_target = 0
-        if can_boost and (int(over_m) >= int(self.production_overflow_minerals) or int(over_g) >= int(self.production_overflow_gas)):
+        if can_boost and (int(over_m) >= int(over_m_on) or int(over_g) >= int(over_g_on)):
             boost_target = 1
-            if int(over_m) >= int(self.production_overflow_minerals) * 2:
+            if int(over_m) >= int(over_m_on) * 2:
                 boost_target = 2
-        elif (int(over_m) <= int(self.production_overflow_off_minerals) and int(over_g) <= int(self.production_overflow_off_gas)):
+            if rush_heavy_active and (
+                int(over_m) >= int(over_m_on) * 3
+                or float(army_supply_pressure) >= 0.55
+                or float(construction_pressure) >= 0.45
+            ):
+                boost_target = max(int(boost_target), 3)
+        elif (int(over_m) <= int(over_m_off) and int(over_g) <= int(over_g_off)):
             boost_target = 0
 
-        boost_target = max(0, min(int(self.production_boost_max), int(boost_target)))
+        boost_target = max(0, min(int(boost_cap), int(boost_target)))
         boost_prev = int(awareness.mem.get(K("macro", "exec", "production_boost_level"), now=now, default=0) or 0)
         boost_changed_at = float(
             awareness.mem.get(K("macro", "exec", "production_boost_changed_at"), now=now, default=-9999.0) or -9999.0
@@ -294,7 +321,13 @@ class MacroOrchestratorPlanner(BasePlanner):
         air_w = sum(float(desired_comp.get(n, 0.0) or 0.0) for n in ("MEDIVAC", "VIKINGFIGHTER", "LIBERATOR", "BANSHEE", "RAVEN"))
         mech_w = sum(float(desired_comp.get(n, 0.0) or 0.0) for n in ("HELLION", "SIEGETANK", "CYCLONE", "THOR"))
         bio_w = sum(float(desired_comp.get(n, 0.0) or 0.0) for n in ("MARINE", "MARAUDER", "GHOST"))
-        if air_w >= mech_w and air_w >= bio_w:
+        desired_signals = awareness.mem.get(K("macro", "desired", "signals"), now=now, default={}) or {}
+        if not isinstance(desired_signals, dict):
+            desired_signals = {}
+        opening_selected = str(desired_signals.get("opening_selected", "") or "")
+        if rush_hard_active or opening_selected == "RushDefenseOpen":
+            boost_order = ["BARRACKS", "FACTORY", "STARPORT"]
+        elif air_w >= mech_w and air_w >= bio_w:
             boost_order = ["STARPORT", "FACTORY", "BARRACKS"]
         elif mech_w >= bio_w:
             boost_order = ["FACTORY", "STARPORT", "BARRACKS"]
@@ -368,7 +401,8 @@ class MacroOrchestratorPlanner(BasePlanner):
             milestones=tech_milestones,
             now=float(now),
         )
-        desired_structures = dict(due_structures) if due_structures else dict(desired_structures_all)
+        # Respect timing milestones: only due structures should influence immediate tech pressure.
+        desired_structures = dict(due_structures)
         desired_upgrades = (
             [u for u in due_upgrades if u in set(str(x) for x in desired_upgrades_all)]
             if due_upgrades
@@ -511,6 +545,13 @@ class MacroOrchestratorPlanner(BasePlanner):
             scores["production"] += 0.12
             scores["expand"] -= 0.65
             scores["workers"] -= 0.20
+        rush_tier = str(awareness.mem.get(K("enemy", "rush", "tier"), now=now, default="NONE") or "NONE").upper()
+        if rush_tier in {"HEAVY", "EXTREME"}:
+            scores["production"] += 0.26
+            scores["expand"] -= 0.22
+        if rush_tier == "EXTREME":
+            scores["spawn"] += 0.18
+            scores["workers"] -= 0.08
 
         if ahead_expand_push and enable_expansion:
             scores["expand"] += 0.48
@@ -665,6 +706,23 @@ class MacroOrchestratorPlanner(BasePlanner):
         bases_now = int(attention.macro.bases_total)
         pending_cc = int(bot.already_pending(U.COMMANDCENTER) or 0)
         total_bases = int(bases_now + pending_cc)
+        desired_signals = awareness.mem.get(K("macro", "desired", "signals"), now=now, default={}) or {}
+        if not isinstance(desired_signals, dict):
+            desired_signals = {}
+        opening_selected = str(desired_signals.get("opening_selected", "") or "")
+        enemy_build_snapshot = awareness.mem.get(K("enemy", "build", "snapshot"), now=now, default={}) or {}
+        if not isinstance(enemy_build_snapshot, dict):
+            enemy_build_snapshot = {}
+        enemy_bases_visible = int(enemy_build_snapshot.get("bases_visible", 0) or 0)
+        enemy_natural_on_ground = bool(enemy_build_snapshot.get("natural_on_ground", False))
+        rush_state_early = str(awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
+        scout_no_natural_confirmed = bool(
+            awareness.mem.get(K("enemy", "rush", "scout_no_natural_confirmed"), now=now, default=False)
+        )
+        enemy_one_base_rush = bool(
+            rush_state_early in {"SUSPECTED", "CONFIRMED", "HOLDING"}
+            and (bool(scout_no_natural_confirmed) or int(enemy_bases_visible) <= 1 or not bool(enemy_natural_on_ground))
+        )
 
         if phase == "OPENING":
             scv_cap = int(self.scv_cap_opening)
@@ -697,6 +755,8 @@ class MacroOrchestratorPlanner(BasePlanner):
         )
         if ahead_expand_push:
             base_expand = max(int(base_expand), int(total_bases) + 1)
+        if bool(enemy_one_base_rush) or str(opening_selected) == "RushDefenseOpen":
+            base_expand = min(int(base_expand), 2)
 
         lag_prod, lag_spend, lag_tech = self._publish_priority_lags(
             bot=bot,
@@ -719,8 +779,6 @@ class MacroOrchestratorPlanner(BasePlanner):
         workers_per_refinery = int(gas_decision.target_workers_per_refinery)
         if phase == "OPENING":
             gas_target = min(int(gas_target), int(self.opening_gas_cap))
-            workers_per_refinery = 3
-        elif phase == "MID":
             workers_per_refinery = 3
         elif phase == "LATE" and not pressure_high:
             gas_target += int(self.late_gas_bonus)
@@ -747,18 +805,53 @@ class MacroOrchestratorPlanner(BasePlanner):
             freeflow_mode = False
 
         rush_state = str(awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
+        rush_tier = str(awareness.mem.get(K("enemy", "rush", "tier"), now=now, default="NONE") or "NONE").upper()
+        rush_severity = float(awareness.mem.get(K("enemy", "rush", "severity"), now=now, default=0.0) or 0.0)
+        rush_last_seen_pressure_t = float(
+            awareness.mem.get(K("enemy", "rush", "last_seen_pressure_t"), now=now, default=0.0) or 0.0
+        )
         aggression_state = str(
             awareness.mem.get(K("enemy", "aggression", "state"), now=now, default="NONE") or "NONE"
         ).upper()
         rush_is_early = bool(float(now) <= float(self.rush_phase_max_s))
         rush_active = bool(rush_is_early and rush_state in {"SUSPECTED", "CONFIRMED", "HOLDING"})
+        rush_hard_active = bool(rush_state in {"CONFIRMED", "HOLDING"})
+        rush_heavy_active = bool(rush_active and rush_tier in {"HEAVY", "EXTREME"})
         aggression_active = bool(aggression_state == "AGGRESSION")
         rush_army_dump = bool(
-            (rush_active and int(attention.economy.minerals) >= int(self.rush_army_dump_minerals))
+            rush_heavy_active
+            or rush_hard_active
+            or (rush_active and int(attention.economy.minerals) >= int(self.rush_army_dump_minerals))
             or (aggression_active and int(attention.economy.minerals) >= int(self.aggression_army_dump_minerals))
         )
         if rush_army_dump:
             freeflow_mode = True
+        if rush_hard_active or rush_heavy_active:
+            ahead_expand_push = False
+        rush_clear_for = max(0.0, float(now) - float(rush_last_seen_pressure_t)) if float(rush_last_seen_pressure_t) > 0.0 else 9999.0
+        try:
+            tanks_ready = int(bot.units.of_type({U.SIEGETANK, U.SIEGETANKSIEGED}).ready.amount)
+        except Exception:
+            tanks_ready = 0
+        try:
+            bunkers_ready = int(bot.structures(U.BUNKER).ready.amount)
+        except Exception:
+            bunkers_ready = 0
+        try:
+            army_supply_now = float(getattr(bot, "supply_army", 0.0) or 0.0)
+        except Exception:
+            army_supply_now = 0.0
+        rush_natural_release = bool(
+            int(bases_now) < 2
+            and bool(attention.macro.opening_done)
+            and not bool(pressure_high)
+            and float(rush_clear_for) >= float(self.rush_natural_release_clear_s)
+            and (
+                int(tanks_ready) >= int(self.rush_natural_release_min_tanks)
+                or float(army_supply_now) >= float(self.rush_natural_release_min_army_supply)
+                or (bool(self.rush_natural_release_bunker_ok) and int(bunkers_ready) > 0)
+            )
+        )
 
         expand_to = self._cooldown_value(
             awareness=awareness,
@@ -768,6 +861,8 @@ class MacroOrchestratorPlanner(BasePlanner):
             proposed=max(1, int(base_expand)),
             cooldown_s=float(self.critical_expand_cooldown_s),
         )
+        if bool(enemy_one_base_rush) or str(opening_selected) == "RushDefenseOpen":
+            expand_to = min(int(expand_to), 2)
         gas_target = self._cooldown_value(
             awareness=awareness,
             now=now,
@@ -779,13 +874,21 @@ class MacroOrchestratorPlanner(BasePlanner):
 
         enable_workers = bool(not pressure_high or int(attention.economy.workers_total) < 32)
         enable_expansion = bool(not pressure_high)
+        enable_production = True
         if phase == "OPENING" and int(total_bases) < 2:
             enable_expansion = True
         if ahead_expand_push:
             enable_expansion = True
-        if rush_army_dump:
+        if rush_army_dump or rush_hard_active:
             enable_expansion = False
             expand_to = min(int(expand_to), int(bases_now))
+        if bool(enemy_one_base_rush) or str(opening_selected) == "RushDefenseOpen":
+            if bool(rush_natural_release):
+                enable_expansion = True
+                expand_to = 2
+            else:
+                enable_expansion = False
+                expand_to = min(int(expand_to), min(2, int(bases_now)))
 
         lane_order, lane_scores, lane_top = self._lane_order(
             awareness=awareness,
@@ -798,7 +901,7 @@ class MacroOrchestratorPlanner(BasePlanner):
             enable_supply=True,
             enable_gas=True,
             enable_spawn=True,
-            enable_production=True,
+            enable_production=bool(enable_production),
             enable_expansion=bool(enable_expansion),
             scv_cap=int(scv_cap),
             expand_to=max(1, int(expand_to)),
@@ -850,8 +953,11 @@ class MacroOrchestratorPlanner(BasePlanner):
         awareness.mem.set(K("macro", "exec", "freeflow_mode"), value=bool(freeflow_mode), now=now, ttl=ttl)
         awareness.mem.set(K("macro", "exec", "emergency_mineral_dump"), value=bool(emergency_dump), now=now, ttl=ttl)
         awareness.mem.set(K("macro", "exec", "rush_army_dump"), value=bool(rush_army_dump), now=now, ttl=ttl)
+        awareness.mem.set(K("macro", "exec", "rush_heavy_active"), value=bool(rush_heavy_active), now=now, ttl=ttl)
+        awareness.mem.set(K("macro", "exec", "rush_tier"), value=str(rush_tier), now=now, ttl=ttl)
+        awareness.mem.set(K("macro", "exec", "rush_severity"), value=float(rush_severity), now=now, ttl=ttl)
         awareness.mem.set(K("macro", "exec", "ahead_expand_push"), value=bool(ahead_expand_push), now=now, ttl=ttl)
-        awareness.mem.set(K("macro", "exec", "enable_production"), value=True, now=now, ttl=ttl)
+        awareness.mem.set(K("macro", "exec", "enable_production"), value=bool(enable_production), now=now, ttl=ttl)
         awareness.mem.set(K("macro", "exec", "enable_expansion"), value=bool(enable_expansion), now=now, ttl=ttl)
         awareness.mem.set(K("macro", "exec", "expand_to"), value=int(expand_to), now=now, ttl=ttl)
         awareness.mem.set(K("macro", "exec", "lane_order"), value=list(lane_order), now=now, ttl=ttl)
@@ -876,7 +982,11 @@ class MacroOrchestratorPlanner(BasePlanner):
                 "freeflow_mode": bool(freeflow_mode),
                 "emergency_mineral_dump": bool(emergency_dump),
                 "rush_army_dump": bool(rush_army_dump),
-                "enable_production": True,
+                "rush_tier": str(rush_tier),
+                "rush_severity": float(rush_severity),
+                "rush_clear_for": float(rush_clear_for),
+                "rush_natural_release": bool(rush_natural_release),
+                "enable_production": bool(enable_production),
                 "enable_expansion": bool(enable_expansion),
                 "expand_to": int(expand_to),
                 "ahead_expand_push": bool(ahead_expand_push),
@@ -900,6 +1010,15 @@ class MacroOrchestratorPlanner(BasePlanner):
         prod_idle = int(attention.macro.prod_structures_idle)
         pressure_high = self._pressure_high(awareness=awareness, attention=attention, now=now)
         emergency_dump = bool(awareness.mem.get(K("macro", "exec", "emergency_mineral_dump"), now=now, default=False))
+        rush_state = str(awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
+        desired_signals = awareness.mem.get(K("macro", "desired", "signals"), now=now, default={}) or {}
+        if not isinstance(desired_signals, dict):
+            desired_signals = {}
+        opening_selected = str(desired_signals.get("opening_selected", "") or "")
+        rush_tech_locked = bool(
+            opening_selected == "RushDefenseOpen"
+            and rush_state in {"SUSPECTED", "CONFIRMED", "HOLDING"}
+        )
         tech_pause_for_army = bool(
             int(prod_idle) >= int(self.tech_pause_idle_structures_min)
             and (
@@ -930,12 +1049,15 @@ class MacroOrchestratorPlanner(BasePlanner):
             and (bool(upgrades) or bool(structures))
             and (not pressure_high)
             and (not emergency_dump)
+            and (not rush_tech_locked)
             and (not tech_pause_for_army)
         )
         if pressure_high:
             reason = "paused_pressure_high"
         elif emergency_dump:
             reason = "paused_emergency_mineral_dump"
+        elif rush_tech_locked:
+            reason = "paused_rush_defense_active"
         elif tech_pause_for_army:
             reason = "paused_army_production_lag"
         elif opening_active:
@@ -963,6 +1085,8 @@ class MacroOrchestratorPlanner(BasePlanner):
                 "prod_idle": int(prod_idle),
                 "pressure_high": bool(pressure_high),
                 "emergency_mineral_dump": bool(emergency_dump),
+                "rush_tech_locked": bool(rush_tech_locked),
+                "opening_selected": str(opening_selected),
             },
             now=now,
             ttl=ttl,

@@ -1,10 +1,10 @@
 # bot/sensors/__init__.py
 
-from bot.sensors.game_state_sensor import GameStateSnapshot, derive_game_state_snapshot
-from bot.sensors.unit_threat_sensor import derive_unit_threat_snapshot
+"""
+Sensor package marker.
 
-__all__ = [
-    "GameStateSnapshot",
-    "derive_game_state_snapshot",
-    "derive_unit_threat_snapshot",
-]
+Keep this module import-light to avoid circular imports during bootstrap.
+Import concrete sensors directly from their modules.
+"""
+
+__all__: list[str] = []

@@ -7,91 +7,70 @@ MinGamesWinrateBased: 3
 BuildChoices:
   Protoss:
     BotName: MyBot
-    Cycle: [BansheeHellionOpen]
+    Cycle: [MechaOpen, BioOpen]
   Terran:
     BotName: MyBot
-    Cycle: [BansheeHellionOpen]
+    Cycle: [MechaOpen, BioOpen]
   Zerg:
     BotName: MyBot
-    Cycle: [BansheeHellionOpen]
+    Cycle: [MechaOpen, BioOpen]
   Random:
     BotName: MyBot
-    Cycle: [BansheeHellionOpen]
+    Cycle: [MechaOpen, BioOpen]
 
 Builds:
-  Default:
-    AutoSupplyAtSupply: 25
-    ConstantWorkerProductionTill: 32
-    OpeningBuildOrder:
-      - 14 supply @ ramp
-      - 12 worker_scout:
-          [enemy_spawn, enemy_nat, enemy_ramp, map_center]
-      - 16 barracks @ ramp
-      - 16 gas
-      - 0 orbital
-      - 19 reaper
-      - 19 expand
-      - 20 supply @ ramp
-      - 21 factory
-      - 21 barracksreactor
-      - 26 gas
-      - 21 starport
-      - 21 addonswap factory barracksreactor
-      - 23 hellion *4
-      - 0 orbital
-
-  DefensiveOpening:
-    AutoSupplyAtSupply: 30
-    ConstantWorkerProductionTill: 28
-    OpeningBuildOrder:
-      - 14 supply @ ramp
-      - 16 barracks @ ramp
-      - 16 gas
-      - 19 supply @ ramp
-      - 19 reaper
-      - 0 orbital
-      - 20 marine *3
-      - 21 factory
-      - 21 gas
-      - 21 starport
-      - 23 marine *4
-
-  BansheeHellionOpen:
+  BioOpen:
     AutoSupplyAtSupply: 25
     ConstantWorkerProductionTill: 60
     OpeningBuildOrder:
       - 14 supply @ ramp
-      - 12 worker_scout:
-          [enemy_spawn, enemy_nat, enemy_ramp, map_center]
+      - 16 barracks @ ramp
+      - 16 gas
+      - 0 orbital
+      - 19 expand
+      - 20 supply @ ramp
+      - 20 barracksreactor
+      - 24 factory @ ramp
+      - 24 gas
+      - 24 marine *2
+      - 26 starport
+      - 24 factorytechlab
+      - 30 siegetank
+
+  MechaOpen:
+    AutoSupplyAtSupply: 25
+    ConstantWorkerProductionTill: 60
+    OpeningBuildOrder:
+      - 14 supply @ ramp
       - 16 barracks @ ramp
       - 16 gas
       - 0 orbital
       - 19 reaper
       - 19 expand
+      - 19 factory @ ramp
       - 20 supply @ ramp
-      - 21 factory
       - 21 barracksreactor
+      - 21 gas
       - 21 addonswap factory barracksreactor
       - 23 hellion *2
-      
-  StimDropTankOpen:
-    AutoSupplyAtSupply: 25
+      - 24 factory @ ramp
+      - 24 factorytechlab
+
+  RushDefenseOpen:
+    AutoSupplyAtSupply: 23
     ConstantWorkerProductionTill: 60
     OpeningBuildOrder:
-      - 14 supply @ ramp      
-      - 12 worker_scout:
-          [enemy_spawn, enemy_nat, enemy_ramp, map_center]
+      - 14 supply @ ramp
       - 16 barracks @ ramp
       - 16 gas
       - 0 orbital
-      - 19 expand
+      - 19 barracks
+      - 20 marine *2
       - 20 supply @ ramp
-      - 20 barrackstechlab
-      - 22 marine *3
-      - 23 stimpack
-      - 24 factory
-      - 24 gas
-      - 26 starport
-      - 30 siegetank
-      - 32 medivac *2
-      - 36 barracks
+      - 20 factory @ ramp
+      - 21 barracksreactor
+      - 21 factorytechlab
+      - 22 marine *2
+      - 24 siegetank
+      - 24 marine *4
+      - 30 expand

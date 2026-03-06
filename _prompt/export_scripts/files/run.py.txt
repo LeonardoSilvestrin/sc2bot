@@ -40,6 +40,9 @@ CONFIG_FILE: str = "config.yml"
 MAP_FILE_EXT: str = "SC2Map"
 MY_BOT_NAME: str = "MyBotName"
 MY_BOT_RACE: str = "MyBotRace"
+ENEMY_RACE: Race = Race.Zerg
+ENEMY_DIFFICULTY: Difficulty = Difficulty.CheatInsane
+ENEMY_BUILD: AIBuild = AIBuild.Rush
 
 
 def main():
@@ -93,13 +96,13 @@ def main():
                 "UltraloveAIE_v2",
             ]
 
-        random_race = random.choice([Race.Zerg, Race.Terran, Race.Protoss])
         print("Starting local game...")
+        print(f"Enemy config: race={ENEMY_RACE.name} difficulty={ENEMY_DIFFICULTY.name} build={ENEMY_BUILD.name}")
         run_game(
             maps.get(random.choice(map_list)),
             [
                 bot1,
-                Computer(random_race, Difficulty.Hard, ai_build=AIBuild.Macro),
+                Computer(ENEMY_RACE, ENEMY_DIFFICULTY, ai_build=ENEMY_BUILD),
             ],
             realtime=False,
         )

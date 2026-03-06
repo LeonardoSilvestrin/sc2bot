@@ -1,0 +1,201 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+from sc2.ids.unit_typeid import UnitTypeId as U
+from sc2.position import Point2
+
+from bot.devlog import DevLogger
+from bot.mind.attention import Attention
+from bot.mind.awareness import Awareness, K
+from bot.tasks.base_task import BaseTask, TaskResult, TaskTick
+
+_NON_COMBAT = {
+    U.SCV,
+    U.PROBE,
+    U.DRONE,
+    U.MULE,
+    U.LARVA,
+    U.EGG,
+    U.OVERLORD,
+}
+_TOWNHALLS = {
+    U.COMMANDCENTER,
+    U.ORBITALCOMMAND,
+    U.PLANETARYFORTRESS,
+    U.HATCHERY,
+    U.LAIR,
+    U.HIVE,
+    U.NEXUS,
+}
+
+
+def _point_payload(pos: Point2 | None) -> dict[str, float] | None:
+    if pos is None:
+        return None
+    return {"x": float(pos.x), "y": float(pos.y)}
+
+
+@dataclass
+class WorkerExpansionScoutTask(BaseTask):
+    awareness: Awareness
+    route: list[Point2]
+    labels: list[str]
+    log: DevLogger | None = None
+    arrive_radius: float = 7.0
+    visible_radius: float = 10.0
+    danger_radius: float = 9.0
+    retreat_hp_frac: float = 0.45
+    log_every_s: float = 8.0
+
+    _idx: int = field(default=0, init=False)
+    _last_log_t: float = field(default=0.0, init=False)
+
+    def __init__(
+        self,
+        *,
+        awareness: Awareness,
+        route: list[Point2],
+        labels: list[str],
+        log: DevLogger | None = None,
+        arrive_radius: float = 7.0,
+        visible_radius: float = 10.0,
+        danger_radius: float = 9.0,
+        retreat_hp_frac: float = 0.45,
+        log_every_s: float = 8.0,
+    ) -> None:
+        super().__init__(task_id="worker_expansion_scout", domain="INTEL", commitment=9)
+        self.awareness = awareness
+        self.route = list(route or [])
+        self.labels = [str(x) for x in (labels or [])]
+        self.log = log
+        self.arrive_radius = float(arrive_radius)
+        self.visible_radius = float(visible_radius)
+        self.danger_radius = float(danger_radius)
+        self.retreat_hp_frac = float(retreat_hp_frac)
+        self.log_every_s = float(log_every_s)
+        self._idx = 0
+        self._last_log_t = 0.0
+
+    def evaluate(self, bot, attention: Attention) -> int:
+        return 22
+
+    def _mark_target_seen(self, *, bot, now: float, label: str, target: Point2) -> None:
+        enemy_base_present = False
+        enemy_structure_count = 0
+        try:
+            for s in list(getattr(bot, "enemy_structures", []) or []):
+                if float(s.distance_to(target)) > float(self.visible_radius):
+                    continue
+                enemy_structure_count += 1
+                if s.type_id in _TOWNHALLS:
+                    enemy_base_present = True
+        except Exception:
+            pass
+        payload = {
+            "last_t": float(now),
+            "label": str(label),
+            "target": _point_payload(target),
+            "enemy_base_present": bool(enemy_base_present),
+            "enemy_structure_count": int(enemy_structure_count),
+        }
+        self.awareness.mem.set(K("intel", "worker_scout", "by_label", str(label), "snapshot"), value=payload, now=now, ttl=180.0)
+        self.awareness.mem.set(K("intel", "worker_scout", "by_label", str(label), "last_t"), value=float(now), now=now, ttl=None)
+        self.awareness.mem.set(K("intel", "worker_scout", "last_route_t"), value=float(now), now=now, ttl=None)
+
+    def _enemy_danger_near(self, *, bot, center: Point2) -> int:
+        total = 0
+        for unit in list(getattr(bot, "enemy_units", []) or []):
+            try:
+                if unit.type_id in _NON_COMBAT:
+                    continue
+                if not bool(getattr(unit, "can_attack_ground", False)):
+                    continue
+                if float(unit.distance_to(center)) <= float(self.danger_radius):
+                    total += 1
+            except Exception:
+                continue
+        return int(total)
+
+    def _retreat_target(self, bot) -> Point2:
+        try:
+            return bot.start_location.towards(bot.game_info.map_center, 3.0)
+        except Exception:
+            return bot.start_location
+
+    def _log_tick(self, *, now: float, unit, reason: str) -> None:
+        if self.log is None:
+            return
+        if (float(now) - float(self._last_log_t)) < float(self.log_every_s):
+            return
+        self._last_log_t = float(now)
+        self.log.emit(
+            "worker_expansion_scout_tick",
+            {
+                "t": round(float(now), 2),
+                "mission_id": str(self.mission_id or ""),
+                "tag": int(getattr(unit, "tag", -1) or -1),
+                "idx": int(self._idx),
+                "reason": str(reason),
+                "labels": list(self.labels),
+            },
+            meta={"module": "task", "component": "task.worker_expansion_scout"},
+        )
+
+    async def on_step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult:
+        bound_err = self.require_mission_bound(exact_tags=1)
+        if bound_err is not None:
+            return bound_err
+        if len(self.route) <= 0 or len(self.labels) <= 0 or len(self.route) != len(self.labels):
+            return TaskResult.failed("invalid_route")
+
+        now = float(tick.time)
+        tag = int(self.assigned_tags[0])
+        unit = bot.units.find_by_tag(tag)
+        if unit is None:
+            return TaskResult.failed("assigned_unit_missing")
+        if unit.type_id != U.SCV:
+            return TaskResult.failed("assigned_unit_not_scv")
+
+        hp_frac = float(getattr(unit, "health_percentage", 1.0) or 1.0)
+        if hp_frac <= float(self.retreat_hp_frac):
+            unit.move(self._retreat_target(bot))
+            self._done("scout_retreat_low_hp")
+            return TaskResult.done("scout_retreat_low_hp")
+
+        if self._idx >= len(self.route):
+            unit.move(self._retreat_target(bot))
+            self._done("route_complete")
+            return TaskResult.done("route_complete")
+
+        target = self.route[self._idx]
+        label = self.labels[self._idx]
+        local_danger = self._enemy_danger_near(bot=bot, center=unit.position)
+        if local_danger > 0:
+            unit.move(self._retreat_target(bot))
+            self._done("scout_retreat_danger")
+            return TaskResult.done("scout_retreat_danger")
+
+        if float(unit.distance_to(target)) <= float(self.arrive_radius):
+            self._mark_target_seen(bot=bot, now=now, label=label, target=target)
+            self._idx += 1
+            if self._idx >= len(self.route):
+                unit.move(self._retreat_target(bot))
+                self._done("route_complete")
+                return TaskResult.done("route_complete")
+            target = self.route[self._idx]
+            label = self.labels[self._idx]
+
+        unit.move(target)
+        self._active(f"scouting_{label}")
+        self._log_tick(now=now, unit=unit, reason=f"move_{label}")
+        return TaskResult.running(
+            "scouting_enemy_expansions",
+            telemetry={
+                "idx": int(self._idx),
+                "target": _point_payload(target),
+                "label": str(label),
+                "route_len": int(len(self.route)),
+                "local_danger": int(local_danger),
+            },
+        )

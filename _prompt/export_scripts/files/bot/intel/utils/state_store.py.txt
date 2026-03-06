@@ -55,12 +55,16 @@ class EnemyRushStateStore:
         state: str,
         confidence: float,
         score: float,
+        severity: float,
+        tier: str,
         evidence: dict[str, Any],
         last_seen_pressure_t: float,
     ) -> None:
         self.awareness.mem.set(K("enemy", "rush", "state"), value=str(state), now=now, ttl=float(ttl_s))
         self.awareness.mem.set(K("enemy", "rush", "confidence"), value=float(confidence), now=now, ttl=float(ttl_s))
         self.awareness.mem.set(K("enemy", "rush", "score"), value=float(score), now=now, ttl=float(ttl_s))
+        self.awareness.mem.set(K("enemy", "rush", "severity"), value=float(severity), now=now, ttl=float(ttl_s))
+        self.awareness.mem.set(K("enemy", "rush", "tier"), value=str(tier), now=now, ttl=float(ttl_s))
         self.awareness.mem.set(K("enemy", "rush", "evidence"), value=dict(evidence), now=now, ttl=float(ttl_s))
         self.awareness.mem.set(
             K("enemy", "rush", "last_seen_pressure_t"),
@@ -96,3 +100,34 @@ class EnemyWeakPointsStateStore:
         self.awareness.mem.set(K("enemy", "weak_points", "primary"), value=primary, now=now, ttl=float(ttl_s))
         self.awareness.mem.set(K("enemy", "weak_points", "bases_visible"), value=int(len(points)), now=now, ttl=float(ttl_s))
         self.awareness.mem.set(K("enemy", "weak_points", "last_update_t"), value=float(now), now=now, ttl=None)
+        # New canonical location-scoped publication for planners/tasks.
+        self.awareness.mem.set(
+            K("intel", "locations", "enemy_weak_points", "snapshot"),
+            value=dict(payload),
+            now=now,
+            ttl=float(ttl_s),
+        )
+        self.awareness.mem.set(
+            K("intel", "locations", "enemy_weak_points", "points"),
+            value=list(points),
+            now=now,
+            ttl=float(ttl_s),
+        )
+        self.awareness.mem.set(
+            K("intel", "locations", "enemy_weak_points", "primary"),
+            value=primary,
+            now=now,
+            ttl=float(ttl_s),
+        )
+        self.awareness.mem.set(
+            K("intel", "locations", "enemy_weak_points", "targets"),
+            value=list(points),
+            now=now,
+            ttl=float(ttl_s),
+        )
+        self.awareness.mem.set(
+            K("intel", "locations", "enemy_weak_points", "last_update_t"),
+            value=float(now),
+            now=now,
+            ttl=None,
+        )

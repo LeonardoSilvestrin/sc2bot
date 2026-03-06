@@ -112,6 +112,37 @@ class DefendBaseTask(BaseTask):
             return base_pos
 
     @staticmethod
+    def _bunkers_near_base(bot, *, base_pos: Point2) -> list:
+        out = []
+        for s in list(getattr(bot, "structures", []) or []):
+            try:
+                if s.type_id == U.BUNKER and bool(getattr(s, "is_ready", False)) and float(s.distance_to(base_pos)) <= 16.0:
+                    out.append(s)
+            except Exception:
+                continue
+        return out
+
+    @staticmethod
+    def _bunker_sites_near_base(bot, *, base_pos: Point2) -> list:
+        out = []
+        for s in list(getattr(bot, "structures", []) or []):
+            try:
+                if s.type_id == U.BUNKER and float(s.distance_to(base_pos)) <= 16.0:
+                    out.append(s)
+            except Exception:
+                continue
+        return out
+
+    @staticmethod
+    def _bunker_has_space(bunker) -> bool:
+        try:
+            cargo_max = int(getattr(bunker, "cargo_max", 4) or 4)
+            cargo_used = int(getattr(bunker, "cargo_used", 0) or 0)
+            return int(cargo_used) < int(cargo_max)
+        except Exception:
+            return True
+
+    @staticmethod
     def _mine_slots(center: Point2) -> list[Point2]:
         out: list[Point2] = []
         for r in (4.5, 7.0):
@@ -160,10 +191,25 @@ class DefendBaseTask(BaseTask):
         return True
 
     @staticmethod
-    def _handle_general(*, unit, base_pos: Point2, threat: Point2, enemy_near_base, now: float) -> bool:
+    def _handle_general(*, unit, base_pos: Point2, threat: Point2, enemy_near_base, bunkers: list, bunker_sites: list, now: float) -> bool:
         if unit.type_id == U.MEDIVAC:
             follow = threat.towards(base_pos, 6.0)
             unit.move(follow)
+            return True
+        if unit.type_id == U.MARINE and bunkers:
+            ready_bunkers = [b for b in bunkers if DefendBaseTask._bunker_has_space(b)]
+            if ready_bunkers:
+                bunker = min(ready_bunkers, key=lambda b: float(unit.distance_to(b)))
+                if float(unit.distance_to(bunker)) <= 2.0:
+                    unit(AbilityId.SMART, bunker)
+                else:
+                    unit.move(bunker.position)
+                return True
+        if unit.type_id == U.MARINE and bunker_sites:
+            site = min(bunker_sites, key=lambda b: float(unit.distance_to(b)))
+            hold = site.position.towards(base_pos, 2.0)
+            if float(unit.distance_to(hold)) > 2.0:
+                unit.move(hold)
             return True
         if int(enemy_near_base.amount) > 0:
             unit.attack(enemy_near_base.closest_to(unit))
@@ -191,6 +237,8 @@ class DefendBaseTask(BaseTask):
         mine_slots = self._mine_slots(mineral_center)
         threat = self.threat_pos or attention.combat.primary_threat_pos or base_pos
         enemy_near_base = bot.enemy_units.closer_than(22.0, base_pos)
+        bunkers = self._bunkers_near_base(bot, base_pos=base_pos)
+        bunker_sites = self._bunker_sites_near_base(bot, base_pos=base_pos)
 
         issued = False
         mine_idx = 0
@@ -209,6 +257,8 @@ class DefendBaseTask(BaseTask):
                 base_pos=base_pos,
                 threat=threat,
                 enemy_near_base=enemy_near_base,
+                bunkers=bunkers,
+                bunker_sites=bunker_sites,
                 now=float(tick.time),
             ) or issued
 

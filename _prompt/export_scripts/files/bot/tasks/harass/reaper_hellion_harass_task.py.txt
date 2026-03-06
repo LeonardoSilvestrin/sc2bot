@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import math
 
 from sc2.ids.unit_typeid import UnitTypeId as U
 from sc2.position import Point2
+from sc2.units import Units
 
 from bot.devlog import DevLogger
 from bot.mind.attention import Attention
@@ -27,17 +29,29 @@ class ReaperHellionHarass(BaseTask):
     commit_min_can_win_with_workers: int = 4
     commit_workers_threshold: int = 3
     retreat_loss_floor: int = 2
+    kite_step: float = 3.0
+    reaper_attack_range: float = 5.0
+    hellion_attack_range: float = 5.0
+    stutter_fire_cooldown_s: float = 0.25
+    route_engage_radius: float = 10.5
+    route_engage_min_can_win: int = 5
+    route_engage_min_workers: int = 1
+    chase_memory_s: float = 3.0
 
     _phase: int = field(default=0, init=False)
     _started_at: float = field(default=-1.0, init=False)
     _last_log_t: float = field(default=0.0, init=False)
     _commit_until: float = field(default=0.0, init=False)
+    _last_chase_pos: dict[int, Point2] = field(default_factory=dict, init=False)
+    _last_chase_t: dict[int, float] = field(default_factory=dict, init=False)
 
     def __init__(self, *, awareness: Awareness, log: DevLogger | None = None, preferred_target: Point2 | None = None):
         super().__init__(task_id="reaper_hellion_harass", domain="HARASS", commitment=8)
         self.awareness = awareness
         self.log = log
         self.preferred_target = preferred_target
+        self._last_chase_pos = {}
+        self._last_chase_t = {}
 
     def evaluate(self, bot, attention: Attention) -> int:
         return 70
@@ -93,6 +107,18 @@ class ReaperHellionHarass(BaseTask):
     def _can_attack_ground(enemy) -> bool:
         try:
             return bool(getattr(enemy, "can_attack_ground", False))
+        except Exception:
+            return False
+
+    @staticmethod
+    def _is_melee_ground(enemy) -> bool:
+        try:
+            if bool(getattr(enemy, "is_flying", False)):
+                return False
+            if not bool(getattr(enemy, "can_attack_ground", False)):
+                return False
+            rng = float(getattr(enemy, "ground_range", 0.0) or 0.0)
+            return rng <= 1.6
         except Exception:
             return False
 
@@ -171,6 +197,90 @@ class ReaperHellionHarass(BaseTask):
             return None
         return workers.closest_to(unit)
 
+    @staticmethod
+    def _retreat_point(unit_pos: Point2, threat_pos: Point2, step: float) -> Point2:
+        dx = float(unit_pos.x) - float(threat_pos.x)
+        dy = float(unit_pos.y) - float(threat_pos.y)
+        n = math.hypot(dx, dy)
+        if n <= 1e-6:
+            return Point2((float(unit_pos.x), float(unit_pos.y)))
+        ux = dx / n
+        uy = dy / n
+        return Point2((float(unit_pos.x) + (ux * float(step)), float(unit_pos.y) + (uy * float(step))))
+
+    def _stutter_attack_ground(self, *, unit, local_enemies, fallback_target: Point2, attack_range: float, now: float) -> None:
+        if unit is None:
+            return
+        ground_enemies = [e for e in local_enemies if bool(getattr(e, "is_flying", False)) is False]
+        if not ground_enemies:
+            tag = int(getattr(unit, "tag", 0) or 0)
+            last_t = float(self._last_chase_t.get(tag, -9999.0))
+            last_pos = self._last_chase_pos.get(tag)
+            if last_pos is not None and (float(now) - float(last_t)) <= float(self.chase_memory_s):
+                # Keep pressure a bit into fog when target just slipped vision.
+                unit.attack(last_pos)
+                return
+            unit.move(fallback_target)
+            return
+        target = self._closest_worker(unit, local_enemies)
+        if target is None:
+            target = min(ground_enemies, key=lambda e: float(unit.distance_to(e)))
+        tag = int(getattr(unit, "tag", 0) or 0)
+        if tag > 0:
+            self._last_chase_pos[tag] = Point2((float(target.position.x), float(target.position.y)))
+            self._last_chase_t[tag] = float(now)
+        dist = float(unit.distance_to(target))
+        wc = float(getattr(unit, "weapon_cooldown", 0.0) or 0.0)
+        target_melee = bool(self._is_melee_ground(target))
+        fire_window = float(self.stutter_fire_cooldown_s)
+        if dist <= (float(attack_range) + 0.25) and wc <= fire_window:
+            unit.attack(target)
+            return
+        danger_close = any(
+            bool(self._can_attack_ground(e)) and float(unit.distance_to(e)) <= (float(attack_range) + 1.5)
+            for e in ground_enemies
+        )
+        melee_pressure = target_melee and (dist <= (float(attack_range) + 2.2))
+        too_close_vs_melee = target_melee and (dist <= (float(attack_range) - 0.8))
+        if (wc > fire_window and (danger_close or melee_pressure)) or too_close_vs_melee:
+            kite_to = self._retreat_point(unit.position, target.position, float(self.kite_step))
+            unit.move(kite_to)
+            return
+        # Attack-follow is only safe when cooldown is close to ready.
+        if wc <= (fire_window + 0.12):
+            unit.attack(target)
+            return
+        # Keep closing under control instead of A-move into melee clumps.
+        if target_melee and dist > float(attack_range):
+            unit.move(target.position.towards(unit.position, 1.0))
+            return
+        unit.attack(target)
+
+    def _route_should_engage(self, *, bot, group: list, local_enemies) -> bool:
+        if not group or local_enemies.amount <= 0:
+            return False
+        workers = local_enemies.of_type({U.SCV, U.PROBE, U.DRONE, U.MULE})
+        if int(workers.amount) >= int(self.route_engage_min_workers):
+            return True
+        ground_threats = local_enemies.filter(lambda e: bool(getattr(e, "is_flying", False)) is False)
+        if ground_threats.amount <= 0:
+            return False
+        can_win_fight = getattr(bot.mediator, "can_win_fight", None)
+        if not callable(can_win_fight):
+            return False
+        try:
+            res = can_win_fight(
+                own_units=Units(group, bot),
+                enemy_units=ground_threats,
+                timing_adjust=True,
+                good_positioning=True,
+                workers_do_no_damage=True,
+            )
+            can_win_value = int(getattr(res, "value", int(res)))
+            return int(can_win_value) >= int(self.route_engage_min_can_win)
+        except Exception:
+            return False
+
     async def on_step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult:
         now = float(tick.time)
         if self._started_at < 0.0:
@@ -182,6 +292,9 @@ class ReaperHellionHarass(BaseTask):
 
         units = [bot.units.find_by_tag(int(t)) for t in self.assigned_tags]
         units = [u for u in units if u is not None]
+        alive_tags = {int(getattr(u, "tag", 0) or 0) for u in units}
+        self._last_chase_pos = {k: v for k, v in self._last_chase_pos.items() if k in alive_tags}
+        self._last_chase_t = {k: v for k, v in self._last_chase_t.items() if k in alive_tags}
         reapers = [u for u in units if u.type_id == U.REAPER]
         hellions = [u for u in units if u.type_id == U.HELLION]
 
@@ -213,6 +326,24 @@ class ReaperHellionHarass(BaseTask):
 
         if self._phase == 0:
             group = ([reaper] if reaper is not None else []) + hellions
+            if group:
+                cx = sum(float(u.position.x) for u in group) / float(len(group))
+                cy = sum(float(u.position.y) for u in group) / float(len(group))
+                center = Point2((cx, cy))
+                local_enemies = bot.enemy_units.closer_than(float(self.route_engage_radius), center)
+                if self._route_should_engage(bot=bot, group=group, local_enemies=local_enemies):
+                    for u in group:
+                        local = local_enemies.closer_than(11.0, u.position)
+                        ar = float(self.reaper_attack_range if u.type_id == U.REAPER else self.hellion_attack_range)
+                        self._stutter_attack_ground(unit=u, local_enemies=local, fallback_target=staging, attack_range=ar, now=now)
+                    self._active("harass_route_skirmish")
+                    self._log_tick(
+                        now=now,
+                        reason="route_skirmish",
+                        reaper_tag=int(reaper.tag) if reaper is not None else -1,
+                        hellion_count=len(hellions),
+                    )
+                    return TaskResult.running("harass_route_skirmish")
             for u in group:
                 u.move(staging)
             if group and all(float(u.distance_to(staging)) <= float(self.regroup_radius) for u in group):
@@ -222,20 +353,25 @@ class ReaperHellionHarass(BaseTask):
             return TaskResult.running("harass_regroup")
 
         if self._phase == 1:
-            local_enemies = bot.enemy_units.closer_than(12.0, harass_target)
             if reaper is not None:
-                r_target = self._closest_worker(reaper, local_enemies)
-                if r_target is not None:
-                    reaper.attack(r_target)
-                else:
-                    reaper.move(harass_target)
+                local_enemies_r = bot.enemy_units.closer_than(11.0, reaper.position)
+                self._stutter_attack_ground(
+                    unit=reaper,
+                    local_enemies=local_enemies_r,
+                    fallback_target=harass_target,
+                    attack_range=float(self.reaper_attack_range),
+                    now=now,
+                )
 
             for h in hellions:
-                h_target = self._closest_worker(h, local_enemies)
-                if h_target is not None:
-                    h.attack(h_target)
-                else:
-                    h.move(harass_target)
+                local_enemies_h = bot.enemy_units.closer_than(11.0, h.position)
+                self._stutter_attack_ground(
+                    unit=h,
+                    local_enemies=local_enemies_h,
+                    fallback_target=harass_target,
+                    attack_range=float(self.hellion_attack_range),
+                    now=now,
+                )
 
             self._active("harass_enemy_natural")
             self._log_tick(now=now, reason="harass", reaper_tag=int(reaper.tag) if reaper is not None else -1, hellion_count=len(hellions))

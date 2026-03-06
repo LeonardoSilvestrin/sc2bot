@@ -79,28 +79,45 @@ class MacroAresExecutorTick(BaseTask):
             raise RuntimeError("invalid_contract:macro.desired.army_comp.empty")
         return out
 
-    @staticmethod
-    def _unit_enabled(army_comp: dict[U, dict[str, float | int]], unit_id: U) -> bool:
-        cfg = army_comp.get(unit_id, None)
-        if not isinstance(cfg, dict):
-            return False
-        try:
-            return float(cfg.get("proportion", 0.0) or 0.0) > 0.0
-        except Exception:
-            return False
-
-    def _ensure_key_addons(self, *, bot, now: float, army_comp: dict[U, dict[str, float | int]]) -> None:
+    def _ensure_key_addons(self, *, bot, now: float) -> None:
         if float(now) < float(self._next_addon_cmd_at):
             return
         self._next_addon_cmd_at = float(now) + 1.0
 
-        need_factory_tl = self._unit_enabled(army_comp, U.CYCLONE) or self._unit_enabled(army_comp, U.SIEGETANK)
-        need_starport_tl = self._unit_enabled(army_comp, U.BANSHEE)
+        addon_targets = self.awareness.mem.get(K("macro", "desired", "addon_targets"), now=now, default={}) or {}
+        if not isinstance(addon_targets, dict):
+            addon_targets = {}
 
         def _can_try(cost_m: int, cost_g: int) -> bool:
             return int(getattr(bot, "minerals", 0) or 0) >= int(cost_m) and int(getattr(bot, "vespene", 0) or 0) >= int(cost_g)
 
-        if need_factory_tl:
+        desired_barracks_reactor = max(0, int(addon_targets.get("BARRACKSREACTOR", 0) or 0))
+        if desired_barracks_reactor > 0:
+            try:
+                ready_rx = int(bot.structures(U.BARRACKSREACTOR).ready.amount)
+            except Exception:
+                ready_rx = 0
+            try:
+                pending_rx = int(bot.already_pending(U.BARRACKSREACTOR) or 0)
+            except Exception:
+                pending_rx = 0
+            reactor_ability = getattr(AbilityId, "BUILD_REACTOR_BARRACKS", None)
+            if reactor_ability is not None and int(ready_rx + pending_rx) < int(desired_barracks_reactor) and _can_try(50, 50):
+                try:
+                    candidates = [b for b in bot.structures(U.BARRACKS).ready if int(getattr(b, "add_on_tag", 0) or 0) == 0]
+                    candidates.sort(key=lambda s: float(s.distance_to(bot.start_location)))
+                except Exception:
+                    candidates = []
+                for rax in list(candidates):
+                    try:
+                        rax(reactor_ability)
+                        self._next_addon_cmd_at = float(now) + 3.0
+                        return
+                    except Exception:
+                        continue
+
+        desired_factory_tl = max(0, int(addon_targets.get("FACTORYTECHLAB", 0) or 0))
+        if desired_factory_tl > 0:
             try:
                 ready_tl = int(bot.structures(U.FACTORYTECHLAB).ready.amount)
             except Exception:
@@ -109,7 +126,7 @@ class MacroAresExecutorTick(BaseTask):
                 pending_tl = int(bot.already_pending(U.FACTORYTECHLAB) or 0)
             except Exception:
                 pending_tl = 0
-            if int(ready_tl + pending_tl) <= 0 and _can_try(50, 25):
+            if int(ready_tl + pending_tl) < int(desired_factory_tl) and _can_try(50, 25):
                 try:
                     candidates = [f for f in bot.structures(U.FACTORY).ready if int(getattr(f, "add_on_tag", 0) or 0) == 0]
                 except Exception:
@@ -120,7 +137,8 @@ class MacroAresExecutorTick(BaseTask):
                     self._next_addon_cmd_at = float(now) + 3.0
                     return
 
-        if need_starport_tl:
+        desired_starport_tl = max(0, int(addon_targets.get("STARPORTTECHLAB", 0) or 0))
+        if desired_starport_tl > 0:
             try:
                 ready_tl = int(bot.structures(U.STARPORTTECHLAB).ready.amount)
             except Exception:
@@ -129,7 +147,7 @@ class MacroAresExecutorTick(BaseTask):
                 pending_tl = int(bot.already_pending(U.STARPORTTECHLAB) or 0)
             except Exception:
                 pending_tl = 0
-            if int(ready_tl + pending_tl) <= 0 and _can_try(50, 25):
+            if int(ready_tl + pending_tl) < int(desired_starport_tl) and _can_try(50, 25):
                 try:
                     candidates = [s for s in bot.structures(U.STARPORT).ready if int(getattr(s, "add_on_tag", 0) or 0) == 0]
                 except Exception:
@@ -181,20 +199,15 @@ class MacroAresExecutorTick(BaseTask):
 
         now = float(tick.time)
         bor = getattr(bot, "build_order_runner", None)
-        if bor is not None and not bool(getattr(bor, "build_completed", False)):
-            rush_state = str(
-                self.awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE"
-            ).upper()
-            rush_active = rush_state in {"SUSPECTED", "CONFIRMED", "HOLDING"}
-            pressure_high = bool(
-                int(getattr(attention.combat, "primary_urgency", 0) or 0) >= 14
-                or int(getattr(attention.combat, "primary_enemy_count", 0) or 0) >= 2
-            )
-            minerals = int(getattr(attention.economy, "minerals", 0) or 0)
-            gas = int(getattr(attention.economy, "gas", 0) or 0)
-            overflow_bank = bool(minerals >= 450 or (minerals >= 300 and gas >= 150))
-            if not (rush_active or pressure_high or overflow_bank):
-                return TaskResult.running("opening_buildorder_active")
+        buildorder_active = bool(bor is not None and not bool(getattr(bor, "build_completed", False)))
+        current_opening = str(getattr(bor, "chosen_opening", "") or "").strip() if bor is not None else ""
+        allow_rush_opening_support = bool(
+            buildorder_active
+            and current_opening == "RushDefenseOpen"
+            and str(self.domain) == "MACRO_ARMY_EXECUTOR"
+        )
+        if buildorder_active and not bool(allow_rush_opening_support):
+            return TaskResult.running("opening_buildorder_active")
         macro_budget_enabled = bool(
             self.awareness.mem.get(
                 K("ego", "exec_budget", "macro_enabled"),
@@ -222,7 +235,7 @@ class MacroAresExecutorTick(BaseTask):
             army_comp = self._army_comp(now=now)
         except Exception:
             return TaskResult.running("missing_army_comp")
-        self._ensure_key_addons(bot=bot, now=now, army_comp=army_comp)
+        self._ensure_key_addons(bot=bot, now=now)
 
         plan_active = self.awareness.mem.get(K("macro", "plan", "active"), now=now, default={}) or {}
         if not isinstance(plan_active, dict) or not plan_active:
@@ -275,6 +288,23 @@ class MacroAresExecutorTick(BaseTask):
         if self.force_front_lanes:
             forced = [ln for ln in self.force_front_lanes if ln in lane_order]
             lane_order = forced + [ln for ln in lane_order if ln not in set(forced)]
+        default_lanes = ["workers", "supply", "gas", "spawn", "production", "expand"]
+        fallback_lanes = list(default_lanes)
+        if self.lane_whitelist:
+            allowed = set(self.lane_whitelist)
+            fallback_lanes = [ln for ln in default_lanes if ln in allowed]
+        if allow_rush_opening_support:
+            # Keep rush-defense opening in charge of geometry/expansion, but allow
+            # unit spawn support so idle barracks/factory do not float resources
+            # once the desired comp is already clamped to tank/marine/marauder.
+            enable_supply = False
+            enable_production = False
+            enable_expansion = False
+            fallback_lanes = ["workers", "gas", "spawn"]
+            lane_order = [ln for ln in lane_order if ln in set(fallback_lanes)]
+            if self.force_front_lanes:
+                forced = [ln for ln in self.force_front_lanes if ln in lane_order]
+                lane_order = forced + [ln for ln in lane_order if ln not in set(forced)]
 
         sig = self._sig_from_plan(
             army_comp=army_comp,
@@ -334,7 +364,7 @@ class MacroAresExecutorTick(BaseTask):
                 return
 
         seen = set()
-        for lane in lane_order + ["workers", "supply", "gas", "spawn", "production", "expand"]:
+        for lane in lane_order + fallback_lanes:
             if lane in seen:
                 continue
             seen.add(lane)
