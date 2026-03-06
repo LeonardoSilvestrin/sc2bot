@@ -50,13 +50,15 @@ Builds:
       - 0 orbital
       - 19 reaper
       - 19 expand
+      - 19 factory @ ramp
       - 20 supply @ ramp
-      - 21 factory @ ramp
       - 21 barracksreactor
       - 21 gas
       - 21 addonswap factory barracksreactor
       - 23 hellion *2
       - 24 factory @ ramp
       - 24 factorytechlab
-      - 26 starport
-      - 26 starporttechlab
+      - 25 widowmine *2
+      - 27 siegetank *2
+      - 30 starport
+      - 30 starporttechlab

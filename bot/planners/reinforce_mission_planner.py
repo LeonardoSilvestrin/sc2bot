@@ -40,13 +40,15 @@ class ReinforcePickPolicy:
 class ReinforceMissionPlanner(BasePlanner):
     planner_id: str = "reinforce_mission_planner"
     log: DevLogger | None = None
-    allowed_domains: tuple[str, ...] = ("HARASS",)
+    allowed_domains: tuple[str, ...] = ("HARASS", "DEFENSE")
     max_add_per_type: int = 1
     cooldown_s: float = 1.2
     lease_ttl_s: float = 8.0
     score: int = 72
     min_remaining_s: float = 3.0
     banshee_harass_target_size: int = 2
+    defense_tank_target_size: int = 2
+    defense_mine_target_size: int = 2
 
     def _proposal_id(self, mission_id: str, unit_type_name: str) -> str:
         return f"{self.planner_id}:{mission_id}:{unit_type_name}"
@@ -72,6 +74,10 @@ class ReinforceMissionPlanner(BasePlanner):
     def _is_banshee_harass_mission(mission: MissionStatusSnapshot) -> bool:
         return str(mission.domain) == "HARASS" and str(mission.proposal_id).startswith("harass_planner:banshee")
 
+    @staticmethod
+    def _is_defense_base_mission(mission: MissionStatusSnapshot) -> bool:
+        return str(mission.domain) == "DEFENSE" and str(mission.proposal_id).startswith("defense_planner:defend:base:")
+
     def _requirements_for_mission(self, bot, mission: MissionStatusSnapshot) -> list[UnitRequirement]:
         objective = self._mission_objective(bot, mission)
         desired_counts = {str(k): int(v) for k, v in mission.original_type_counts}
@@ -81,6 +87,15 @@ class ReinforceMissionPlanner(BasePlanner):
             desired_counts["BANSHEE"] = max(
                 int(desired_counts.get("BANSHEE", 0)),
                 int(self.banshee_harass_target_size),
+            )
+        if self._is_defense_base_mission(mission):
+            desired_counts["SIEGETANK"] = max(
+                int(desired_counts.get("SIEGETANK", 0)),
+                int(self.defense_tank_target_size),
+            )
+            desired_counts["WIDOWMINE"] = max(
+                int(desired_counts.get("WIDOWMINE", 0)),
+                int(self.defense_mine_target_size),
             )
         alive_counts = self._alive_type_counts(bot, mission)
 
@@ -125,7 +140,11 @@ class ReinforceMissionPlanner(BasePlanner):
                 self._is_banshee_harass_mission(mission)
                 and int(mission.alive_count) > 0
             )
-            if not bool(mission.can_reinforce) and not banshee_growth_candidate:
+            defense_growth_candidate = bool(
+                self._is_defense_base_mission(mission)
+                and int(mission.alive_count) > 0
+            )
+            if not bool(mission.can_reinforce) and not banshee_growth_candidate and not defense_growth_candidate:
                 continue
             if not self._domain_allowed(str(mission.domain), allowed):
                 continue

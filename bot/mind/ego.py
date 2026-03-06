@@ -133,10 +133,22 @@ class Ego:
 
     def _publish_exec_budget(self, *, attention: Attention, awareness: Awareness, now: float) -> None:
         urgency = int(attention.combat.primary_urgency)
-        macro_enabled = bool(urgency < int(self.cfg.macro_apm_hard_block_urgency))
+        minerals = int(getattr(attention.economy, "minerals", 0) or 0)
+        gas = int(getattr(attention.economy, "gas", 0) or 0)
+        rush_state = str(awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
+        rush_active = rush_state in {"SUSPECTED", "CONFIRMED", "HOLDING"}
+        bank_overflow = bool(minerals >= 360 or (minerals >= 260 and gas >= 140))
+        macro_enabled = True
         if urgency >= int(self.cfg.macro_apm_hard_block_urgency):
-            reason = "hard_micro_pressure"
-            cadence = 0.0
+            # Keep army/econ macro alive under hard pressure when we are rushed
+            # or floating resources; otherwise all production can stall.
+            if rush_active or bank_overflow:
+                reason = "hard_micro_pressure_but_macro_forced"
+                cadence = 0.35
+            else:
+                reason = "hard_micro_pressure"
+                cadence = 0.0
+                macro_enabled = False
         elif urgency >= int(self.cfg.macro_apm_soft_block_urgency):
             reason = "soft_micro_pressure"
             cadence = 0.55
@@ -245,7 +257,12 @@ class Ego:
                 continue
 
             effective_domain = domain if reinforce_commitment is None else str(reinforce_commitment.domain)
-            if threatened and urgency >= self.cfg.threat_block_start_at and effective_domain != "DEFENSE":
+            if (
+                threatened
+                and urgency >= self.cfg.threat_block_start_at
+                and effective_domain
+                not in {"DEFENSE", "MACRO_ARMY_EXECUTOR", "MACRO_ECON_EXECUTOR", "MACRO_DEPOT_CONTROL"}
+            ):
                 continue
 
             if reinforce_commitment is None and domain in self.cfg.singleton_domains:

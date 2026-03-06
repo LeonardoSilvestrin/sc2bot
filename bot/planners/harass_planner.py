@@ -71,6 +71,7 @@ class HarassPlanner:
     avoid_heavy_fortification: bool = True
     max_target_path_danger: float = 2.6
     path_hotspot_radius: float = 12.0
+    existence_trigger_enabled: bool = True
     _next_idle_log_at: float = 0.0
 
     def _pid_reaper_hellion(self) -> str:
@@ -326,6 +327,7 @@ class HarassPlanner:
 
         reaper_hellion_done = bool(awareness.mem.get(K("ops", "harass", "reaper_hellion", "done"), now=now, default=False))
         banshee_ready_window = bool(float(now) >= float(self.propose_banshee_from_s))
+        banshee_exists = int(bot.units.of_type(U.BANSHEE).ready.amount) > 0
         desired_comp = awareness.mem.get(K("macro", "desired", "comp"), now=now, default={}) or {}
         if not isinstance(desired_comp, dict):
             desired_comp = {}
@@ -337,6 +339,7 @@ class HarassPlanner:
         banshee_opening_enabled = bool(
             "BANSHEE" in {str(x).upper() for x in desired_priority}
             or float(desired_comp.get("BANSHEE", 0.0) or 0.0) >= 0.08
+            or (bool(self.existence_trigger_enabled) and bool(banshee_exists))
         )
         banshee_seeded = bool(awareness.mem.get(K("ops", "harass", "banshee", "seeded"), now=now, default=False))
         should_seed_banshee = bool(

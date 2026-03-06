@@ -182,7 +182,19 @@ class MacroAresExecutorTick(BaseTask):
         now = float(tick.time)
         bor = getattr(bot, "build_order_runner", None)
         if bor is not None and not bool(getattr(bor, "build_completed", False)):
-            return TaskResult.running("opening_buildorder_active")
+            rush_state = str(
+                self.awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE"
+            ).upper()
+            rush_active = rush_state in {"SUSPECTED", "CONFIRMED", "HOLDING"}
+            pressure_high = bool(
+                int(getattr(attention.combat, "primary_urgency", 0) or 0) >= 14
+                or int(getattr(attention.combat, "primary_enemy_count", 0) or 0) >= 2
+            )
+            minerals = int(getattr(attention.economy, "minerals", 0) or 0)
+            gas = int(getattr(attention.economy, "gas", 0) or 0)
+            overflow_bank = bool(minerals >= 450 or (minerals >= 300 and gas >= 150))
+            if not (rush_active or pressure_high or overflow_bank):
+                return TaskResult.running("opening_buildorder_active")
         macro_budget_enabled = bool(
             self.awareness.mem.get(
                 K("ego", "exec_budget", "macro_enabled"),
