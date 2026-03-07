@@ -7,90 +7,86 @@ Use este contexto antes de propor qualquer mudanca.
 OBJETIVO ATUAL
 - Manter arquitetura previsivel com ownership claro.
 - Melhorar gasto macro (evitar flood de mineral/gas sem producao).
-- Tornar timing e expansao mais controlaveis por sinais de awareness.
+- Reduzir comportamento opaco: toda decisao adaptativa importante deve ser observavel em memoria ou log.
 
-ATUALIZACOES RECENTES (2026-03-05)
-- Supervisor de vantagem integrado no runtime:
-  - bot/control/advantage_supervisor.py
-  - bot/mind/self.py
-- Ownership separado por namespace (sem overlap de escrita):
-  - macro.desired.* = Intel
-  - macro.control.* = Control (AdvantageSupervisor)
-  - macro.exec.* / tech.exec.* = Planner
-- PriorityPolicy passou a consumir sinais de controle:
-  - strategic_mode e bank targets vindos de macro.control.*
-  - bot/control/priority_policy.py
-- MacroOrchestrator passou a consumir targets de controle:
-  - production_scale e bank targets vindos de macro.control.*
-  - sinais dinamicos de producao movidos para macro.exec.*
-  - bot/planners/macro_orchestrator_planner.py
-- Contrato de ownership atualizado:
-  - bot/plans/contracts.py
-- Correcoes de import para evitar ciclo em inicializacao:
-  - bot/control/__init__.py
-  - bot/planners/macro_orchestrator_planner.py
+IMPORTANTE: ESTADO REAL DESTE CHECKOUT
+- Este checkout NAO tem pasta `bot/control/`.
+- O que o handoff antigo chamava de "AdvantageSupervisor" hoje esta implementado em:
+  - `bot/intel/strategy/i2_CTRL_advantage_game_status_intel.py`
+- O que o handoff antigo chamava de "PriorityPolicy" hoje esta implementado em:
+  - `bot/intel/ego/i1_PI_prioritization_intel.py`
+- O controle de gas/stock-flow usado pelo planner esta acoplado ao `SpendingPolicy`:
+  - `bot/planners/utils/spending_policy.py`
+- Se algum agente citar `bot/control/*` como codigo existente, trate como referencia desatualizada do handoff, nao como source of truth.
 
-ESTADO ARQUITETURAL ATUAL (2026-03)
-- Sensor atualiza Attention.
-- Intel atualiza Awareness em macro.desired.* e strategy.parity.*.
-- AdvantageSupervisor atualiza macro.control.* (pesos/setpoints globais).
-- MacroOrchestratorPlanner publica plano em macro.exec.* e tech.exec.*.
-- Ego arbitra proposals por score/policy e executa tasks ativas.
-- Somente executores dedicados registram MacroPlan (Ares).
+ESTADO ARQUITETURAL ATUAL (2026-03-07)
+- Sensors atualizam Attention.
+- Intel atualiza Awareness em `enemy.*`, `macro.desired.*`, `strategy.parity.*` e namespaces correlatos.
+- `AdvantageGameStatusIntel.step(...)` atualiza `macro.control.*` (pesos/setpoints globais).
+- `MacroOrchestratorPlanner` publica plano em `macro.exec.*` e `tech.exec.*`.
+- `Ego` arbitra proposals por score/policy, admite/preempta missoes e executa tasks ativas.
+- Somente executores dedicados registram `MacroPlan`/behaviors Ares.
 
 PIPELINE DE EXECUCAO
-1) RuntimeApp.on_step:
-   derive_opening_contract_intel ->
-   derive_attention ->
-   derive_enemy_build_intel ->
-   derive_my_army_composition_intel ->
-   derive_game_parity_intel ->
-   advantage_supervisor.step
-2) Ego.tick:
-   planners -> proposals -> PriorityPolicy -> admissao/preempcao -> execute step das tasks
+1) `RuntimeApp.on_step` em `bot/mind/self.py`:
+   `derive_opening_contract_intel -> derive_attention -> enemy/build/opening/pathing/map_control/mission intels -> derive_my_army_composition_intel -> derive_game_parity_intel -> AdvantageGameStatusIntel.step`
+2) `Ego.tick` em `bot/mind/ego.py`:
+   `planners -> pre_filter -> PrioritizationIntel -> admissao/preempcao -> execute step das tasks`
 3) Executors:
-   MacroAresExecutorTick (macro) + TechAresExecutorTick (tech), ambos com throttle.
+   `MacroAresExecutorTick` (macro) + `TechAresExecutorTick` (tech), ambos com throttle/cadence.
 
 MACRO: COMO FUNCIONA HOJE
-- Planner macro roda continuamente e decide "o que gastar e em qual ordem de lane".
-- Executor macro roda continuamente, mas aplica MacroPlan em intervalo minimo (nao por frame).
-- Lane order dinamica: workers/supply/gas/spawn/production/expand.
-- O topo da lane usa score com histerese (lane_min_hold + lane_switch_margin).
-- Gas ownership centralizado no planner via MacroResourceController:
-  - define target_refineries e target_workers_per_refinery
-  - publica macro.exec.gas_target e macro.gas.target_workers_per_refinery
-  - task de housekeeping apenas executa/ajusta, nao arbitra economia
+- `MacroOrchestratorPlanner` roda continuamente e publica "o que gastar" e "qual lane esta na frente".
+- O executor macro roda continuamente, mas aplica `MacroPlan` em intervalo minimo, nao por frame.
+- Lanes atuais: `workers/supply/gas/spawn/production/expand`.
+- O topo da lane usa score com histerese (`lane_min_hold_s` + `lane_switch_margin`).
+- O planner publica:
+  - `macro.exec.gas_target`
+  - `macro.gas.target_workers_per_refinery`
+  - `macro.exec.freeflow_mode`
+  - `macro.exec.emergency_mineral_dump`
+  - `macro.exec.ahead_expand_push`
+  - `macro.exec.lane_order/lane_scores/lane_selected`
 - Tech executor separado:
-  - consome tech.exec.targets
-  - re-registra comportamento periodicamente (nao fica preso em "no_change")
+  - consome `tech.exec.targets`
+  - pode ser pausado por pressure / emergency dump / rush defense / army-production lag
+
+PONTOS DE IMPREVISIBILIDADE A OBSERVAR
+- Ha multiplos loops de ajuste simultaneos:
+  - `strategy.parity.*` influencia `macro.control.*`
+  - `macro.control.*` influencia planner e priorizacao
+  - `macro.exec.*` influencia executores
+  - `ego.exec_budget.*` pode reduzir cadence macro sob pressao
+- Isso NAO e um PID formal. O sistema usa erro, clamps, thresholds, histerese e cooldowns distribuidos.
+- O bot pode ficar dificil de prever se os seguintes sinais nao forem observados juntos:
+  - `strategy.parity.state`
+  - `macro.control.strategic_mode`
+  - `macro.control.weights`
+  - `macro.control.bank_target_*`
+  - `macro.control.production_scale`
+  - `macro.exec.freeflow_mode`
+  - `macro.exec.emergency_mineral_dump`
+  - `macro.exec.gas_target`
+  - `macro.exec.expand_to`
+  - `macro.exec.lane_selected`
+  - `ego.exec_budget.macro_enabled` / `ego.exec_budget.macro_cadence`
+- Se um agente fizer leitura arquitetural sem citar esses sinais ou sem apontar os pontos de histerese/cooldown, a analise provavelmente esta superficial.
 
 MUDANCAS RECENTES IMPORTANTES
-- Planner macro renomeado/movido para:
-  - bot/planners/macro_orchestrator_planner.py
-- Runtime wiring atualizado em:
-  - bot/mind/self.py
+- Runtime wiring centralizado em:
+  - `bot/mind/self.py`
 - Intel de parity ligado no runtime:
-  - strategy.parity.overall/econ/army/expand_bias passam a ser atualizados
+  - `strategy.parity.overall/econ/army/expand_bias/state/severity/*`
+- Controle global de vantagem/estado integrado no runtime:
+  - `bot/intel/strategy/i2_CTRL_advantage_game_status_intel.py`
 - Anti-flood de mineral:
-  - freeflow thresholds reduzidos para acionar spend-first mais cedo
-  - emergency_mineral_dump com histerese
+  - `freeflow_mode` com thresholds/histerese
+  - `emergency_mineral_dump` com hold/histerese
 - Expansao oportunista:
-  - ahead_expand_push quando parity diz AHEAD + army minima
-
-ATUALIZACOES RECENTES (2026-03-06)
-- Defesa por base consolidada:
-  - DefensePlanner gera proposta por base (sem TTL) e Task de defesa orquestra unidade por unidade.
-  - siege tank/widowmine com comportamento dedicado em defesa de base.
-- Reforco de missoes ativo para DEFENSE/HARASS:
-  - ReinforceMissionPlanner passou a crescer missoes de defesa tambem.
-- Distribuicao de defesa melhor:
-  - score de vulnerabilidade considera defesa propria perto da base (evita stack em uma base so).
+  - `ahead_expand_push` quando parity/army permitem
 - Macro sob rush/hard pressure nao pode parar:
-  - Ego libera macro em hard pressure quando rush ativo ou banco alto.
-  - admissao sob ameaca alta nao bloqueia MACRO_ARMY_EXECUTOR/MACRO_ECON_EXECUTOR.
-  - MacroAresExecutorTick pode sair do gate do opening BO em rush/pressao/overflow de recursos.
-- Fix de crash conhecido:
-  - removido retorno invalido em `ares-sc2/src/ares/main.py` (`return le` -> NameError).
+  - `Ego` preserva `MACRO_ARMY_EXECUTOR` e `MACRO_ECON_EXECUTOR` sob ameaca alta
+  - `MacroAresExecutorTick` pode sair do gate do opening em rush/pressao/overflow de recursos
 
 CONTRATOS DE MEMORIA (FONTE DE VERDADE)
 
@@ -152,7 +148,7 @@ CONTRATOS DE MEMORIA (FONTE DE VERDADE)
 
 OWNERSHIP (NAO NEGOCIAVEL)
 - Intel escreve apenas macro.desired.* e strategy.parity.*.
-- Control escreve apenas macro.control.*.
+- `AdvantageGameStatusIntel` escreve `macro.control.*`.
 - Planner escreve apenas macro.exec.* e tech.exec.*.
 - Executors leem exec/desired e executam Ares.
 - Ninguem fora do planner escreve macro.exec.* ou tech.exec.*.
@@ -172,16 +168,15 @@ ROOT MAP (PASTAS DA RAIZ E PAPEL)
 ARQUIVOS CRITICOS PARA ENTENDER O MACRO
 - bot/mind/self.py : wiring principal de runtime/planners/intel.
 - bot/mind/ego.py : arbitracao/admissao/preempcao de missions.
-- bot/control/advantage_supervisor.py : controlador global de vantagem (pesos e setpoints).
+- bot/intel/strategy/i2_CTRL_advantage_game_status_intel.py : controlador global de vantagem/estado (pesos e setpoints em `macro.control.*`).
 - bot/planners/macro_orchestrator_planner.py : supervisor de macro.exec/tech.exec.
-- bot/control/macro_resource_controller.py : decisao de gas workers/refineries por stock+flow.
+- bot/planners/utils/spending_policy.py : politica de stock/flow usada pelo planner para gas/spending.
 - bot/tasks/macro/tasks/macro_ares_executor_tick.py : executor macro (Ares MacroPlan).
 - bot/tasks/tech/tasks/tech_ares_executor_tick.py : executor tech (Ares MacroPlan).
 - bot/tasks/macro/tasks/scv_housekeeping_task.py : housekeeping operacional (idle/balance/gas assignment).
-- bot/intel/my_army_composition_intel.py : split de composicao e prioridades.
-- bot/intel/tech_intel.py : tech targets (upgrades/structures).
-- bot/intel/game_parity_intel.py : sinal de ahead/behind para push de expand.
-- bot/control/priority_policy.py : policy de ordering de proposals.
+- bot/intel/macro/desired_intel.py : split de composicao desejada, milestones e tech targets.
+- bot/intel/strategy/i1_game_parity_intel.py : sinal de ahead/behind e severidade.
+- bot/intel/ego/i1_PI_prioritization_intel.py : policy de ordering de proposals.
 - _tools/check_macro_executor_uniqueness.py : guardrail anti-regressao.
 
 SINAIS DE HEALTH EM RUNTIME (OLHAR NO LOG)
@@ -193,12 +188,16 @@ SINAIS DE HEALTH EM RUNTIME (OLHAR NO LOG)
 - mission_started / mission_ended
 - runtime_clock
 - macro.gas.status
+- control.priority.notes.*
+- control.priority.components.*
+- macro.control.supervisor.status
+- ego.exec_budget.*
 
 REGRAS DE ALTERACAO (PARA O OUTRO AGENTE)
 1) Nao reintroduzir tasks macro legadas.
 2) Nao criar novos writers para macro.exec.* ou tech.exec.* fora do planner.
 3) Nao criar writes em macro.desired.* fora de intel.*.
-4) Nao criar writes em macro.control.* fora de control.*.
+4) Nao criar writes em macro.control.* fora de `AdvantageGameStatusIntel` ou de uma substituicao explicita e documentada.
 5) Nao duplicar ownership do gas (planner decide; task executa).
 6) Qualquer executor novo deve usar:
    - assinatura deterministica
@@ -211,11 +210,13 @@ P0) Validar em 3-5 jogos de smoke:
     - lane_selected ao longo do tempo
     - macro/tech register_count
     - oscilacao de freeflow/emergency_dump/gas target
+    - transicoes de strategic_mode / weights / bank_target / ego.exec_budget
 P1) Timing attacks:
-    - transformar timing_attacks em erro temporal por janela
-    - usar erro para priorizar spawn/production/tech perto do deadline
+    - `macro.desired.timing_attacks` ja existe no contrato, mas ainda nao e tratado como erro temporal fechado
+    - se implementar, explicitar writer/reader e como isso afeta planner/prioritization
 P2) Gasto anti-flood:
     - revisar thresholds de emergency_mineral_dump e ahead_expand_min_army_supply
+    - validar se freeflow/emergency_dump/expand nao brigam entre si
 P3) Housekeeping:
     - garantir retorno de scout worker perdido sem remover recuperacao de idle workers
 
@@ -223,6 +224,7 @@ CHECKLIST GO/NO-GO
 - [ ] macro register_count cresce por cadence, nao por frame
 - [ ] tech register_count cresce por necessidade real
 - [ ] sem oscillation rapida de freeflow/gas/expand
+- [ ] transicoes de strategic_mode/policy sao explicaveis a partir de parity + pressure + banks
 - [ ] gas workers seguem target do planner
 - [ ] sem missing_contract/invalid_contract em loop
 
@@ -230,3 +232,7 @@ ENTREGA ESPERADA DO AGENTE
 1. Diagnostico objetivo (causa raiz + arquivo/linha/chave).
 2. Patch pequeno coerente com o contrato atual.
 3. Validacoes executadas (compile/import + evidencias de log).
+4. Se citar arquitetura, diferenciar claramente:
+   - fato observado no codigo
+   - inferencia arquitetural
+   - risco hipotetico

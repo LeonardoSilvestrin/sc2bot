@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from ares.consts import UnitRole
 from sc2.ids.ability_id import AbilityId
 from sc2.ids.unit_typeid import UnitTypeId as U
 from sc2.position import Point2
@@ -39,6 +40,14 @@ class ScvRepairTask(BaseTask):
         return self.base_pos
 
     @staticmethod
+    def _assign_role(bot, units: list, role: UnitRole) -> None:
+        for unit in list(units or []):
+            try:
+                bot.mediator.assign_role(tag=int(unit.tag), role=role, remove_from_squad=True)
+            except Exception:
+                continue
+
+    @staticmethod
     def _main_wall_targets(bot) -> list:
         try:
             ramp = getattr(bot, "main_base_ramp", None)
@@ -72,16 +81,16 @@ class ScvRepairTask(BaseTask):
             is_main_wall = bool(getattr(unit, "_scv_repair_main_wall", False))
         except Exception:
             is_main_wall = False
-        if is_main_wall:
-            return (6, hp_gap)
         if tid == U.BUNKER:
-            return (5, hp_gap)
+            return (9 if is_main_wall else 8, hp_gap)
+        if is_main_wall:
+            return (7, hp_gap)
         if tid in {U.SIEGETANK, U.SIEGETANKSIEGED}:
-            return (4, hp_gap)
+            return (5, hp_gap)
         if tid in {U.COMMANDCENTER, U.ORBITALCOMMAND, U.PLANETARYFORTRESS}:
-            return (3, hp_gap)
+            return (4, hp_gap)
         if tid in {U.BARRACKS, U.BARRACKSREACTOR, U.BARRACKSTECHLAB, U.SUPPLYDEPOT, U.SUPPLYDEPOTLOWERED}:
-            return (2, hp_gap)
+            return (3, hp_gap)
         return (1, hp_gap)
 
     @staticmethod
@@ -174,9 +183,11 @@ class ScvRepairTask(BaseTask):
         base_pos = self._resolve_base_pos(bot)
         targets = self._repair_targets(bot, base_pos=base_pos)
         if not targets:
+            self._assign_role(bot, units, UnitRole.GATHERING)
             self._done("repair_targets_cleared")
             return TaskResult.done("repair_targets_cleared")
 
+        self._assign_role(bot, units, UnitRole.REPAIRING)
         issued = False
         for scv in units:
             ranked_targets = list(targets)

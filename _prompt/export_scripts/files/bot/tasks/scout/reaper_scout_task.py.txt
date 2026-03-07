@@ -134,6 +134,33 @@ class ReaperScout(BaseTask):
             landing = ramp.top_center
         return approach, landing
 
+    @staticmethod
+    def _home_defense_emergency(bot, attention: Attention) -> bool:
+        try:
+            if int(attention.combat.primary_urgency) >= 12 and int(attention.combat.primary_enemy_count) >= 2:
+                return True
+        except Exception:
+            pass
+        try:
+            ramp = getattr(bot, "main_base_ramp", None)
+            if ramp is None:
+                return False
+            probes: list[tuple[Point2, float]] = []
+            top = getattr(ramp, "top_center", None)
+            if top is not None:
+                probes.append((top, 5.5))
+            for pos in list(getattr(ramp, "corner_depots", []) or []):
+                probes.append((pos, 4.5))
+            barracks_pos = getattr(ramp, "barracks_correct_placement", None)
+            if barracks_pos is not None:
+                probes.append((barracks_pos, 5.0))
+            for pos, radius in probes:
+                if int(bot.enemy_units.closer_than(float(radius), pos).amount) > 0:
+                    return True
+        except Exception:
+            pass
+        return False
+
     def _is_locally_safe(self, bot, unit) -> bool:
         try:
             grid = bot.mediator.get_ground_grid
@@ -220,6 +247,13 @@ class ReaperScout(BaseTask):
         hp_frac = float(unit.health_percentage) if hasattr(unit, "health_percentage") else 1.0
         if hp_frac <= float(self.retreat_hp_frac):
             self._phase = 3
+
+        if self._home_defense_emergency(bot, attention):
+            unit.move(bot.start_location)
+            self.awareness.mark_reaper_scout_done(now=now)
+            self._done("home_defense_emergency")
+            self._log_tick(now=now, reason="home_defense_emergency", tag=tag, pos=unit.position)
+            return TaskResult.done("home_defense_emergency")
 
         if not self.awareness.intel_reaper_scout_dispatched(now=now):
             self.awareness.mark_reaper_scout_dispatched(now=now)

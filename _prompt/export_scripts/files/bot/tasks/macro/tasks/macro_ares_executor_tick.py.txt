@@ -203,12 +203,24 @@ class MacroAresExecutorTick(BaseTask):
         bor = getattr(bot, "build_order_runner", None)
         buildorder_active = bool(bor is not None and not bool(getattr(bor, "build_completed", False)))
         current_opening = str(getattr(bor, "chosen_opening", "") or "").strip() if bor is not None else ""
+        plan_active = self.awareness.mem.get(K("macro", "plan", "active"), now=now, default={}) or {}
+        if not isinstance(plan_active, dict):
+            plan_active = {}
+        allow_rush_opening_econ = bool(
+            buildorder_active
+            and current_opening == "RushDefenseOpen"
+            and str(self.domain) == "MACRO_ECON_EXECUTOR"
+            and (
+                bool(plan_active.get("rush_natural_release"))
+                or bool(plan_active.get("enemy_macro_catchup_expand"))
+            )
+        )
         allow_rush_opening_support = bool(
             buildorder_active
             and current_opening == "RushDefenseOpen"
             and str(self.domain) == "MACRO_ARMY_EXECUTOR"
         )
-        if buildorder_active and not bool(allow_rush_opening_support):
+        if buildorder_active and not bool(allow_rush_opening_support or allow_rush_opening_econ):
             return TaskResult.running("opening_buildorder_active")
         macro_budget_enabled = bool(
             self.awareness.mem.get(
@@ -239,7 +251,6 @@ class MacroAresExecutorTick(BaseTask):
             return TaskResult.running("missing_army_comp")
         self._ensure_key_addons(bot=bot, now=now)
 
-        plan_active = self.awareness.mem.get(K("macro", "plan", "active"), now=now, default={}) or {}
         if not isinstance(plan_active, dict) or not plan_active:
             return TaskResult.running("macro_plan_missing")
         required = (
@@ -307,6 +318,18 @@ class MacroAresExecutorTick(BaseTask):
             if self.force_front_lanes:
                 forced = [ln for ln in self.force_front_lanes if ln in lane_order]
                 lane_order = forced + [ln for ln in lane_order if ln not in set(forced)]
+        elif allow_rush_opening_econ:
+            # RushDefenseOpen keeps the scripted opening, but explicit natural-release
+            # signals must still be able to place the CC when enemy macro lead is visible.
+            enable_workers = False
+            enable_supply = False
+            enable_gas = False
+            enable_spawn = False
+            enable_production = False
+            enable_expansion = bool(enable_expansion)
+            expand_to = max(2, int(expand_to))
+            fallback_lanes = ["expand"]
+            lane_order = [ln for ln in lane_order if ln == "expand"] or ["expand"]
 
         sig = self._sig_from_plan(
             army_comp=army_comp,

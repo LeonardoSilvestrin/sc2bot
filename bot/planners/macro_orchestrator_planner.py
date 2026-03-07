@@ -11,6 +11,7 @@ from bot.devlog import DevLogger
 from bot.mind.attention import Attention
 from bot.mind.awareness import Awareness, K
 from bot.planners.utils.base_planner import BasePlanner
+from bot.planners.utils.building_placement_planner import BuildingPlacementPlanner
 from bot.planners.utils.proposals import Proposal, TaskSpec
 from bot.planners.utils.spending_policy import SpendingPolicy
 from bot.tasks.macro.tasks.macro_ares_executor_tick import MacroAresExecutorTick
@@ -36,6 +37,7 @@ class MacroOrchestratorPlanner(BasePlanner):
     tech_priority_upgrade_release: tuple[str, ...] = ("STIMPACK",)
     critical_expand_cooldown_s: float = 12.0
     critical_gas_cooldown_s: float = 10.0
+    lag_debug_emit_interval_s: float = 6.0
 
     phase_opening_max_s: float = 220.0
     phase_late_after_s: float = 620.0
@@ -98,6 +100,14 @@ class MacroOrchestratorPlanner(BasePlanner):
     rush_natural_release_min_army_supply: float = 14.0
     rush_natural_release_min_tanks: int = 1
     rush_natural_release_bunker_ok: bool = True
+    enemy_macro_catchup_visible_bases: int = 3
+    enemy_macro_catchup_base_gap: int = 2
+    enemy_macro_catchup_clear_s: float = 4.0
+    enemy_macro_catchup_min_army_supply: float = 10.0
+    enemy_macro_catchup_min_tanks: int = 1
+    enemy_macro_catchup_bunker_ok: bool = True
+    enemy_at_door_urgency_floor: int = 16
+    enemy_at_door_count_floor: int = 2
 
     housekeeping_score: int = 18
     housekeeping_interval_s: float = 4.0
@@ -118,10 +128,73 @@ class MacroOrchestratorPlanner(BasePlanner):
     _last_plan_hash: str = ""
     _plan_version: int = 0
     _resource_controller: SpendingPolicy = field(default_factory=SpendingPolicy)
+    _placement_planner: BuildingPlacementPlanner = field(default_factory=BuildingPlacementPlanner)
 
     @staticmethod
     def _clamp01(x: float) -> float:
         return max(0.0, min(1.0, float(x)))
+
+    def _enemy_at_door(self, bot, *, attention: Attention) -> bool:
+        non_combat_units = {U.SCV, U.PROBE, U.DRONE, U.MULE, U.LARVA, U.EGG}
+        non_threat_structures = {
+            U.COMMANDCENTER,
+            U.ORBITALCOMMAND,
+            U.PLANETARYFORTRESS,
+            U.HATCHERY,
+            U.LAIR,
+            U.HIVE,
+            U.NEXUS,
+        }
+
+        def _hostile_count_near(pos, radius: float) -> int:
+            total = 0
+            for unit in list(getattr(bot, "enemy_units", []) or []):
+                try:
+                    if getattr(unit, "type_id", None) in non_combat_units:
+                        continue
+                    if float(unit.distance_to(pos)) <= float(radius):
+                        total += 1
+                except Exception:
+                    continue
+            for struct in list(getattr(bot, "enemy_structures", []) or []):
+                try:
+                    if getattr(struct, "type_id", None) in non_threat_structures:
+                        continue
+                    if float(struct.distance_to(pos)) <= float(radius):
+                        total += 1
+                except Exception:
+                    continue
+            return int(total)
+
+        if (
+            int(attention.combat.primary_urgency) >= int(self.enemy_at_door_urgency_floor)
+            and int(attention.combat.primary_enemy_count) >= int(self.enemy_at_door_count_floor)
+        ):
+            return True
+        try:
+            ramp = getattr(bot, "main_base_ramp", None)
+            if ramp is not None:
+                probes = []
+                top = getattr(ramp, "top_center", None)
+                if top is not None:
+                    probes.append((top, 5.5))
+                for pos in list(getattr(ramp, "corner_depots", []) or []):
+                    probes.append((pos, 4.5))
+                barracks_pos = getattr(ramp, "barracks_correct_placement", None)
+                if barracks_pos is not None:
+                    probes.append((barracks_pos, 5.0))
+                for pos, radius in probes:
+                    if int(_hostile_count_near(pos, float(radius))) > 0:
+                        return True
+        except Exception:
+            pass
+        try:
+            nat = bot.mediator.get_own_nat
+            if nat is not None and int(_hostile_count_near(nat, 8.5)) >= 2:
+                return True
+        except Exception:
+            pass
+        return False
 
     @staticmethod
     def _interp_scalar_milestones(*, milestones: list[dict[str, Any]], now: float, key: str) -> float:
@@ -435,11 +508,65 @@ class MacroOrchestratorPlanner(BasePlanner):
         lag_tech = self._clamp01((0.70 * structure_missing_ratio) + (0.30 * upgrade_missing_ratio))
 
         ttl = 12.0
+        lag_debug = {
+            "t": float(now),
+            "lag_prod": float(lag_prod),
+            "lag_spend": float(lag_spend),
+            "lag_tech": float(lag_tech),
+            "lagging_unit_gap": float(lagging_gap),
+            "idle_pressure": float(idle_pressure),
+            "army_supply_gap": float(army_supply_gap),
+            "army_supply_pressure": float(army_supply_pressure),
+            "construction_pressure": float(construction_pressure),
+            "prod_structure_missing": int(prod_structure_missing),
+            "prod_structure_target_total": int(prod_structure_target_total),
+            "expand_gap": int(expand_gap),
+            "desired_expand_to": int(desired_expand_to),
+            "bases_now": int(bases_now),
+            "minerals": int(minerals),
+            "gas": int(gas),
+            "structure_missing": int(structure_missing),
+            "structure_target_total": int(structure_target_total),
+            "structure_missing_ratio": float(structure_missing_ratio),
+            "upgrade_missing": int(upgrade_missing),
+            "upgrade_target_total": int(len(desired_upgrades)),
+            "upgrade_missing_ratio": float(upgrade_missing_ratio),
+            "workers_total": int(workers_total),
+            "scv_cap": int(scv_cap),
+        }
+        awareness.mem.set(K("control", "priority", "lag", "debug"), value=dict(lag_debug), now=now, ttl=ttl)
         awareness.mem.set(K("control", "priority", "lag", "production"), value=float(lag_prod), now=now, ttl=ttl)
         awareness.mem.set(K("control", "priority", "lag", "construction"), value=float(construction_pressure), now=now, ttl=ttl)
         awareness.mem.set(K("control", "priority", "lag", "spending"), value=float(lag_spend), now=now, ttl=ttl)
         awareness.mem.set(K("control", "priority", "lag", "tech"), value=float(lag_tech), now=now, ttl=ttl)
         awareness.mem.set(K("control", "priority", "lag", "army_supply"), value=float(army_supply_pressure), now=now, ttl=ttl)
+        if self.log is not None:
+            last_emit = float(
+                awareness.mem.get(K("control", "priority", "lag", "debug_last_emit_t"), now=now, default=0.0) or 0.0
+            )
+            lag_saturated = bool(float(lag_prod) >= 0.95 or float(lag_spend) >= 0.95 or float(lag_tech) >= 0.95)
+            if lag_saturated and (float(now) - float(last_emit)) >= float(self.lag_debug_emit_interval_s):
+                awareness.mem.set(K("control", "priority", "lag", "debug_last_emit_t"), value=float(now), now=now, ttl=30.0)
+                self.log.emit(
+                    "macro_lag_debug",
+                    {
+                        "t": round(float(now), 2),
+                        "lag_prod": round(float(lag_prod), 3),
+                        "lag_spend": round(float(lag_spend), 3),
+                        "lag_tech": round(float(lag_tech), 3),
+                        "lagging_unit_gap": round(float(lagging_gap), 2),
+                        "army_supply_gap": round(float(army_supply_gap), 2),
+                        "construction_pressure": round(float(construction_pressure), 3),
+                        "expand_gap": int(expand_gap),
+                        "minerals": int(minerals),
+                        "gas": int(gas),
+                        "structure_missing_ratio": round(float(structure_missing_ratio), 3),
+                        "upgrade_missing_ratio": round(float(upgrade_missing_ratio), 3),
+                        "prod_structure_missing": int(prod_structure_missing),
+                        "prod_structure_target_total": int(prod_structure_target_total),
+                    },
+                    meta={"module": "planner", "component": f"planner.{self.planner_id}"},
+                )
         return float(lag_prod), float(lag_spend), float(lag_tech)
 
     def _lane_order(
@@ -713,6 +840,7 @@ class MacroOrchestratorPlanner(BasePlanner):
             enemy_build_snapshot = {}
         enemy_bases_visible = int(enemy_build_snapshot.get("bases_visible", 0) or 0)
         enemy_natural_on_ground = bool(enemy_build_snapshot.get("natural_on_ground", False))
+        enemy_base_gap = max(0, int(enemy_bases_visible) - int(bases_now))
         rush_state_early = str(awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
         scout_no_natural_confirmed = bool(
             awareness.mem.get(K("enemy", "rush", "scout_no_natural_confirmed"), now=now, default=False)
@@ -816,9 +944,11 @@ class MacroOrchestratorPlanner(BasePlanner):
         rush_hard_active = bool(rush_state in {"CONFIRMED", "HOLDING"})
         rush_heavy_active = bool(rush_active and rush_tier in {"HEAVY", "EXTREME"})
         aggression_active = bool(aggression_state == "AGGRESSION")
+        enemy_at_door = bool(self._enemy_at_door(bot, attention=attention))
         rush_army_dump = bool(
             rush_heavy_active
             or rush_hard_active
+            or enemy_at_door
             or (rush_active and int(attention.economy.minerals) >= int(self.rush_army_dump_minerals))
             or (aggression_active and int(attention.economy.minerals) >= int(self.aggression_army_dump_minerals))
         )
@@ -839,9 +969,31 @@ class MacroOrchestratorPlanner(BasePlanner):
             army_supply_now = float(getattr(bot, "supply_army", 0.0) or 0.0)
         except Exception:
             army_supply_now = 0.0
+        nat_should_secure = bool(
+            awareness.mem.get(K("intel", "map_control", "our_nat", "should_secure"), now=now, default=False)
+        )
+        enemy_macro_catchup_expand = bool(
+            int(bases_now) < 2
+            and int(enemy_bases_visible) >= int(self.enemy_macro_catchup_visible_bases)
+            and int(enemy_base_gap) >= int(self.enemy_macro_catchup_base_gap)
+            and not bool(pressure_high)
+            and not bool(enemy_at_door)
+            and float(rush_clear_for) >= float(self.enemy_macro_catchup_clear_s)
+            and (
+                bool(attention.macro.opening_done)
+                or bool(nat_should_secure)
+                or bool(enemy_natural_on_ground)
+            )
+            and (
+                int(tanks_ready) >= int(self.enemy_macro_catchup_min_tanks)
+                or float(army_supply_now) >= float(self.enemy_macro_catchup_min_army_supply)
+                or (bool(self.enemy_macro_catchup_bunker_ok) and int(bunkers_ready) > 0)
+                or bool(nat_should_secure)
+            )
+        )
         rush_natural_release = bool(
             int(bases_now) < 2
-            and bool(attention.macro.opening_done)
+            and (bool(attention.macro.opening_done) or bool(nat_should_secure))
             and not bool(pressure_high)
             and float(rush_clear_for) >= float(self.rush_natural_release_clear_s)
             and (
@@ -859,7 +1011,17 @@ class MacroOrchestratorPlanner(BasePlanner):
             proposed=max(1, int(base_expand)),
             cooldown_s=float(self.critical_expand_cooldown_s),
         )
-        if bool(enemy_one_base_rush) or str(opening_selected) == "RushDefenseOpen":
+        rush_defense_gate_active = bool(
+            bool(enemy_one_base_rush)
+            or (
+                str(opening_selected) == "RushDefenseOpen"
+                and (
+                    rush_state in {"SUSPECTED", "CONFIRMED", "HOLDING"}
+                    or float(rush_clear_for) < float(self.rush_natural_release_clear_s)
+                )
+            )
+        )
+        if rush_defense_gate_active:
             expand_to = min(int(expand_to), 2)
         gas_target = self._cooldown_value(
             awareness=awareness,
@@ -873,6 +1035,9 @@ class MacroOrchestratorPlanner(BasePlanner):
         enable_workers = bool(not pressure_high or int(attention.economy.workers_total) < 32)
         enable_expansion = bool(not pressure_high)
         enable_production = True
+        if enemy_at_door:
+            enable_workers = bool(int(attention.economy.workers_total) < 24)
+            enable_production = False
         if phase == "OPENING" and int(total_bases) < 2:
             enable_expansion = True
         if ahead_expand_push:
@@ -880,13 +1045,19 @@ class MacroOrchestratorPlanner(BasePlanner):
         if rush_army_dump or rush_hard_active:
             enable_expansion = False
             expand_to = min(int(expand_to), int(bases_now))
-        if bool(enemy_one_base_rush) or str(opening_selected) == "RushDefenseOpen":
-            if bool(rush_natural_release):
+        if rush_defense_gate_active:
+            if bool(rush_natural_release) or bool(enemy_macro_catchup_expand):
                 enable_expansion = True
                 expand_to = 2
             else:
                 enable_expansion = False
                 expand_to = min(int(expand_to), min(2, int(bases_now)))
+        if enemy_at_door:
+            enable_expansion = False
+            expand_to = min(int(expand_to), int(bases_now))
+        if bool(enemy_macro_catchup_expand) and not bool(enemy_at_door):
+            enable_expansion = True
+            expand_to = max(2, int(expand_to))
 
         lane_order, lane_scores, lane_top = self._lane_order(
             awareness=awareness,
@@ -907,6 +1078,9 @@ class MacroOrchestratorPlanner(BasePlanner):
             ahead_expand_push=bool(ahead_expand_push),
             rush_army_dump=bool(rush_army_dump),
         )
+        if enemy_at_door:
+            preferred = ["spawn", "supply", "workers", "gas"]
+            lane_order = [ln for ln in preferred if ln in lane_order] + [ln for ln in lane_order if ln not in set(preferred)]
 
         ttl = 12.0
         awareness.mem.set(K("control", "phase"), value=str(phase), now=now, ttl=ttl)
@@ -954,6 +1128,9 @@ class MacroOrchestratorPlanner(BasePlanner):
         awareness.mem.set(K("macro", "exec", "rush_heavy_active"), value=bool(rush_heavy_active), now=now, ttl=ttl)
         awareness.mem.set(K("macro", "exec", "rush_tier"), value=str(rush_tier), now=now, ttl=ttl)
         awareness.mem.set(K("macro", "exec", "rush_severity"), value=float(rush_severity), now=now, ttl=ttl)
+        awareness.mem.set(K("macro", "exec", "enemy_bases_visible"), value=int(enemy_bases_visible), now=now, ttl=ttl)
+        awareness.mem.set(K("macro", "exec", "enemy_base_gap"), value=int(enemy_base_gap), now=now, ttl=ttl)
+        awareness.mem.set(K("macro", "exec", "enemy_macro_catchup_expand"), value=bool(enemy_macro_catchup_expand), now=now, ttl=ttl)
         awareness.mem.set(K("macro", "exec", "ahead_expand_push"), value=bool(ahead_expand_push), now=now, ttl=ttl)
         awareness.mem.set(K("macro", "exec", "enable_production"), value=bool(enable_production), now=now, ttl=ttl)
         awareness.mem.set(K("macro", "exec", "enable_expansion"), value=bool(enable_expansion), now=now, ttl=ttl)
@@ -984,6 +1161,10 @@ class MacroOrchestratorPlanner(BasePlanner):
                 "rush_severity": float(rush_severity),
                 "rush_clear_for": float(rush_clear_for),
                 "rush_natural_release": bool(rush_natural_release),
+                "enemy_bases_visible": int(enemy_bases_visible),
+                "enemy_base_gap": int(enemy_base_gap),
+                "enemy_macro_catchup_expand": bool(enemy_macro_catchup_expand),
+                "enemy_at_door": bool(enemy_at_door),
                 "enable_production": bool(enable_production),
                 "enable_expansion": bool(enable_expansion),
                 "expand_to": int(expand_to),
@@ -1102,6 +1283,7 @@ class MacroOrchestratorPlanner(BasePlanner):
         if (float(now) - float(self._last_tech_exec_publish_at)) >= max(0.2, float(self.tech_exec_min_interval_s)):
             self._publish_tech_exec(bot, awareness=awareness, attention=attention, now=now)
             self._last_tech_exec_publish_at = float(now)
+        self._placement_planner.publish(bot=bot, awareness=awareness, now=now)
 
         army_executor_pid = self.proposal_id("macro_army_executor")
         if not self.is_proposal_running(awareness=awareness, proposal_id=army_executor_pid, now=now):

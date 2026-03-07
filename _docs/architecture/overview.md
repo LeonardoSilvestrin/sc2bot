@@ -1,6 +1,4 @@
-# ARQUITETURA v2 (Runtime Atual)
-
-## 1. Objetivo
+# Arquitetura v2
 
 Arquitetura oficial do bot baseada no codigo atual.
 
@@ -16,7 +14,7 @@ Objetivos:
 
 ---
 
-## 2. Principios
+## Principios
 
 1. `Sensors` so leem estado do jogo.
 2. `Attention` e snapshot imutavel por tick.
@@ -28,22 +26,22 @@ Objetivos:
 
 ---
 
-## 3. Topologia
+## Topologia
 
 Entradas principais:
-- [`run.py`](run.py)
-- [`bot/main.py`](bot/main.py)
-- [`bot/mind/self.py`](bot/mind/self.py)
+- `run.py`
+- `bot/main.py`
+- `bot/mind/self.py`
 
 Componentes centrais:
 - `Sensors`: `bot/sensors/*`
-- `Attention`: [`bot/mind/attention.py`](bot/mind/attention.py)
+- `Attention`: `bot/mind/attention.py`
 - `Intel`: `bot/intel/*`
-- `Awareness`: [`bot/mind/awareness.py`](bot/mind/awareness.py)
+- `Awareness`: `bot/mind/awareness.py`
 - `Planners`: `bot/planners/*`
-- `Ego`: [`bot/mind/ego.py`](bot/mind/ego.py)
+- `Ego`: `bot/mind/ego.py`
 - `Tasks`: `bot/tasks/*`
-- `Body/Leases`: [`bot/mind/body.py`](bot/mind/body.py)
+- `Body/Leases`: `bot/mind/body.py`
 
 Pipeline:
 1. sensors derivam snapshot
@@ -56,9 +54,9 @@ Pipeline:
 
 ---
 
-## 4. Fluxo por Tick
+## Fluxo por tick
 
-Sequencia em [`RuntimeApp.on_step`](bot/mind/self.py):
+Sequencia em `RuntimeApp.on_step`:
 1. `attention = derive_attention(...)`
 2. `derive_enemy_build_intel(..., attention=attention, awareness=awareness, ...)`
 3. `derive_my_army_composition(...)` e `derive_game_parity(...)`
@@ -81,9 +79,10 @@ Eventos principais:
 
 ---
 
-## 5. Contratos por Camada
+## Contratos por camada
 
-### 5.1 Sensors
+### Sensors
+
 Permitido:
 - ler estado do bot/engine
 
@@ -91,7 +90,8 @@ Proibido:
 - escrever em `Awareness`
 - emitir comando de unidade
 
-### 5.2 Attention
+### Attention
+
 - snapshot somente leitura
 - sem historico
 - sem side-effect
@@ -108,22 +108,25 @@ Tipos principais:
 
 Nota: contrato antigo `economy.bases` foi removido; usar `economy.bases_sat`.
 
-### 5.3 Intel
+### Intel
+
 - converte fatos em inferencia/state
-- grava em `Awareness.mem` (com TTL quando aplicavel)
+- grava em `Awareness.mem` com TTL quando aplicavel
 - nao comanda unidades
 
 Split atual de enemy intel:
-- [`bot/intel/opening_intel.py`](bot/intel/opening_intel.py)
-- [`bot/intel/weak_points_intel.py`](bot/intel/weak_points_intel.py)
-- orquestrador: [`bot/intel/enemy_build_intel.py`](bot/intel/enemy_build_intel.py)
+- `bot/intel/opening_intel.py`
+- `bot/intel/weak_points_intel.py`
+- orquestrador: `bot/intel/enemy_build_intel.py`
 
-### 5.4 Awareness
+### Awareness
+
 - blackboard entre ticks
 - chaves namespaceadas via `K(...)`
 - suporte a `ttl`, `age`, `staleness`, eventos
 
-### 5.5 Planners
+### Planners
+
 Entrada:
 - `Attention + Awareness`
 
@@ -144,7 +147,8 @@ Planners atuais:
 - `HousekeepingPlanner`
 - `DepotControlPlanner`
 
-### 5.6 Ego
+### Ego
+
 Responsabilidades:
 - cooldown de propostas
 - threat gate por dominio
@@ -152,7 +156,8 @@ Responsabilidades:
 - selecao/binding de unidades
 - lifecycle de missao e persistencia em `Awareness`
 
-### 5.7 Tasks
+### Tasks
+
 Contrato:
 - `on_step` retorna `TaskResult`
 - status operacionais: `RUNNING`, `DONE`, `FAILED`, `NOOP`
@@ -162,10 +167,10 @@ Somente tasks emitem `move/attack/train/register_behavior/...`.
 
 ---
 
-## 6. Modelo de Proposal/Missao
+## Modelo de proposal/missao
 
 Definicoes oficiais em:
-- [`bot/planners/utils/proposals.py`](bot/planners/utils/proposals.py)
+- `bot/planners/utils/proposals.py`
 
 Estruturas:
 - `UnitRequirement(unit_type, count, pick_policy, required)`
@@ -178,7 +183,8 @@ Regras:
 - `task_factory` recebe `mission_id`
 - `reinforce_mission_id` permite bind de reforco na missao existente
 
-### 6.1 Admissao (Ego)
+### Admissao
+
 `Ego._admit`:
 1. ignora cooldown
 2. valida singleton/domain gate
@@ -187,7 +193,8 @@ Regras:
 5. bind task + commitment
 6. persiste composicao original da missao
 
-### 6.2 Execucao/encerramento
+### Execucao e encerramento
+
 `Ego._execute`:
 - encerra por expiracao/degradacao
 - executa `task.step(...)`
@@ -197,10 +204,10 @@ Regras:
 
 ---
 
-## 7. Estado Persistente (Awareness)
+## Estado persistente
 
 Catalogo detalhado:
-- [`_docs/attention_awareness.md`](_docs/attention_awareness.md)
+- [runtime/state_catalog.md](../runtime/state_catalog.md)
 
 Namespaces principais:
 - `ops:*` (missoes, cooldowns, proposals)
@@ -210,48 +217,35 @@ Namespaces principais:
 
 ---
 
-## 8. Observabilidade
+## Observabilidade
 
 Implementacao:
-- [`bot/devlog.py`](bot/devlog.py)
+- `bot/devlog.py`
 
 Formato:
 - JSONL consolidado por run
 - JSONL por modulo e por componente
 
 Eventos-chave:
-- churn de missao: `mission_started`/`mission_ended`
-- falhas/cooldowns: `mission_ended` com `status=FAILED`
+- churn de missao: `mission_started` e `mission_ended`
+- falhas e cooldowns: `mission_ended` com `status=FAILED`
 - pressao de combate: `attention_tick` (`primary_urgency`, `primary_enemy_count`, `threatened_bases`)
 - decisao de planner: `planner_proposed`
 
 Triagem rapida:
 1. validar `attention_tick`
 2. validar `planner_proposed`
-3. validar `mission_started`/`mission_ended`
+3. validar `mission_started` e `mission_ended`
 4. validar eventos de task (`*_tick`)
 
 ---
 
-## 9. Invariantes
+## Invariantes
 
 1. `Attention` nao persiste estado entre ticks.
 2. `Intel` nao emite comandos.
 3. `Planners` nao executam micro.
-4. `Ego` arbitra admissao/ownership.
-5. toda `Task` retorna `TaskResult` valido.
-6. toda missao admitida deixa rastro em `Awareness`.
-7. leases sao liberados ao fim da missao.
-
----
-
-## 10. Referencias
-
-- [`bot/mind/self.py`](bot/mind/self.py)
-- [`bot/mind/attention.py`](bot/mind/attention.py)
-- [`bot/mind/awareness.py`](bot/mind/awareness.py)
-- [`bot/intel/enemy_build_intel.py`](bot/intel/enemy_build_intel.py)
-- [`bot/mind/ego.py`](bot/mind/ego.py)
-- [`bot/mind/body.py`](bot/mind/body.py)
-- [`bot/planners/utils/proposals.py`](bot/planners/utils/proposals.py)
-- [`_docs/attention_awareness.md`](_docs/attention_awareness.md)
+4. `Ego` arbitra admissao e ownership.
+5. Toda `Task` retorna `TaskResult` valido.
+6. Toda missao admitida deixa rastro em `Awareness`.
+7. Leases sao liberados ao fim da missao.

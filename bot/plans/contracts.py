@@ -17,6 +17,7 @@ CONTRACTS: dict[str, dict[str, str]] = {
     "macro.gas.*": {"writer": "planner.macro_orchestrator", "reader": "tasks.macro_executor/planners.housekeeping"},
     "macro.exec.*": {"writer": "planner.macro_orchestrator", "reader": "tasks/intel.prioritization/runtime"},
     "macro.plan.*": {"writer": "planner.macro_orchestrator", "reader": "task.macro_executor"},
+    "macro.placement.*": {"writer": "planner.macro_orchestrator", "reader": "task.macro_executor/task.tech_executor/ares.behaviors"},
     "tech.exec.*": {"writer": "planner.macro_orchestrator", "reader": "task.tech_executor/planners"},
     "control.phase": {"writer": "planner.macro_orchestrator", "reader": "planners.housekeeping"},
     "control.pressure.*": {"writer": "planner.macro_orchestrator", "reader": "ego/intel/planners/tasks"},

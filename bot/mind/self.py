@@ -1,7 +1,7 @@
 # bot/mind/self.py
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, is_dataclass
+from dataclasses import asdict, dataclass, field, is_dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -14,6 +14,7 @@ from bot.intel.strategy.i2_CTRL_advantage_game_status_intel import AdvantageGame
 from bot.intel.locations.i1_pathing_flow_intel import PathingFlowIntelConfig, derive_pathing_flow_intel
 from bot.intel.locations.i2_pathing_route_intel import PathingRouteIntelConfig, derive_pathing_route_intel
 from bot.intel.locations.i3_map_control_intel import MapControlIntelConfig, derive_map_control_intel
+from bot.intel.locations.i4_enemy_presence_intel import EnemyPresenceIntelConfig, derive_enemy_presence_intel
 from bot.intel.mission.i1_mission_unit_threat_intel import MissionUnitThreatIntelConfig, derive_mission_unit_threat_intel
 from bot.intel.mission.i2_mission_value_intel import MissionValueIntelConfig, derive_mission_value_intel
 from bot.sensors.threat_sensor import Threat
@@ -87,6 +88,7 @@ class RuntimeApp:
     pathing_flow_cfg: PathingFlowIntelConfig
     pathing_route_cfg: PathingRouteIntelConfig
     map_control_cfg: MapControlIntelConfig
+    enemy_presence_cfg: EnemyPresenceIntelConfig
     mission_unit_threat_cfg: MissionUnitThreatIntelConfig
     mission_value_cfg: MissionValueIntelConfig
     advantage_game_status_intel: AdvantageGameStatusIntel
@@ -99,6 +101,9 @@ class RuntimeApp:
     bo_stall_warn_s: float = 25.0
     runtime_clock_every_iters: int = 24
     runtime_clock_print: bool = False
+    scv_churn_window_s: float = 2.5
+    scv_churn_emit_interval_s: float = 5.0
+    scv_churn_min_changes: int = 4
     _bo_last_step_idx: int = -1
     _bo_last_step_t: float = 0.0
     _bo_last_opening: str = ""
@@ -116,6 +121,8 @@ class RuntimeApp:
     chat_min_interval_s: float = 20.0
     chat_status_interval_s: float = 45.0
     _wall_start_s: float = 0.0
+    _scv_state_by_tag: dict[int, dict[str, Any]] = field(default_factory=dict)
+    _scv_churn_by_tag: dict[int, dict[str, Any]] = field(default_factory=dict)
 
     @classmethod
     def build(cls, *, log: DevLogger, debug: bool = True) -> "RuntimeApp":
@@ -238,6 +245,7 @@ class RuntimeApp:
             pathing_flow_cfg=PathingFlowIntelConfig(),
             pathing_route_cfg=PathingRouteIntelConfig(),
             map_control_cfg=MapControlIntelConfig(),
+            enemy_presence_cfg=EnemyPresenceIntelConfig(),
             mission_unit_threat_cfg=MissionUnitThreatIntelConfig(),
             mission_value_cfg=MissionValueIntelConfig(),
             advantage_game_status_intel=AdvantageGameStatusIntel(AdvantageGameStatusIntelConfig()),
@@ -258,6 +266,8 @@ class RuntimeApp:
         self._chat_seen_early_rush = False
         self._chat_rush_held_announced = False
         self._wall_start_s = float(time.perf_counter())
+        self._scv_state_by_tag.clear()
+        self._scv_churn_by_tag.clear()
         derive_opening_contract_intel(
             bot,
             awareness=self.awareness,
@@ -331,6 +341,13 @@ class RuntimeApp:
             now=now,
             cfg=self.pathing_route_cfg,
         )
+        derive_enemy_presence_intel(
+            bot,
+            awareness=self.awareness,
+            attention=attention,
+            now=now,
+            cfg=self.enemy_presence_cfg,
+        )
         derive_map_control_intel(
             bot,
             awareness=self.awareness,
@@ -360,6 +377,7 @@ class RuntimeApp:
         await self._emit_chat_updates(bot, now=now)
 
         self._emit_build_order_diagnostics(bot, now=now, iteration=int(iteration))
+        self._emit_scv_churn_debug(bot, now=now)
 
         if self.log and self._full_snapshots_enabled():
             if int(iteration) % max(1, int(self.attention_full_every_iters)) == 0:
@@ -381,6 +399,101 @@ class RuntimeApp:
         tick = TaskTick(iteration=int(iteration), time=now)
         await self.ego.tick(bot, tick=tick, attention=attention, awareness=self.awareness)
         self._emit_runtime_clock(iteration=int(iteration), now=now)
+
+    def _emit_scv_churn_debug(self, bot, *, now: float) -> None:
+        if self.log is None:
+            return
+
+        role_by_tag: dict[int, str] = {}
+        try:
+            role_dict = getattr(bot.mediator, "get_unit_role_dict", {}) or {}
+            for role, tags in dict(role_dict).items():
+                role_name = str(getattr(role, "name", role) or "")
+                for tag in list(tags or []):
+                    try:
+                        role_by_tag[int(tag)] = str(role_name)
+                    except Exception:
+                        continue
+        except Exception:
+            role_by_tag = {}
+
+        alive_tags: set[int] = set()
+        for worker in list(getattr(bot, "workers", []) or []):
+            try:
+                tag = int(getattr(worker, "tag", -1) or -1)
+            except Exception:
+                continue
+            if tag <= 0:
+                continue
+            alive_tags.add(tag)
+
+            orders = list(getattr(worker, "orders", []) or [])
+            order_name = ""
+            order_target = ""
+            if orders:
+                try:
+                    order_name = str(getattr(getattr(orders[0], "ability", None), "name", "") or "")
+                except Exception:
+                    order_name = ""
+                try:
+                    target = getattr(worker, "order_target", None)
+                    if hasattr(target, "x") and hasattr(target, "y"):
+                        order_target = f"{float(getattr(target, 'x')):.1f},{float(getattr(target, 'y')):.1f}"
+                    elif target is not None:
+                        order_target = str(target)
+                except Exception:
+                    order_target = ""
+
+            state = {
+                "role": str(role_by_tag.get(tag, "UNKNOWN")),
+                "order_name": str(order_name),
+                "order_target": str(order_target),
+                "is_idle": bool(getattr(worker, "is_idle", False)),
+                "is_constructing": bool(getattr(worker, "is_constructing", False)),
+            }
+            prev = self._scv_state_by_tag.get(tag)
+            self._scv_state_by_tag[tag] = dict(state)
+            if prev is None or prev == state:
+                continue
+
+            churn = self._scv_churn_by_tag.get(
+                tag,
+                {"window_start": float(now), "changes": 0, "last_emit": -9999.0},
+            )
+            if (float(now) - float(churn.get("window_start", now) or now)) > float(self.scv_churn_window_s):
+                churn["window_start"] = float(now)
+                churn["changes"] = 0
+            churn["changes"] = int(churn.get("changes", 0) or 0) + 1
+            self._scv_churn_by_tag[tag] = churn
+
+            if (
+                int(churn["changes"]) >= int(self.scv_churn_min_changes)
+                and (float(now) - float(churn.get("last_emit", -9999.0) or -9999.0)) >= float(self.scv_churn_emit_interval_s)
+            ):
+                churn["last_emit"] = float(now)
+                self.log.emit(
+                    "scv_order_churn",
+                    {
+                        "t": round(float(now), 2),
+                        "tag": int(tag),
+                        "changes_in_window": int(churn["changes"]),
+                        "window_s": float(self.scv_churn_window_s),
+                        "prev_role": str(prev.get("role", "")),
+                        "role": str(state["role"]),
+                        "prev_order": str(prev.get("order_name", "")),
+                        "order": str(state["order_name"]),
+                        "prev_target": str(prev.get("order_target", "")),
+                        "target": str(state["order_target"]),
+                        "is_idle": bool(state["is_idle"]),
+                        "is_constructing": bool(state["is_constructing"]),
+                    },
+                    meta={"module": "runtime", "component": "runtime.scv_churn"},
+                )
+
+        stale_tags = [tag for tag in self._scv_state_by_tag.keys() if int(tag) not in alive_tags]
+        for tag in stale_tags:
+            self._scv_state_by_tag.pop(tag, None)
+            self._scv_churn_by_tag.pop(tag, None)
 
     async def on_end(self, bot, game_result: Result) -> None:
         if self.log:

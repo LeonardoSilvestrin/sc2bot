@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from ares.consts import UnitRole
 from sc2.ids.unit_typeid import UnitTypeId as U
 from sc2.position import Point2
 
@@ -42,12 +43,22 @@ class DefenseBunkerTask(BaseTask):
             return th.position
         return self.base_pos
 
+    @staticmethod
+    def _release_worker(bot, worker) -> None:
+        try:
+            bot.mediator.assign_role(tag=int(worker.tag), role=UnitRole.GATHERING, remove_from_squad=True)
+        except Exception:
+            pass
+
     def _bunker_anchor(self, bot, *, base_pos: Point2) -> Point2:
         mode = str(self.anchor_mode or "BASE").upper()
         if mode == "MAIN_RAMP":
             try:
                 ramp = getattr(bot, "main_base_ramp", None)
                 if ramp is not None:
+                    barracks_pos = getattr(ramp, "barracks_correct_placement", None)
+                    if barracks_pos is not None:
+                        return barracks_pos
                     top = getattr(ramp, "top_center", None)
                     if top is not None:
                         return top
@@ -60,7 +71,8 @@ class DefenseBunkerTask(BaseTask):
                 return bot.start_location
         if mode == "NAT_CHOKE":
             try:
-                return base_pos.towards(bot.start_location, 4.5)
+                enemy_main = bot.enemy_start_locations[0]
+                return base_pos.towards(enemy_main, 4.5)
             except Exception:
                 return base_pos
         if mode == "PERIMETER":
@@ -152,25 +164,27 @@ class DefenseBunkerTask(BaseTask):
             return None
 
     async def on_step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult:
-        bound_err = self.require_mission_bound()
+        bound_err = self.require_mission_bound(exact_tags=1)
         if bound_err is not None:
             return bound_err
+        worker = bot.units.find_by_tag(int(self.assigned_tags[0]))
+        if worker is None:
+            return TaskResult.failed("bunker_worker_missing")
+        if getattr(worker, "type_id", None) != U.SCV:
+            return TaskResult.failed("bunker_worker_not_scv")
 
         base_pos = self._resolve_base_pos(bot)
         if self._bunker_started_or_ready(bot, base_pos=base_pos):
+            self._release_worker(bot, worker)
             self._done("bunker_ready_or_started")
             return TaskResult.done("bunker_ready_or_started")
 
         anchor = self._bunker_anchor(bot, base_pos=base_pos)
         pos = await self._choose_bunker_position(bot, base_pos=base_pos, anchor=anchor)
         if pos is None:
-            return TaskResult.noop("bunker_position_unavailable")
-        try:
-            worker = bot.mediator.select_worker(target_position=pos, force_close=True)
-        except Exception:
-            worker = None
-        if worker is None:
-            return TaskResult.noop("bunker_worker_unavailable")
+            self._release_worker(bot, worker)
+            self._done("bunker_position_unavailable")
+            return TaskResult.done("bunker_position_unavailable")
         try:
             if bool(
                 bot.mediator.build_with_specific_worker(
@@ -182,5 +196,9 @@ class DefenseBunkerTask(BaseTask):
                 self._active("building_defense_bunker")
                 return TaskResult.running("building_defense_bunker")
         except Exception:
-            return TaskResult.noop("bunker_build_command_failed")
-        return TaskResult.noop("bunker_build_command_rejected")
+            self._release_worker(bot, worker)
+            self._done("bunker_build_command_failed")
+            return TaskResult.done("bunker_build_command_failed")
+        self._release_worker(bot, worker)
+        self._done("bunker_build_command_rejected")
+        return TaskResult.done("bunker_build_command_rejected")

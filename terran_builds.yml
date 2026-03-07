@@ -24,6 +24,7 @@ Builds:
       - 14 supply @ ramp
       - 16 barracks @ ramp
       - 16 gas
+      - 17 worker_scout
       - 0 orbital
       - 19 expand
       - 20 supply @ ramp
@@ -42,6 +43,7 @@ Builds:
       - 14 supply @ ramp
       - 16 barracks @ ramp
       - 16 gas
+      - 17 worker_scout
       - 0 orbital
       - 19 reaper
       - 19 expand
@@ -61,14 +63,17 @@ Builds:
       - 14 supply @ ramp
       - 16 barracks @ ramp
       - 16 gas
+      - 17 worker_scout
       - 0 orbital
+      - 19 bunker @ ramp
       - 19 barracks
       - 20 marine *2
       - 20 supply @ ramp
       - 20 factory @ ramp
       - 21 barracksreactor
-      - 21 factorytechlab
+      - 21 hellion
       - 22 marine *2
-      - 24 siegetank
       - 24 marine *4
+      - 24 factorytechlab
+      - 25 siegetank
       - 30 expand

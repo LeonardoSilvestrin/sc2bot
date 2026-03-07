@@ -1,20 +1,22 @@
-# Attention & Awareness State Catalog
+# Catalogo de Estado
 
 Este documento descreve o contrato atual de estado do bot:
-- `bot/mind/attention.py` (snapshot do tick)
-- `bot/mind/awareness.py` (memoria entre ticks)
+- `bot/mind/attention.py`
+- `bot/mind/awareness.py`
 
 Regra base:
-- `Attention` = fatos do tick atual (imutavel)
+- `Attention` = fatos do tick atual
 - `Awareness` = estado persistente, inferencia, cooldown e trilha operacional
 
 ---
 
-## 1) Attention
+## Attention
 
-Fonte: `bot/mind/attention.py`.
+Fonte:
+- `bot/mind/attention.py`
 
-### 1.1 Estrutura principal
+### Estrutura principal
+
 - `economy: EconomySnapshot`
 - `combat: CombatSnapshot`
 - `unit_threats: UnitThreatsSnapshot`
@@ -24,8 +26,9 @@ Fonte: `bot/mind/attention.py`.
 - `missions: MissionSnapshot`
 - `time: float`
 
-### 1.2 EconomySnapshot
-- `units_ready: dict` (`{UnitTypeId -> count}`)
+### EconomySnapshot
+
+- `units_ready: dict`
 - `minerals: int`
 - `gas: int`
 - `supply_used: int`
@@ -48,28 +51,34 @@ Fonte: `bot/mind/attention.py`.
 - `gas_saturation`, `gas_ideal`
 - `refinery_tags`
 
-Nota: o campo legado `economy.bases` foi removido. O contrato oficial agora e apenas `bases_sat`.
+Nota:
+- o campo legado `economy.bases` foi removido
+- o contrato oficial agora e `bases_sat`
 
-### 1.3 CombatSnapshot
+### CombatSnapshot
+
 - `primary_base_tag: Optional[int]`
 - `primary_enemy_count: int`
-- `primary_urgency: int` (0..100)
+- `primary_urgency: int`
 - `primary_threat_pos: Optional[Point2]`
 - `base_threats: tuple[BaseThreatSnapshot, ...]`
 
-### 1.4 UnitThreatsSnapshot
+### UnitThreatsSnapshot
+
 - `units: tuple[UnitThreatSnapshot, ...]`
 - `missions: tuple[MissionUnitThreatSnapshot, ...]`
 
 Uso principal:
-- micro de missao (ex.: can-win, unidades em perigo)
-- gatilho de reinforce/support
+- micro de missao
+- gatilho de reinforce e support
 
-### 1.5 IntelSnapshot
+### IntelSnapshot
+
 - `orbital_ready_to_scan: bool`
 - `orbital_energy: float`
 
-### 1.6 MacroSnapshot
+### MacroSnapshot
+
 - `opening_done: bool`
 - `bases_total: int`
 - `prod_structures_total: int`
@@ -79,7 +88,8 @@ Uso principal:
 - `bases_under_saturated`, `bases_over_saturated`
 - `supply_used`, `supply_cap`, `supply_left`, `supply_blocked`
 
-### 1.7 EnemyBuildSnapshot
+### EnemyBuildSnapshot
+
 - `enemy_units`, `enemy_structures`
 - `enemy_main_pos`, `enemy_natural_pos`
 - `enemy_units_main`, `enemy_structures_main`
@@ -88,7 +98,8 @@ Uso principal:
 - `enemy_natural_townhall_progress`
 - `enemy_natural_townhall_type`
 
-### 1.8 MissionSnapshot
+### MissionSnapshot
+
 - `ongoing: tuple[MissionStatusSnapshot, ...]`
 - `ongoing_count`
 - `ongoing_units_alive`
@@ -107,13 +118,17 @@ Uso principal:
 
 ---
 
-## 2) Awareness.mem
+## Awareness.mem
 
-Fonte: `bot/mind/awareness.py`.
+Fonte:
+- `bot/mind/awareness.py`
 
-Formato de chave: tupla `("a","b","c")`, documentada como `a:b:c`.
+Formato de chave:
+- tupla `("a", "b", "c")`
+- documentada como `a:b:c`
 
-### 2.1 Ops / Missions (Ego)
+### Ops e missions
+
 - `ops:mission:<mission_id>:status`
 - `ops:mission:<mission_id>:domain`
 - `ops:mission:<mission_id>:proposal_id`
@@ -125,32 +140,37 @@ Formato de chave: tupla `("a","b","c")`, documentada como `a:b:c`.
 - `ops:mission:<mission_id>:reason`
 - `ops:mission:<mission_id>:ended_at`
 
-### 2.2 Ops / Proposals e cooldown
+### Ops, proposals e cooldown
+
 - `ops:cooldown:<proposal_id>:until`
 - `ops:cooldown:<proposal_id>:reason`
-- `ops:proposal_running:<proposal_id>` (helper de runtime)
+- `ops:proposal_running:<proposal_id>`
 
-### 2.3 Intel / Scout e scan
+### Intel, scout e scan
+
 - `intel:scv:*`
 - `intel:reaper:scout:*`
 - `intel:scan:*`
 
-### 2.4 Enemy openMing
+### Enemy opening
+
 - `enemy:opening:first_seen_t`
-- `enemy:rush:*` (state, score, confidence, evidence)
+- `enemy:rush:*`
 - `enemy:opening:kind`
 - `enemy:opening:confidence`
 - `enemy:opening:signals`
 - `enemy:opening:last_update_t`
 
-### 2.5 Enemy weak points
+### Enemy weak points
+
 - `enemy:weak_points:snapshot`
 - `enemy:weak_points:points`
 - `enemy:weak_points:primary`
 - `enemy:weak_points:bases_visible`
 - `enemy:weak_points:last_update_t`
 
-### 2.6 Macro / housekeeping
+### Macro e housekeeping
+
 - `macro:opening:selected`
 - `macro:opening:transition_target`
 - `macro:opening:build_selected`
@@ -172,19 +192,19 @@ Formato de chave: tupla `("a","b","c")`, documentada como `a:b:c`.
 
 ---
 
-## 3) Fluxo alvo de harass
+## Fluxo alvo de harass
 
 Fluxo oficial atual:
-1. `weak_points_intel` atualiza `enemy:weak_points:*` na `Awareness`.
-2. `harass_planner` le `enemy:weak_points:primary` e define `objective`.
-3. planner cria proposal com `task_factory(..., preferred_target=objective)`.
-4. tasks de harass executam somente o alvo recebido (`preferred_target`), sem recalcular `weak_points` internamente.
+1. `weak_points_intel` atualiza `enemy:weak_points:*` na Awareness
+2. `harass_planner` le `enemy:weak_points:primary` e define `objective`
+3. o planner cria `proposal` com `task_factory(..., preferred_target=objective)`
+4. tasks de harass executam somente o alvo recebido
 
 Isso centraliza decisao no planner e deixa task focada em execucao.
 
 ---
 
-## 4) Manutencao
+## Manutencao
 
 Ao mudar:
 - campos de `Attention`

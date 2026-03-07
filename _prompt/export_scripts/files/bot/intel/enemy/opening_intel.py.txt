@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict
 
+from ares.consts import UnitRole
 from sc2.ids.unit_typeid import UnitTypeId as U
 
 from bot.intel.config.opening_timing_rules import OpeningTimingRule
@@ -38,6 +39,51 @@ class OpeningDecision:
 
 def _clamp(v: float, lo: float, hi: float) -> float:
     return max(float(lo), min(float(hi), float(v)))
+
+
+def _sync_build_runner_scout_intel(*, bot, awareness: Awareness, now: float) -> None:
+    lost_early_key = K("intel", "scv", "lost_early")
+    lost_early_t_key = K("intel", "scv", "lost_early_t")
+    try:
+        scouts = bot.mediator.get_units_from_role(role=UnitRole.BUILD_RUNNER_SCOUT, unit_type=U.SCV)
+    except Exception:
+        scouts = []
+    scouts = [u for u in list(scouts or []) if u is not None]
+    if not scouts:
+        dispatched = bool(awareness.intel_scv_dispatched(now=now))
+        arrived_main = bool(awareness.intel_scv_arrived_main(now=now))
+        last_dispatch_at = float(awareness.intel_last_scv_dispatch_at(now=now) or 0.0)
+        lost_early = bool(awareness.mem.get(lost_early_key, now=now, default=False))
+        lost_early_window = bool(
+            dispatched
+            and not arrived_main
+            and not lost_early
+            and float(now) <= 220.0
+            and float(last_dispatch_at) > 0.0
+            and (float(now) - float(last_dispatch_at)) <= 120.0
+        )
+        if lost_early_window:
+            awareness.mem.set(lost_early_key, value=True, now=now, ttl=180.0)
+            awareness.mem.set(lost_early_t_key, value=float(now), now=now, ttl=180.0)
+        return
+
+    if not awareness.intel_scv_dispatched(now=now):
+        awareness.mark_scv_dispatched(now=now)
+
+    try:
+        enemy_main = bot.enemy_start_locations[0]
+    except Exception:
+        enemy_main = None
+    if enemy_main is None or awareness.intel_scv_arrived_main(now=now):
+        return
+
+    for scout in scouts:
+        try:
+            if float(scout.distance_to(enemy_main)) <= 12.0:
+                awareness.mark_scv_arrived_main(now=now, ttl=180.0)
+                return
+        except Exception:
+            continue
 
 
 def _match_timing_rule(
@@ -283,7 +329,12 @@ def _evaluate_opening(
     confirmed_with_pressure = bool(
         rush_score >= float(cfg.rush_score_confirmed) and (bool(threatened) or int(near_bases) >= 2)
     )
-    is_confirmed = bool(hard_rush or confirmed_with_pressure or (threatened and near_bases >= 3))
+    ling_flood_contact = bool(
+        float(now) <= float(cfg.rush_phase_max_s)
+        and int(lings) >= 4
+        and int(near_bases) >= 2
+    )
+    is_confirmed = bool(hard_rush or confirmed_with_pressure or (threatened and near_bases >= 3) or ling_flood_contact)
     rush_likely_end = bool(rush_math["likely_end"]) and clear_for >= float(cfg.rush_end_clear_s)
     rush_forced_end = bool(clear_for >= float(cfg.rush_hold_max_s) and int(near_bases) <= 1 and not bool(threatened))
     rush_suspected_decay = bool(clear_for >= float(cfg.rush_suspect_decay_s) and int(near_bases) <= 1 and not bool(threatened))
@@ -444,6 +495,7 @@ def derive_enemy_opening_intel(
     now: float,
     cfg: OpeningIntelConfig = OpeningIntelConfig(),
 ) -> None:
+    _sync_build_runner_scout_intel(bot=bot, awareness=awareness, now=now)
     store = EnemyRushStateStore(awareness=awareness)
 
     eb = attention.enemy_build
@@ -483,10 +535,13 @@ def derive_enemy_opening_intel(
     signals = dict(decision.signals or {})
     last_seen_main_t = float(awareness.mem.get(K("enemy", "build", "last_seen_main_t"), now=now, default=0.0) or 0.0)
     scv_dispatched = bool(awareness.intel_scv_dispatched(now=now))
+    scv_lost_early = bool(awareness.mem.get(K("intel", "scv", "lost_early"), now=now, default=False))
     reaper_done = bool(awareness.intel_last_reaper_scout_done_at(now=now) > 0.0)
     main_seen_recent = bool(float(last_seen_main_t) > 0.0 and (float(now) - float(last_seen_main_t)) <= 75.0)
     visible_non_worker_total = int(rush_math.get("visible_non_worker_total", 0) or 0)
     production_structures_visible = int(rush_math.get("production_structures_visible", 0) or 0)
+    enemy_bases_visible = int(signals.get("enemy_bases_visible", 0) or 0)
+    lings_seen = int((signals.get("seen_units", {}) or {}).get("lings", 0) or 0)
     structural_evidence = bool(rush_math.get("hard_rush", False)) or bool(rush_math.get("matched_timing_rules", []))
     no_natural_structural_confirmed = bool(
         float(now) <= float(cfg.rush_phase_max_s)
@@ -551,6 +606,39 @@ def derive_enemy_opening_intel(
     ):
         if rush_state_out in {"NONE", "ENDED"}:
             rush_state_out = "SUSPECTED"
+    early_visible_ling_flood = bool(
+        float(now) <= float(cfg.rush_phase_max_s)
+        and int(lings_seen) >= 6
+        and int(enemy_bases_visible) <= 1
+    )
+    scout_loss_army_confirmed = bool(
+        scv_lost_early
+        and float(now) <= float(cfg.rush_phase_max_s)
+        and (
+            bool(structural_evidence)
+            or (int(lings_seen) >= 6 and int(enemy_bases_visible) <= 1)
+            or int(visible_non_worker_total) >= 8
+            or (int(production_structures_visible) >= 2 and int(visible_non_worker_total) >= 5)
+        )
+    )
+    scout_loss_army_suspected = bool(
+        scv_lost_early
+        and float(now) <= float(cfg.rush_phase_max_s)
+        and (
+            bool(structural_evidence)
+            or int(lings_seen) >= 4
+            or int(visible_non_worker_total) >= 5
+            or int(enemy_bases_visible) <= 1
+        )
+    )
+    if early_visible_ling_flood or scout_loss_army_confirmed:
+        rush_state_out = "CONFIRMED"
+        rush_tier_out = "HEAVY" if rush_tier_out not in {"HEAVY", "EXTREME"} else rush_tier_out
+        rush_severity_out = max(float(rush_severity_out), 0.86)
+    elif scout_loss_army_suspected and rush_state_out in {"NONE", "ENDED"}:
+        rush_state_out = "SUSPECTED"
+        rush_tier_out = "MEDIUM" if rush_tier_out == "NONE" else rush_tier_out
+        rush_severity_out = max(float(rush_severity_out), 0.58)
 
     rush_is_early = bool(float(now) <= float(cfg.rush_phase_max_s))
     if (not rush_is_early) and rush_state_out in {"SUSPECTED", "CONFIRMED", "HOLDING"}:
@@ -567,6 +655,8 @@ def derive_enemy_opening_intel(
     ):
         last_seen_pressure_out = float(now)
     if bool(scout_no_natural_confirmed) or bool(no_natural_structural_confirmed):
+        last_seen_pressure_out = float(now)
+    if bool(early_visible_ling_flood) or bool(scout_loss_army_confirmed):
         last_seen_pressure_out = float(now)
     if rush_state_out == "CONFIRMED":
         store.set_rush_confirmed(now=now)
@@ -616,6 +706,9 @@ def derive_enemy_opening_intel(
             "rush_severity": float(rush_severity_out),
             "scout_no_natural_confirmed": bool(scout_no_natural_confirmed),
             "no_natural_structural_confirmed": bool(no_natural_structural_confirmed),
+            "scv_lost_early": bool(scv_lost_early),
+            "early_visible_ling_flood": bool(early_visible_ling_flood),
+            "scout_loss_army_confirmed": bool(scout_loss_army_confirmed),
             "production_structures_visible": int(production_structures_visible),
             "visible_non_worker_total": int(visible_non_worker_total),
         },
@@ -631,6 +724,12 @@ def derive_enemy_opening_intel(
     awareness.mem.set(
         K("enemy", "rush", "no_natural_structural_confirmed"),
         value=bool(no_natural_structural_confirmed),
+        now=now,
+        ttl=float(rush_ttl_s),
+    )
+    awareness.mem.set(
+        K("enemy", "rush", "scv_lost_early"),
+        value=bool(scv_lost_early),
         now=now,
         ttl=float(rush_ttl_s),
     )

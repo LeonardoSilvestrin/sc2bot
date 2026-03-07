@@ -39,6 +39,9 @@ class PrioritizationIntelConfig:
     rush_bank_army_boost: float = 0.55
     rush_bank_econ_dampen: float = 0.40
     rush_bank_tech_dampen: float = 0.45
+    enemy_macro_lead_map_control_boost: float = 0.55
+    enemy_macro_lead_macro_econ_boost: float = 0.42
+    enemy_macro_lead_macro_army_dampen: float = 0.10
 
     min_domain_weight: float = 0.45
     max_domain_weight: float = 2.75
@@ -97,6 +100,24 @@ class PrioritizationIntel:
             aggression_source = {}
         rush_is_early = bool(aggression_source.get("rush_is_early", False))
         rush_army_dump = bool(awareness.mem.get(K("macro", "exec", "rush_army_dump"), now=now, default=False))
+        enemy_build_snapshot = awareness.mem.get(K("enemy", "build", "snapshot"), now=now, default={}) or {}
+        if not isinstance(enemy_build_snapshot, dict):
+            enemy_build_snapshot = {}
+        enemy_bases_visible = int(enemy_build_snapshot.get("bases_visible", 0) or 0)
+        bases_now = int(getattr(attention.macro, "bases_total", 0) or 0)
+        enemy_base_gap = max(0, int(enemy_bases_visible) - int(bases_now))
+        nat_should_secure = bool(
+            awareness.mem.get(K("intel", "map_control", "our_nat", "should_secure"), now=now, default=False)
+        )
+        plan_active = awareness.mem.get(K("macro", "plan", "active"), now=now, default={}) or {}
+        if not isinstance(plan_active, dict):
+            plan_active = {}
+        enemy_macro_catchup_expand = bool(plan_active.get("enemy_macro_catchup_expand", False))
+        enemy_macro_lead_visible = bool(
+            int(bases_now) < 2
+            and int(enemy_bases_visible) >= 3
+            and int(enemy_base_gap) >= 2
+        )
         if threat_factor > 0.0:
             if domain == "DEFENSE":
                 domain_weight += float(self.cfg.defense_weight_boost) * float(threat_factor)
@@ -198,6 +219,17 @@ class PrioritizationIntel:
                 domain_weight *= max(0.0, 1.0 - float(self.cfg.rush_bank_tech_dampen))
                 notes.append("aggression_tech_dampen")
 
+        if bool(enemy_macro_lead_visible) and (bool(nat_should_secure) or bool(enemy_macro_catchup_expand)):
+            if domain == "MAP_CONTROL":
+                domain_weight += float(self.cfg.enemy_macro_lead_map_control_boost)
+                notes.append("map_control_boost_from_enemy_macro_lead")
+            elif domain == "MACRO_ECON_EXECUTOR":
+                domain_weight += float(self.cfg.enemy_macro_lead_macro_econ_boost)
+                notes.append("macro_econ_boost_from_enemy_macro_lead")
+            elif domain == "MACRO_ARMY_EXECUTOR" and urgency < int(self.cfg.defense_threat_start_at):
+                domain_weight *= max(0.70, 1.0 - float(self.cfg.enemy_macro_lead_macro_army_dampen))
+                notes.append("macro_army_dampen_from_enemy_macro_lead")
+
         if domain in {"MACRO_EXECUTOR", "MACRO_ARMY_EXECUTOR", "MACRO_ECON_EXECUTOR"}:
             if not bool(attention.macro.opening_done):
                 domain_weight += float(self.cfg.executor_opening_boost)
@@ -252,6 +284,10 @@ class PrioritizationIntel:
                 "aggression_state": str(aggression_state),
                 "rush_army_dump": bool(rush_army_dump),
                 "bank_pressure": float(self._cached_bank_pressure),
+                "enemy_bases_visible": int(enemy_bases_visible),
+                "enemy_base_gap": int(enemy_base_gap),
+                "enemy_macro_lead_visible": bool(enemy_macro_lead_visible),
+                "enemy_macro_catchup_expand": bool(enemy_macro_catchup_expand),
                 "domain": str(domain),
             },
             now=now,

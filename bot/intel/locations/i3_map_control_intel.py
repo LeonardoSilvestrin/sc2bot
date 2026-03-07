@@ -48,6 +48,14 @@ class MapControlIntelConfig:
     min_total_power: float = 6.0
     min_main_power: float = 4.0
     max_enemy_power_at_nat: float = 2.6
+    max_enemy_presence_power_at_nat: float = 2.25
+    enemy_macro_lead_visible_bases: int = 3
+    enemy_macro_lead_gap: int = 2
+    enemy_macro_lead_clear_s: float = 4.0
+    enemy_macro_lead_min_total_power: float = 4.0
+    enemy_macro_lead_min_main_power: float = 3.0
+    enemy_macro_lead_max_enemy_power_at_nat: float = 3.1
+    enemy_macro_lead_max_enemy_presence_power_at_nat: float = 2.75
     rush_refresh_scan_stale_s: float = 12.0
     rush_refresh_min_interval_s: float = 12.0
 
@@ -204,6 +212,18 @@ def derive_map_control_intel(
         except Exception:
             continue
 
+    enemy_build_snapshot = awareness.mem.get(K("enemy", "build", "snapshot"), now=now, default={}) or {}
+    if not isinstance(enemy_build_snapshot, dict):
+        enemy_build_snapshot = {}
+    bases_now = int(getattr(attention.macro, "bases_total", 0) or 0)
+    enemy_bases_visible = int(enemy_build_snapshot.get("bases_visible", 0) or 0)
+    enemy_base_gap = max(0, int(enemy_bases_visible) - int(bases_now))
+    enemy_macro_lead_visible = bool(
+        int(bases_now) < 2
+        and int(enemy_bases_visible) >= int(cfg.enemy_macro_lead_visible_bases)
+        and int(enemy_base_gap) >= int(cfg.enemy_macro_lead_gap)
+    )
+
     rush_state = str(awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
     rush_active = rush_state in {"SUSPECTED", "CONFIRMED", "HOLDING"}
     last_confirmed_t = float(
@@ -228,10 +248,23 @@ def derive_map_control_intel(
     nat_scan_stale = (float(now) - float(nat_scan_t)) >= float(cfg.rush_refresh_scan_stale_s)
     main_scan_stale = (float(now) - float(main_scan_t)) >= float(cfg.rush_refresh_scan_stale_s)
     natural_seen_on_ground = bool(getattr(attention.enemy_build, "enemy_natural_on_ground", False))
+    enemy_presence_snapshot = awareness.mem.get(
+        K("enemy", "army", "positions", "snapshot"),
+        now=now,
+        default={},
+    ) or {}
+    if not isinstance(enemy_presence_snapshot, dict):
+        enemy_presence_snapshot = {}
+    presence_nat_side_power = float(enemy_presence_snapshot.get("nat_side_power", 0.0) or 0.0)
+    presence_state = str(enemy_presence_snapshot.get("state", "UNKNOWN") or "UNKNOWN")
+    presence_primary = enemy_presence_snapshot.get("primary")
+    presence_primary_side = ""
+    if isinstance(presence_primary, dict):
+        presence_primary_side = str(presence_primary.get("side", "") or "")
 
     refresh_label = ""
     refresh_target = None
-    if rush_recent and no_direct_pressure:
+    if (rush_recent or enemy_macro_lead_visible) and no_direct_pressure:
         if not natural_seen_on_ground and nat_scan_stale:
             refresh_label = "enemy_natural"
             refresh_target = getattr(attention.enemy_build, "enemy_natural_pos", None)
@@ -249,21 +282,38 @@ def derive_map_control_intel(
     should_secure = False
     if nat_taken:
         defer_reason = "nat_taken"
-    elif not bool(rush_recent or had_rush_context):
-        defer_reason = "no_rush_context"
+    elif not bool(rush_recent or had_rush_context or enemy_macro_lead_visible):
+        defer_reason = "no_expand_context"
     elif not no_direct_pressure:
         defer_reason = "main_under_pressure"
-    elif float(clear_for) < float(cfg.release_clear_s):
-        defer_reason = "pressure_not_clear_long_enough"
-    elif float(own_total_power) < float(cfg.min_total_power):
-        defer_reason = "army_too_small"
-    elif float(own_main_power) < float(cfg.min_main_power):
-        defer_reason = "main_hold_too_thin"
-    elif float(nat_enemy_power) > float(cfg.max_enemy_power_at_nat):
-        defer_reason = "enemy_still_controls_nat"
+    elif bool(enemy_macro_lead_visible):
+        if float(clear_for) < float(cfg.enemy_macro_lead_clear_s):
+            defer_reason = "macro_lead_pressure_not_clear"
+        elif float(own_total_power) < float(cfg.enemy_macro_lead_min_total_power):
+            defer_reason = "macro_lead_army_too_small"
+        elif float(own_main_power) < float(cfg.enemy_macro_lead_min_main_power):
+            defer_reason = "macro_lead_main_hold_too_thin"
+        elif float(presence_nat_side_power) > float(cfg.enemy_macro_lead_max_enemy_presence_power_at_nat):
+            defer_reason = "macro_lead_enemy_presence_nat_side"
+        elif float(nat_enemy_power) > float(cfg.enemy_macro_lead_max_enemy_power_at_nat):
+            defer_reason = "macro_lead_enemy_controls_nat"
+        else:
+            should_secure = True
+            defer_reason = "enemy_macro_lead_secure_nat"
     else:
-        should_secure = True
-        defer_reason = "commit_lowground"
+        if float(clear_for) < float(cfg.release_clear_s):
+            defer_reason = "pressure_not_clear_long_enough"
+        elif float(own_total_power) < float(cfg.min_total_power):
+            defer_reason = "army_too_small"
+        elif float(own_main_power) < float(cfg.min_main_power):
+            defer_reason = "main_hold_too_thin"
+        elif float(presence_nat_side_power) > float(cfg.max_enemy_presence_power_at_nat):
+            defer_reason = "enemy_presence_nat_side"
+        elif float(nat_enemy_power) > float(cfg.max_enemy_power_at_nat):
+            defer_reason = "enemy_still_controls_nat"
+        else:
+            should_secure = True
+            defer_reason = "commit_lowground"
 
     payload = {
         "updated_at": float(now),
@@ -273,11 +323,18 @@ def derive_map_control_intel(
         "had_rush_context": bool(had_rush_context),
         "clear_for": float(clear_for),
         "nat_taken": bool(nat_taken),
+        "bases_now": int(bases_now),
+        "enemy_bases_visible": int(enemy_bases_visible),
+        "enemy_base_gap": int(enemy_base_gap),
+        "enemy_macro_lead_visible": bool(enemy_macro_lead_visible),
         "main_under_pressure": bool(not no_direct_pressure),
         "main_threat_active": bool(main_threat_active),
         "enemy_main_count": int(len(main_enemy)),
         "enemy_nat_count": int(len(nat_enemy)),
         "enemy_nat_power": float(round(float(nat_enemy_power), 3)),
+        "enemy_presence_state": str(presence_state),
+        "enemy_presence_nat_side_power": float(round(float(presence_nat_side_power), 3)),
+        "enemy_presence_primary_side": str(presence_primary_side),
         "own_total_power": float(round(float(own_total_power), 3)),
         "own_main_power": float(round(float(own_main_power), 3)),
         "own_nat_power": float(round(float(own_nat_power), 3)),

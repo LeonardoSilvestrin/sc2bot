@@ -13,7 +13,6 @@ import zipfile
 BOT_FOLDER_POLICY: Dict[str, bool] = {
     "bot/ares_wrapper": True,
     "bot/builds": True,
-    "bot/control": True,
     "bot/intel": True,
     "bot/mind": True,
     "bot/plans": True,
@@ -30,7 +29,7 @@ ROOT_FILES: List[str] = [
     "terran_builds.yml",
     #"config.yml",
     "run.py",
-    "ARCHITECTURE.md",
+    "_docs/ARCHITECTURE.md",
     "_prompt/root.txt",
     "_tools/check_macro_executor_uniqueness.py",
 ]

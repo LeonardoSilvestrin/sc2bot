@@ -11,6 +11,7 @@ from sc2.position import Point2
 
 from bot.devlog import DevLogger
 from bot.mind.attention import Attention
+from bot.mind.awareness import Awareness, K
 from bot.tasks.base_task import BaseTask, TaskResult, TaskTick
 
 
@@ -23,18 +24,21 @@ class DefendBaseTask(BaseTask):
 
     base_tag: int
     base_pos: Point2
+    awareness: Awareness | None = None
     threat_pos: Point2 | None = None
     log: DevLogger | None = None
 
     def __init__(
         self,
         *,
+        awareness: Awareness | None = None,
         base_tag: int,
         base_pos: Point2,
         threat_pos: Point2 | None = None,
         log: DevLogger | None = None,
     ) -> None:
         super().__init__(task_id="defend_base", domain="DEFENSE", commitment=90)
+        self.awareness = awareness
         self.base_tag = int(base_tag)
         self.base_pos = base_pos
         self.threat_pos = threat_pos
@@ -55,9 +59,90 @@ class DefendBaseTask(BaseTask):
         y = sum(float(m.position.y) for m in mfs) / float(mfs.amount)
         return Point2((x, y))
 
-    def _highground_anchor(self, bot, *, base_pos: Point2, mineral_center: Point2) -> Point2:
+    @staticmethod
+    def _point_from_payload(payload) -> Point2 | None:
+        if not isinstance(payload, dict):
+            return None
+        try:
+            return Point2((float(payload.get("x", 0.0)), float(payload.get("y", 0.0))))
+        except Exception:
+            return None
+
+    @staticmethod
+    def _pathable(bot, pos: Point2) -> bool:
+        try:
+            return bool(bot.in_pathing_grid(pos))
+        except Exception:
+            return True
+
+    @staticmethod
+    def _height(bot, pos: Point2) -> float:
+        if not DefendBaseTask._pathable(bot, pos):
+            return -9999.0
+        try:
+            return float(bot.get_terrain_z_height(pos))
+        except Exception:
+            return -9999.0
+
+    def _forward_tank_anchor_hint(self, *, bot, now: float, base_pos: Point2) -> Point2 | None:
+        if self.awareness is None or not self._is_main_base(bot, base_pos=base_pos):
+            return None
+        snap = self.awareness.mem.get(K("intel", "map_control", "our_nat", "snapshot"), now=now, default={}) or {}
+        if not isinstance(snap, dict) or not bool(snap.get("should_secure", False)):
+            return None
+        staging = self._point_from_payload(snap.get("staging"))
+        hold = self._point_from_payload(snap.get("hold"))
+        for pos in (staging, hold):
+            if pos is not None and self._pathable(bot, pos):
+                return pos
+        return None
+
+    def _best_forward_tank_anchor(self, bot, *, anchor_hint: Point2, fallback: Point2) -> Point2:
+        candidates = [anchor_hint]
+        for radius in (1.5, 3.0, 4.5, 6.0):
+            for idx in range(16):
+                ang = (2.0 * math.pi * float(idx)) / 16.0
+                candidates.append(
+                    Point2(
+                        (
+                            float(anchor_hint.x) + (float(radius) * math.cos(ang)),
+                            float(anchor_hint.y) + (float(radius) * math.sin(ang)),
+                        )
+                    )
+                )
+        best = anchor_hint if self._pathable(bot, anchor_hint) else fallback
+        best_h = self._height(bot, best)
+        for pos in candidates:
+            if not self._pathable(bot, pos):
+                continue
+            height = self._height(bot, pos)
+            if height > best_h:
+                best = pos
+                best_h = height
+                continue
+            if abs(float(height) - float(best_h)) <= 0.05 and float(pos.distance_to(anchor_hint)) < float(best.distance_to(anchor_hint)):
+                best = pos
+        return best
+
+    def _highground_anchor(self, bot, *, base_pos: Point2, mineral_center: Point2, now: float) -> Point2:
         wall_hint = self._wall_hint(bot, base_pos=base_pos)
-        points = [wall_hint, mineral_center]
+        is_main = self._is_main_base(bot, base_pos=base_pos)
+        if is_main:
+            forward_hint = self._forward_tank_anchor_hint(bot=bot, now=now, base_pos=base_pos)
+            if forward_hint is not None:
+                return self._best_forward_tank_anchor(bot, anchor_hint=forward_hint, fallback=wall_hint)
+        points = [wall_hint] if is_main else [wall_hint, mineral_center]
+        if is_main:
+            try:
+                ramp = getattr(bot, "main_base_ramp", None)
+                top = getattr(ramp, "top_center", None) if ramp is not None else None
+                barracks_pos = getattr(ramp, "barracks_correct_placement", None) if ramp is not None else None
+                if top is not None:
+                    points.append(top)
+                if barracks_pos is not None:
+                    points.append(barracks_pos)
+            except Exception:
+                pass
         for r in (4.0, 6.0, 8.0):
             for i in range(16):
                 ang = (2.0 * math.pi * float(i)) / 16.0
@@ -65,29 +150,45 @@ class DefendBaseTask(BaseTask):
                 if float(p.distance_to(base_pos)) <= 18.0:
                     points.append(p)
 
-        def _pathable(p: Point2) -> bool:
-            try:
-                return bool(bot.in_pathing_grid(p))
-            except Exception:
-                return True
-
-        def _height(p: Point2) -> float:
-            if not _pathable(p):
-                return -9999.0
-            try:
-                return float(bot.get_terrain_z_height(p))
-            except Exception:
-                return -9999.0
-
-        fallback = wall_hint if _pathable(wall_hint) else (mineral_center if _pathable(mineral_center) else base_pos)
+        fallback = wall_hint if self._pathable(bot, wall_hint) else (base_pos if is_main else (mineral_center if self._pathable(bot, mineral_center) else base_pos))
         best = fallback
-        best_h = _height(best)
+        best_h = self._height(bot, best)
         for p in points:
-            h = _height(p)
+            h = self._height(bot, p)
             if h > best_h:
                 best = p
                 best_h = h
         return best
+
+    @staticmethod
+    def _is_main_base(bot, *, base_pos: Point2) -> bool:
+        try:
+            return float(base_pos.distance_to(bot.start_location)) <= 10.0
+        except Exception:
+            return False
+
+    def _defense_anchor(self, bot, *, base_pos: Point2, tank_anchor: Point2) -> Point2:
+        if not self._is_main_base(bot, base_pos=base_pos):
+            return base_pos
+        wall_hint = self._wall_hint(bot, base_pos=base_pos)
+        candidates = [tank_anchor, wall_hint]
+        try:
+            ramp = getattr(bot, "main_base_ramp", None)
+            top = getattr(ramp, "top_center", None) if ramp is not None else None
+            barracks_pos = getattr(ramp, "barracks_correct_placement", None) if ramp is not None else None
+            if top is not None:
+                candidates.insert(0, top)
+            if barracks_pos is not None:
+                candidates.insert(1, barracks_pos)
+        except Exception:
+            pass
+        for p in candidates:
+            try:
+                if bool(bot.in_pathing_grid(p)):
+                    return p
+            except Exception:
+                return p
+        return tank_anchor
 
     @staticmethod
     def _wall_structures_near_base(bot, *, base_pos: Point2) -> list:
@@ -193,9 +294,9 @@ class DefendBaseTask(BaseTask):
         return True
 
     @staticmethod
-    def _handle_general(*, unit, base_pos: Point2, threat: Point2, enemy_near_base, bunkers: list, bunker_sites: list, now: float) -> bool:
+    def _handle_general(*, unit, base_pos: Point2, hold_anchor: Point2, threat: Point2, enemy_near_base, bunkers: list, bunker_sites: list, now: float) -> bool:
         if unit.type_id == U.MEDIVAC:
-            follow = threat.towards(base_pos, 6.0)
+            follow = threat.towards(hold_anchor, 6.0)
             unit.move(follow)
             return True
         if unit.type_id == U.MARINE and bunkers:
@@ -209,7 +310,7 @@ class DefendBaseTask(BaseTask):
                 return True
         if unit.type_id == U.MARINE and bunker_sites:
             site = min(bunker_sites, key=lambda b: float(unit.distance_to(b)))
-            hold = site.position.towards(base_pos, 2.0)
+            hold = site.position.towards(hold_anchor, 2.0)
             if float(unit.distance_to(hold)) > 2.0:
                 unit.move(hold)
             return True
@@ -219,7 +320,7 @@ class DefendBaseTask(BaseTask):
         # Keep units active on-map even in calm windows.
         phase = int(float(now) // 4.0)
         sign = 1.0 if ((int(getattr(unit, "tag", 0) or 0) + phase) % 2 == 0) else -1.0
-        patrol = Point2((float(base_pos.x) + (6.0 * sign), float(base_pos.y) + (3.5 * sign)))
+        patrol = Point2((float(hold_anchor.x) + (4.0 * sign), float(hold_anchor.y) + (2.5 * sign)))
         unit.move(patrol)
         return True
 
@@ -235,9 +336,10 @@ class DefendBaseTask(BaseTask):
 
         base_pos = self._resolve_base_pos(bot)
         mineral_center = self._mineral_line_center(bot, base_pos)
-        tank_anchor = self._highground_anchor(bot, base_pos=base_pos, mineral_center=mineral_center)
+        tank_anchor = self._highground_anchor(bot, base_pos=base_pos, mineral_center=mineral_center, now=float(tick.time))
+        defense_anchor = self._defense_anchor(bot, base_pos=base_pos, tank_anchor=tank_anchor)
         mine_slots = self._mine_slots(mineral_center)
-        threat = self.threat_pos or attention.combat.primary_threat_pos or base_pos
+        threat = self.threat_pos or attention.combat.primary_threat_pos or defense_anchor
         enemy_near_base = bot.enemy_units.closer_than(22.0, base_pos)
         bunkers = self._bunkers_near_base(bot, base_pos=base_pos)
         bunker_sites = self._bunker_sites_near_base(bot, base_pos=base_pos)
@@ -257,6 +359,7 @@ class DefendBaseTask(BaseTask):
             issued = self._handle_general(
                 unit=u,
                 base_pos=base_pos,
+                hold_anchor=defense_anchor,
                 threat=threat,
                 enemy_near_base=enemy_near_base,
                 bunkers=bunkers,

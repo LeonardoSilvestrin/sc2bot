@@ -1,0 +1,230 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from ares.consts import UnitRole
+from sc2.ids.ability_id import AbilityId
+from sc2.ids.unit_typeid import UnitTypeId as U
+from sc2.position import Point2
+
+from bot.devlog import DevLogger
+from bot.mind.attention import Attention
+from bot.tasks.base_task import BaseTask, TaskResult, TaskTick
+
+
+@dataclass
+class HoldRampTask(BaseTask):
+    base_tag: int
+    base_pos: Point2
+    threat_pos: Point2 | None = None
+    log: DevLogger | None = None
+
+    def __init__(
+        self,
+        *,
+        base_tag: int,
+        base_pos: Point2,
+        threat_pos: Point2 | None = None,
+        log: DevLogger | None = None,
+    ) -> None:
+        super().__init__(task_id="hold_ramp", domain="DEFENSE", commitment=88)
+        self.base_tag = int(base_tag)
+        self.base_pos = base_pos
+        self.threat_pos = threat_pos
+        self.log = log
+
+    def _resolve_base_pos(self, bot) -> Point2:
+        th = bot.townhalls.find_by_tag(int(self.base_tag))
+        if th is not None:
+            return th.position
+        return self.base_pos
+
+    @staticmethod
+    def _assign_role(bot, units: list, role: UnitRole) -> None:
+        for unit in list(units or []):
+            try:
+                if getattr(unit, "type_id", None) != U.SCV:
+                    continue
+                bot.mediator.assign_role(tag=int(unit.tag), role=role, remove_from_squad=True)
+            except Exception:
+                continue
+
+    @staticmethod
+    def _wall_context(bot) -> tuple[Point2, list[Point2], Point2 | None]:
+        ramp = getattr(bot, "main_base_ramp", None)
+        top = getattr(ramp, "top_center", None) if ramp is not None else None
+        depots = list(getattr(ramp, "corner_depots", []) or []) if ramp is not None else []
+        barracks_pos = getattr(ramp, "barracks_correct_placement", None) if ramp is not None else None
+        if top is None:
+            top = bot.start_location
+        return top, depots, barracks_pos
+
+    @staticmethod
+    def _wall_targets(bot, *, depots: list[Point2], barracks_pos: Point2 | None) -> list:
+        out = []
+        wall_types = {U.SUPPLYDEPOT, U.SUPPLYDEPOTLOWERED, U.BARRACKS, U.BARRACKSREACTOR, U.BARRACKSTECHLAB, U.BUNKER}
+        for unit in list(getattr(bot, "structures", []) or []):
+            try:
+                if getattr(unit, "type_id", None) not in wall_types:
+                    continue
+                on_wall = any(float(unit.distance_to(pos)) <= 1.8 for pos in depots)
+                if (not on_wall) and barracks_pos is not None:
+                    on_wall = float(unit.distance_to(barracks_pos)) <= 2.5
+                if not on_wall and getattr(unit, "type_id", None) != U.BUNKER:
+                    continue
+                out.append(unit)
+            except Exception:
+                continue
+        return out
+
+    @staticmethod
+    def _repair_targets(bot, *, depots: list[Point2], barracks_pos: Point2 | None) -> list:
+        targets = []
+        for unit in HoldRampTask._wall_targets(bot, depots=depots, barracks_pos=barracks_pos):
+            try:
+                hp = float(getattr(unit, "health", 0.0) or 0.0)
+                hp_max = float(getattr(unit, "health_max", 0.0) or 0.0)
+                build_progress = float(getattr(unit, "build_progress", 1.0) or 1.0)
+                if hp_max > 0.0 and (hp < hp_max or build_progress < 1.0):
+                    targets.append(unit)
+            except Exception:
+                continue
+        targets.sort(
+            key=lambda u: (
+                0 if getattr(u, "type_id", None) in {U.SUPPLYDEPOT, U.SUPPLYDEPOTLOWERED} else 1,
+                float(getattr(u, "health_percentage", 1.0) or 1.0),
+            )
+        )
+        return targets
+
+    @staticmethod
+    def _issue_repair(scv, target) -> bool:
+        try:
+            repair_fn = getattr(scv, "repair", None)
+            if callable(repair_fn):
+                repair_fn(target)
+                return True
+        except Exception:
+            pass
+        for ability_name in ("EFFECT_REPAIR_SCV", "EFFECT_REPAIR"):
+            try:
+                ability = getattr(AbilityId, ability_name, None)
+                if ability is None:
+                    continue
+                scv(ability, target)
+                return True
+            except Exception:
+                continue
+        return False
+
+    @staticmethod
+    def _bunkers_near_wall(bot, *, top_center: Point2) -> list:
+        out = []
+        for unit in list(getattr(bot, "structures", []) or []):
+            try:
+                if getattr(unit, "type_id", None) == U.BUNKER and float(unit.distance_to(top_center)) <= 8.0:
+                    out.append(unit)
+            except Exception:
+                continue
+        return out
+
+    @staticmethod
+    def _bunker_has_space(bunker) -> bool:
+        try:
+            return int(getattr(bunker, "cargo_used", 0) or 0) < int(getattr(bunker, "cargo_max", 4) or 4)
+        except Exception:
+            return True
+
+    async def on_step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult:
+        bound_err = self.require_mission_bound(min_tags=1)
+        if bound_err is not None:
+            return bound_err
+
+        units = [bot.units.find_by_tag(int(tag)) for tag in self.assigned_tags]
+        units = [u for u in units if u is not None]
+        if not units:
+            return TaskResult.failed("no_hold_ramp_units_alive")
+
+        top_center, depots, barracks_pos = self._wall_context(bot)
+        base_pos = self._resolve_base_pos(bot)
+        enemy_wall = bot.enemy_units.closer_than(9.0, top_center)
+        if int(enemy_wall.amount) <= 0:
+            self._assign_role(bot, units, UnitRole.GATHERING)
+            self._done("ramp_contact_cleared")
+            return TaskResult.done("ramp_contact_cleared")
+
+        self._assign_role(bot, units, UnitRole.REPAIRING)
+        repair_targets = self._repair_targets(bot, depots=depots, barracks_pos=barracks_pos)
+        bunkers = [b for b in self._bunkers_near_wall(bot, top_center=top_center) if self._bunker_has_space(b)]
+        issued = False
+        marine_slots = depots[:] if depots else [top_center]
+        marine_idx = 0
+        enemy_count = int(enemy_wall.amount)
+
+        for unit in units:
+            if unit.type_id == U.SCV:
+                close_enemy = None
+                try:
+                    close_enemy = enemy_wall.closest_to(unit) if int(enemy_wall.amount) > 0 else None
+                except Exception:
+                    close_enemy = None
+                if close_enemy is not None:
+                    try:
+                        if (
+                            float(unit.distance_to(close_enemy)) <= 2.6
+                            and float(getattr(unit, "health_percentage", 1.0) or 1.0) >= 0.5
+                        ):
+                            unit.attack(close_enemy)
+                            issued = True
+                            continue
+                    except Exception:
+                        pass
+                target = repair_targets[0] if repair_targets else None
+                if target is not None:
+                    issued = self._issue_repair(unit, target) or issued
+                    continue
+                hold = top_center.towards(base_pos, 1.8)
+                if float(unit.distance_to(hold)) > 1.5:
+                    unit.move(hold)
+                    issued = True
+                elif close_enemy is not None:
+                    unit.attack(close_enemy)
+                    issued = True
+                continue
+
+            if unit.type_id == U.MARINE:
+                target = enemy_wall.closest_to(unit)
+                slot = marine_slots[marine_idx % len(marine_slots)] if marine_slots else top_center
+                marine_idx += 1
+                close_to_slot = False
+                try:
+                    close_to_slot = float(unit.distance_to(slot)) <= 1.75
+                except Exception:
+                    close_to_slot = False
+                bunker_ok = bool(bunkers and float(unit.distance_to(target)) <= 5.5 and close_to_slot and enemy_count <= 6)
+                if bunker_ok:
+                    bunker = min(bunkers, key=lambda b: float(unit.distance_to(b)))
+                    if float(unit.distance_to(bunker)) <= 2.0:
+                        unit(AbilityId.SMART, bunker)
+                    else:
+                        unit.move(bunker.position)
+                    issued = True
+                    continue
+                try:
+                    if float(unit.distance_to(slot)) > 1.5:
+                        unit.move(slot)
+                    else:
+                        unit.attack(target)
+                except Exception:
+                    unit.attack(target)
+                issued = True
+                continue
+
+            target = enemy_wall.closest_to(unit)
+            unit.attack(target)
+            issued = True
+
+        if issued:
+            self._active("holding_ramp")
+            return TaskResult.running("holding_ramp")
+        return TaskResult.noop("hold_ramp_idle")

@@ -33,6 +33,7 @@ class MyBot(AresBot):
 
         # runtime é a única "inteligência" conectada ao main
         self.rt = RuntimeApp.build(log=self.log, debug=debug)
+        self.awareness = self.rt.awareness
 
     async def on_start(self) -> None:
         await super().on_start()

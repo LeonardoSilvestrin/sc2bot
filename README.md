@@ -2,6 +2,7 @@
 
 [ares-sc2 framework repo](https://github.com/AresSC2/ares-sc2)  
 [ares-sc2 documentation](https://aressc2.github.io/ares-sc2/index.html)
+[bot documentation hub](_docs/README.md)
 
 ---
 # Installation

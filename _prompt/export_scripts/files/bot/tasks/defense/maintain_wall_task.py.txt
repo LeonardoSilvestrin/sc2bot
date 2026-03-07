@@ -251,7 +251,12 @@ class MaintainWallTask(BaseTask):
                 radius=2.2,
             )
         three_by_three_done = 0 if missing_three_by_three else (1 if barracks_pos is not None else 0)
-        reactor_required = bool(rush_active and barracks_pos is not None and (main_wall_enemy_near or attention.combat.primary_urgency > 0))
+        reactor_required = bool(
+            rush_active
+            and barracks_pos is not None
+            and depots_done >= len(depot_positions)
+            and int(three_by_three_done) >= 1
+        )
         reactor_started = bool(self._main_wall_reactor_started_or_ready(bot, barracks_pos=barracks_pos)) if reactor_required else False
         self.awareness.mem.set(
             K("ops", "wall", "main", "status"),
@@ -261,6 +266,7 @@ class MaintainWallTask(BaseTask):
                 "three_by_three_done": int(three_by_three_done),
                 "reactor_required": bool(reactor_required),
                 "reactor_started": bool(reactor_started),
+                "enemy_near": bool(main_wall_enemy_near),
                 "complete": bool(
                     depots_done >= len(depot_positions)
                     and three_by_three_done >= 1

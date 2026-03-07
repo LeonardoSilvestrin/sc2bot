@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Optional
 
 from sc2.ids.unit_typeid import UnitTypeId as U
 from sc2.position import Point2
@@ -36,12 +37,52 @@ class _SecureBasePickPolicy:
         return (hp * 12.0) - dist
 
 
+@dataclass(frozen=True)
+class _SecureScvPickPolicy:
+    objective: Point2
+    name: str = "map_control.secure_base.support_scv.v1"
+
+    def allow(self, unit, *, bot, attention, now: float) -> bool:
+        if unit is None or unit.type_id != U.SCV:
+            return False
+        if not bool(getattr(unit, "is_ready", False)):
+            return False
+        if float(getattr(unit, "health_percentage", 1.0) or 1.0) < 0.65:
+            return False
+        try:
+            if bool(getattr(unit, "is_constructing", False)):
+                return False
+        except Exception:
+            pass
+        try:
+            for order in list(getattr(unit, "orders", []) or []):
+                name = str(getattr(getattr(order, "ability", None), "name", "") or "").upper()
+                if "BUILD" in name or "REPAIR" in name:
+                    return False
+        except Exception:
+            pass
+        return True
+
+    def score(self, unit, *, bot, attention, now: float) -> float:
+        try:
+            dist = float(unit.distance_to(self.objective))
+        except Exception:
+            dist = 9999.0
+        hp = float(getattr(unit, "health_percentage", 1.0) or 1.0)
+        carrying_penalty = 0.0
+        try:
+            carrying_penalty = 5.0 if bool(getattr(unit, "is_carrying_resource", False)) else 0.0
+        except Exception:
+            carrying_penalty = 0.0
+        return (hp * 11.0) - dist - carrying_penalty
+
+
 @dataclass
 class MapControlPlanner:
     planner_id: str = "map_control_planner"
     log: DevLogger | None = None
     cadence_s: float = 2.0
-    lease_ttl_s: float = 12.0
+    lease_ttl_s: Optional[float] = None
 
     def _pid(self, label: str) -> str:
         return f"{self.planner_id}:{str(label)}"
@@ -72,10 +113,11 @@ class MapControlPlanner:
     def _available(bot, unit_type: U) -> int:
         return int(bot.units.of_type(unit_type).ready.amount)
 
-    def _requirements(self, *, bot, hold_pos: Point2, snapshot: dict) -> list[UnitRequirement]:
+    def _requirements(self, *, bot, attention: Attention, hold_pos: Point2, snapshot: dict) -> list[UnitRequirement]:
         enemy_nat_power = float(snapshot.get("enemy_nat_power", 0.0) or 0.0)
         own_total_power = float(snapshot.get("own_total_power", 0.0) or 0.0)
         rush_state = str(snapshot.get("rush_state", "NONE") or "NONE").upper()
+        bases_now = int(getattr(attention.macro, "bases_total", 0) or 0)
         desired_general = 4
         if own_total_power >= 8.0:
             desired_general = 5
@@ -135,6 +177,21 @@ class MapControlPlanner:
                     required=False,
                 )
             )
+        scv_avail = self._available(bot, U.SCV)
+        support_scvs = 0
+        if bases_now < 2 and rush_state in {"CONFIRMED", "HOLDING"} and own_total_power >= 7.0:
+            support_scvs = 2 if enemy_nat_power <= 1.2 else 3
+        elif enemy_nat_power > 0.0 and own_total_power >= 8.0:
+            support_scvs = 1
+        if scv_avail > 0 and support_scvs > 0:
+            reqs.append(
+                UnitRequirement(
+                    unit_type=U.SCV,
+                    count=min(int(support_scvs), int(scv_avail)),
+                    pick_policy=_SecureScvPickPolicy(objective=hold_pos),
+                    required=False,
+                )
+            )
         return reqs
 
     def propose(self, bot, *, awareness: Awareness, attention: Attention) -> list[Proposal]:
@@ -157,7 +214,7 @@ class MapControlPlanner:
         if base_pos is None or staging_pos is None or hold_pos is None:
             return []
 
-        reqs = self._requirements(bot=bot, hold_pos=hold_pos, snapshot=snapshot)
+        reqs = self._requirements(bot=bot, attention=attention, hold_pos=hold_pos, snapshot=snapshot)
         if not reqs:
             return []
 
@@ -182,10 +239,10 @@ class MapControlPlanner:
                         task_id="secure_base",
                         task_factory=_factory,
                         unit_requirements=reqs,
-                        lease_ttl=float(self.lease_ttl_s),
+                        lease_ttl=(None if self.lease_ttl_s is None else float(self.lease_ttl_s)),
                     )
                 ],
-                lease_ttl=float(self.lease_ttl_s),
+                lease_ttl=(None if self.lease_ttl_s is None else float(self.lease_ttl_s)),
                 cooldown_s=0.0,
                 risk_level=0,
                 allow_preempt=True,
