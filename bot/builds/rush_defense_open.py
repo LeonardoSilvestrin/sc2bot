@@ -10,10 +10,10 @@ def _rush_defense_phase(*, phase: str) -> Dict[str, Any]:
         return {
             "seed": {"focus_structure": "BARRACKS", "adapt_gain_supply": 0.16, "adapt_gain_units": 0.30, "adapt_gain_production": 0.26},
             "comp": {"MARINE": 0.80, "MARAUDER": 0.04, "SIEGETANK": 0.16},
-            "priority": ["MARINE", "SIEGETANK", "MARAUDER"],
+            "priority": ["MARINE", "SIEGETANK","WIDOWMINE", "MARAUDER"],
             "pid": {"lag_pi_kp": 0.98, "lag_pi_ki": 0.26, "production_lag_weight_boost": 0.88, "tech_lag_inflight_dampen_gain": 0.70, "block_production_max_lag_prod": 0.84, "timing_attack_production_weight_boost": 0.70},
             "army_supply_milestones": [{"t": 90.0, "supply": 10.0}, {"t": 140.0, "supply": 20.0}, {"t": 190.0, "supply": 32.0}],
-            "unit_count_milestones": [{"t": 90.0, "units": {"MARINE": 4}}, {"t": 140.0, "units": {"MARINE": 9, "MARAUDER": 1}}, {"t": 190.0, "units": {"MARINE": 15, "SIEGETANK": 1, "MARAUDER": 2}}],
+            "unit_count_milestones": [{"t": 90.0, "units": {"MARINE": 4}}, {"t": 140.0, "units": {"MARINE": 9, "WIDOWMINE": 1}}, {"t": 190.0, "units": {"MARINE": 15, "SIEGETANK": 1, "MARAUDER": 2}}],
             "timing_attacks": [],
             "production_structure_targets": {"BARRACKS": 3, "FACTORY": 1, "STARPORT": 0},
             "production_scale": {"BARRACKS": 1.20, "FACTORY": 0.30, "STARPORT": 0.0},

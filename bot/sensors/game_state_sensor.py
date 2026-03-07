@@ -5,10 +5,11 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Tuple
+from typing import Any, Tuple
 
 from ares.consts import UnitRole
 from sc2.ids.unit_typeid import UnitTypeId as U
+from sc2.position import Point2
 
 from bot.mind.attention import BaseSat, EconomySnapshot, IntelSnapshot, MacroSnapshot
 from bot.mind.awareness import K
@@ -117,8 +118,216 @@ def _as_dict_maybe(x):
     return x if isinstance(x, dict) else {}
 
 
+def _point_payload(pos) -> dict[str, float] | None:
+    try:
+        return {"x": float(pos.x), "y": float(pos.y)}
+    except Exception:
+        return None
+
+
+def _point_from_payload(payload: Any) -> Point2 | None:
+    if not isinstance(payload, dict):
+        return None
+    try:
+        return Point2((float(payload.get("x", 0.0) or 0.0), float(payload.get("y", 0.0) or 0.0)))
+    except Exception:
+        return None
+
+
+def _site_labels(bot) -> list[tuple[str, Point2]]:
+    out: list[tuple[str, Point2]] = []
+    try:
+        start = bot.start_location
+        out.append(("MAIN", start))
+    except Exception:
+        start = None
+    exps = list(getattr(bot, "expansion_locations_list", []) or [])
+    if not exps:
+        return out
+    try:
+        if start is not None:
+            exps = [p for p in exps if float(p.distance_to(start)) > 2.0]
+            exps.sort(key=lambda p: float(start.distance_to(p)))
+    except Exception:
+        pass
+    labels = ["NATURAL", "THIRD", "FOURTH", "FIFTH", "SIXTH"]
+    for idx, pos in enumerate(exps):
+        label = labels[idx] if idx < len(labels) else f"BASE_{idx + 2}"
+        out.append((str(label), pos))
+    return out
+
+
+def _townhall_units(bot) -> list:
+    try:
+        return list(getattr(bot, "townhalls", []) or [])
+    except Exception:
+        return []
+
+
+def _is_readyish_townhall(unit) -> bool:
+    try:
+        return bool(getattr(unit, "build_progress", 0.0) or 0.0) >= 0.98
+    except Exception:
+        return False
+
+
+def _is_flying_townhall(unit) -> bool:
+    try:
+        return bool(getattr(unit, "is_flying", False))
+    except Exception:
+        return False
+
+
+def _is_mining_townhall(unit) -> bool:
+    return bool(_is_readyish_townhall(unit) and not _is_flying_townhall(unit))
+
+
+def _state_for_base(*, entry: dict[str, Any], unit, intended_pos: Point2 | None) -> str:
+    if unit is None:
+        if bool(entry.get("needs_rebuild", False)):
+            return "DESTROYED"
+        return str(entry.get("state", "PLANNED") or "PLANNED")
+    flying = bool(_is_flying_townhall(unit))
+    current_pos = getattr(unit, "position", None)
+    dist_to_site = 9999.0
+    try:
+        if intended_pos is not None and current_pos is not None:
+            dist_to_site = float(current_pos.distance_to(intended_pos))
+    except Exception:
+        dist_to_site = 9999.0
+    if flying:
+        if dist_to_site <= 5.0:
+            return "FLYING_TO_SITE"
+        return "BUILDING_OFFSITE"
+    if not bool(_is_readyish_townhall(unit)):
+        return "BUILDING_OFFSITE" if dist_to_site > 8.0 else "SECURING"
+    if dist_to_site <= 8.0:
+        return "ESTABLISHED"
+    return "LANDED_UNSAFE"
+
+
+def _update_our_bases_registry(bot, *, awareness, now: float) -> dict[str, dict[str, Any]]:
+    previous = awareness.mem.get(K("intel", "our_bases", "registry"), now=now, default={}) or {}
+    if not isinstance(previous, dict):
+        previous = {}
+    labels = _site_labels(bot)
+    townhalls = _townhall_units(bot)
+    by_tag: dict[int, Any] = {}
+    for th in townhalls:
+        try:
+            by_tag[int(th.tag)] = th
+        except Exception:
+            continue
+    assigned_tags: set[int] = set()
+    out: dict[str, dict[str, Any]] = {}
+
+    # First pass: keep stable ownership for known tags.
+    for order, (label, pos) in enumerate(labels):
+        prev = dict(previous.get(label, {})) if isinstance(previous.get(label, {}), dict) else {}
+        entry: dict[str, Any] = {
+            "label": str(label),
+            "order": int(order),
+            "intended_pos": _point_payload(pos),
+            "current_pos": prev.get("current_pos"),
+            "townhall_tag": None,
+            "townhall_type": str(prev.get("townhall_type", "") or ""),
+            "state": str(prev.get("state", "PLANNED") or "PLANNED"),
+            "owned": bool(prev.get("owned", label == "MAIN")),
+            "is_flying": bool(prev.get("is_flying", False)),
+            "is_ready": bool(prev.get("is_ready", False)),
+            "is_mining": bool(prev.get("is_mining", False)),
+            "safe_to_land": bool(prev.get("safe_to_land", False)),
+            "safe_to_mine": bool(prev.get("safe_to_mine", False)),
+            "fortified": bool(prev.get("fortified", False)),
+            "needs_rebuild": bool(prev.get("needs_rebuild", False)),
+            "destroyed": bool(prev.get("destroyed", False)),
+            "updated_at": float(now),
+        }
+        prev_tag = int(prev.get("townhall_tag", 0) or 0)
+        unit = by_tag.get(prev_tag)
+        if unit is not None:
+            entry["townhall_tag"] = int(prev_tag)
+            entry["townhall_type"] = str(getattr(unit.type_id, "name", "") or "")
+            entry["current_pos"] = _point_payload(getattr(unit, "position", None))
+            entry["is_flying"] = bool(_is_flying_townhall(unit))
+            entry["is_ready"] = bool(_is_readyish_townhall(unit))
+            entry["is_mining"] = bool(_is_mining_townhall(unit))
+            entry["owned"] = True
+            entry["destroyed"] = False
+            entry["needs_rebuild"] = False
+            entry["state"] = _state_for_base(entry=entry, unit=unit, intended_pos=pos)
+            assigned_tags.add(int(prev_tag))
+        elif prev_tag:
+            entry["owned"] = bool(prev.get("owned", False))
+            entry["destroyed"] = bool(prev.get("owned", False))
+            entry["needs_rebuild"] = bool(prev.get("owned", False))
+            entry["state"] = "DESTROYED" if bool(entry["destroyed"]) else str(entry["state"])
+        out[str(label)] = entry
+
+    # Second pass: assign remaining townhalls by proximity to intended site.
+    for th in townhalls:
+        try:
+            tag = int(th.tag)
+        except Exception:
+            continue
+        if tag in assigned_tags:
+            continue
+        best_label = None
+        best_dist = 9999.0
+        for label, pos in labels:
+            entry = out.get(str(label), {})
+            if int(entry.get("townhall_tag", 0) or 0) != 0:
+                continue
+            try:
+                dist = float(th.distance_to(pos))
+            except Exception:
+                dist = 9999.0
+            if dist < best_dist:
+                best_label = str(label)
+                best_dist = float(dist)
+        if best_label is None:
+            continue
+        pos = _point_from_payload(out[best_label].get("intended_pos"))
+        out[best_label]["townhall_tag"] = int(tag)
+        out[best_label]["townhall_type"] = str(getattr(th.type_id, "name", "") or "")
+        out[best_label]["current_pos"] = _point_payload(getattr(th, "position", None))
+        out[best_label]["is_flying"] = bool(_is_flying_townhall(th))
+        out[best_label]["is_ready"] = bool(_is_readyish_townhall(th))
+        out[best_label]["is_mining"] = bool(_is_mining_townhall(th))
+        out[best_label]["owned"] = True
+        out[best_label]["destroyed"] = False
+        out[best_label]["needs_rebuild"] = False
+        out[best_label]["state"] = _state_for_base(entry=out[best_label], unit=th, intended_pos=pos)
+        assigned_tags.add(int(tag))
+
+    owned_townhalls_total = 0
+    established_bases_total = 0
+    mining_bases_total = 0
+    for entry in out.values():
+        if bool(entry.get("townhall_tag")):
+            owned_townhalls_total += 1
+        if str(entry.get("state", "")).upper() in {"ESTABLISHED", "LANDED_UNSAFE", "SECURING"}:
+            established_bases_total += 1
+        if bool(entry.get("is_mining", False)):
+            mining_bases_total += 1
+    awareness.mem.set(K("intel", "our_bases", "registry"), value=dict(out), now=now, ttl=8.0)
+    awareness.mem.set(
+        K("intel", "our_bases", "summary"),
+        value={
+            "owned_townhalls_total": int(owned_townhalls_total),
+            "established_bases_total": int(established_bases_total),
+            "mining_bases_total": int(mining_bases_total),
+        },
+        now=now,
+        ttl=8.0,
+    )
+    return out
+
+
 def derive_game_state_snapshot(bot, *, awareness=None) -> GameStateSnapshot:
     now = float(getattr(bot, "time", 0.0) or 0.0)
+    if awareness is not None:
+        _update_our_bases_registry(bot, awareness=awareness, now=now)
     # resources + supply
     try:
         minerals = int(getattr(bot, "minerals", 0) or 0)

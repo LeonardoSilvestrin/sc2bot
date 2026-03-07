@@ -42,6 +42,9 @@ class PrioritizationIntelConfig:
     enemy_macro_lead_map_control_boost: float = 0.55
     enemy_macro_lead_macro_econ_boost: float = 0.42
     enemy_macro_lead_macro_army_dampen: float = 0.10
+    delayed_natural_map_control_boost: float = 0.65
+    delayed_natural_macro_econ_boost: float = 0.52
+    delayed_natural_macro_army_dampen: float = 0.14
 
     min_domain_weight: float = 0.45
     max_domain_weight: float = 2.75
@@ -117,6 +120,9 @@ class PrioritizationIntel:
             int(bases_now) < 2
             and int(enemy_bases_visible) >= 3
             and int(enemy_base_gap) >= 2
+        )
+        delayed_natural_alarm = bool(
+            awareness.mem.get(K("strategy", "parity", "alarms", "delayed_natural"), now=now, default=False)
         )
         if threat_factor > 0.0:
             if domain == "DEFENSE":
@@ -230,6 +236,17 @@ class PrioritizationIntel:
                 domain_weight *= max(0.70, 1.0 - float(self.cfg.enemy_macro_lead_macro_army_dampen))
                 notes.append("macro_army_dampen_from_enemy_macro_lead")
 
+        if delayed_natural_alarm:
+            if domain == "MAP_CONTROL":
+                domain_weight += float(self.cfg.delayed_natural_map_control_boost)
+                notes.append("map_control_boost_from_delayed_natural_alarm")
+            elif domain == "MACRO_ECON_EXECUTOR":
+                domain_weight += float(self.cfg.delayed_natural_macro_econ_boost)
+                notes.append("macro_econ_boost_from_delayed_natural_alarm")
+            elif domain == "MACRO_ARMY_EXECUTOR" and urgency < int(self.cfg.defense_threat_start_at):
+                domain_weight *= max(0.72, 1.0 - float(self.cfg.delayed_natural_macro_army_dampen))
+                notes.append("macro_army_dampen_from_delayed_natural_alarm")
+
         if domain in {"MACRO_EXECUTOR", "MACRO_ARMY_EXECUTOR", "MACRO_ECON_EXECUTOR"}:
             if not bool(attention.macro.opening_done):
                 domain_weight += float(self.cfg.executor_opening_boost)
@@ -288,6 +305,7 @@ class PrioritizationIntel:
                 "enemy_base_gap": int(enemy_base_gap),
                 "enemy_macro_lead_visible": bool(enemy_macro_lead_visible),
                 "enemy_macro_catchup_expand": bool(enemy_macro_catchup_expand),
+                "delayed_natural_alarm": bool(delayed_natural_alarm),
                 "domain": str(domain),
             },
             now=now,

@@ -25,6 +25,8 @@ class DefendBaseTask(BaseTask):
     awareness: Awareness | None = None
     threat_pos: Point2 | None = None
     log: DevLogger | None = None
+    release_clear_s: float = 5.0
+    _clear_since: float = 0.0
 
     def __init__(
         self,
@@ -341,6 +343,23 @@ class DefendBaseTask(BaseTask):
         enemy_near_base = bot.enemy_units.closer_than(22.0, base_pos)
         bunkers = self._bunkers_near_base(bot, base_pos=base_pos)
         bunker_sites = self._bunker_sites_near_base(bot, base_pos=base_pos)
+        base_urgency = 0
+        for th in list(getattr(attention.combat, "base_threats", ()) or ()):
+            try:
+                if int(getattr(th, "th_tag", -1) or -1) == int(self.base_tag):
+                    base_urgency = int(getattr(th, "urgency", 0) or 0)
+                    break
+            except Exception:
+                continue
+
+        if int(enemy_near_base.amount) <= 0 and int(base_urgency) <= 0:
+            if float(self._clear_since) <= 0.0:
+                self._clear_since = float(tick.time)
+            elif (float(tick.time) - float(self._clear_since)) >= float(self.release_clear_s):
+                self._done("base_stable_release")
+                return TaskResult.done("base_stable_release")
+        else:
+            self._clear_since = 0.0
 
         issued = False
         mine_idx = 0

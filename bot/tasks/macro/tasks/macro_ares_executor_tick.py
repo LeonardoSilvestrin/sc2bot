@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from ares.behaviors.macro.auto_supply import AutoSupply
 from ares.behaviors.macro.build_workers import BuildWorkers
+from ares.behaviors.macro.build_structure import BuildStructure
 from ares.behaviors.macro.expansion_controller import ExpansionController
 from ares.behaviors.macro.gas_building_controller import GasBuildingController
 from ares.behaviors.macro.macro_plan import MacroPlan
@@ -12,6 +13,7 @@ from ares.behaviors.macro.spawn_controller import SpawnController
 from ares.behaviors.macro.upgrade_ccs import UpgradeCCs
 from sc2.ids.ability_id import AbilityId
 from sc2.ids.unit_typeid import UnitTypeId as U
+from sc2.position import Point2
 
 from bot.devlog import DevLogger
 from bot.mind.attention import Attention
@@ -192,6 +194,15 @@ class MacroAresExecutorTick(BaseTask):
             ]
         )
 
+    @staticmethod
+    def _point_from_payload(payload) -> Point2 | None:
+        if not isinstance(payload, dict):
+            return None
+        try:
+            return Point2((float(payload.get("x", 0.0) or 0.0), float(payload.get("y", 0.0) or 0.0)))
+        except Exception:
+            return None
+
     async def on_step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult:
         bound_err = self.require_mission_bound()
         if bound_err is not None:
@@ -209,7 +220,11 @@ class MacroAresExecutorTick(BaseTask):
             and current_opening == "RushDefenseOpen"
             and str(self.domain) == "MACRO_ECON_EXECUTOR"
             and (
-                bool(plan_active.get("rush_natural_release"))
+                str(plan_active.get("expand_target_label", "") or "") == "NATURAL"
+                or str(plan_active.get("expand_build_mode", "DIRECT") or "DIRECT").upper() == "OFFSITE"
+                or bool(plan_active.get("expand_safe_to_land"))
+                or bool(plan_active.get("enable_expansion"))
+                or bool(plan_active.get("rush_natural_release"))
                 or bool(plan_active.get("enemy_macro_catchup_expand"))
             )
         )
@@ -282,6 +297,8 @@ class MacroAresExecutorTick(BaseTask):
         enable_expansion = bool(plan_active.get("enable_expansion"))
         enable_orbital_morph = bool(plan_active.get("enable_orbital_morph"))
         expand_to = int(plan_active.get("expand_to") or 1)
+        expand_target_label = str(plan_active.get("expand_target_label", "") or "")
+        expand_build_mode = str(plan_active.get("expand_build_mode", "DIRECT") or "DIRECT").upper()
         lane_order_raw = plan_active.get("lane_order")
         lane_order = [str(x) for x in lane_order_raw] if isinstance(lane_order_raw, list) else [
             "workers",
@@ -383,7 +400,22 @@ class MacroAresExecutorTick(BaseTask):
                 )
                 return
             if lane == "expand" and enable_expansion:
-                plan.add(ExpansionController(to_count=max(1, int(expand_to))))
+                if str(expand_target_label) == "NATURAL":
+                    registry = self.awareness.mem.get(K("intel", "our_bases", "registry"), now=now, default={}) or {}
+                    if not isinstance(registry, dict):
+                        registry = {}
+                    entry = dict(registry.get("NATURAL", {})) if isinstance(registry.get("NATURAL", {}), dict) else {}
+                    intended = self._point_from_payload(entry.get("intended_pos"))
+                    base_location = bot.start_location if expand_build_mode == "OFFSITE" or intended is None else intended
+                    plan.add(
+                        BuildStructure(
+                            base_location=base_location,
+                            structure_id=U.COMMANDCENTER,
+                            to_count=max(1, int(expand_to)),
+                        )
+                    )
+                else:
+                    plan.add(ExpansionController(to_count=max(1, int(expand_to))))
                 return
 
         seen = set()

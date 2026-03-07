@@ -656,6 +656,16 @@ def derive_army_comp_intel(
     rush_state = str(awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
     rush_tier = str(awareness.mem.get(K("enemy", "rush", "tier"), now=now, default="NONE") or "NONE").upper()
     rush_severity = float(awareness.mem.get(K("enemy", "rush", "severity"), now=now, default=0.0) or 0.0)
+    factory_techlab_ready = int(getattr(attention.macro, "factory_techlab", 0) or 0) > 0
+    enemy_at_door = bool(
+        int(getattr(attention.combat, "primary_urgency", 0) or 0) >= 16
+        and int(getattr(attention.combat, "primary_enemy_count", 0) or 0) >= 2
+    )
+    mecha_emergency_hellions = bool(
+        str(opening_selected) == "MechaOpen"
+        and not bool(factory_techlab_ready)
+        and bool(enemy_at_door)
+    )
     if str(opening_selected) == "MechaOpen" and rush_tier in {"HEAVY", "EXTREME"}:
         priority_units = _prepend_unique(priority_units, "MARINE")
         comp = _boost_unit_comp_bias(
@@ -669,8 +679,9 @@ def derive_army_comp_intel(
     wants_banshee_path = bool("BANSHEE" in set(str(x) for x in priority_units) or float(comp.get("BANSHEE", 0.0) or 0.0) >= 0.08)
     if bool(wants_banshee_path) and not bool(banshee_harass_done):
         priority_units = _prepend_unique(priority_units, "BANSHEE")
-        priority_units = _prepend_unique(priority_units, "HELLION")
-        comp = _inject_unit_comp_bias(comp, unit_name="HELLION", weight=0.16)
+        if bool(mecha_emergency_hellions):
+            priority_units = _prepend_unique(priority_units, "HELLION")
+            comp = _inject_unit_comp_bias(comp, unit_name="HELLION", weight=0.16)
         comp = _inject_unit_comp_bias(comp, unit_name="BANSHEE", weight=0.14)
 
     unit_milestones = list(_mode_value(dict(profile["unit_count_milestones_by_mode"]), mode=str(mode), key="unit_count_milestones"))
@@ -680,9 +691,14 @@ def derive_army_comp_intel(
     if str(opening_selected) == "MechaOpen":
         allowed_mech_air_lag_units = {"CYCLONE", "HELLION", "SIEGETANK", "BANSHEE", "LIBERATOR", "THOR"}
         allow_lagging_bias = str(lag_unit_name or "") in allowed_mech_air_lag_units
+        if str(lag_unit_name or "") == "HELLION" and not bool(mecha_emergency_hellions):
+            allow_lagging_bias = False
     if allow_lagging_bias and lag_unit_name is not None and float(lag_unit_gap) > 0.0:
         priority_units = _prepend_unique(priority_units, str(lag_unit_name))
         comp = _inject_unit_comp_bias(comp, unit_name=str(lag_unit_name), weight=0.18)
+    if str(opening_selected) == "MechaOpen" and not bool(mecha_emergency_hellions):
+        priority_units = _prepend_unique(priority_units, "SIEGETANK")
+        comp = _boost_unit_comp_bias(comp, unit_name="SIEGETANK", weight=0.14)
 
     if str(opening_selected) == "RushDefenseOpen" and rush_state in {"SUSPECTED", "CONFIRMED", "HOLDING"}:
         allowed_units = {"MARINE", "MARAUDER", "SIEGETANK"}

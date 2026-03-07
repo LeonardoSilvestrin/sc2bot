@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from ares.consts import BuildingSize
 from sc2.ids.ability_id import AbilityId
@@ -115,21 +116,38 @@ class MaintainWallTask(BaseTask):
         size: BuildingSize,
         require_supply_depot: bool = False,
     ) -> list[Point2]:
+        return [pos for pos, _info in self._wall_entries(
+            bot,
+            base_location=base_location,
+            size=size,
+            require_supply_depot=require_supply_depot,
+            include_bunkers=False,
+        )]
+
+    def _wall_entries(
+        self,
+        bot,
+        *,
+        base_location: Point2,
+        size: BuildingSize,
+        require_supply_depot: bool = False,
+        include_bunkers: bool = False,
+    ) -> list[tuple[Point2, dict[str, Any]]]:
         placements = self._placements_dict(bot)
         if base_location not in placements:
             return []
         per_size = placements[base_location].get(size, {}) or {}
-        out: list[Point2] = []
+        out: list[tuple[Point2, dict[str, Any]]] = []
         for pos, info in per_size.items():
             if not isinstance(info, dict):
                 continue
             if not bool(info.get("is_wall", False)):
                 continue
-            if bool(info.get("bunker", False)):
+            if bool(info.get("bunker", False)) and not bool(include_bunkers):
                 continue
             if bool(require_supply_depot) and not bool(info.get("supply_depot", False)):
                 continue
-            out.append(pos)
+            out.append((pos, info))
         return out
 
     def _nat_active(self, bot) -> bool:
@@ -221,6 +239,46 @@ class MaintainWallTask(BaseTask):
         except Exception:
             return False
 
+    def _maybe_set_wall_barracks_rally(
+        self,
+        bot,
+        *,
+        barracks_pos: Point2 | None,
+        now: float,
+    ) -> None:
+        """
+        Empurra o rally da barracks da wall para dentro do main.
+        Executado uma vez (TTL=180s) para evitar spam; re-aplica se a barracks for reconstruída.
+        """
+        already_set = bool(
+            self.awareness.mem.get(K("ops", "wall", "main", "rally_set"), now=now, default=False)
+        )
+        if already_set:
+            return
+        wall_rax = self._main_wall_barracks(bot, barracks_pos=barracks_pos)
+        if wall_rax is None:
+            return
+        try:
+            if not bool(getattr(wall_rax, "is_ready", False)):
+                return
+            if bool(getattr(wall_rax, "is_flying", False)):
+                return
+            ramp = getattr(bot, "main_base_ramp", None)
+            top = getattr(ramp, "top_center", None) if ramp is not None else None
+            if top is None:
+                top = bot.start_location
+            start_loc = getattr(bot, "start_location", top)
+            rally_pos = top.towards(start_loc, 5.0)
+            wall_rax(AbilityId.SMART, rally_pos)
+            self.awareness.mem.set(
+                K("ops", "wall", "main", "rally_set"),
+                value=True,
+                now=now,
+                ttl=180.0,
+            )
+        except Exception:
+            pass
+
     def _maintain_main(self, bot, *, attention: Attention, now: float) -> TaskResult:
         ramp = bot.main_base_ramp
         depot_positions = list(getattr(ramp, "corner_depots", []) or [])
@@ -256,6 +314,11 @@ class MaintainWallTask(BaseTask):
             and int(three_by_three_done) >= 1
         )
         reactor_started = bool(self._main_wall_reactor_started_or_ready(bot, barracks_pos=barracks_pos)) if reactor_required else False
+
+        # Rally da barracks da wall: empurra marines para dentro do main assim que fica pronta
+        if int(three_by_three_done) >= 1:
+            self._maybe_set_wall_barracks_rally(bot, barracks_pos=barracks_pos, now=now)
+
         self.awareness.mem.set(
             K("ops", "wall", "main", "status"),
             value={
@@ -310,12 +373,14 @@ class MaintainWallTask(BaseTask):
             size=BuildingSize.TWO_BY_TWO,
             require_supply_depot=True,
         )
-        three_by_three_targets = self._wall_positions(
+        three_by_three_entries = self._wall_entries(
             bot,
             base_location=nat,
             size=BuildingSize.THREE_BY_THREE,
             require_supply_depot=False,
+            include_bunkers=True,
         )
+        three_by_three_targets = [pos for pos, _info in three_by_three_entries]
         if not depot_targets and not three_by_three_targets:
             self.awareness.mem.set(
                 K("ops", "wall", "nat", "status"),
@@ -340,21 +405,19 @@ class MaintainWallTask(BaseTask):
             structure_types={U.SUPPLYDEPOT, U.SUPPLYDEPOTLOWERED},
             radius=1.6,
         )
-        missing_three_by_three = self._missing_exact_targets(
-            bot,
-            targets=three_by_three_targets,
-            structure_types={
-                U.BARRACKS,
-                U.BARRACKSFLYING,
-                U.FACTORY,
-                U.FACTORYFLYING,
-                U.ENGINEERINGBAY,
-                U.ARMORY,
-                U.GHOSTACADEMY,
-                U.FUSIONCORE,
-            },
-            radius=2.2,
-        )
+        missing_three_by_three: list[tuple[Point2, U]] = []
+        for pos, info in three_by_three_entries:
+            structure_type = U.BUNKER if bool(info.get("bunker", False)) else U.BARRACKS
+            structure_types = (
+                {U.BUNKER}
+                if structure_type == U.BUNKER
+                else {
+                    U.BARRACKS,
+                    U.BARRACKSFLYING,
+                }
+            )
+            if self._tracked_or_built(bot, structure_types=structure_types, target=pos, radius=2.2) <= 0:
+                missing_three_by_three.append((pos, structure_type))
         depot_count = max(0, len(depot_targets) - len(missing_depots))
         three_by_three_done = max(0, len(three_by_three_targets) - len(missing_three_by_three))
         self.awareness.mem.set(
@@ -375,9 +438,11 @@ class MaintainWallTask(BaseTask):
             ttl=8.0,
         )
         if missing_three_by_three:
-            if self._issue_exact_build(bot, structure_type=U.BARRACKS, pos=missing_three_by_three[0]):
-                self._active("building_nat_wall_three_by_three")
-                return TaskResult.running("building_nat_wall_three_by_three")
+            target_pos, structure_type = missing_three_by_three[0]
+            if self._issue_exact_build(bot, structure_type=structure_type, pos=target_pos):
+                status = "building_nat_wall_bunker" if structure_type == U.BUNKER else "building_nat_wall_three_by_three"
+                self._active(status)
+                return TaskResult.running(status)
         if missing_depots:
             if self._issue_exact_build(bot, structure_type=U.SUPPLYDEPOT, pos=missing_depots[0]):
                 self._active("building_nat_depot")

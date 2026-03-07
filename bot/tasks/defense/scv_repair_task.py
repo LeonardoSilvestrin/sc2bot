@@ -18,6 +18,8 @@ class ScvRepairTask(BaseTask):
     base_pos: Point2
     threat_pos: Point2 | None = None
     log: DevLogger | None = None
+    early_window_s: float = 240.0
+    max_scvs_per_structure_early: int = 3
 
     def __init__(
         self,
@@ -26,12 +28,16 @@ class ScvRepairTask(BaseTask):
         base_pos: Point2,
         threat_pos: Point2 | None = None,
         log: DevLogger | None = None,
+        early_window_s: float = 240.0,
+        max_scvs_per_structure_early: int = 3,
     ) -> None:
         super().__init__(task_id="scv_repair", domain="DEFENSE", commitment=75)
         self.base_tag = int(base_tag)
         self.base_pos = base_pos
         self.threat_pos = threat_pos
         self.log = log
+        self.early_window_s = float(early_window_s)
+        self.max_scvs_per_structure_early = max(1, int(max_scvs_per_structure_early))
 
     def _resolve_base_pos(self, bot) -> Point2:
         th = bot.townhalls.find_by_tag(int(self.base_tag))
@@ -87,7 +93,7 @@ class ScvRepairTask(BaseTask):
             return (7, hp_gap)
         if tid in {U.SIEGETANK, U.SIEGETANKSIEGED}:
             return (5, hp_gap)
-        if tid in {U.COMMANDCENTER, U.ORBITALCOMMAND, U.PLANETARYFORTRESS}:
+        if tid in {U.COMMANDCENTER, U.COMMANDCENTERFLYING, U.ORBITALCOMMAND, U.ORBITALCOMMANDFLYING, U.PLANETARYFORTRESS}:
             return (4, hp_gap)
         if tid in {U.BARRACKS, U.BARRACKSREACTOR, U.BARRACKSTECHLAB, U.SUPPLYDEPOT, U.SUPPLYDEPOTLOWERED}:
             return (3, hp_gap)
@@ -123,7 +129,9 @@ class ScvRepairTask(BaseTask):
             U.SIEGETANK,
             U.SIEGETANKSIEGED,
             U.COMMANDCENTER,
+            U.COMMANDCENTERFLYING,
             U.ORBITALCOMMAND,
+            U.ORBITALCOMMANDFLYING,
             U.PLANETARYFORTRESS,
             U.BARRACKS,
             U.BARRACKSREACTOR,
@@ -170,6 +178,70 @@ class ScvRepairTask(BaseTask):
         out.sort(key=self._repair_priority, reverse=True)
         return out
 
+    def _is_early_game(self, bot) -> bool:
+        try:
+            return float(getattr(bot, "time", 0.0) or 0.0) <= float(self.early_window_s)
+        except Exception:
+            return False
+
+    def _max_scvs_for_target(self, bot, target) -> int:
+        if self._is_early_game(bot):
+            return int(self.max_scvs_per_structure_early)
+        return 99
+
+    def _assign_targets_to_scvs(self, bot, *, scvs: list, targets: list) -> dict[int, object]:
+        """
+        Distribui SCVs entre os alvos respeitando cap por estrutura no early game.
+        Estratégia:
+        - prioriza targets por prioridade global;
+        - para cada SCV, escolhe o melhor target ainda abaixo do cap;
+        - fallback: se todos estiverem capados, usa o melhor target mesmo assim.
+        """
+        assignments: dict[int, object] = {}
+        if not scvs or not targets:
+            return assignments
+
+        target_loads: dict[int, int] = {}
+        for scv in scvs:
+            ranked_targets = list(targets)
+            try:
+                ranked_targets.sort(
+                    key=lambda target: (
+                        -self._repair_priority(target)[0],
+                        -self._repair_priority(target)[1],
+                        float(scv.distance_to(target)),
+                    )
+                )
+            except Exception:
+                pass
+
+            chosen = None
+            for target in ranked_targets:
+                try:
+                    ttag = int(getattr(target, "tag", -1) or -1)
+                except Exception:
+                    ttag = -1
+                current_load = int(target_loads.get(ttag, 0))
+                target_cap = int(self._max_scvs_for_target(bot, target))
+                if current_load < target_cap:
+                    chosen = target
+                    break
+
+            if chosen is None and ranked_targets:
+                chosen = ranked_targets[0]
+
+            if chosen is None:
+                continue
+
+            try:
+                ctag = int(getattr(chosen, "tag", -1) or -1)
+            except Exception:
+                ctag = -1
+            target_loads[ctag] = int(target_loads.get(ctag, 0)) + 1
+            assignments[int(scv.tag)] = chosen
+
+        return assignments
+
     async def on_step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult:
         bound_err = self.require_mission_bound(min_tags=1)
         if bound_err is not None:
@@ -189,19 +261,10 @@ class ScvRepairTask(BaseTask):
 
         self._assign_role(bot, units, UnitRole.REPAIRING)
         issued = False
+
+        assignments = self._assign_targets_to_scvs(bot, scvs=units, targets=targets)
         for scv in units:
-            ranked_targets = list(targets)
-            try:
-                ranked_targets.sort(
-                    key=lambda target: (
-                        -self._repair_priority(target)[0],
-                        -self._repair_priority(target)[1],
-                        float(scv.distance_to(target)),
-                    )
-                )
-            except Exception:
-                pass
-            target = ranked_targets[0] if ranked_targets else None
+            target = assignments.get(int(scv.tag))
             if target is None:
                 continue
             issued = self._issue_repair(scv, target) or issued

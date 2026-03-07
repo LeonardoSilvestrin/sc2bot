@@ -43,6 +43,22 @@ class BuildingPlacementPlanner:
     ttl_s: float = 12.0
 
     @staticmethod
+    def _offsite_cc_anchor(bot, *, target: Point2 | None) -> Point2:
+        try:
+            ramp = getattr(bot, "main_base_ramp", None)
+            top = getattr(ramp, "top_center", None) if ramp is not None else None
+            if top is not None:
+                return top.towards(bot.start_location, 6.0)
+        except Exception:
+            pass
+        if target is not None:
+            try:
+                return target.towards(bot.start_location, 12.0)
+            except Exception:
+                pass
+        return bot.start_location
+
+    @staticmethod
     def _current_structure_count(bot, structure_id: U) -> int:
         try:
             ready = len([s for s in bot.mediator.get_own_structures_dict[structure_id] if getattr(s, "is_ready", False)])
@@ -97,7 +113,25 @@ class BuildingPlacementPlanner:
             return None
         return point_to_payload(point, source=source)
 
-    def _preview_expansion(self, bot, *, previous_signals: dict[str, Any]) -> dict[str, Any] | None:
+    def _preview_expansion(self, bot, *, awareness: Awareness, previous_signals: dict[str, Any]) -> dict[str, Any] | None:
+        mem = getattr(awareness, "mem", None)
+        now = float(getattr(bot, "time", 0.0) or 0.0)
+        registry = mem.get(K("intel", "our_bases", "registry"), now=now, default={}) if mem is not None else {}
+        if not isinstance(registry, dict):
+            registry = {}
+        plan_active = mem.get(K("macro", "plan", "active"), now=now, default={}) if mem is not None else {}
+        if not isinstance(plan_active, dict):
+            plan_active = {}
+        target_label = str(plan_active.get("expand_target_label", "") or "")
+        build_mode = str(plan_active.get("expand_build_mode", "DIRECT") or "DIRECT").upper()
+        if target_label:
+            target_entry = registry.get(target_label, {})
+            if isinstance(target_entry, dict):
+                intended = payload_to_point(target_entry.get("intended_pos"))
+                if intended is not None:
+                    if build_mode == "OFFSITE":
+                        return point_to_payload(self._offsite_cc_anchor(bot, target=intended), source="expand_offsite")
+                    return point_to_payload(intended, source="expand_site")
         preferred = payload_to_point(previous_signals.get(str(bot.base_townhall_type.name)))
         try:
             expansions = list(bot.mediator.get_own_expansions or [])
@@ -154,7 +188,7 @@ class BuildingPlacementPlanner:
         enable_expansion = bool(active_plan.get("enable_expansion", False))
         current_bases = self._current_structure_count(bot, bot.base_townhall_type)
         if enable_expansion and current_bases < expand_to:
-            payload = self._preview_expansion(bot, previous_signals=previous_signals)
+            payload = self._preview_expansion(bot, awareness=awareness, previous_signals=previous_signals)
             if payload is not None:
                 signals[str(bot.base_townhall_type.name)] = payload
 
