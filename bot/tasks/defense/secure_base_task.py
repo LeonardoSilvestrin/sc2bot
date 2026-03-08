@@ -483,7 +483,7 @@ class SecureBaseTask(BaseTask):
                 if not lowground_cleared:
                     anchor = forward_staging_anchor if int(tank_idx) == 0 else rear_tank_anchor
                     tank_idx += 1
-                    issued = self._handle_tank(unit=unit, anchor=anchor, enemy_near=enemy_main) or issued
+                    issued = self._handle_tank(unit=unit, anchor=anchor, enemy_near=enemy_near) or issued
                     continue
                 anchor = tank_anchors[min(int(tank_idx), len(tank_anchors) - 1)]
                 tank_idx += 1
