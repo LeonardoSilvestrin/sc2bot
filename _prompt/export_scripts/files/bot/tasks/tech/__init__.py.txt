@@ -1,5 +1,0 @@
-# bot/tasks/tech/__init__.py
-
-from bot.tasks.tech.tasks import TechAresExecutorTick
-
-__all__ = ["TechAresExecutorTick"]

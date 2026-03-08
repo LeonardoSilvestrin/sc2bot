@@ -62,6 +62,13 @@ class DefenseBunkerTask(BaseTask):
         except Exception:
             pass
 
+    @staticmethod
+    def _reserve_worker(bot, worker) -> None:
+        try:
+            bot.mediator.assign_role(tag=int(worker.tag), role=UnitRole.BUILDING, remove_from_squad=True)
+        except Exception:
+            pass
+
     def _bunker_anchor(self, bot, *, base_pos: Point2) -> Point2:
         mode = str(self.anchor_mode or "BASE").upper()
         if mode == "MAIN_RAMP":
@@ -188,6 +195,126 @@ class DefenseBunkerTask(BaseTask):
             out.append(pos)
         return out
 
+    @staticmethod
+    def _nat_side_ramp_depot(bot) -> Point2 | None:
+        try:
+            ramp = getattr(bot, "main_base_ramp", None)
+            depots = list(getattr(ramp, "corner_depots", []) or []) if ramp is not None else []
+        except Exception:
+            depots = []
+        if not depots:
+            return None
+        try:
+            nat = bot.mediator.get_own_nat
+        except Exception:
+            nat = None
+        if nat is None:
+            try:
+                nat = getattr(getattr(bot, "main_base_ramp", None), "bottom_center", None)
+            except Exception:
+                nat = None
+        if nat is None:
+            try:
+                nat = bot.enemy_start_locations[0]
+            except Exception:
+                nat = None
+        if nat is None:
+            return depots[0]
+        try:
+            return min(depots, key=lambda depot: float(depot.distance_to(nat)))
+        except Exception:
+            return depots[0]
+
+    def _main_ramp_candidate_positions(self, bot, *, anchor: Point2) -> list[Point2]:
+        top, barracks_pos, bottom = self._ramp_reference_points(bot)
+        start = getattr(bot, "start_location", None)
+        lowground_h = self._height(bot, bottom)
+        highground_h = max(self._height(bot, top), self._height(bot, anchor), self._height(bot, start))
+        placements = self._placements_dict(bot)
+        if start is None or start not in placements:
+            return []
+        per_size = placements[start].get(BuildingSize.THREE_BY_THREE, {}) or {}
+        wall_positions = self._wall_reserved_positions(bot)
+        nat_side_depot = self._nat_side_ramp_depot(bot)
+        try:
+            depots = list(getattr(getattr(bot, "main_base_ramp", None), "corner_depots", []) or [])
+        except Exception:
+            depots = []
+        refs = [point for point in (nat_side_depot, top, barracks_pos, anchor, bottom, *depots) if point is not None]
+        ranked: list[tuple[tuple[float, ...], Point2]] = []
+        for pos, info in per_size.items():
+            if not isinstance(info, dict):
+                continue
+            try:
+                if not bool(bot.in_pathing_grid(pos)):
+                    continue
+            except Exception:
+                pass
+            try:
+                if not bool(bot.mediator.can_place_structure(position=pos, structure_type=U.BUNKER)):
+                    continue
+            except Exception:
+                continue
+            exact_wall_slot = bool(info.get("is_wall", False)) and bool(info.get("bunker", False))
+            if (not exact_wall_slot) and self._conflicts_with_wall(pos, wall_positions, min_dist=1.25):
+                continue
+            pos_h = self._height(bot, pos)
+            if pos_h <= (float(lowground_h) + 0.25):
+                continue
+            if highground_h > -9990.0 and pos_h < (float(highground_h) - 0.75):
+                continue
+            if refs:
+                try:
+                    nearest_ref = min(float(pos.distance_to(ref)) for ref in refs)
+                except Exception:
+                    nearest_ref = 9999.0
+                if nearest_ref > 7.25:
+                    continue
+            if top is not None and float(pos.distance_to(top)) > 8.0:
+                continue
+            if bottom is not None and float(pos.distance_to(bottom)) > 8.5:
+                continue
+            if barracks_pos is not None and top is not None:
+                try:
+                    if float(pos.distance_to(barracks_pos)) > 9.0 and float(pos.distance_to(top)) > 6.0:
+                        continue
+                except Exception:
+                    continue
+            if start is not None and top is not None:
+                try:
+                    if float(pos.distance_to(start)) < (float(top.distance_to(start)) - 0.75):
+                        continue
+                except Exception:
+                    pass
+            edge_depth = self._ramp_edge_depth(bot, pos=pos, bottom=bottom, lowground_h=lowground_h)
+            if edge_depth > (5.25 if exact_wall_slot else 4.75):
+                continue
+            if nat_side_depot is not None:
+                try:
+                    nat_depot_dist = float(pos.distance_to(nat_side_depot))
+                except Exception:
+                    nat_depot_dist = 9999.0
+            elif depots:
+                try:
+                    nat_depot_dist = min(float(pos.distance_to(depot)) for depot in depots)
+                except Exception:
+                    nat_depot_dist = 9999.0
+            else:
+                nat_depot_dist = 9999.0
+            try:
+                top_dist = float(pos.distance_to(top)) if top is not None else 9999.0
+            except Exception:
+                top_dist = 9999.0
+            try:
+                anchor_dist = float(pos.distance_to(anchor)) if anchor is not None else 9999.0
+            except Exception:
+                anchor_dist = 9999.0
+            exact_bucket = 0.0 if exact_wall_slot else (1.0 if bool(info.get("is_wall", False)) else 2.0)
+            edge_error = abs(float(edge_depth) - (2.0 if exact_wall_slot else 2.25))
+            ranked.append(((float(nat_depot_dist), float(exact_bucket), float(top_dist), float(anchor_dist), float(edge_error)), pos))
+        ranked.sort(key=lambda item: item[0])
+        return [pos for _score, pos in ranked]
+
     def _is_exact_main_wall_bunker_slot(self, bot, *, pos: Point2) -> bool:
         for slot in self._main_wall_bunker_slots(bot):
             try:
@@ -201,6 +328,19 @@ class DefenseBunkerTask(BaseTask):
         top, barracks_pos, bottom = self._ramp_reference_points(bot)
         start = getattr(bot, "start_location", None)
         targets: list[Point2] = []
+        nat_side_depot = self._nat_side_ramp_depot(bot)
+        for point in (nat_side_depot,):
+            if point is None:
+                continue
+            targets.append(point)
+            for ref in (top, bottom, start):
+                if ref is None:
+                    continue
+                for dist in (0.75, 1.5, 2.25):
+                    try:
+                        targets.append(point.towards(ref, dist))
+                    except Exception:
+                        continue
         for slot in self._main_wall_bunker_slots(bot):
             targets.append(slot)
             if start is not None:
@@ -352,78 +492,10 @@ class DefenseBunkerTask(BaseTask):
         return out
 
     def _main_ramp_bunker_position(self, bot, *, anchor: Point2) -> Point2 | None:
-        top, barracks_pos, bottom = self._ramp_reference_points(bot)
-        candidate_centers = self._main_ramp_probe_targets(bot, anchor=anchor)
-        if not candidate_centers:
-            return None
-        start = getattr(bot, "start_location", None)
-        lowground_h = self._height(bot, bottom)
-        highground_h = max(self._height(bot, top), self._height(bot, anchor), self._height(bot, start))
-        wall_positions = self._wall_reserved_positions(bot)
-        best: tuple[float, Point2] | None = None
-        for center in candidate_centers:
-            for radius, steps in ((0.0, 1), (1.5, 8), (2.5, 12), (3.5, 16), (4.5, 20)):
-                for idx in range(steps):
-                    angle = 0.0 if steps == 1 else ((2.0 * math.pi * float(idx)) / float(steps))
-                    probe = Point2(
-                        (
-                            float(center.x) + (float(radius) * math.cos(angle)),
-                            float(center.y) + (float(radius) * math.sin(angle)),
-                        )
-                    )
-                    try:
-                        if not bool(bot.in_pathing_grid(probe)):
-                            continue
-                    except Exception:
-                        pass
-                    try:
-                        if not bool(
-                            bot.mediator.can_place_structure(
-                                position=probe,
-                                structure_type=U.BUNKER,
-                            )
-                        ):
-                            continue
-                    except Exception:
-                        continue
-                    if self._conflicts_with_wall(probe, wall_positions, min_dist=2.0):
-                        continue
-                    score = 0.0
-                    try:
-                        probe_h = self._height(bot, probe)
-                        if probe_h <= (float(lowground_h) + 0.25):
-                            continue
-                        if highground_h > -9990.0 and probe_h < (float(highground_h) - 0.75):
-                            continue
-                        if bottom is not None and float(probe.distance_to(bottom)) > 7.5:
-                            continue
-                        if top is not None and float(probe.distance_to(top)) > 7.0:
-                            continue
-                        edge_depth = self._ramp_edge_depth(bot, pos=probe, bottom=bottom, lowground_h=lowground_h)
-                        if edge_depth > 4.5:
-                            continue
-                        if top is not None:
-                            score += max(0.0, 12.0 - float(probe.distance_to(top))) * 4.0
-                        if barracks_pos is not None:
-                            score += max(0.0, 10.0 - float(probe.distance_to(barracks_pos))) * 2.5
-                        if bottom is not None:
-                            score += max(0.0, 12.0 - float(probe.distance_to(bottom))) * 1.8
-                            score -= max(0.0, float(probe.distance_to(bottom)) - 4.5) * 2.5
-                        if edge_depth < 1.0:
-                            score -= 6.0
-                        else:
-                            score += max(0.0, 3.5 - abs(float(edge_depth) - 2.25)) * 3.0
-                        if start is not None:
-                            # Reject positions tucked too deep into the main.
-                            score -= max(0.0, 10.0 - float(probe.distance_to(start))) * 4.5
-                        if top is not None and start is not None:
-                            # Penalize lightly if bunker is deeper than ramp top (farther from ramp).
-                            score -= max(0.0, float(probe.distance_to(top)) - 4.0) * 2.5
-                    except Exception:
-                        pass
-                    if best is None or score > best[0]:
-                        best = (float(score), probe)
-        return best[1] if best is not None else None
+        for pos in self._main_ramp_candidate_positions(bot, anchor=anchor):
+            if self._is_valid_main_ramp_bunker_pos(bot, pos=pos, anchor=anchor):
+                return pos
+        return None
 
     def _is_valid_main_ramp_bunker_pos(self, bot, *, pos: Point2, anchor: Point2) -> bool:
         top, barracks_pos, bottom = self._ramp_reference_points(bot)
@@ -520,6 +592,27 @@ class DefenseBunkerTask(BaseTask):
         blocked.append(pos)
         self._blocked_positions = blocked[-8:]
 
+    @staticmethod
+    def _evacuate_bunker_footprint(bot, *, pos: Point2, worker_tag: int | None = None) -> None:
+        try:
+            start = getattr(bot, "start_location", pos)
+        except Exception:
+            start = pos
+        for unit in list(getattr(bot, "units", []) or []) + list(getattr(bot, "structures", []) or []):
+            try:
+                if int(getattr(unit, "tag", -1) or -1) == int(worker_tag or -1):
+                    continue
+                if bool(getattr(unit, "is_flying", False)):
+                    continue
+                if getattr(unit, "type_id", None) in {U.SCV, U.MULE}:
+                    continue
+                if float(unit.distance_to(pos)) > 2.8:
+                    continue
+                retreat = unit.position.towards(start, 3.5)
+                unit.move(retreat)
+            except Exception:
+                continue
+
     def _intel_main_ramp_bunker_pos(self, *, now: float) -> Point2 | None:
         if self.awareness is None:
             return None
@@ -579,6 +672,27 @@ class DefenseBunkerTask(BaseTask):
         mode = str(self.anchor_mode or "BASE").upper()
         if mode == "MAIN_RAMP":
             wall_slots = self._main_wall_bunker_slots(bot)
+            for pos in self._main_ramp_candidate_positions(bot, anchor=anchor):
+                if self._is_blocked_position(pos):
+                    continue
+                if self._is_valid_main_ramp_bunker_pos(bot, pos=pos, anchor=anchor):
+                    return pos
+            try:
+                pos = bot.mediator.request_building_placement(
+                    base_location=bot.start_location,
+                    structure_type=U.BUNKER,
+                    bunker=True,
+                    closest_to=anchor,
+                    reserve_placement=False,
+                )
+                if (
+                    pos is not None
+                    and not self._is_blocked_position(pos)
+                    and self._is_valid_main_ramp_bunker_pos(bot, pos=pos, anchor=anchor)
+                ):
+                    return pos
+            except Exception:
+                pass
             intel_pos = self._intel_main_ramp_bunker_pos(now=now)
             if (
                 intel_pos is not None
@@ -586,9 +700,14 @@ class DefenseBunkerTask(BaseTask):
                 and self._is_valid_main_ramp_bunker_pos(bot, pos=intel_pos, anchor=anchor)
             ):
                 return intel_pos
-            for target in self._main_ramp_highground_targets(bot, anchor=anchor):
+            for slot in wall_slots:
+                if self._is_blocked_position(slot):
+                    continue
+                if self._is_valid_main_ramp_bunker_pos(bot, pos=slot, anchor=anchor):
+                    return slot
+            for slot in wall_slots:
                 try:
-                    pos = await bot.find_placement(U.BUNKER, near=target, max_distance=2)
+                    pos = await bot.find_placement(U.BUNKER, near=slot, max_distance=2)
                     if (
                         pos is not None
                         and not self._is_blocked_position(pos)
@@ -597,11 +716,6 @@ class DefenseBunkerTask(BaseTask):
                         return pos
                 except Exception:
                     continue
-            for slot in wall_slots:
-                if self._is_blocked_position(slot):
-                    continue
-                if self._is_valid_main_ramp_bunker_pos(bot, pos=slot, anchor=anchor):
-                    return slot
             for target in self._main_wall_fallback_targets(bot):
                 try:
                     pos = await bot.find_placement(U.BUNKER, near=target, max_distance=2)
@@ -625,7 +739,17 @@ class DefenseBunkerTask(BaseTask):
                             return pos
                     except Exception:
                         continue
-                return None
+            for target in self._main_ramp_highground_targets(bot, anchor=anchor):
+                try:
+                    pos = await bot.find_placement(U.BUNKER, near=target, max_distance=2)
+                    if (
+                        pos is not None
+                        and not self._is_blocked_position(pos)
+                        and self._is_valid_main_ramp_bunker_pos(bot, pos=pos, anchor=anchor)
+                    ):
+                        return pos
+                except Exception:
+                    continue
             pos = self._main_ramp_bunker_position(bot, anchor=anchor)
             if (
                 pos is not None
@@ -664,6 +788,19 @@ class DefenseBunkerTask(BaseTask):
                     and self._is_valid_main_ramp_bunker_pos(bot, pos=pos, anchor=anchor)
                 ):
                     return pos
+            except Exception:
+                pass
+            # Último recurso: aceita qualquer posição buildável perto do anchor sem
+            # exigir validação de geometria da rampa — melhor construir num lugar
+            # ligeiramente subótimo do que não construir nenhum bunker.
+            try:
+                pos = await bot.find_placement(U.BUNKER, near=anchor, max_distance=8)
+                if pos is not None and not self._is_blocked_position(pos):
+                    top, _bp, bottom = self._ramp_reference_points(bot)
+                    lowground_h = self._height(bot, bottom)
+                    pos_h = self._height(bot, pos)
+                    if pos_h > (float(lowground_h) + 0.25):
+                        return pos
             except Exception:
                 pass
             return None
@@ -715,6 +852,14 @@ class DefenseBunkerTask(BaseTask):
             return TaskResult.failed("bunker_worker_missing")
         if getattr(worker, "type_id", None) != U.SCV:
             return TaskResult.failed("bunker_worker_not_scv")
+        self._reserve_worker(bot, worker)
+        try:
+            if bool(getattr(worker, "is_carrying_resource", False)):
+                worker.return_resource()
+                self._active("dropping_resources_before_bunker")
+                return TaskResult.running("dropping_resources_before_bunker")
+        except Exception:
+            pass
 
         base_pos = self._resolve_base_pos(bot)
         if self._bunker_started_or_ready(bot, base_pos=base_pos):
@@ -729,6 +874,11 @@ class DefenseBunkerTask(BaseTask):
             pos = await self._choose_bunker_position(bot, base_pos=base_pos, anchor=anchor, now=now)
             self._target_pos = pos
         if pos is None:
+            if self.log is not None:
+                try:
+                    self.log.warn(f"[DefenseBunkerTask] bunker_position_unavailable anchor_mode={self.anchor_mode} anchor={anchor}")
+                except Exception:
+                    pass
             self._release_worker(bot, worker)
             self._done("bunker_position_unavailable")
             return TaskResult.done("bunker_position_unavailable")
@@ -742,6 +892,8 @@ class DefenseBunkerTask(BaseTask):
         if float(now) < float(self._next_issue_at):
             self._active("waiting_bunker_retry_window")
             return TaskResult.running("waiting_bunker_retry_window")
+        if str(self.anchor_mode or "BASE").upper() == "MAIN_RAMP":
+            self._evacuate_bunker_footprint(bot, pos=pos, worker_tag=int(getattr(worker, "tag", -1) or -1))
         try:
             if bool(
                 bot.mediator.build_with_specific_worker(

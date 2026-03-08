@@ -8,6 +8,7 @@ from ares.behaviors.macro.build_workers import BuildWorkers
 from ares.behaviors.macro.build_structure import BuildStructure
 from ares.behaviors.macro.expansion_controller import ExpansionController
 from ares.behaviors.macro.gas_building_controller import GasBuildingController
+from ares.behaviors.macro.macro_behavior import MacroBehavior
 from ares.behaviors.macro.macro_plan import MacroPlan
 from ares.behaviors.macro.production_controller import ProductionController
 from ares.behaviors.macro.spawn_controller import SpawnController
@@ -21,6 +22,115 @@ from bot.devlog import DevLogger
 from bot.mind.attention import Attention
 from bot.mind.awareness import Awareness, K
 from bot.tasks.base_task import BaseTask, TaskResult, TaskTick
+
+
+@dataclass
+class TargetedTownhallBuild(MacroBehavior):
+    target_pos: Point2
+    to_count: int
+    max_pending: int = 1
+
+    @staticmethod
+    def _is_pathable(ai, pos: Point2 | None) -> bool:
+        if pos is None:
+            return False
+        try:
+            return bool(ai.in_pathing_grid(pos))
+        except Exception:
+            return True
+
+    def _clear_own_blockers(self, ai, *, selected_worker_tag: int | None = None) -> bool:
+        issued = False
+        for unit in list(getattr(ai, "units", []) or []):
+            try:
+                if bool(getattr(unit, "is_flying", False)):
+                    continue
+                if getattr(unit, "type_id", None) in {
+                    U.COMMANDCENTER,
+                    U.ORBITALCOMMAND,
+                    U.PLANETARYFORTRESS,
+                    U.COMMANDCENTERFLYING,
+                    U.ORBITALCOMMANDFLYING,
+                }:
+                    continue
+                if selected_worker_tag is not None and int(getattr(unit, "tag", -1) or -1) == int(selected_worker_tag):
+                    continue
+                if float(unit.distance_to(self.target_pos)) > 4.6:
+                    continue
+                if bool(getattr(unit, "is_constructing", False)):
+                    continue
+            except Exception:
+                continue
+
+            try:
+                fallback = self.target_pos.towards(ai.start_location, 7.0)
+            except Exception:
+                fallback = getattr(ai, "start_location", None)
+            try:
+                escape = self.target_pos.towards(unit.position, 7.0)
+            except Exception:
+                escape = fallback
+            if not self._is_pathable(ai, escape):
+                escape = fallback
+            if escape is None:
+                continue
+            try:
+                if getattr(unit, "type_id", None) == U.SIEGETANKSIEGED:
+                    unit(AbilityId.UNSIEGE_UNSIEGE)
+                elif getattr(unit, "type_id", None) == U.WIDOWMINEBURROWED:
+                    unit(AbilityId.BURROWUP_WIDOWMINE)
+                else:
+                    unit.move(escape)
+                issued = True
+            except Exception:
+                continue
+        return issued
+
+    def execute(self, ai, config: dict, mediator) -> bool:
+        try:
+            ready_townhalls = len([th for th in ai.townhalls if bool(getattr(th, "is_ready", False))])
+        except Exception:
+            ready_townhalls = 0
+        try:
+            pending = int(ai.structure_pending(ai.base_townhall_type) or 0)
+        except Exception:
+            pending = 0
+        if int(ready_townhalls) + int(pending) >= int(self.to_count):
+            return False
+        if int(pending) >= int(self.max_pending):
+            return False
+        try:
+            if not bool(ai.can_afford(ai.base_townhall_type)):
+                return False
+        except Exception:
+            return False
+        try:
+            if ExpansionController._location_is_blocked(mediator, self.target_pos):
+                return False
+        except Exception:
+            pass
+        if self._clear_own_blockers(ai):
+            return True
+        try:
+            if not bool(mediator.can_place_structure(position=self.target_pos, structure_type=ai.base_townhall_type)):
+                return False
+        except Exception:
+            return False
+        worker = mediator.select_worker(target_position=self.target_pos)
+        if worker is None:
+            return False
+        if self._clear_own_blockers(ai, selected_worker_tag=int(getattr(worker, "tag", -1) or -1)):
+            return True
+        try:
+            return bool(
+                mediator.build_with_specific_worker(
+                    worker=worker,
+                    structure_type=ai.base_townhall_type,
+                    pos=self.target_pos,
+                )
+            )
+        except Exception:
+            return False
 
 
 @dataclass
@@ -165,6 +275,13 @@ class MacroAresExecutorTick(BaseTask):
                     return
 
     @staticmethod
+    def _main_wall_complete(*, awareness: Awareness, now: float) -> bool:
+        status = awareness.mem.get(K("ops", "wall", "main", "status"), now=now, default=None)
+        if not isinstance(status, dict):
+            return False
+        return bool(status.get("complete", False))
+
+    @staticmethod
     def _sig_from_plan(
         *,
         army_comp: dict[U, dict[str, float | int]],
@@ -244,7 +361,7 @@ class MacroAresExecutorTick(BaseTask):
     def _active_macro_build_sites(self, *, now: float) -> list[tuple[U, Point2]]:
         signals = self.awareness.mem.get(K("macro", "placement", "signals"), now=now, default={}) or {}
         if not isinstance(signals, dict):
-            return []
+            signals = {}
         out: list[tuple[U, Point2]] = []
         for name, payload in signals.items():
             structure_id = getattr(U, str(name), None)
@@ -254,6 +371,24 @@ class MacroAresExecutorTick(BaseTask):
             if point is None:
                 continue
             out.append((structure_id, point))
+        plan_active = self.awareness.mem.get(K("macro", "plan", "active"), now=now, default={}) or {}
+        if isinstance(plan_active, dict):
+            wants_natural = bool(
+                bool(plan_active.get("enable_expansion"))
+                and str(plan_active.get("expand_target_label", "") or "") == "NATURAL"
+            )
+            if wants_natural:
+                registry = self.awareness.mem.get(K("intel", "our_bases", "registry"), now=now, default={}) or {}
+                if isinstance(registry, dict):
+                    entry = dict(registry.get("NATURAL", {})) if isinstance(registry.get("NATURAL", {}), dict) else {}
+                    intended = self._point_from_payload(entry.get("intended_pos"))
+                    if intended is not None:
+                        duplicate = any(
+                            structure_id == U.COMMANDCENTER and float(point.distance_to(intended)) <= 0.9
+                            for structure_id, point in out
+                        )
+                        if not duplicate:
+                            out.append((U.COMMANDCENTER, intended))
         return out
 
     def _clear_macro_build_sites(self, *, bot, now: float) -> int:
@@ -352,7 +487,15 @@ class MacroAresExecutorTick(BaseTask):
         )
         allow_rush_opening_support = bool(
             buildorder_active
-            and current_opening == "RushDefenseOpen"
+            and (
+                current_opening == "RushDefenseOpen"
+                or (
+                    current_opening == "MechaOpen"
+                    and str(plan_active.get("rush_tier", "NONE") or "NONE").upper() in {"HEAVY", "EXTREME"}
+                )
+                or bool(plan_active.get("enemy_at_door"))
+                or bool(plan_active.get("rush_army_dump"))
+            )
             and str(self.domain) == "MACRO_ARMY_EXECUTOR"
         )
         if buildorder_active and not bool(allow_rush_opening_support or allow_rush_opening_econ):
@@ -384,6 +527,8 @@ class MacroAresExecutorTick(BaseTask):
             army_comp = self._army_comp(now=now)
         except Exception:
             return TaskResult.running("missing_army_comp")
+        spawn_ignore_below_unit_count = 0 if buildorder_active else 8
+        spawn_over_produce_on_low_tech = not bool(buildorder_active)
         self._ensure_key_addons(bot=bot, now=now)
         self._clear_macro_build_sites(bot=bot, now=now)
 
@@ -409,7 +554,7 @@ class MacroAresExecutorTick(BaseTask):
 
         enable_workers = bool(plan_active.get("enable_workers"))
         scv_cap = int(plan_active.get("scv_cap") or 66)
-        enable_supply = bool(plan_active.get("enable_supply"))
+        enable_supply = bool(plan_active.get("enable_supply")) and self._main_wall_complete(awareness=self.awareness, now=now)
         enable_gas = bool(plan_active.get("enable_gas"))
         gas_target = int(plan_active.get("gas_target") or 0)
         gas_workers_per_refinery = int(plan_active.get("gas_workers_per_refinery") or 3)
@@ -425,6 +570,9 @@ class MacroAresExecutorTick(BaseTask):
         expand_safe_to_land = bool(plan_active.get("expand_safe_to_land"))
         rush_natural_release = bool(plan_active.get("rush_natural_release"))
         enemy_macro_catchup_expand = bool(plan_active.get("enemy_macro_catchup_expand"))
+        enemy_at_door = bool(plan_active.get("enemy_at_door"))
+        hard_second_cc_alarm = bool(plan_active.get("hard_second_cc_alarm"))
+        rush_tier = str(plan_active.get("rush_tier", "NONE") or "NONE").upper()
         lane_order_raw = plan_active.get("lane_order")
         lane_order = [str(x) for x in lane_order_raw] if isinstance(lane_order_raw, list) else [
             "workers",
@@ -480,9 +628,16 @@ class MacroAresExecutorTick(BaseTask):
             and float(natural_expand_stall_started_at) > 0.0
             and (float(now) - float(natural_expand_stall_started_at)) >= 10.0
         )
+        hard_second_cc_watchdog = bool(
+            bool(hard_second_cc_alarm)
+            and str(expand_target_label) == "NATURAL"
+            and int(attention.macro.bases_total) < 2
+            and int(pending_cc) <= 0
+        )
         natural_expand_preempt_production = bool(
             enable_expansion
             and enable_production
+            and not bool(enemy_at_door)
             and int(attention.macro.bases_total) < max(2, int(expand_to))
             and str(expand_target_label) == "NATURAL"
             and int(pending_cc) <= 0
@@ -501,6 +656,11 @@ class MacroAresExecutorTick(BaseTask):
             enable_production = False
             lane_order = [ln for ln in lane_order if ln != "production"]
             fallback_lanes = [ln for ln in fallback_lanes if ln != "production"]
+        if hard_second_cc_watchdog:
+            enable_expansion = True
+            enable_production = False
+            lane_order = ["expand"] + [ln for ln in lane_order if ln not in {"expand", "production"}]
+            fallback_lanes = ["expand"] + [ln for ln in fallback_lanes if ln not in {"expand", "production"}]
         if allow_rush_opening_support:
             # Keep rush-defense opening in charge of geometry/expansion, but allow
             # unit spawn support so idle barracks/factory do not float resources
@@ -520,11 +680,17 @@ class MacroAresExecutorTick(BaseTask):
             enable_supply = False
             enable_gas = False
             enable_spawn = False
-            enable_production = False
-            enable_expansion = bool(enable_expansion)
-            expand_to = max(2, int(expand_to))
-            fallback_lanes = ["expand"]
-            lane_order = [ln for ln in lane_order if ln == "expand"] or ["expand"]
+            if bool(enemy_at_door) or str(rush_tier) in {"HEAVY", "EXTREME"}:
+                enable_production = True
+                enable_expansion = False
+                fallback_lanes = ["production"]
+                lane_order = [ln for ln in lane_order if ln == "production"] or ["production"]
+            else:
+                enable_production = False
+                enable_expansion = bool(enable_expansion)
+                expand_to = max(2, int(expand_to))
+                fallback_lanes = ["expand"]
+                lane_order = [ln for ln in lane_order if ln == "expand"] or ["expand"]
 
         sig = self._sig_from_plan(
             army_comp=army_comp,
@@ -566,8 +732,8 @@ class MacroAresExecutorTick(BaseTask):
                     SpawnController(
                         army_composition_dict=army_comp,
                         freeflow_mode=bool(freeflow_mode),
-                        ignore_proportions_below_unit_count=8,
-                        over_produce_on_low_tech=True,
+                        ignore_proportions_below_unit_count=int(spawn_ignore_below_unit_count),
+                        over_produce_on_low_tech=bool(spawn_over_produce_on_low_tech),
                     )
                 )
                 return
@@ -586,16 +752,25 @@ class MacroAresExecutorTick(BaseTask):
                         registry = {}
                     entry = dict(registry.get("NATURAL", {})) if isinstance(registry.get("NATURAL", {}), dict) else {}
                     intended = self._point_from_payload(entry.get("intended_pos"))
-                    base_location = bot.start_location if expand_build_mode == "OFFSITE" or intended is None else intended
                     natural_to_count = min(max(1, int(expand_to)), 2)
-                    plan.add(
-                        BuildStructure(
-                            base_location=base_location,
-                            structure_id=U.COMMANDCENTER,
-                            max_on_route=(3 if natural_expand_stalled else 2),
-                            to_count=int(natural_to_count),
+                    if expand_build_mode != "OFFSITE" and intended is not None:
+                        plan.add(
+                            TargetedTownhallBuild(
+                                target_pos=intended,
+                                to_count=int(natural_to_count),
+                                max_pending=1,
+                            )
                         )
-                    )
+                    else:
+                        base_location = bot.start_location
+                        plan.add(
+                            BuildStructure(
+                                base_location=base_location,
+                                structure_id=U.COMMANDCENTER,
+                                max_on_route=(3 if natural_expand_stalled else 2),
+                                to_count=int(natural_to_count),
+                            )
+                        )
                 else:
                     plan.add(ExpansionController(to_count=max(1, int(expand_to))))
                 return
@@ -665,6 +840,7 @@ class MacroAresExecutorTick(BaseTask):
                     "enable_expansion": bool(enable_expansion),
                     "expand_to": int(expand_to),
                     "natural_expand_stalled": bool(natural_expand_stalled),
+                    "hard_second_cc_watchdog": bool(hard_second_cc_watchdog),
                     "enable_orbital_morph": bool(enable_orbital_morph),
                     "lane_order": list(lane_order),
                     "army_comp_count": int(len(army_comp)),

@@ -31,6 +31,10 @@ class AdvantageGameStatusIntelConfig:
     enter_press: float = 0.22
     exit_press: float = 0.10
     error_to_weight_gain: float = 0.55
+    delayed_natural_expand_bonus: float = 0.16
+    delayed_natural_army_penalty: float = 0.10
+    delayed_natural_bank_target_minerals: int = 400
+    delayed_natural_bank_target_gas: int = 120
 
 
 class AdvantageGameStatusIntel:
@@ -94,6 +98,23 @@ class AdvantageGameStatusIntel:
         if float(confidence) < float(self.cfg.confidence_floor_for_greed) and regime == "PRESS":
             regime = "STANDARD"
 
+        our_bases = awareness.mem.get(K("intel", "our_bases", "registry"), now=now, default={}) or {}
+        if not isinstance(our_bases, dict):
+            our_bases = {}
+        nat_entry = dict(our_bases.get("NATURAL", {})) if isinstance(our_bases.get("NATURAL", {}), dict) else {}
+        nat_state = str(nat_entry.get("state", "PLANNED") or "PLANNED").upper()
+        nat_flying = bool(nat_entry.get("is_flying", False))
+        nat_taken = bool(nat_state in {"ESTABLISHED", "LANDED_UNSAFE", "SECURING"} and not nat_flying)
+        delayed_natural_alarm = bool(
+            awareness.mem.get(K("strategy", "parity", "alarms", "delayed_natural"), now=now, default=False)
+        )
+        delayed_natural_push = bool(
+            delayed_natural_alarm
+            and int(getattr(attention.macro, "bases_total", 0) or 0) < 2
+            and not bool(nat_taken)
+            and int(threat_urgency) < int(self.cfg.threat_block_greed_urgency)
+        )
+
         k = max(0.0, float(self.cfg.error_to_weight_gain))
         base = {"army": 0.40, "tech": 0.20, "expand": 0.25, "harass": 0.15}
         army_w = float(base["army"]) + (k * err)
@@ -109,6 +130,9 @@ class AdvantageGameStatusIntel:
             expand_w += 0.10
             tech_w += 0.04
             harass_w += 0.04
+        if delayed_natural_push:
+            expand_w += float(self.cfg.delayed_natural_expand_bonus)
+            army_w -= float(self.cfg.delayed_natural_army_penalty)
         army_w = self._clamp(army_w, 0.08, 0.82)
         expand_w = self._clamp(expand_w, 0.05, 0.65)
         tech_w = self._clamp(tech_w, 0.05, 0.45)
@@ -140,6 +164,9 @@ class AdvantageGameStatusIntel:
             bank_g = int(base_bank_g)
             regime_mode = "STANDARD"
             posture = "STANDARD"
+        if delayed_natural_push:
+            bank_m = max(int(bank_m), int(self.cfg.delayed_natural_bank_target_minerals))
+            bank_g = max(int(bank_g), int(self.cfg.delayed_natural_bank_target_gas))
 
         desired_mode_raw = str(awareness.mem.get(K("macro", "desired", "mode"), now=now, default="") or "").upper()
         desired_phase = str(awareness.mem.get(K("macro", "desired", "phase"), now=now, default="OPENING") or "OPENING").upper()
@@ -192,6 +219,7 @@ class AdvantageGameStatusIntel:
                 "confidence": float(confidence),
                 "observation_ratio": float(obs_ratio),
                 "threat_urgency": int(threat_urgency),
+                "delayed_natural_push": bool(delayed_natural_push),
                 "strategic_mode": str(strategic_mode),
                 "strategic_mode_source": str(strategic_mode_source),
                 "desired_phase": str(desired_phase),

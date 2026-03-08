@@ -71,6 +71,13 @@ class BuildingPlacementPlanner:
         return int(ready + pending)
 
     @staticmethod
+    def _main_wall_complete(*, awareness: Awareness, now: float) -> bool:
+        status = awareness.mem.get(K("ops", "wall", "main", "status"), now=now, default=None)
+        if not isinstance(status, dict):
+            return False
+        return bool(status.get("complete", False))
+
+    @staticmethod
     def _preview_flags(structure_id: U) -> dict[str, bool]:
         flags: dict[str, bool] = {}
         if structure_id == U.SUPPLYDEPOT:
@@ -174,7 +181,7 @@ class BuildingPlacementPlanner:
             supply_required = int(AutoSupply._num_supply_required(bot, bot.mediator))
         except Exception:
             supply_required = 0
-        if supply_required > 0:
+        if supply_required > 0 and self._main_wall_complete(awareness=awareness, now=now):
             payload = self._preview_structure(
                 bot,
                 structure_id=U.SUPPLYDEPOT,

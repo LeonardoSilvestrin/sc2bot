@@ -313,15 +313,27 @@ def derive_macro_mode_intel(
     # Build profile is phase-seeded only. Runtime adaptation handles pressure/flood dynamics.
     scenario = "NORMAL"
 
-    if str(opening_selected) == "MechaOpen" and bool(
+    enemy_at_door = bool(
+        int(getattr(attention.combat, "primary_urgency", 0) or 0) >= 16
+        and int(getattr(attention.combat, "primary_enemy_count", 0) or 0) >= 2
+    )
+    mecha_should_abort_to_rush_defense = bool(
         scout_no_natural_confirmed
         or no_natural_structural_confirmed
         or rush_state == "CONFIRMED"
-        or (rush_state == "HOLDING" and rush_tier in {"HEAVY", "EXTREME"})
-    ):
+        or (
+            not bool(opening_done)
+            and rush_state == "HOLDING"
+        )
+        or (
+            rush_state == "SUSPECTED"
+            and (bool(enemy_at_door) or rush_tier in {"HEAVY", "EXTREME"} or float(rush_severity) >= 0.72)
+        )
+    )
+    if str(opening_selected) == "MechaOpen" and bool(mecha_should_abort_to_rush_defense):
         requested_opening = "RushDefenseOpen"
         requested_transition_target = "STIM"
-        opening_request_reason = "enemy_rush_confirmed"
+        opening_request_reason = "enemy_rush_pressure"
     rush_stable_clear = bool(
         str(opening_selected) == "RushDefenseOpen"
         and bool(attention.macro.opening_done)
@@ -342,9 +354,12 @@ def derive_macro_mode_intel(
         ttl_s=float(cfg.ttl_s),
     )
 
+    effective_opening = str(requested_opening)
+    effective_transition_target = str(requested_transition_target)
+
     profile = resolve_build_profile(
-        opening_selected=str(opening_selected),
-        transition_target=str(transition_target),
+        opening_selected=str(effective_opening),
+        transition_target=str(effective_transition_target),
         phase=str(phase_profile),
         scenario=str(scenario),
     )
@@ -384,7 +399,7 @@ def derive_macro_mode_intel(
             "enemy_kind": str(enemy_kind),
             "scenario": str(scenario),
             "confidence": float(conf),
-            "opening_selected": str(opening_selected),
+            "opening_selected": str(effective_opening),
             "transition_target": str(transition_target),
             "requested_opening": str(requested_opening),
             "requested_transition_target": str(requested_transition_target),
@@ -404,8 +419,8 @@ def derive_macro_mode_intel(
     return {
         "mode": str(mode),
         "profile": dict(profile),
-        "opening_selected": str(opening_selected),
-        "transition_target": str(transition_target),
+        "opening_selected": str(effective_opening),
+        "transition_target": str(effective_transition_target),
         "requested_opening": str(requested_opening),
         "requested_transition_target": str(requested_transition_target),
         "banshee_harass_done": bool(banshee_harass_done),
@@ -648,19 +663,27 @@ def derive_army_comp_intel(
     comp = dict(comp_by_mode.get(str(mode), comp_by_mode["STANDARD"]))
     priority_units = list(prio_by_mode.get(str(mode), prio_by_mode["STANDARD"]))
 
-    missing_harass_unit = _harass_missing_unit_from_cooldown(awareness=awareness, now=now)
-    if missing_harass_unit is not None:
-        priority_units = _prepend_unique(priority_units, missing_harass_unit)
-        comp = _inject_unit_comp_bias(comp, unit_name=str(missing_harass_unit), weight=0.12)
-
     rush_state = str(awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
     rush_tier = str(awareness.mem.get(K("enemy", "rush", "tier"), now=now, default="NONE") or "NONE").upper()
     rush_severity = float(awareness.mem.get(K("enemy", "rush", "severity"), now=now, default=0.0) or 0.0)
+    aggression_state = str(awareness.mem.get(K("enemy", "aggression", "state"), now=now, default="NONE") or "NONE").upper()
+    rush_active = rush_state in {"SUSPECTED", "CONFIRMED", "HOLDING"}
     factory_techlab_ready = int(getattr(attention.macro, "factory_techlab", 0) or 0) > 0
     enemy_at_door = bool(
         int(getattr(attention.combat, "primary_urgency", 0) or 0) >= 16
         and int(getattr(attention.combat, "primary_enemy_count", 0) or 0) >= 2
     )
+    harass_bias_blocked = bool(
+        rush_active
+        or bool(enemy_at_door)
+        or aggression_state in {"RUSH", "AGGRESSION"}
+    )
+
+    missing_harass_unit = _harass_missing_unit_from_cooldown(awareness=awareness, now=now)
+    if not bool(harass_bias_blocked) and missing_harass_unit is not None:
+        priority_units = _prepend_unique(priority_units, missing_harass_unit)
+        comp = _inject_unit_comp_bias(comp, unit_name=str(missing_harass_unit), weight=0.12)
+
     mecha_emergency_hellions = bool(
         str(opening_selected) == "MechaOpen"
         and not bool(factory_techlab_ready)
@@ -711,10 +734,13 @@ def derive_army_comp_intel(
         comp = {str(name): float(weight) for name, weight in comp.items() if str(name) in allowed_units and float(weight) > 0.0}
         comp = _boost_unit_comp_bias(comp, unit_name="SIEGETANK", weight=0.16)
         comp = _boost_unit_comp_bias(comp, unit_name="MARINE", weight=0.10)
-        priority_units = ["SIEGETANK", "MARINE", "MARAUDER"] + [
+        # Ares SpawnController stops on an unaffordable higher-priority unit.
+        # Keep Marines ahead of Tanks during rush defense so idle Barracks still
+        # spend minerals when Factory tech/gas is not ready.
+        priority_units = ["MARINE", "SIEGETANK", "MARAUDER"] + [
             str(unit_name)
             for unit_name in priority_units
-            if str(unit_name) in allowed_units and str(unit_name) not in {"SIEGETANK", "MARINE", "MARAUDER"}
+            if str(unit_name) in allowed_units and str(unit_name) not in {"MARINE", "SIEGETANK", "MARAUDER"}
         ]
 
     comp = _normalize(comp)
@@ -917,12 +943,35 @@ def derive_tech_intel(
         production_structure_targets["STARPORT"] = 0
         production_scale["STARPORT"] = 0.0
     if opening_selected == "RushDefenseOpen" and natural_unresolved:
-        production_structure_targets["BARRACKS"] = min(int(production_structure_targets.get("BARRACKS", 0) or 0), 2)
-        production_structure_targets["FACTORY"] = min(int(production_structure_targets.get("FACTORY", 0) or 0), 1)
-        production_structure_targets["STARPORT"] = 0
-        production_scale["BARRACKS"] = min(float(production_scale.get("BARRACKS", 0.0) or 0.0), 0.85)
-        production_scale["FACTORY"] = min(float(production_scale.get("FACTORY", 0.0) or 0.0), 0.35)
-        production_scale["STARPORT"] = 0.0
+        if rush_state in {"SUSPECTED", "CONFIRMED", "HOLDING"}:
+            # While the natural is unresolved under rush pressure, we still need
+            # enough on-base production to dump minerals into immediate defense.
+            # Keep starport off, but do not choke barracks/factory throughput.
+            production_structure_targets["BARRACKS"] = max(
+                int(production_structure_targets.get("BARRACKS", 0) or 0),
+                3 if rush_tier in {"LIGHT", "MEDIUM", "NONE"} else 4,
+            )
+            production_structure_targets["FACTORY"] = max(
+                int(production_structure_targets.get("FACTORY", 0) or 0),
+                1,
+            )
+            production_structure_targets["STARPORT"] = 0
+            production_scale["BARRACKS"] = max(
+                float(production_scale.get("BARRACKS", 0.0) or 0.0),
+                1.10 if rush_tier in {"LIGHT", "MEDIUM", "NONE"} else 1.40,
+            )
+            production_scale["FACTORY"] = max(
+                float(production_scale.get("FACTORY", 0.0) or 0.0),
+                0.35,
+            )
+            production_scale["STARPORT"] = 0.0
+        else:
+            production_structure_targets["BARRACKS"] = min(int(production_structure_targets.get("BARRACKS", 0) or 0), 2)
+            production_structure_targets["FACTORY"] = min(int(production_structure_targets.get("FACTORY", 0) or 0), 1)
+            production_structure_targets["STARPORT"] = 0
+            production_scale["BARRACKS"] = min(float(production_scale.get("BARRACKS", 0.0) or 0.0), 0.85)
+            production_scale["FACTORY"] = min(float(production_scale.get("FACTORY", 0.0) or 0.0), 0.35)
+            production_scale["STARPORT"] = 0.0
     due_structures = _due_structures_by_time(milestones=tech_timing_milestones, now_t=float(now))
     # Contract: structures in tech_targets are due-by-time; phase cap stays in tech_structure_targets.
     tech_targets = {"upgrades": list(upgrades), "structures": dict(due_structures)}

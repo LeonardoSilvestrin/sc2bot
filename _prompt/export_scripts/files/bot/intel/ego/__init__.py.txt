@@ -1,4 +1,0 @@
-# bot/intel/ego/__init__.py
-
-"""Ego-facing intel modules."""
-

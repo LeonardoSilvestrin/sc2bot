@@ -228,6 +228,21 @@ class SecureBaseTask(BaseTask):
         return self.base_pos
 
     @staticmethod
+    def _cc_footprint_sites(center: Point2) -> list[Point2]:
+        offsets = (
+            (0.0, 0.0),
+            (2.0, 0.0),
+            (-2.0, 0.0),
+            (0.0, 2.0),
+            (0.0, -2.0),
+            (2.0, 2.0),
+            (2.0, -2.0),
+            (-2.0, 2.0),
+            (-2.0, -2.0),
+        )
+        return [Point2((float(center.x) + dx, float(center.y) + dy)) for dx, dy in offsets]
+
+    @staticmethod
     def _bunkers_near_base(bot, *, base_pos: Point2, hold_pos: Point2) -> list:
         out = []
         for unit in list(getattr(bot, "structures", []) or []):
@@ -613,7 +628,12 @@ class SecureBaseTask(BaseTask):
         # CC tem footprint 5x5 (raio ~2.83 até o canto) — reservar centro + 4 offsets
         # para garantir que _sanitize_slots e _handle_general empurrem unidades de toda a área.
         plan_active = self.awareness.mem.get(K("macro", "plan", "active"), now=now, default={}) or {}
-        if isinstance(plan_active, dict) and bool(plan_active.get("enable_expansion")) and str(plan_active.get("expand_target_label", "") or "") == "NATURAL":
+        reserve_nat_cc_site = bool(
+            (isinstance(plan_active, dict) and bool(plan_active.get("enable_expansion")) and str(plan_active.get("expand_target_label", "") or "") == "NATURAL")
+            or bool(snap.get("nat_offsite", False))
+            or bool(snap.get("safe_to_land", False))
+        )
+        if reserve_nat_cc_site:
             registry = self.awareness.mem.get(K("intel", "our_bases", "registry"), now=now, default={}) or {}
             if isinstance(registry, dict):
                 nat_entry = registry.get("NATURAL", {})
@@ -623,18 +643,11 @@ class SecureBaseTask(BaseTask):
                         try:
                             intended_pt = Point2((float(intended_raw["x"]), float(intended_raw["y"])))
                             if not any(float(intended_pt.distance_to(s)) <= 0.9 for s in reserved_sites):
-                                # Reservar centro + 4 cantos do footprint 5x5 do CC
-                                _cc_offsets = [
-                                    Point2((0.0, 0.0)),
-                                    Point2((2.0, 2.0)),
-                                    Point2((-2.0, 2.0)),
-                                    Point2((2.0, -2.0)),
-                                    Point2((-2.0, -2.0)),
-                                ]
-                                extra = [Point2((intended_pt.x + o.x, intended_pt.y + o.y)) for o in _cc_offsets]
-                                reserved_sites = list(reserved_sites) + extra
+                                reserved_sites = list(reserved_sites) + self._cc_footprint_sites(intended_pt)
                         except Exception:
                             pass
+        if reserve_nat_cc_site and not any(float(self.base_pos.distance_to(s)) <= 0.9 for s in reserved_sites):
+            reserved_sites = list(reserved_sites) + self._cc_footprint_sites(self.base_pos)
         perimeter = self._slots(self.hold_pos, radius=4.5, count=max(4, len(units)))
         staging_perimeter = self._slots(self.staging_pos, radius=3.0, count=max(4, len(units)))
         mine_center = self.staging_pos

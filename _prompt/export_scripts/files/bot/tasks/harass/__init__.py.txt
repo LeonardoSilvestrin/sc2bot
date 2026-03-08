@@ -1,3 +1,0 @@
-# bot/tasks/harass/__init__.py
-
-# Harass task package.

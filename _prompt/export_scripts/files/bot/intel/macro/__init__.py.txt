@@ -1,4 +1,0 @@
-# bot/intel/macro/__init__.py
-
-"""Macro intel package."""
-

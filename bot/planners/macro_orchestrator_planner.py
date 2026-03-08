@@ -119,6 +119,9 @@ class MacroOrchestratorPlanner(BasePlanner):
     enemy_at_door_urgency_floor: int = 16
     enemy_at_door_count_floor: int = 2
     natural_cc_force_minerals: int = 360
+    hard_second_cc_alarm_at_s: float = 300.0
+    hard_second_cc_offsite_enemy_power: float = 1.1
+    hard_second_cc_offsite_presence_power: float = 1.0
 
     housekeeping_score: int = 18
     housekeeping_interval_s: float = 4.0
@@ -1065,6 +1068,10 @@ class MacroOrchestratorPlanner(BasePlanner):
         except Exception:
             bunkers_ready = 0
         try:
+            pending_cc = int(bot.already_pending(U.COMMANDCENTER) or 0)
+        except Exception:
+            pending_cc = 0
+        try:
             army_supply_now = float(getattr(bot, "supply_army", 0.0) or 0.0)
         except Exception:
             army_supply_now = 0.0
@@ -1089,13 +1096,30 @@ class MacroOrchestratorPlanner(BasePlanner):
         delayed_natural_alarm = bool(nat_snapshot.get("delayed_natural_alarm", False))
         local_nat_cover_ready = bool(nat_snapshot.get("local_nat_cover_ready", False))
         natural_release_window = bool(nat_snapshot.get("natural_release_window", False))
+        nat_enemy_power = float(nat_snapshot.get("enemy_nat_power", 0.0) or 0.0)
+        nat_presence_power = float(nat_snapshot.get("enemy_presence_nat_side_power", 0.0) or 0.0)
+        hard_second_cc_alarm = bool(
+            float(now) >= float(self.hard_second_cc_alarm_at_s)
+            and int(bases_now) < 2
+            and not bool(nat_is_mining)
+        )
+        nat_region_compromised = bool(
+            not bool(nat_safe_to_land)
+            or float(nat_enemy_power) >= float(self.hard_second_cc_offsite_enemy_power)
+            or float(nat_presence_power) >= float(self.hard_second_cc_offsite_presence_power)
+        )
+        # parity-based offsite só é válido quando não estamos em rush hard ativo.
+        # Durante rush o army delta é ruído (inimigo tem unidades visíveis, nós não), então
+        # parity_army/"BEHIND" acionaria offsite expand incorretamente.
+        _parity_offsite_ok = not bool(rush_hard_active)
         should_expand_offsite = bool(
             delayed_natural_alarm
             or enemy_macro_lead_visible
-            or parity_overall == "BEHIND"
-            or parity_army == "BEHIND"
-            or parity_state in {"BEHIND_BOTH", "BEHIND_ARMY_AHEAD_ECON"}
-            or parity_army_behind >= 0.32
+            or (bool(_parity_offsite_ok) and parity_overall == "BEHIND")
+            or (bool(_parity_offsite_ok) and parity_army == "BEHIND")
+            or (bool(_parity_offsite_ok) and parity_state in {"BEHIND_BOTH", "BEHIND_ARMY_AHEAD_ECON"})
+            or (bool(_parity_offsite_ok) and parity_army_behind >= 0.32)
+            or (bool(hard_second_cc_alarm) and bool(nat_region_compromised))
         )
         enemy_macro_catchup_expand = bool(
             int(bases_now) < 2
@@ -1116,7 +1140,22 @@ class MacroOrchestratorPlanner(BasePlanner):
                 or bool(nat_should_secure)
             )
         )
-        rush_natural_release = bool(
+        # rush_natural_release: permite expandir para a nat após segurar o rush.
+        # Caminho primário: nat_safe_to_land=True (terreno comprovadamente limpo) — permite
+        # mesmo com rush_active, pois o intel de map_control já confirmou que é seguro pousar.
+        # Caminho secundário: rush encerrado (not rush_active) + army mínima.
+        _nat_clear_early_release = bool(
+            int(bases_now) < 2
+            and bool(nat_safe_to_land)
+            and not bool(pressure_high)
+            and not bool(enemy_at_door)
+            and float(rush_clear_for) >= float(self.rush_natural_release_clear_s)
+            and (
+                bool(attention.macro.opening_done)
+                or not bool(self.rush_natural_release_requires_opening_done)
+            )
+        )
+        _nat_release_standard = bool(
             int(bases_now) < 2
             and not bool(pressure_high)
             and (
@@ -1136,17 +1175,23 @@ class MacroOrchestratorPlanner(BasePlanner):
                 )
             )
         )
+        rush_natural_release = bool(_nat_clear_early_release or _nat_release_standard)
         natural_cc_force_now = bool(
             int(bases_now) < 2
             and int(pending_cc) <= 0
-            and int(attention.economy.minerals) >= int(self.natural_cc_force_minerals)
-            and not bool(enemy_at_door)
-            and not bool(rush_active)
             and (
-                bool(nat_safe_to_land)
-                or bool(rush_natural_release)
-                or bool(nat_should_secure)
-                or bool(enemy_macro_catchup_expand)
+                (
+                    int(attention.economy.minerals) >= int(self.natural_cc_force_minerals)
+                    and not bool(enemy_at_door)
+                    and not bool(rush_active)
+                    and (
+                        bool(nat_safe_to_land)
+                        or bool(rush_natural_release)
+                        or bool(nat_should_secure)
+                        or bool(enemy_macro_catchup_expand)
+                    )
+                )
+                or bool(hard_second_cc_alarm)
             )
         )
         natural_prebank_now = bool(
@@ -1207,7 +1252,6 @@ class MacroOrchestratorPlanner(BasePlanner):
         enable_production = True
         if enemy_at_door:
             enable_workers = bool(int(attention.economy.workers_total) < 24)
-            enable_production = False
         if phase == "OPENING" and int(total_bases) < 2:
             enable_expansion = True
         if ahead_expand_push:
@@ -1225,8 +1269,9 @@ class MacroOrchestratorPlanner(BasePlanner):
                 enable_expansion = False
                 expand_to = min(int(expand_to), min(2, int(bases_now)))
         if enemy_at_door:
-            enable_expansion = False
-            expand_to = min(int(expand_to), int(bases_now))
+            if not bool(hard_second_cc_alarm and should_expand_offsite and int(pending_cc) <= 0):
+                enable_expansion = False
+                expand_to = min(int(expand_to), int(bases_now))
         if bool(enemy_macro_catchup_expand) and not bool(enemy_at_door):
             enable_expansion = True
             expand_to = max(2, int(expand_to))
@@ -1235,6 +1280,10 @@ class MacroOrchestratorPlanner(BasePlanner):
             expand_to = max(2, int(expand_to))
             enable_production = False
         if natural_cc_force_now:
+            enable_expansion = True
+            expand_to = max(2, int(expand_to))
+            enable_production = False
+        if bool(hard_second_cc_alarm) and int(bases_now) < 2:
             enable_expansion = True
             expand_to = max(2, int(expand_to))
             enable_production = False
@@ -1266,6 +1315,8 @@ class MacroOrchestratorPlanner(BasePlanner):
             expand_build_mode = "OFFSITE" if bool(should_expand_offsite) else "DIRECT"
             if bool(nat_offsite):
                 enable_expansion = False
+            elif bool(hard_second_cc_alarm) and bool(nat_region_compromised):
+                expand_build_mode = "OFFSITE"
         elif int(expand_to) >= 3 and (bool(nat_offsite) or nat_state != "ESTABLISHED"):
             enable_expansion = False
             expand_to = min(int(expand_to), 2)
@@ -1396,6 +1447,8 @@ class MacroOrchestratorPlanner(BasePlanner):
                 "rush_natural_release": bool(rush_natural_release),
                 "natural_prebank_now": bool(natural_prebank_now),
                 "natural_cc_force_now": bool(natural_cc_force_now),
+                "hard_second_cc_alarm": bool(hard_second_cc_alarm),
+                "nat_region_compromised": bool(nat_region_compromised),
                 "enemy_bases_visible": int(enemy_bases_visible),
                 "enemy_base_gap": int(enemy_base_gap),
                 "enemy_macro_catchup_expand": bool(enemy_macro_catchup_expand),

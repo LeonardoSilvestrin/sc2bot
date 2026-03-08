@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ares.consts import BuildingSize
+from ares.consts import UnitRole
 from sc2.ids.ability_id import AbilityId
 from sc2.ids.unit_typeid import UnitTypeId as U
 from sc2.position import Point2
@@ -89,15 +90,15 @@ class MaintainWallTask(BaseTask):
         return missing
 
     def _issue_exact_build(self, bot, *, structure_type: U, pos: Point2) -> bool:
+        worker = self._assigned_worker(bot)
+        if worker is None:
+            return False
         try:
             if not bool(bot.can_afford(structure_type)):
                 return False
         except Exception:
             return False
         try:
-            worker = bot.mediator.select_worker(target_position=pos, force_close=True)
-            if worker is None:
-                return False
             return bool(
                 bot.mediator.build_with_specific_worker(
                     worker=worker,
@@ -107,6 +108,31 @@ class MaintainWallTask(BaseTask):
             )
         except Exception:
             return False
+
+    def _assigned_worker(self, bot):
+        try:
+            if not self.assigned_tags:
+                return None
+            worker = bot.units.find_by_tag(int(self.assigned_tags[0]))
+            if worker is None or getattr(worker, "type_id", None) != U.SCV:
+                return None
+            return worker
+        except Exception:
+            return None
+
+    @staticmethod
+    def _reserve_worker(bot, worker) -> None:
+        try:
+            bot.mediator.assign_role(tag=int(worker.tag), role=UnitRole.BUILDING, remove_from_squad=True)
+        except Exception:
+            pass
+
+    @staticmethod
+    def _release_worker(bot, worker) -> None:
+        try:
+            bot.mediator.assign_role(tag=int(worker.tag), role=UnitRole.GATHERING, remove_from_squad=True)
+        except Exception:
+            pass
 
     def _wall_positions(
         self,
@@ -494,12 +520,27 @@ class MaintainWallTask(BaseTask):
         return TaskResult.noop("nat_wall_wait")
 
     async def on_step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult:
-        bound_err = self.require_mission_bound()
+        bound_err = self.require_mission_bound(exact_tags=1)
         if bound_err is not None:
             return bound_err
+        worker = self._assigned_worker(bot)
+        if worker is None:
+            return TaskResult.failed("wall_worker_missing")
+        self._reserve_worker(bot, worker)
+        try:
+            if bool(getattr(worker, "is_carrying_resource", False)):
+                worker.return_resource()
+                self._active("dropping_resources_before_wall")
+                return TaskResult.running("dropping_resources_before_wall")
+        except Exception:
+            pass
         now = float(tick.time)
         if self.zone == "main":
-            return self._maintain_main(bot, attention=attention, now=now)
-        if self.zone == "nat":
-            return self._maintain_nat(bot, attention=attention, now=now)
-        return TaskResult.failed("unknown_wall_zone")
+            result = self._maintain_main(bot, attention=attention, now=now)
+        elif self.zone == "nat":
+            result = self._maintain_nat(bot, attention=attention, now=now)
+        else:
+            result = TaskResult.failed("unknown_wall_zone")
+        if result.status in {"DONE", "FAILED"}:
+            self._release_worker(bot, worker)
+        return result

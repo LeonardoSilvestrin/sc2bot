@@ -23,7 +23,10 @@ class GameParityIntelConfig:
     econ_ahead_norm: float = 18.0
     parity_state_trigger: float = 0.32
     delayed_natural_alarm_at_s: float = 300.0
+    delayed_natural_force_at_s: float = 420.0
     delayed_natural_pressure_urgency_high: int = 18
+    delayed_natural_force_block_urgency: int = 26
+    delayed_natural_force_block_enemy_count: int = 5
 
 
 _WORKER_TYPES: Tuple[U, ...] = (U.SCV, U.PROBE, U.DRONE)
@@ -182,15 +185,25 @@ def derive_game_parity_intel(
     nat_flying = bool(nat_entry.get("is_flying", False))
     nat_taken = bool(nat_state in {"ESTABLISHED", "LANDED_UNSAFE", "SECURING"} and not nat_flying)
     pressure_level = int(awareness.mem.get(K("control", "pressure", "level"), now=now, default=1) or 1)
+    primary_urgency = int(getattr(attention.combat, "primary_urgency", 0) or 0)
+    primary_enemy_count = int(getattr(attention.combat, "primary_enemy_count", 0) or 0)
     pressure_high = bool(
         int(pressure_level) >= 3
-        or int(getattr(attention.combat, "primary_urgency", 0) or 0) >= int(cfg.delayed_natural_pressure_urgency_high)
+        or int(primary_urgency) >= int(cfg.delayed_natural_pressure_urgency_high)
+    )
+    pressure_extreme = bool(
+        int(primary_urgency) >= int(cfg.delayed_natural_force_block_urgency)
+        or int(primary_enemy_count) >= int(cfg.delayed_natural_force_block_enemy_count)
+    )
+    delayed_natural_force = bool(
+        float(now) >= float(cfg.delayed_natural_force_at_s)
+        and not bool(pressure_extreme)
     )
     delayed_natural_alarm = bool(
         float(now) >= float(cfg.delayed_natural_alarm_at_s)
         and int(own_bases) < 2
         and not bool(nat_taken)
-        and not bool(pressure_high)
+        and ((not bool(pressure_high)) or bool(delayed_natural_force))
     )
 
     enemy_workers_seen = int(sum_units(enemy_units, _WORKER_TYPES))
@@ -326,6 +339,8 @@ def derive_game_parity_intel(
         "aggression_state": str(aggression_state),
         "nat_taken": bool(nat_taken),
         "pressure_high": bool(pressure_high),
+        "pressure_extreme": bool(pressure_extreme),
+        "delayed_natural_force": bool(delayed_natural_force),
         "delayed_natural_alarm": bool(delayed_natural_alarm),
     }
 

@@ -1,4 +1,0 @@
-# bot/intel/enemy/__init__.py
-
-"""Enemy-facing intel modules."""
-

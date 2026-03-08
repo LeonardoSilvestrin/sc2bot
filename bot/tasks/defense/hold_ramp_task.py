@@ -140,6 +140,30 @@ class HoldRampTask(BaseTask):
         return slots
 
     @staticmethod
+    def _reaper_hold_slot(*, depots: list[Point2], barracks_pos: Point2 | None, top_center: Point2, base_pos: Point2) -> Point2:
+        candidates: list[Point2] = []
+        if barracks_pos is not None:
+            try:
+                candidates.append(barracks_pos.towards(base_pos, 2.2))
+            except Exception:
+                candidates.append(barracks_pos)
+        for pos in list(depots or []):
+            try:
+                candidates.append(pos.towards(base_pos, 2.0))
+            except Exception:
+                candidates.append(pos)
+        try:
+            candidates.append(top_center.towards(base_pos, 2.4))
+        except Exception:
+            candidates.append(top_center)
+        if not candidates:
+            return top_center
+        try:
+            return min(candidates, key=lambda p: float(p.distance_to(top_center)))
+        except Exception:
+            return candidates[0]
+
+    @staticmethod
     def _issue_repair(scv, target) -> bool:
         try:
             repair_fn = getattr(scv, "repair", None)
@@ -333,6 +357,12 @@ class HoldRampTask(BaseTask):
             base_pos=base_pos,
         )
         scv_hold_slots = self._sanitize_slots(scv_hold_slots, reserved_sites=reserved_sites, retreat=base_pos, fallback=top_center)
+        reaper_hold_slot = self._reaper_hold_slot(
+            depots=depots,
+            barracks_pos=barracks_pos,
+            top_center=top_center,
+            base_pos=base_pos,
+        )
         bunkers = [b for b in self._bunkers_near_wall(bot, top_center=top_center) if self._bunker_has_space(b)]
         issued = False
         marine_slots = depots[:] if depots else [top_center]
@@ -416,6 +446,30 @@ class HoldRampTask(BaseTask):
                     issued = True
                 elif close_enemy is not None:
                     unit.attack(close_enemy)
+                    issued = True
+                continue
+
+            if unit.type_id == U.REAPER:
+                reserved_site = self._nearest_reserved_site(unit, reserved_sites, radius=2.5)
+                if reserved_site is not None:
+                    unit.move(reserved_site.towards(base_pos, 3.0))
+                    issued = True
+                    continue
+                target = min(enemy_wall, key=lambda e: float(unit.distance_to(e))) if enemy_wall else None
+                if target is None:
+                    continue
+                try:
+                    if float(unit.distance_to(reaper_hold_slot)) > 1.25:
+                        unit.move(reaper_hold_slot)
+                        issued = True
+                        continue
+                    if float(unit.distance_to(target)) <= 5.25:
+                        unit.attack(target)
+                    else:
+                        unit.move(reaper_hold_slot)
+                    issued = True
+                except Exception:
+                    unit.move(reaper_hold_slot)
                     issued = True
                 continue
 

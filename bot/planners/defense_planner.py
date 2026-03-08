@@ -18,6 +18,7 @@ from bot.tasks.defense.scv_defensive_pull_task import ScvDefensivePullTask
 from bot.tasks.defense.scv_repair_task import ScvRepairTask
 from bot.tasks.defense.defend_task import Defend
 from bot.tasks.defense.lift_natural_task import LiftNaturalTask
+from bot.tasks.defense.reaper_nat_patrol_task import ReaperPatrolTask
 
 
 @dataclass(frozen=True)
@@ -55,6 +56,11 @@ class _ScvDefensePickPolicy:
             return False
         if float(getattr(unit, "health_percentage", 1.0) or 1.0) < 0.45:
             return False
+        try:
+            if bool(getattr(unit, "is_carrying_resource", False)):
+                return False
+        except Exception:
+            pass
         try:
             if float(unit.distance_to(self.objective)) > float(self.max_distance):
                 return False
@@ -149,12 +155,12 @@ class DefensePlanner:
     rush_extreme_bonus_general: int = 6
     scv_pull_max: int = 8
     scv_repair_max: int = 4
-    scv_hold_ramp_max: int = 4
+    scv_hold_ramp_max: int = 3
     early_defense_window_s: float = 240.0
     low_army_pull_supply_cap: int = 2
     main_breach_radius: float = 11.0
     main_breach_pull_base: int = 5
-    early_wall_repair_base: int = 3
+    early_wall_repair_base: int = 2
 
     @staticmethod
     def _ready_bunker_garrison_near(bot, *, center: Point2, radius: float = 16.0) -> int:
@@ -180,6 +186,9 @@ class DefensePlanner:
 
     def _pid_hold_ramp(self, base_tag: int) -> str:
         return f"{self.planner_id}:hold_ramp:base:{int(base_tag)}"
+
+    def _pid_reaper_nat_patrol(self) -> str:
+        return f"{self.planner_id}:reaper_nat_patrol"
 
     def _make_defend_factory(self, *, awareness: Awareness, base_tag: int, base_pos: Point2, objective: Point2):
         def _factory(mission_id: str) -> DefendBaseTask:
@@ -238,6 +247,26 @@ class DefensePlanner:
                 base_tag=int(base_tag),
                 base_pos=base_pos,
                 threat_pos=threat_pos,
+                log=self.log,
+            )
+        return _factory
+
+    def _make_reaper_patrol_factory(
+        self,
+        *,
+        roam_center: Point2,
+        safe_point: Point2,
+        roam_radius: float = 7.0,
+        engage_radius: float = 12.0,
+        task_id: str = "reaper_patrol",
+    ):
+        def _factory(mission_id: str) -> ReaperPatrolTask:
+            return ReaperPatrolTask(
+                roam_center=roam_center,
+                safe_point=safe_point,
+                roam_radius=float(roam_radius),
+                engage_radius=float(engage_radius),
+                task_id=str(task_id),
                 log=self.log,
             )
         return _factory
@@ -865,29 +894,42 @@ class DefensePlanner:
                 wall_status = {}
             wall_complete = bool(wall_status.get("complete", False))
             depots_done = int(wall_status.get("depots_done", 0) or 0)
+            depots_expected = int(wall_status.get("depots_expected", 0) or 0)
             three_by_three_done = int(wall_status.get("three_by_three_done", 0) or 0)
             emergency_wall = bool(wall_status.get("emergency_wall", False))
             enemy_near_wall = bool(wall_status.get("enemy_near", False))
             target_near_wall = bool(wall_status.get("target_near", False))
+            wall_geometry_ready = bool(
+                wall_complete
+                or (
+                    depots_expected > 0
+                    and depots_done >= depots_expected
+                    and three_by_three_done >= 1
+                )
+            )
             # Nao tenta bunker da rampa antes da wall da main existir minimamente.
             # Isso evita o primeiro bunker sair com geometria incompleta e ir parar longe da rampa.
             # Em rush HEAVY/EXTREME ou one-base-rush, relaxar para 1 depot (geometria já usável).
-            heavy_rush = bool(rush_ctx.get("heavy", False)) or bool(rush_ctx.get("extreme", False)) or bool(rush_ctx.get("enemy_one_base_rush", False))
             main_wall_contact = bool(
                 emergency_wall
                 or enemy_near_wall
                 or target_near_wall
                 or DefensePlanner._enemy_contacting_main_wall(bot)
             )
-            wall_min_ok = (
-                wall_complete
-                or (depots_done >= 2 and three_by_three_done >= 1)
-                or (heavy_rush and depots_done >= 1)
-                or (heavy_rush and three_by_three_done >= 1)
-                or (main_wall_contact and depots_done >= 1)
-                or (main_wall_contact and three_by_three_done >= 1)
+            breach = DefensePlanner._main_breach_snapshot(
+                bot,
+                base_pos=th.th_pos,
+                now=float(now),
+                early_window_s=float(DefensePlanner.early_defense_window_s),
+                breach_radius=float(DefensePlanner.main_breach_radius),
             )
-            if not wall_min_ok:
+            # Relaxa o requisito de wall em rush HEAVY/EXTREME com 1+ depot, ou quando
+            # wall_status expirou (dict vazio) mas o rush ja esta confirmado.
+            wall_geometry_relaxed = bool(
+                (tier in {"HEAVY", "EXTREME"} and (depots_done >= 1 or three_by_three_done >= 1))
+                or (not wall_status and state in {"CONFIRMED", "HOLDING"})
+            )
+            if not wall_geometry_ready and not wall_geometry_relaxed:
                 return False
             # Bunker perto da rampa
             try:
@@ -1349,7 +1391,6 @@ class DefensePlanner:
             enemy_at_ramp = 0
 
         combat_types = (
-            U.REAPER,
             U.MARINE,
             U.MARAUDER,
             U.CYCLONE,
@@ -1385,8 +1426,6 @@ class DefensePlanner:
             primary_required = False
         if scv_count > 0:
             scv_target = min(int(scv_count), int(self.scv_hold_ramp_max))
-            if int(enemy_at_ramp) >= 8:
-                scv_target = min(int(scv_count), int(self.scv_hold_ramp_max) + 2)
             reqs.append(
                 UnitRequirement(
                     unit_type=U.SCV,
@@ -1507,6 +1546,89 @@ class DefensePlanner:
             except Exception:
                 pass
 
+        # Reaper: patrulha a nat durante rush OU quando há presença inimiga na nat.
+        # - Se a nat está segura (temos CC lá): roam no choke da nat, safe_point = topo da rampa
+        # - Se a nat NÃO está segura (one-base-rush / nat perdida): roam na região da nat
+        #   com safe_point = topo da rampa (atrás da parede)
+        _nat_ctrl_snap = awareness.mem.get(K("intel", "map_control", "our_nat", "snapshot"), now=now, default={}) or {}
+        if not isinstance(_nat_ctrl_snap, dict):
+            _nat_ctrl_snap = {}
+        _nat_enemy_power = float(_nat_ctrl_snap.get("enemy_nat_power", 0.0) or 0.0)
+        _nat_presence_power = float(_nat_ctrl_snap.get("enemy_presence_nat_side_power", 0.0) or 0.0)
+        _reaper_should_patrol = bool(rush_ctx.get("active", False)) or bool(
+            (_nat_enemy_power >= 0.5 or _nat_presence_power >= 0.5)
+        )
+        reaper_nat_pid = self._pid_reaper_nat_patrol()
+        if (
+            bool(_reaper_should_patrol)
+            and int(self._available(bot, U.REAPER)) > 0
+            and not awareness.ops_proposal_running(proposal_id=reaper_nat_pid, now=now)
+            and self._due(awareness=awareness, now=now, pid=reaper_nat_pid)
+        ):
+            try:
+                own_nat = bot.mediator.get_own_nat
+                ramp_safe = self._main_ramp_anchor(bot)
+
+                # Choke da nat: ponto entre nat e inimigo
+                nat_anchor = self._nat_choke_anchor(bot, base_pos=own_nat)
+
+                # Nat segura = temos CC na nat
+                nat_has_cc = any(
+                    float(th.distance_to(own_nat)) <= 8.0
+                    for th in list(getattr(bot, "townhalls", []) or [])
+                )
+
+                if nat_has_cc:
+                    # Roam no choke da nat, safe = topo da rampa
+                    roam_center = nat_anchor
+                    safe_point = ramp_safe
+                    roam_radius = 7.0
+                    engage_radius = 12.0
+                else:
+                    # Nat perdida / one-base-rush: roam na região da nat com safe atrás da wall
+                    roam_center = Point2((float(own_nat.x), float(own_nat.y)))
+                    safe_point = ramp_safe
+                    roam_radius = 9.0
+                    engage_radius = 14.0
+
+                reaper_count = int(self._available(bot, U.REAPER))
+                reaper_patrol_factory = self._make_reaper_patrol_factory(
+                    roam_center=roam_center,
+                    safe_point=safe_point,
+                    roam_radius=roam_radius,
+                    engage_radius=engage_radius,
+                    task_id="reaper_nat_patrol",
+                )
+                out.append(
+                    Proposal(
+                        proposal_id=reaper_nat_pid,
+                        domain="DEFENSE",
+                        score=min(100, self._score_from_urgency(15 + (10 if bool(rush_ctx.get("heavy", False)) else 4))),
+                        tasks=[
+                            TaskSpec(
+                                task_id="reaper_nat_patrol",
+                                task_factory=reaper_patrol_factory,
+                                unit_requirements=[
+                                    UnitRequirement(
+                                        unit_type=U.REAPER,
+                                        count=reaper_count,
+                                        pick_policy=_HoldRampCombatPickPolicy(objective=roam_center, unit_type=U.REAPER),
+                                        required=True,
+                                    )
+                                ],
+                                lease_ttl=20.0,
+                            )
+                        ],
+                        lease_ttl=20.0,
+                        cooldown_s=5.0,
+                        risk_level=0,
+                        allow_preempt=True,
+                    )
+                )
+                self._mark_proposed(awareness=awareness, now=now, pid=reaper_nat_pid)
+            except Exception:
+                pass
+
         # Guardrail: se MapControlPlanner já está segurando a nat (postura ativa),
         # DefensePlanner não aciona o fallback de existência para a nat.
         # Usa postura ao invés de should_secure legado.
@@ -1622,10 +1744,10 @@ class DefensePlanner:
                                         required=True,
                                     )
                                 ],
-                                lease_ttl=18.0,
+                                lease_ttl=45.0,
                             )
                         ],
-                        lease_ttl=18.0,
+                        lease_ttl=45.0,
                         cooldown_s=0.0,
                         risk_level=0,
                         allow_preempt=True,
@@ -1679,7 +1801,7 @@ class DefensePlanner:
                 and not awareness.ops_proposal_running(proposal_id=hold_ramp_pid, now=now)
                 and self._due(awareness=awareness, now=now, pid=hold_ramp_pid)
             ):
-                repair_count = max(2, min(self.scv_hold_ramp_max, self._repair_count(bot=bot, th=th, rush_ctx=rush_ctx)))
+                repair_count = min(self.scv_hold_ramp_max, self._repair_count(bot=bot, th=th, rush_ctx=rush_ctx))
                 hold_factory = self._make_hold_ramp_factory(
                     base_tag=int(th.th_tag),
                     base_pos=th.th_pos,

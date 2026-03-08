@@ -32,7 +32,7 @@ class OpeningIntelConfig:
     rush_hold_max_s: float = 36.0
     log_interval_s: float = 8.0
     rush_suspect_decay_s: float = 16.0
-    rush_confirmed_min_hold_s: float = 90.0
+    rush_confirmed_min_hold_s: float = 35.0
     rush_structural_hold_s: float = 55.0
     rush_no_natural_hold_s: float = 55.0
     rush_worker_deficit_hold_s: float = 45.0

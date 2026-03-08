@@ -64,6 +64,11 @@ class _SecureScvPickPolicy:
         if float(getattr(unit, "health_percentage", 1.0) or 1.0) < 0.65:
             return False
         try:
+            if bool(getattr(unit, "is_carrying_resource", False)):
+                return False
+        except Exception:
+            pass
+        try:
             if bool(getattr(unit, "is_constructing", False)):
                 return False
         except Exception:
@@ -130,9 +135,10 @@ class MapControlPlanner:
     def _pid(self, label: str) -> str:
         return f"{self.planner_id}:{str(label)}"
 
-    def _make_bunker_factory(self, *, base_pos: Point2, hold_pos: Point2):
+    def _make_bunker_factory(self, *, awareness: Awareness, base_pos: Point2, hold_pos: Point2):
         def _factory(mission_id: str) -> DefenseBunkerTask:
             return DefenseBunkerTask(
+                awareness=awareness,
                 base_tag=-1,
                 base_pos=base_pos,
                 threat_pos=hold_pos,
@@ -524,7 +530,11 @@ class MapControlPlanner:
                     and not awareness.ops_proposal_running(proposal_id=bunker_pid, now=now)
                     and self._due(awareness=awareness, now=now, pid=bunker_pid)
                 ):
-                    bunker_factory = self._make_bunker_factory(base_pos=base_pos, hold_pos=hold_pos_early)
+                    bunker_factory = self._make_bunker_factory(
+                        awareness=awareness,
+                        base_pos=base_pos,
+                        hold_pos=hold_pos_early,
+                    )
                     delayed_natural_alarm = bool(snapshot.get("delayed_natural_alarm", False))
                     out.append(
                         Proposal(

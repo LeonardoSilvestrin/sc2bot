@@ -2,13 +2,61 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from sc2.ids.unit_typeid import UnitTypeId as U
+from sc2.position import Point2
+
 from ares.consts import BuildingSize
 
 from bot.devlog import DevLogger
 from bot.mind.attention import Attention
 from bot.mind.awareness import Awareness, K
-from bot.planners.utils.proposals import Proposal, TaskSpec
+from bot.planners.utils.proposals import Proposal, TaskSpec, UnitRequirement
 from bot.tasks.wall.maintain_wall_task import MaintainWallTask
+
+
+@dataclass(frozen=True)
+class _WallScvPickPolicy:
+    objective: Point2
+    name: str = "wall.scv.closest.v1"
+
+    def allow(self, unit, *, bot, attention, now: float) -> bool:
+        if unit is None or unit.type_id != U.SCV:
+            return False
+        if not bool(getattr(unit, "is_ready", False)):
+            return False
+        if float(getattr(unit, "health_percentage", 1.0) or 1.0) < 0.45:
+            return False
+        try:
+            if bool(getattr(unit, "is_carrying_resource", False)):
+                return False
+        except Exception:
+            pass
+        try:
+            if bool(getattr(unit, "is_constructing", False)):
+                return False
+        except Exception:
+            pass
+        try:
+            for order in list(getattr(unit, "orders", []) or []):
+                ability_name = str(getattr(getattr(order, "ability", None), "name", "") or "").upper()
+                if "BUILD" in ability_name or "REPAIR" in ability_name:
+                    return False
+        except Exception:
+            pass
+        return True
+
+    def score(self, unit, *, bot, attention, now: float) -> float:
+        try:
+            dist = float(unit.distance_to(self.objective))
+        except Exception:
+            dist = 9999.0
+        carrying_penalty = 0.0
+        try:
+            carrying_penalty = 4.0 if bool(getattr(unit, "is_carrying_resource", False)) else 0.0
+        except Exception:
+            carrying_penalty = 0.0
+        hp = float(getattr(unit, "health_percentage", 1.0) or 1.0)
+        return (hp * 10.0) - dist - carrying_penalty
 
 
 @dataclass
@@ -148,7 +196,14 @@ class WallPlanner:
                         TaskSpec(
                             task_id="maintain_main_wall",
                             task_factory=self._main_factory(awareness=awareness),
-                            unit_requirements=[],
+                            unit_requirements=[
+                                UnitRequirement(
+                                    unit_type=U.SCV,
+                                    count=1,
+                                    pick_policy=_WallScvPickPolicy(objective=bot.start_location),
+                                    required=True,
+                                )
+                            ],
                             lease_ttl=20.0,
                         )
                     ],
@@ -164,6 +219,10 @@ class WallPlanner:
         nat_required = bool(nat_supported and (rush_active or int(attention.macro.bases_total) >= 2))
         nat_pid = self._pid("nat")
         if nat_required and not awareness.ops_proposal_running(proposal_id=nat_pid, now=now) and self._due(awareness=awareness, now=now, zone="nat"):
+            try:
+                nat_objective = bot.mediator.get_own_nat
+            except Exception:
+                nat_objective = bot.start_location
             out.append(
                 Proposal(
                     proposal_id=nat_pid,
@@ -173,7 +232,14 @@ class WallPlanner:
                         TaskSpec(
                             task_id="maintain_nat_wall",
                             task_factory=self._nat_factory(awareness=awareness),
-                            unit_requirements=[],
+                            unit_requirements=[
+                                UnitRequirement(
+                                    unit_type=U.SCV,
+                                    count=1,
+                                    pick_policy=_WallScvPickPolicy(objective=nat_objective),
+                                    required=True,
+                                )
+                            ],
                             lease_ttl=20.0,
                         )
                     ],

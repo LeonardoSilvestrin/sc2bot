@@ -122,7 +122,7 @@ class LandBaseTask(BaseTask):
                 if bool(getattr(ally, "is_flying", False)):
                     continue
                 dist = float(ally.distance_to(target_pos))
-                if dist > 4.5:
+                if dist > 6.0:
                     continue
                 if getattr(ally, "type_id", None) == U.WIDOWMINEBURROWED:
                     ally(AbilityId.BURROWUP_WIDOWMINE)
@@ -131,7 +131,7 @@ class LandBaseTask(BaseTask):
                 retreat = getattr(bot, "start_location", None)
                 try:
                     if retreat is not None:
-                        retreat = target_pos.towards(retreat, 6.0)
+                        retreat = target_pos.towards(retreat, 8.0)
                 except Exception:
                     retreat = getattr(bot, "start_location", None)
                 if retreat is None:

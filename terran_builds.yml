@@ -42,8 +42,8 @@ Builds:
     OpeningBuildOrder:
       - 14 supply @ ramp
       - 16 barracks @ ramp
+      - 14 worker_scout
       - 16 gas
-      - 15 worker_scout
       - 0 orbital
       - 19 reaper
       - 19 expand
@@ -62,8 +62,8 @@ Builds:
     OpeningBuildOrder:
       - 14 supply @ ramp
       - 16 barracks @ ramp
+      - 14 worker_scout
       - 16 gas
-      - 15 worker_scout
       - 0 orbital
       - 19 barracks
       - 20 marine *1

@@ -140,6 +140,19 @@ def sync_opening_selection_from_runner(*, bot, awareness: Awareness, now: float,
         now=float(now),
         ttl=float(ttl_s),
     )
+    requested = get_requested_opening_state(awareness=awareness, now=now)
+    if requested is not None:
+        requested_opening, requested_transition, _request_reason = requested
+        if str(requested_opening) != str(opening_name):
+            return
+        set_active_opening_state(
+            awareness=awareness,
+            now=float(now),
+            opening=str(requested_opening),
+            transition_target=str(requested_transition),
+            ttl_s=float(ttl_s),
+        )
+        return
     set_active_opening_state(
         awareness=awareness,
         now=float(now),
@@ -197,6 +210,12 @@ def apply_opening_request(*, bot, awareness: Awareness, now: float, log=None, tt
         bor.switch_opening(str(requested_opening), remove_completed=True)
     except Exception as exc:
         raise RuntimeError(f"invalid_contract:build_order_runner.switch_opening:{type(exc).__name__}") from exc
+
+    if str(requested_opening) == "RushDefenseOpen":
+        try:
+            bor.set_build_completed()
+        except Exception:
+            pass
 
     set_active_opening_state(
         awareness=awareness,

@@ -367,6 +367,11 @@ def derive_map_control_intel(
     own_total_power = _own_total_power(bot)
     own_main_power = _own_power_near(bot, center=bot.start_location, radius=18.0)
     own_nat_power = _own_power_near(bot, center=nat, radius=16.0)
+    posture_snapshot = awareness.mem.get(K("strategy", "army", "snapshot"), now=now, default={}) or {}
+    if not isinstance(posture_snapshot, dict):
+        posture_snapshot = {}
+    posture_name = str(posture_snapshot.get("posture", "") or "").upper()
+    posture_wants_nat_hold = posture_name in {"HOLD_NAT_CHOKE", "SECURE_NAT", "CONTROLLED_RETAKE"}
     own_nat_bunker_count = 0
     own_nat_tank_count = 0
     for struct in list(getattr(bot, "structures", []) or []):
@@ -452,10 +457,19 @@ def derive_map_control_intel(
         or own_nat_tank_count > 0
         or float(own_nat_power) >= float(cfg.natural_release_min_own_nat_power)
     )
+    strategic_nat_cover_ready = bool(
+        local_nat_cover_ready
+        or (
+            posture_wants_nat_hold
+            and bool(no_direct_pressure)
+            and float(own_total_power) >= max(4.0, float(cfg.min_total_power) - 1.0)
+            and float(own_main_power) >= max(2.5, float(cfg.min_main_power) - 1.0)
+        )
+    )
     natural_release_window = bool(
         bool(no_direct_pressure)
         and float(clear_for) >= float(cfg.natural_release_clear_s)
-        and bool(local_nat_cover_ready)
+        and bool(strategic_nat_cover_ready)
     )
     if bool(nat_taken):
         safe_to_land = True
@@ -463,7 +477,7 @@ def derive_map_control_intel(
         # Offsite com terreno limpo pode pousar
         safe_to_land = bool(fortified or bool(nat_clear_to_land))
     elif bool(should_secure) and bool(nat_clear_to_land):
-        safe_to_land = bool(fortified or natural_release_window)
+        safe_to_land = bool(fortified or natural_release_window or strategic_nat_cover_ready)
     else:
         safe_to_land = False
 
@@ -501,6 +515,7 @@ def derive_map_control_intel(
         "own_nat_power": float(round(float(own_nat_power), 3)),
         "fortified": bool(fortified),
         "local_nat_cover_ready": bool(local_nat_cover_ready),
+        "strategic_nat_cover_ready": bool(strategic_nat_cover_ready),
         "natural_release_window": bool(natural_release_window),
         "own_nat_bunker_count": int(own_nat_bunker_count),
         "own_nat_tank_count": int(own_nat_tank_count),
