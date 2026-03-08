@@ -556,20 +556,18 @@ def derive_enemy_opening_intel(
             )
         )
     )
-    scout_no_natural_confirmed = bool(
+    scout_no_natural_suspected = bool(
         float(now) <= float(cfg.rush_phase_max_s)
         and scv_dispatched
         and not bool(signals.get("natural_on_ground", False))
+        and (reaper_done or main_seen_recent or structural_evidence or int(visible_non_worker_total) >= 4)
+    )
+    scout_no_natural_confirmed = bool(
+        scout_no_natural_suspected
         and (
-            reaper_done
-            or
-            main_seen_recent
-            or structural_evidence
+            structural_evidence
+            or int(production_structures_visible) >= 2
             or int(visible_non_worker_total) >= 6
-            or bool(enemy_units)
-            or bool(enemy_structs)
-            or bool(getattr(eb, "enemy_units_main", {}))
-            or bool(getattr(eb, "enemy_structures_main", {}))
         )
     )
     no_natural = not bool(signals.get("natural_on_ground", False))
@@ -583,6 +581,10 @@ def derive_enemy_opening_intel(
         rush_state_out = "CONFIRMED"
         rush_tier_out = "HEAVY" if rush_tier_out not in {"HEAVY", "EXTREME"} else rush_tier_out
         rush_severity_out = max(float(rush_severity_out), 0.84)
+    elif scout_no_natural_suspected and rush_state_out in {"NONE", "ENDED"}:
+        rush_state_out = "SUSPECTED"
+        rush_tier_out = "MEDIUM" if rush_tier_out == "NONE" else rush_tier_out
+        rush_severity_out = max(float(rush_severity_out), 0.56)
     if no_natural_structural_confirmed and (
         int(production_structures_visible) >= 4 or int(visible_non_worker_total) >= 12 or bool(rush_math.get("hard_rush", False))
     ):

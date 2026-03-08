@@ -34,6 +34,7 @@ from bot.mind.ego import Ego, EgoConfig
 from bot.tasks.base_task import TaskTick
 
 from bot.tasks.defense.defend_task import Defend
+from bot.tasks.defense.push_task import PushTask
 from bot.tasks.macro.tasks.opening import MacroOpeningTick
 
 from bot.planners.defense_planner import DefensePlanner
@@ -219,6 +220,85 @@ class RuntimeApp:
 
         opening_planner = OpeningPlanner(opening_task=opening_macro_task, log=log)
 
+        @dataclass
+        class PushPlanner:
+            planner_id: str = "push_planner"
+
+            def propose(self, bot, *, awareness: Awareness, attention) -> list:
+                now = float(attention.time)
+
+                timing_attacks = list(
+                    awareness.mem.get(K("macro", "desired", "timing_attacks"), now=now, default=[]) or []
+                )
+                if not timing_attacks:
+                    return []
+
+                rush_state = str(
+                    awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE"
+                ).upper()
+                if rush_state in {"SUSPECTED", "CONFIRMED", "HOLDING"}:
+                    return []
+
+                try:
+                    army_supply = float(getattr(bot, "supply_army", 0.0) or 0.0)
+                except Exception:
+                    army_supply = 0.0
+
+                if int(attention.combat.primary_urgency) >= 40:
+                    return []
+
+                for attack in timing_attacks:
+                    try:
+                        hit_t = float(attack.get("hit_t", 9999.0))
+                        prep_s = float(attack.get("prep_s", 60.0))
+                        hold_s = float(attack.get("hold_s", 30.0))
+                        army_supply_target = float(attack.get("army_supply_target", 40.0))
+                    except Exception:
+                        continue
+
+                    window_start = hit_t - prep_s
+                    window_end = hit_t + hold_s
+
+                    if now < window_start or now > window_end:
+                        continue
+                    if army_supply < army_supply_target * 0.75:
+                        continue
+
+                    pid = f"push_planner:timing_push:{attack.get('name', 'unnamed')}"
+                    if awareness.ops_proposal_running(proposal_id=pid, now=now):
+                        return []
+
+                    try:
+                        target = bot.enemy_start_locations[0]
+                    except Exception:
+                        return []
+
+                    end_t = window_end
+
+                    _t, _e = target, end_t
+                    def _factory(mission_id: str) -> PushTask:
+                        return PushTask(target_pos=_t, end_t=_e)
+
+                    return [Proposal(
+                        proposal_id=pid,
+                        domain="DEFENSE",
+                        score=62,
+                        tasks=[TaskSpec(
+                            task_id="timing_push",
+                            task_factory=_factory,
+                            unit_requirements=[],
+                            lease_ttl=float(hold_s) + 15.0,
+                        )],
+                        lease_ttl=float(hold_s) + 15.0,
+                        cooldown_s=5.0,
+                        risk_level=0,
+                        allow_preempt=True,
+                    )]
+
+                return []
+
+        push_planner = PushPlanner()
+
         ego.register_planners(
             [
                 defense_planner,
@@ -229,6 +309,7 @@ class RuntimeApp:
                 wall_planner,
                 housekeeping_planner,
                 opening_planner,
+                push_planner,
                 macro_orchestrator_planner,
             ]
         )

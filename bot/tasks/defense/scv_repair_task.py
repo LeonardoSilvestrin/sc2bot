@@ -20,6 +20,7 @@ class ScvRepairTask(BaseTask):
     log: DevLogger | None = None
     early_window_s: float = 240.0
     max_scvs_per_structure_early: int = 3
+    _sticky: dict = None  # type: ignore[assignment]
 
     def __init__(
         self,
@@ -38,6 +39,7 @@ class ScvRepairTask(BaseTask):
         self.log = log
         self.early_window_s = float(early_window_s)
         self.max_scvs_per_structure_early = max(1, int(max_scvs_per_structure_early))
+        self._sticky = {}
 
     def _resolve_base_pos(self, bot) -> Point2:
         th = bot.townhalls.find_by_tag(int(self.base_tag))
@@ -52,6 +54,28 @@ class ScvRepairTask(BaseTask):
                 bot.mediator.assign_role(tag=int(unit.tag), role=role, remove_from_squad=True)
             except Exception:
                 continue
+
+    @staticmethod
+    def _enemy_contacting_wall(bot) -> bool:
+        try:
+            ramp = getattr(bot, "main_base_ramp", None)
+            if ramp is None:
+                return False
+            probes = []
+            top = getattr(ramp, "top_center", None)
+            if top is not None:
+                probes.append((top, 5.5))
+            for pos in list(getattr(ramp, "corner_depots", []) or []):
+                probes.append((pos, 4.5))
+            barracks_pos = getattr(ramp, "barracks_correct_placement", None)
+            if barracks_pos is not None:
+                probes.append((barracks_pos, 5.0))
+            for pos, radius in probes:
+                if int(bot.enemy_units.closer_than(float(radius), pos).amount) > 0:
+                    return True
+        except Exception:
+            return False
+        return False
 
     @staticmethod
     def _main_wall_targets(bot) -> list:
@@ -253,6 +277,9 @@ class ScvRepairTask(BaseTask):
             return TaskResult.failed("no_repair_scvs_alive")
 
         base_pos = self._resolve_base_pos(bot)
+
+        # Quando inimigo está em contato com a wall, prioriza reparar wall targets — não sai
+
         targets = self._repair_targets(bot, base_pos=base_pos)
         if not targets:
             self._assign_role(bot, units, UnitRole.GATHERING)
@@ -262,7 +289,24 @@ class ScvRepairTask(BaseTask):
         self._assign_role(bot, units, UnitRole.REPAIRING)
         issued = False
 
-        assignments = self._assign_targets_to_scvs(bot, scvs=units, targets=targets)
+        # Sticky: mantém o alvo atual do SCV se ainda está danificado, evitando troca a cada tick
+        target_tags = {int(getattr(t, "tag", -1)): t for t in targets}
+        fresh = self._assign_targets_to_scvs(bot, scvs=units, targets=targets)
+        assignments: dict[int, object] = {}
+        for scv in units:
+            stag = int(scv.tag)
+            prev_tag = int(self._sticky.get(stag, -1))
+            if prev_tag in target_tags:
+                assignments[stag] = target_tags[prev_tag]
+            else:
+                chosen = fresh.get(stag)
+                assignments[stag] = chosen
+                if chosen is not None:
+                    self._sticky[stag] = int(getattr(chosen, "tag", -1))
+        # Limpa sticky de SCVs que saíram
+        live_tags = {int(u.tag) for u in units}
+        self._sticky = {k: v for k, v in self._sticky.items() if k in live_tags}
+
         for scv in units:
             target = assignments.get(int(scv.tag))
             if target is None:

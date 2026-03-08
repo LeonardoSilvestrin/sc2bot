@@ -666,6 +666,12 @@ def derive_army_comp_intel(
         and not bool(factory_techlab_ready)
         and bool(enemy_at_door)
     )
+    if (
+        str(opening_selected) == "MechaOpen"
+        and not bool(factory_techlab_ready)
+        and not bool(enemy_at_door)
+    ):
+        comp.pop("HELLION", None)
     if str(opening_selected) == "MechaOpen" and rush_tier in {"HEAVY", "EXTREME"}:
         priority_units = _prepend_unique(priority_units, "MARINE")
         comp = _boost_unit_comp_bias(

@@ -15,6 +15,7 @@ from bot.tasks.defense.hold_ramp_task import HoldRampTask
 from bot.tasks.defense.scv_defensive_pull_task import ScvDefensivePullTask
 from bot.tasks.defense.scv_repair_task import ScvRepairTask
 from bot.tasks.defense.defend_task import Defend
+from bot.tasks.defense.land_base_task import LandBaseTask
 from bot.tasks.defense.lift_natural_task import LiftNaturalTask
 
 
@@ -137,7 +138,7 @@ class DefensePlanner:
     Defesa por base: uma proposal por base ameaçada.
     """
     planner_id: str = "defense_planner"
-    defend_task: Defend | None = None  # legado (mantido por compatibilidade com RuntimeApp.build)
+    defend_task: Defend | None = None
     log: DevLogger | None = None
     cadence_s: float = 2.0
     min_base_urgency: int = 1
@@ -182,13 +183,12 @@ class DefensePlanner:
     def _make_defend_factory(self, *, awareness: Awareness, base_tag: int, base_pos: Point2, objective: Point2):
         def _factory(mission_id: str) -> DefendBaseTask:
             return DefendBaseTask(
-                    awareness=awareness,
+                awareness=awareness,
                 base_tag=int(base_tag),
                 base_pos=base_pos,
                 threat_pos=objective,
                 log=self.log,
             )
-
         return _factory
 
     def _make_bunker_factory(self, *, awareness: Awareness, base_tag: int, base_pos: Point2, threat_pos: Point2, anchor_mode: str):
@@ -201,7 +201,6 @@ class DefensePlanner:
                 anchor_mode=str(anchor_mode),
                 log=self.log,
             )
-
         return _factory
 
     def _make_scv_pull_factory(self, *, base_tag: int, base_pos: Point2, threat_pos: Point2):
@@ -212,7 +211,6 @@ class DefensePlanner:
                 threat_pos=threat_pos,
                 log=self.log,
             )
-
         return _factory
 
     def _make_repair_factory(self, *, base_tag: int, base_pos: Point2, threat_pos: Point2):
@@ -223,7 +221,6 @@ class DefensePlanner:
                 threat_pos=threat_pos,
                 log=self.log,
             )
-
         return _factory
 
     def _make_hold_ramp_factory(self, *, base_tag: int, base_pos: Point2, threat_pos: Point2):
@@ -234,7 +231,6 @@ class DefensePlanner:
                 threat_pos=threat_pos,
                 log=self.log,
             )
-
         return _factory
 
     def _make_lift_natural_factory(self, *, nat_pos: Point2, anchor_pos: Point2):
@@ -244,22 +240,26 @@ class DefensePlanner:
                 anchor_pos=anchor_pos,
                 log=self.log,
             )
+        return _factory
 
+    def _make_land_natural_factory(self, *, awareness: Awareness, nat_pos: Point2):
+        def _factory(mission_id: str) -> LandBaseTask:
+            return LandBaseTask(
+                awareness=awareness,
+                base_label="nat",
+                target_pos=nat_pos,
+                log=self.log,
+            )
         return _factory
 
     @staticmethod
     def _should_lift_natural(bot, *, awareness: Awareness, rush_ctx: dict, now: float) -> bool:
-        """
-        Levanta a natural se ela está sendo atacada e não tem ninguém defendendo.
-        Trigger direto: contato inimigo + defesa zero na area.
-        """
         try:
             own_nat = getattr(getattr(bot, "mediator", None), "get_own_nat", None)
             if own_nat is None:
                 return False
         except Exception:
             return False
-        # Precisa de um CC/OC liftável na natural (PF não pode voar)
         nat_cc = None
         for th in list(getattr(bot, "townhalls", []) or []):
             try:
@@ -272,16 +272,24 @@ class DefensePlanner:
             return False
         if nat_cc.type_id not in {U.COMMANDCENTER, U.ORBITALCOMMAND}:
             return False
-        # Inimigos atacando a natural
         try:
             enemy_near = int(bot.enemy_units.closer_than(10.0, own_nat).amount)
         except Exception:
             return False
         if enemy_near < 2:
             return False
-        # Sem defesa lá pra segurar
+        # Bunker contribui 4.0 ao score mas sem garrison não segura a nat.
+        # Desconta bunkers do score para avaliar se a nat realmente tem defesa suficiente.
+        bunker_score = 0.0
+        try:
+            for b in bot.structures(U.BUNKER):
+                if float(b.distance_to(own_nat)) <= 16.0:
+                    bunker_score += 4.0
+        except Exception:
+            pass
         defense_score = DefensePlanner._own_defense_score_near_base(bot, base_pos=own_nat)
-        return defense_score < 2.0
+        effective_defense = defense_score - bunker_score
+        return effective_defense < 3.0
 
     def _due(self, *, awareness: Awareness, now: float, pid: str) -> bool:
         last = awareness.mem.get(("ops", "defense", "proposal", pid, "last_t"), now=now, default=None)
@@ -402,6 +410,119 @@ class DefensePlanner:
             is_main = False
         return bool((not is_main) and (not cls._is_natural_base(bot, base_pos=base_pos)))
 
+    @staticmethod
+    def _main_ramp_anchor(bot) -> Point2:
+        try:
+            ramp = getattr(bot, "main_base_ramp", None)
+            if ramp is not None:
+                top = getattr(ramp, "top_center", None)
+                if top is not None:
+                    return top
+                barracks_pos = getattr(ramp, "barracks_correct_placement", None)
+                if barracks_pos is not None:
+                    return barracks_pos
+        except Exception:
+            pass
+        try:
+            enemy_main = bot.enemy_start_locations[0]
+            return bot.start_location.towards(enemy_main, 8.0)
+        except Exception:
+            return bot.start_location
+
+    @staticmethod
+    def _nat_choke_anchor(bot, *, base_pos: Point2) -> Point2:
+        try:
+            enemy_main = bot.enemy_start_locations[0]
+            return base_pos.towards(enemy_main, 4.5)
+        except Exception:
+            return base_pos
+
+    @classmethod
+    def _default_defense_objective(cls, bot, *, base_pos: Point2) -> Point2:
+        try:
+            is_main = float(base_pos.distance_to(bot.start_location)) <= 10.0
+        except Exception:
+            is_main = False
+        if is_main:
+            return cls._main_ramp_anchor(bot)
+        if cls._is_natural_base(bot, base_pos=base_pos):
+            return cls._nat_choke_anchor(bot, base_pos=base_pos)
+        try:
+            enemy_main = bot.enemy_start_locations[0]
+            return base_pos.towards(enemy_main, 5.0)
+        except Exception:
+            return base_pos
+
+    @classmethod
+    def _proactive_home_threats(cls, bot, *, rush_ctx: dict[str, float | str | bool]) -> list[BaseThreatSnapshot]:
+        if not bool(rush_ctx.get("active", False)):
+            return []
+
+        out: list[BaseThreatSnapshot] = []
+        severity = float(rush_ctx.get("severity", 0.0) or 0.0)
+        tier = str(rush_ctx.get("tier", "NONE") or "NONE")
+        one_base_rush = bool(rush_ctx.get("enemy_one_base_rush", False))
+
+        townhalls = list(getattr(bot, "townhalls", []) or [])
+        if not townhalls:
+            return []
+
+        main_th = None
+        nat_th = None
+        try:
+            ordered = sorted(townhalls, key=lambda th: float(th.distance_to(bot.start_location)))
+            if ordered:
+                main_th = ordered[0]
+            if len(ordered) >= 2:
+                nat_th = ordered[1]
+        except Exception:
+            main_th = townhalls[0]
+            nat_th = townhalls[1] if len(townhalls) >= 2 else None
+
+        synth_enemy = 2
+        if bool(rush_ctx.get("heavy", False)):
+            synth_enemy = 3
+        if bool(rush_ctx.get("extreme", False)) or severity >= 0.82:
+            synth_enemy = 4
+
+        main_urgency = 9
+        nat_urgency = 8
+        if one_base_rush:
+            main_urgency += 4
+            nat_urgency += 6
+        if tier in {"HEAVY", "EXTREME"}:
+            main_urgency += 3
+            nat_urgency += 3
+        if severity >= 0.70:
+            main_urgency += 2
+            nat_urgency += 2
+
+        if main_th is not None:
+            out.append(
+                BaseThreatSnapshot(
+                    th_tag=int(getattr(main_th, "tag", -1) or -1),
+                    th_pos=main_th.position,
+                    enemy_count=int(synth_enemy),
+                    enemy_power=float(synth_enemy),
+                    urgency=int(max(1, min(20, main_urgency))),
+                    threat_pos=cls._main_ramp_anchor(bot),
+                )
+            )
+
+        if nat_th is not None:
+            out.append(
+                BaseThreatSnapshot(
+                    th_tag=int(getattr(nat_th, "tag", -1) or -1),
+                    th_pos=nat_th.position,
+                    enemy_count=int(synth_enemy),
+                    enemy_power=float(synth_enemy),
+                    urgency=int(max(1, min(20, nat_urgency))),
+                    threat_pos=cls._nat_choke_anchor(bot, base_pos=nat_th.position),
+                )
+            )
+
+        return out
+
     def _threat_priority(self, *, bot, th: BaseThreatSnapshot, rush_ctx: dict[str, float | str | bool] | None = None) -> float:
         defense_here = self._own_defense_score_near_base(bot, base_pos=th.th_pos)
         raw = (float(th.urgency) + (2.2 * float(th.enemy_count))) - (2.1 * float(defense_here))
@@ -412,20 +533,29 @@ class DefensePlanner:
             is_main = float(th.th_pos.distance_to(bot.start_location)) <= 10.0
         except Exception:
             is_main = False
+
         if bool(rush_ctx.get("active", False)) and is_nat:
             raw += 3.5
             if float(defense_here) < 6.0:
                 raw += 2.0
+
         if bool(rush_ctx.get("enemy_one_base_rush", False)) and is_nat:
             raw += 2.5
+
         if bool(rush_ctx.get("active", False)) and is_main and float(defense_here) >= 8.0:
             raw -= 2.5
+
         if self._is_outer_base(bot, base_pos=th.th_pos):
             raw += 4.0
             if int(th.enemy_count) > 0:
                 raw += 2.5
             if float(defense_here) < max(3.0, float(th.enemy_count)):
                 raw += 2.0
+            if bool(rush_ctx.get("active", False)):
+                raw -= 6.0
+            if bool(rush_ctx.get("enemy_one_base_rush", False)):
+                raw -= 4.0
+
         return float(raw)
 
     def _fallback_base_candidates(self, bot, *, rush_ctx: dict[str, float | str | bool]) -> list[BaseThreatSnapshot]:
@@ -466,7 +596,7 @@ class DefensePlanner:
                 enemy_count=0,
                 enemy_power=0.0,
                 urgency=int(urgency),
-                threat_pos=(enemy_main if enemy_main is not None else base_pos),
+                threat_pos=self._default_defense_objective(bot, base_pos=base_pos),
             )
             scored.append((float(vulnerability), snap))
         scored.sort(key=lambda x: x[0], reverse=True)
@@ -481,12 +611,18 @@ class DefensePlanner:
         except Exception:
             pass
         try:
+            start = bot.start_location
+            if float(base_pos.distance_to(start)) <= 8.0:
+                return "MAIN_RAMP"
+        except Exception:
+            pass
+        try:
             ths = list(getattr(bot, "townhalls", []) or [])
             if not ths:
                 return "BASE"
             ordered = sorted(ths, key=lambda th: float(th.distance_to(bot.start_location)))
             if ordered:
-                if float(base_pos.distance_to(ordered[0].position)) <= 2.5:
+                if float(base_pos.distance_to(ordered[0].position)) <= 5.0:
                     return "MAIN_RAMP"
                 if len(ordered) >= 2 and float(base_pos.distance_to(ordered[1].position)) <= 3.5:
                     return "NAT_CHOKE"
@@ -506,51 +642,63 @@ class DefensePlanner:
         urgency = int(th.urgency)
         enemy_count = int(th.enemy_count)
         outer_base = self._is_outer_base(bot, base_pos=th.th_pos)
+
         desired_tanks = 1 if urgency < 35 else (2 if urgency < 70 else 3)
         desired_mines = 1 if urgency < 40 else 2
         desired_general = 3 if urgency < 35 else (6 if urgency < 70 else 10)
+
         if outer_base:
             desired_general += 2 if enemy_count <= 4 else 4
             if enemy_count >= 3:
                 desired_tanks = max(int(desired_tanks), 2)
+
         if bool(rush_ctx.get("heavy", False)):
             desired_tanks = max(int(desired_tanks), 2 if urgency < 70 else 3)
             desired_mines = max(int(desired_mines), 2)
             desired_general += int(self.rush_heavy_bonus_general)
+
         if bool(rush_ctx.get("extreme", False)):
             desired_tanks = max(int(desired_tanks), 3)
             desired_mines = max(int(desired_mines), 2)
             desired_general += int(self.rush_extreme_bonus_general)
 
+        # Guardrail: não arrancar tank da defesa principal para third/fourth durante rush.
+        if outer_base and bool(rush_ctx.get("active", False)):
+            desired_tanks = 0
+            desired_mines = min(int(desired_mines), 1)
+            desired_general = min(int(desired_general), 4)
+
         reqs: list[UnitRequirement] = []
 
-        # Include sieged tanks so bases under attack can pull tanks already mounted elsewhere.
         tank_avail = self._available(bot, U.SIEGETANK)
         sieged_tank_avail = self._available(bot, U.SIEGETANKSIEGED)
-        desired_tank_total = min(int(desired_tanks), int(tank_avail + sieged_tank_avail))
-        take_unsieged = min(int(desired_tank_total), int(tank_avail))
-        take_sieged = min(max(0, int(desired_tank_total) - int(take_unsieged)), int(sieged_tank_avail))
-        if take_unsieged > 0:
-            reqs.append(
-                UnitRequirement(
-                    unit_type=U.SIEGETANK,
-                    count=int(take_unsieged),
-                    pick_policy=_DefendPickPolicy(objective=objective, unit_type=U.SIEGETANK),
-                    required=True,
+
+        if int(desired_tanks) > 0:
+            desired_tank_total = min(int(desired_tanks), int(tank_avail + sieged_tank_avail))
+            take_unsieged = min(int(desired_tank_total), int(tank_avail))
+            take_sieged = min(max(0, int(desired_tank_total) - int(take_unsieged)), int(sieged_tank_avail))
+
+            if take_unsieged > 0:
+                reqs.append(
+                    UnitRequirement(
+                        unit_type=U.SIEGETANK,
+                        count=int(take_unsieged),
+                        pick_policy=_DefendPickPolicy(objective=objective, unit_type=U.SIEGETANK),
+                        required=True,
+                    )
                 )
-            )
-        if take_sieged > 0:
-            reqs.append(
-                UnitRequirement(
-                    unit_type=U.SIEGETANKSIEGED,
-                    count=int(take_sieged),
-                    pick_policy=_DefendPickPolicy(objective=objective, unit_type=U.SIEGETANKSIEGED),
-                    required=len(reqs) == 0,
+            if take_sieged > 0 and not outer_base:
+                reqs.append(
+                    UnitRequirement(
+                        unit_type=U.SIEGETANKSIEGED,
+                        count=int(take_sieged),
+                        pick_policy=_DefendPickPolicy(objective=objective, unit_type=U.SIEGETANKSIEGED),
+                        required=len(reqs) == 0,
+                    )
                 )
-            )
 
         mine_avail = self._available(bot, U.WIDOWMINE)
-        if mine_avail > 0:
+        if mine_avail > 0 and int(desired_mines) > 0:
             reqs.append(
                 UnitRequirement(
                     unit_type=U.WIDOWMINE,
@@ -565,6 +713,7 @@ class DefensePlanner:
             general_types = [U.MARINE, U.MARAUDER, U.CYCLONE, U.HELLION, U.THOR, U.THORAP]
         if bool(rush_ctx.get("heavy", False)):
             general_types = [U.MARINE, U.MARAUDER, U.CYCLONE, U.HELLION, U.THOR, U.THORAP]
+
         remaining = int(desired_general)
         for t in general_types:
             if remaining <= 0:
@@ -586,99 +735,18 @@ class DefensePlanner:
         return reqs
 
     @staticmethod
-    def _should_request_bunker(*, bot, th: BaseThreatSnapshot | None, rush_ctx: dict[str, float | str | bool]) -> bool:
-        if th is None:
-            return False
-        tier = str(rush_ctx.get("tier", "NONE"))
-        state = str(rush_ctx.get("state", "NONE"))
-        severity = float(rush_ctx.get("severity", 0.0) or 0.0)
-        one_base_rush = bool(rush_ctx.get("enemy_one_base_rush", False))
-        scout_no_natural_confirmed = bool(rush_ctx.get("scout_no_natural_confirmed", False))
-        local_contact = False
+    def _bunker_already_present(bot, *, anchor: Point2, radius: float = 14.0) -> bool:
+        """Retorna True se já existe bunker (pronto ou em construção) perto do anchor."""
         try:
-            local_contact = int(bot.enemy_units.closer_than(10.0, th.th_pos).amount) >= 2
+            for b in bot.structures(U.BUNKER):
+                if float(b.distance_to(anchor)) <= radius:
+                    return True
         except Exception:
-            local_contact = int(getattr(th, "enemy_count", 0) or 0) >= 2
-        is_main = False
-        nat_taken = False
-        nat_ready = False
-        try:
-            is_main = float(th.th_pos.distance_to(bot.start_location)) <= 10.0
-        except Exception:
-            is_main = False
-        if not bool(is_main):
-            for townhall in list(getattr(bot, "townhalls", []) or []):
-                try:
-                    if float(townhall.distance_to(th.th_pos)) <= 8.0:
-                        nat_taken = True
-                        if float(getattr(townhall, "build_progress", 1.0) or 1.0) >= 1.0:
-                            nat_ready = True
-                        break
-                except Exception:
-                    continue
-        main_wall_contact = bool(is_main) and bool(DefensePlanner._enemy_contacting_main_wall(bot))
-        proactive_wall_bunker = bool(
-            is_main
-            and (
-                main_wall_contact
-                or (local_contact and one_base_rush and state in {"CONFIRMED", "HOLDING"})
-                or (one_base_rush and scout_no_natural_confirmed and tier in {"HEAVY", "EXTREME"} and severity >= 0.72)
-                or (state == "CONFIRMED" and tier == "EXTREME")
-            )
-        )
-        proactive_nat_bunker = bool(
-            (not is_main)
-            and bool(nat_ready)
-            and (
-                (local_contact and one_base_rush and state in {"CONFIRMED", "HOLDING"})
-                or (local_contact and state in {"CONFIRMED", "HOLDING"} and tier in {"MEDIUM", "HEAVY", "EXTREME"})
-                or (state == "CONFIRMED" and tier == "EXTREME" and severity >= 0.86)
-            )
-        )
-        if (not bool(is_main)) and bool(nat_taken) and (not bool(nat_ready)) and (not bool(local_contact)):
-            return False
-        if bool(one_base_rush) and not bool(is_main) and not bool(local_contact) and not bool(proactive_nat_bunker):
-            return False
-        if (
-            tier not in {"MEDIUM", "HEAVY", "EXTREME"}
-            and not bool(local_contact)
-            and not bool(proactive_wall_bunker)
-            and not bool(proactive_nat_bunker)
-        ):
-            return False
-        bunker_anchor = th.th_pos
-        try:
-            if is_main:
-                ramp = getattr(bot, "main_base_ramp", None)
-                wall_center = getattr(ramp, "top_center", None) if ramp is not None else None
-                barracks_pos = getattr(ramp, "barracks_correct_placement", None) if ramp is not None else None
-                refs = [p for p in (wall_center, barracks_pos, th.th_pos, getattr(bot, "start_location", None)) if p is not None]
-                bunker_anchor = wall_center or barracks_pos or th.th_pos
-                existing = [
-                    b
-                    for b in bot.structures(U.BUNKER)
-                    if any(float(b.distance_to(ref)) <= 16.0 for ref in refs)
-                ]
-            else:
-                existing = [b for b in bot.structures(U.BUNKER) if float(b.distance_to(th.th_pos)) <= 16.0]
-        except Exception:
-            existing = []
-            bunker_anchor = th.th_pos
-        ready_garrison = DefensePlanner._ready_bunker_garrison_near(bot, center=bunker_anchor)
-        if int(ready_garrison) <= 0:
-            try:
-                mobile_garrison = int(
-                    bot.units.of_type({U.MARINE, U.MARAUDER, U.REAPER}).ready.closer_than(24.0, th.th_pos).amount
-                )
-            except Exception:
-                mobile_garrison = 0
-            if bool(is_main) or not bool(local_contact) or int(mobile_garrison) <= 0:
-                return False
+            pass
         try:
             tracker = dict(bot.mediator.get_building_tracker_dict or {})
         except Exception:
-            tracker = {}
-        pending = 0
+            return False
         for entry in tracker.values():
             if not isinstance(entry, dict):
                 continue
@@ -688,14 +756,69 @@ class DefensePlanner:
             if pos is None:
                 continue
             try:
-                if is_main and any(float(pos.distance_to(ref)) <= 16.0 for ref in refs):
-                    pending += 1
-                elif (not is_main) and float(pos.distance_to(th.th_pos)) <= 16.0:
-                    pending += 1
+                if float(pos.distance_to(anchor)) <= radius:
+                    return True
             except Exception:
                 continue
-        max_bunkers = 1 if is_main else 2
-        return (len(existing) + int(pending)) < int(max_bunkers)
+        return False
+
+    @staticmethod
+    def _should_request_bunker(*, bot, th: BaseThreatSnapshot | None, rush_ctx: dict[str, float | str | bool]) -> bool:
+        """
+        Lógica simples:
+        - Main: bunker perto da rampa se rush confirmado/suspeito
+        - Nat: bunker na nat se rush confirmado E nat está segura (sem contato imediato)
+        Não pede se já tem bunker ou construção no local.
+        """
+        if th is None:
+            return False
+        state = str(rush_ctx.get("state", "NONE"))
+        tier = str(rush_ctx.get("tier", "NONE"))
+        if state not in {"SUSPECTED", "CONFIRMED", "HOLDING"}:
+            return False
+
+        try:
+            is_main = float(th.th_pos.distance_to(bot.start_location)) <= 10.0
+        except Exception:
+            is_main = False
+
+        if is_main:
+            # Bunker perto da rampa
+            try:
+                ramp = getattr(bot, "main_base_ramp", None)
+                ramp_anchor = (
+                    getattr(ramp, "top_center", None)
+                    or getattr(ramp, "barracks_correct_placement", None)
+                    or bot.start_location
+                ) if ramp is not None else bot.start_location
+            except Exception:
+                ramp_anchor = th.th_pos
+            return not DefensePlanner._bunker_already_present(bot, anchor=ramp_anchor, radius=14.0)
+        else:
+            # Bunker na nat só se rush for CONFIRMED/HOLDING e não tiver contato imediato
+            if state not in {"CONFIRMED", "HOLDING"}:
+                return False
+            if tier not in {"MEDIUM", "HEAVY", "EXTREME"}:
+                return False
+            # Nat precisa estar tomada (tem nosso CC lá)
+            nat_taken = False
+            for townhall in list(getattr(bot, "townhalls", []) or []):
+                try:
+                    if float(townhall.distance_to(th.th_pos)) <= 8.0:
+                        nat_taken = True
+                        break
+                except Exception:
+                    continue
+            if not nat_taken:
+                return False
+            # Não desce bunker na nat se tem inimigo em cima
+            try:
+                local_contact = int(bot.enemy_units.closer_than(12.0, th.th_pos).amount) >= 2
+            except Exception:
+                local_contact = False
+            if local_contact:
+                return False
+            return not DefensePlanner._bunker_already_present(bot, anchor=th.th_pos, radius=14.0)
 
     @staticmethod
     def _enemy_contacting_main_wall(bot) -> bool:
@@ -744,7 +867,10 @@ class DefensePlanner:
             except Exception:
                 continue
             tid = getattr(enemy, "type_id", None)
-            if tid in {U.OVERLORD, U.OVERSEER, U.OBSERVER, U.CHANGELING, U.CHANGELINGMARINESHIELD, U.CHANGELINGMARINE, U.CHANGELINGZEALOT, U.CHANGELINGZERGLING, U.CHANGELINGZERGLINGWINGS}:
+            if tid in {
+                U.OVERLORD, U.OVERSEER, U.OBSERVER, U.CHANGELING, U.CHANGELINGMARINESHIELD,
+                U.CHANGELINGMARINE, U.CHANGELINGZEALOT, U.CHANGELINGZERGLING, U.CHANGELINGZERGLINGWINGS
+            }:
                 continue
             inside_count += 1
             if tid == U.ZERGLING:
@@ -866,7 +992,7 @@ class DefensePlanner:
                 hp = float(getattr(unit, "health", 0.0) or 0.0)
                 hp_max = float(getattr(unit, "health_max", 0.0) or 0.0)
                 build_progress = float(getattr(unit, "build_progress", 1.0) or 1.0)
-                if hp_max <= 0.0 or (hp >= hp_max and build_progress >= 1.0):
+                if hp_max <= 0.0 or build_progress < 1.0 or hp >= hp_max:
                     continue
                 seen_tags.add(tag)
                 weight = 1.0
@@ -877,8 +1003,6 @@ class DefensePlanner:
                     weight = 3.0
                 elif tid in {U.SUPPLYDEPOT, U.SUPPLYDEPOTLOWERED, U.BARRACKS, U.BARRACKSREACTOR, U.BARRACKSTECHLAB}:
                     weight = 1.5
-                if build_progress < 1.0:
-                    weight = max(weight, 1.5)
                 pressure += float(weight)
             except Exception:
                 continue
@@ -1021,7 +1145,7 @@ class DefensePlanner:
                     hp = float(getattr(unit, "health", 0.0) or 0.0)
                     hp_max = float(getattr(unit, "health_max", 0.0) or 0.0)
                     build_progress = float(getattr(unit, "build_progress", 1.0) or 1.0)
-                    if hp_max > 0.0 and (hp < hp_max or build_progress < 1.0):
+                    if hp_max > 0.0 and build_progress >= 1.0 and hp < hp_max:
                         total += 1
                 except Exception:
                     continue
@@ -1141,12 +1265,41 @@ class DefensePlanner:
             )
         return reqs
 
+    def _merge_threats(self, *, bot, raw_threats: list[BaseThreatSnapshot], rush_ctx: dict[str, float | str | bool]) -> list[BaseThreatSnapshot]:
+        merged: dict[int, BaseThreatSnapshot] = {}
+
+        for th in list(raw_threats or []):
+            try:
+                merged[int(th.th_tag)] = th
+            except Exception:
+                continue
+
+        for th in self._proactive_home_threats(bot, rush_ctx=rush_ctx):
+            tag = int(getattr(th, "th_tag", -1) or -1)
+            current = merged.get(tag)
+            if current is None:
+                merged[tag] = th
+                continue
+            try:
+                current_prio = self._threat_priority(bot=bot, th=current, rush_ctx=rush_ctx)
+            except Exception:
+                current_prio = -9999.0
+            try:
+                new_prio = self._threat_priority(bot=bot, th=th, rush_ctx=rush_ctx)
+            except Exception:
+                new_prio = -9999.0
+            if new_prio > current_prio:
+                merged[tag] = th
+
+        out = list(merged.values())
+        out.sort(key=lambda th: self._threat_priority(bot=bot, th=th, rush_ctx=rush_ctx), reverse=True)
+        return out
+
     def propose(self, bot, *, awareness: Awareness, attention: Attention) -> list[Proposal]:
         now = float(attention.time)
         out: list[Proposal] = []
         rush_ctx = self._rush_ctx(awareness=awareness, now=now)
 
-        # Lift natural: proposta global (não por base), apenas em colapso iminente
         lift_pid = f"{self.planner_id}:lift_natural"
         if (
             self._should_lift_natural(bot, awareness=awareness, rush_ctx=rush_ctx, now=now)
@@ -1180,19 +1333,65 @@ class DefensePlanner:
             except Exception:
                 pass
 
+        # Se o CC da nat está voando e a ameaça passou, propõe pousar de volta
+        land_pid = f"{self.planner_id}:land_natural"
+        if (
+            not awareness.ops_proposal_running(proposal_id=lift_pid, now=now)
+            and not awareness.ops_proposal_running(proposal_id=land_pid, now=now)
+            and self._due(awareness=awareness, now=now, pid=land_pid)
+        ):
+            try:
+                flying_nat_cc = None
+                own_nat = bot.mediator.get_own_nat
+                for s in list(getattr(bot, "structures", []) or []):
+                    if s.type_id in {U.COMMANDCENTERFLYING, U.ORBITALCOMMANDFLYING}:
+                        flying_nat_cc = s
+                        break
+                if flying_nat_cc is not None:
+                    nat_snap = awareness.mem.get(K("intel", "map_control", "our_nat", "snapshot"), now=now, default={}) or {}
+                    safe_to_land = bool(nat_snap.get("safe_to_land", False)) if isinstance(nat_snap, dict) else False
+                    if safe_to_land and not self._should_lift_natural(bot, awareness=awareness, rush_ctx=rush_ctx, now=now):
+                        land_factory = self._make_land_natural_factory(awareness=awareness, nat_pos=own_nat)
+                        out.append(
+                            Proposal(
+                                proposal_id=land_pid,
+                                domain="DEFENSE",
+                                score=70,
+                                tasks=[
+                                    TaskSpec(
+                                        task_id="land_natural",
+                                        task_factory=land_factory,
+                                        unit_requirements=[],
+                                        lease_ttl=60.0,
+                                    )
+                                ],
+                                lease_ttl=60.0,
+                                cooldown_s=20.0,
+                                risk_level=0,
+                                allow_preempt=False,
+                            )
+                        )
+                        self._mark_proposed(awareness=awareness, now=now, pid=land_pid)
+            except Exception:
+                pass
+
         secure_natural_commit = bool(
             awareness.mem.get(K("intel", "map_control", "our_nat", "should_secure"), now=now, default=False)
         )
+
         threats_raw = [b for b in self._threats(attention) if int(b.urgency) >= int(self.min_base_urgency)]
+        threats_raw = self._merge_threats(bot=bot, raw_threats=threats_raw, rush_ctx=rush_ctx)
+
         if threats_raw:
-            threats_raw.sort(key=lambda th: self._threat_priority(bot=bot, th=th, rush_ctx=rush_ctx), reverse=True)
             threats = threats_raw[: max(1, int(self.max_bases_per_tick))]
         elif bool(self.existence_trigger_enabled) and (not bool(secure_natural_commit)) and (
             int(self._defense_units_available(bot)) > 0
             or bool(rush_ctx.get("active", False))
             or any(float(self._repair_pressure_near_base(bot, base_pos=th.position)) > 0.0 for th in list(getattr(bot, "townhalls", []) or []))
         ):
-            threats = self._fallback_base_candidates(bot, rush_ctx=rush_ctx)[: max(1, int(self.max_bases_per_tick))]
+            fallback = self._fallback_base_candidates(bot, rush_ctx=rush_ctx)
+            fallback = self._merge_threats(bot=bot, raw_threats=fallback, rush_ctx=rush_ctx)
+            threats = fallback[: max(1, int(self.max_bases_per_tick))]
         else:
             threats = []
 
@@ -1209,11 +1408,13 @@ class DefensePlanner:
                 is_main_base = float(th.th_pos.distance_to(bot.start_location)) <= 10.0
             except Exception:
                 is_main_base = False
+
             effective_urgency = int(th.urgency)
             if bool(rush_ctx.get("heavy", False)):
                 effective_urgency += 10
             elif bool(rush_ctx.get("active", False)):
                 effective_urgency += 4
+
             bunker_pid = self._pid_bunker(int(th.th_tag))
             if (
                 self._should_request_bunker(bot=bot, th=th, rush_ctx=rush_ctx)
@@ -1254,10 +1455,8 @@ class DefensePlanner:
                     )
                 )
                 self._mark_proposed(awareness=awareness, now=now, pid=bunker_pid)
-            reqs = self._requirements(bot=bot, th=th, objective=objective, rush_ctx=rush_ctx)
-            if not reqs:
-                reqs = []
 
+            reqs = self._requirements(bot=bot, th=th, objective=objective, rush_ctx=rush_ctx)
             base_pos = th.th_pos
 
             if reqs:
@@ -1267,7 +1466,6 @@ class DefensePlanner:
                     base_pos=base_pos,
                     objective=objective,
                 )
-
                 out.append(
                     Proposal(
                         proposal_id=pid,
@@ -1283,7 +1481,7 @@ class DefensePlanner:
                                 lease_ttl=None,
                             )
                         ],
-                    lease_ttl=None,  # sua regra: missão de defesa de base sem ttl
+                        lease_ttl=None,
                         cooldown_s=0.0,
                         risk_level=0,
                         allow_preempt=True,
@@ -1295,6 +1493,7 @@ class DefensePlanner:
             main_wall_contact = bool(
                 is_main_base and self._enemy_contacting_main_wall(bot)
             ) if getattr(bot, "start_location", None) is not None else False
+
             if (
                 bool(main_wall_contact)
                 and not awareness.ops_proposal_running(proposal_id=hold_ramp_pid, now=now)
@@ -1328,17 +1527,26 @@ class DefensePlanner:
                         )
                     )
                     self._mark_proposed(awareness=awareness, now=now, pid=hold_ramp_pid)
+
             scv_pull_count = self._scv_pull_count(bot=bot, th=th, rush_ctx=rush_ctx)
             scv_pull_pid = self._pid_scv_pull(int(th.th_tag))
             if (
                 scv_pull_count > 0
-                and (not bool(main_wall_contact) or (bool(is_main_base) and bool(self._main_breach_snapshot(
-                    bot,
-                    base_pos=th.th_pos,
-                    now=now,
-                    early_window_s=float(self.early_defense_window_s),
-                    breach_radius=float(self.main_breach_radius),
-                ).get("inside_count", 0) or 0) > 0))
+                and (
+                    not bool(main_wall_contact)
+                    or (
+                        bool(is_main_base)
+                        and bool(
+                            self._main_breach_snapshot(
+                                bot,
+                                base_pos=th.th_pos,
+                                now=now,
+                                early_window_s=float(self.early_defense_window_s),
+                                breach_radius=float(self.main_breach_radius),
+                            ).get("inside_count", 0) or 0
+                        ) > 0
+                    )
+                )
                 and not awareness.ops_proposal_running(proposal_id=scv_pull_pid, now=now)
                 and self._due(awareness=awareness, now=now, pid=scv_pull_pid)
             ):

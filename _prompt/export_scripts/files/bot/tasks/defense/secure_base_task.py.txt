@@ -118,6 +118,31 @@ class SecureBaseTask(BaseTask):
         return self.base_pos
 
     @staticmethod
+    def _bunkers_near_base(bot, *, base_pos: Point2, hold_pos: Point2) -> list:
+        out = []
+        for unit in list(getattr(bot, "structures", []) or []):
+            try:
+                if getattr(unit, "type_id", None) != U.BUNKER:
+                    continue
+                if not bool(getattr(unit, "is_ready", False)):
+                    continue
+                if min(float(unit.distance_to(base_pos)), float(unit.distance_to(hold_pos))) > 10.0:
+                    continue
+                out.append(unit)
+            except Exception:
+                continue
+        return out
+
+    @staticmethod
+    def _bunker_has_space(bunker) -> bool:
+        try:
+            cargo_max = int(getattr(bunker, "cargo_max", 4) or 4)
+            cargo_used = int(getattr(bunker, "cargo_used", 0) or 0)
+            return int(cargo_used) < int(cargo_max)
+        except Exception:
+            return True
+
+    @staticmethod
     def _height(bot, pos: Point2) -> float:
         try:
             if not bool(bot.in_pathing_grid(pos)):
@@ -194,6 +219,7 @@ class SecureBaseTask(BaseTask):
         if enemy_near:
             return False
         should_secure = bool(snap.get("should_secure", False))
+        fortified = bool(snap.get("fortified", False))
         rush_state = str(self.awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
         nat_taken = False
         for th in list(getattr(bot, "townhalls", []) or []):
@@ -203,7 +229,14 @@ class SecureBaseTask(BaseTask):
                     break
             except Exception:
                 continue
-        return bool((not should_secure) or (nat_taken and rush_state not in {"SUSPECTED", "CONFIRMED", "HOLDING"}))
+        return bool(
+            (not should_secure)
+            or (
+                nat_taken
+                and fortified
+                and rush_state not in {"SUSPECTED", "CONFIRMED", "HOLDING"}
+            )
+        )
 
     def _pick_probe_unit(self, units: list):
         if self._probe_tag is not None:
@@ -332,10 +365,19 @@ class SecureBaseTask(BaseTask):
         unit(AbilityId.BURROWDOWN_WIDOWMINE)
         return True
 
-    def _handle_general(self, *, unit, slot: Point2, enemy_near: list) -> bool:
+    def _handle_general(self, *, unit, slot: Point2, enemy_near: list, bunkers: list) -> bool:
         if unit.type_id == U.MEDIVAC:
             unit.move(self.staging_pos)
             return True
+        if unit.type_id == U.MARINE and bunkers:
+            ready_bunkers = [b for b in bunkers if self._bunker_has_space(b)]
+            if ready_bunkers:
+                bunker = min(ready_bunkers, key=lambda b: float(unit.distance_to(b)))
+                if float(unit.distance_to(bunker)) <= 2.0:
+                    unit(AbilityId.SMART, bunker)
+                else:
+                    unit.move(bunker.position)
+                return True
         if enemy_near:
             unit.attack(min(enemy_near, key=lambda e: float(unit.distance_to(e))))
             return True
@@ -427,6 +469,7 @@ class SecureBaseTask(BaseTask):
         if len(tank_units) >= 2:
             tank_anchors.append(rear_tank_anchor)
         repair_targets = self._support_targets(bot, base_pos=self.base_pos, hold_pos=self.hold_pos)
+        bunkers = self._bunkers_near_base(bot, base_pos=self.base_pos, hold_pos=self.hold_pos)
         issued = False
         mine_idx = 0
         general_idx = 0
@@ -481,7 +524,7 @@ class SecureBaseTask(BaseTask):
                 continue
             slot = perimeter[general_idx % len(perimeter)] if perimeter else self.staging_pos
             general_idx += 1
-            issued = self._handle_general(unit=unit, slot=slot, enemy_near=enemy_near) or issued
+            issued = self._handle_general(unit=unit, slot=slot, enemy_near=enemy_near, bunkers=bunkers) or issued
 
         if issued:
             self._active("securing_base")

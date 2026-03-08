@@ -41,7 +41,7 @@ def _rush_defense_phase(*, phase: str) -> Dict[str, Any]:
         "pid": {"lag_pi_kp": 0.94, "lag_pi_ki": 0.24, "production_lag_weight_boost": 0.82, "tech_lag_inflight_dampen_gain": 0.74, "block_production_max_lag_prod": 0.80, "timing_attack_production_weight_boost": 0.86},
         "army_supply_milestones": [{"t": 210.0, "supply": 36.0}, {"t": 300.0, "supply": 54.0}, {"t": 420.0, "supply": 78.0}],
         "unit_count_milestones": [{"t": 210.0, "units": {"MARINE": 16, "SIEGETANK": 1, "MARAUDER": 2}}, {"t": 300.0, "units": {"MARINE": 26, "SIEGETANK": 3, "MARAUDER": 4}}],
-        "timing_attacks": [{"name": "stabilize_then_push", "hit_t": 360.0, "prep_s": 65.0, "hold_s": 30.0, "army_supply_target": 64.0}],
+        "timing_attacks": [{"name": "stabilize_then_push", "hit_t": 360.0, "prep_s": 65.0, "hold_s": 90.0, "army_supply_target": 54.0}],
         "production_structure_targets": {"BARRACKS": 4, "FACTORY": 2, "STARPORT": 0},
         "production_scale": {"BARRACKS": 1.15, "FACTORY": 0.42, "STARPORT": 0.0},
         "tech_structure_targets": {},

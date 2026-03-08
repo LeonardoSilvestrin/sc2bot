@@ -215,25 +215,56 @@ class DefendBaseTask(BaseTask):
             return base_pos
 
     @staticmethod
-    def _bunkers_near_base(bot, *, base_pos: Point2) -> list:
+    def _ramp_top(bot) -> Point2 | None:
+        try:
+            ramp = getattr(bot, "main_base_ramp", None)
+            if ramp is None:
+                return None
+            return getattr(ramp, "top_center", None) or getattr(ramp, "barracks_correct_placement", None)
+        except Exception:
+            return None
+
+    @classmethod
+    def _bunkers_near_base(cls, bot, *, base_pos: Point2) -> list:
+        search_centers = [base_pos]
+        # Inclui rampa principal como centro de busca — marines de qualquer base podem usar o bunker da rampa
+        ramp_top = cls._ramp_top(bot)
+        if ramp_top is not None and float(ramp_top.distance_to(base_pos)) > 16.0:
+            search_centers.append(ramp_top)
+        seen: set[int] = set()
         out = []
-        for s in list(getattr(bot, "structures", []) or []):
-            try:
-                if s.type_id == U.BUNKER and bool(getattr(s, "is_ready", False)) and float(s.distance_to(base_pos)) <= 16.0:
-                    out.append(s)
-            except Exception:
-                continue
+        for center in search_centers:
+            for s in list(getattr(bot, "structures", []) or []):
+                try:
+                    tag = int(getattr(s, "tag", -1) or -1)
+                    if tag in seen:
+                        continue
+                    if s.type_id == U.BUNKER and bool(getattr(s, "is_ready", False)) and float(s.distance_to(center)) <= 16.0:
+                        seen.add(tag)
+                        out.append(s)
+                except Exception:
+                    continue
         return out
 
-    @staticmethod
-    def _bunker_sites_near_base(bot, *, base_pos: Point2) -> list:
+    @classmethod
+    def _bunker_sites_near_base(cls, bot, *, base_pos: Point2) -> list:
+        search_centers = [base_pos]
+        ramp_top = cls._ramp_top(bot)
+        if ramp_top is not None and float(ramp_top.distance_to(base_pos)) > 16.0:
+            search_centers.append(ramp_top)
+        seen: set[int] = set()
         out = []
-        for s in list(getattr(bot, "structures", []) or []):
-            try:
-                if s.type_id == U.BUNKER and float(s.distance_to(base_pos)) <= 16.0:
-                    out.append(s)
-            except Exception:
-                continue
+        for center in search_centers:
+            for s in list(getattr(bot, "structures", []) or []):
+                try:
+                    tag = int(getattr(s, "tag", -1) or -1)
+                    if tag in seen:
+                        continue
+                    if s.type_id == U.BUNKER and float(s.distance_to(center)) <= 16.0:
+                        seen.add(tag)
+                        out.append(s)
+                except Exception:
+                    continue
         return out
 
     @staticmethod
@@ -256,26 +287,27 @@ class DefendBaseTask(BaseTask):
 
     def _handle_tank(self, *, unit, anchor: Point2, threat: Point2, enemy_near) -> bool:
         if unit.type_id == U.SIEGETANKSIEGED:
-            if float(unit.distance_to(anchor)) > 5.0 and int(enemy_near.amount) <= 0:
+            # Só desfaz siege se estiver longe demais E sem inimigos — threshold generoso (8.0)
+            # para evitar oscillar quando o anchor muda poucos tiles entre ticks
+            if float(unit.distance_to(anchor)) > 8.0 and int(enemy_near.amount) <= 0:
                 unit(AbilityId.UNSIEGE_UNSIEGE)
                 return True
             if int(enemy_near.amount) > 0:
                 unit.attack(enemy_near.closest_to(unit))
                 return True
-            unit.attack(threat)
-            return True
+            # Já sieged e sem inimigos — não faz nada
+            return False
 
         if float(unit.distance_to(anchor)) > 2.5:
-            unit.move(anchor)
-            return True
-        # Defensive posture by default: once in position, stay sieged.
-        if unit.type_id == U.SIEGETANK:
+            if not bool(getattr(unit, "is_moving", False)):
+                unit.move(anchor)
+                return True
+            return False
+        # Defensive posture by default: once in position, siege — só se idle
+        if unit.type_id == U.SIEGETANK and bool(getattr(unit, "is_idle", True)):
             unit(AbilityId.SIEGEMODE_SIEGEMODE)
             return True
-        if int(enemy_near.amount) > 0:
-            unit.attack(enemy_near.closest_to(unit))
-            return True
-        return True
+        return False
 
     def _handle_mine(self, *, unit, slot: Point2, threat: Point2, enemy_near_base) -> bool:
         if unit.type_id == U.WIDOWMINEBURROWED:
@@ -285,44 +317,59 @@ class DefendBaseTask(BaseTask):
             return False
 
         if float(unit.distance_to(slot)) > 1.8:
-            unit.move(slot)
-            return True
+            if not bool(getattr(unit, "is_moving", False)):
+                unit.move(slot)
+                return True
+            return False
         if int(enemy_near_base.amount) > 0 or float(unit.distance_to(threat)) <= 14.0:
-            unit(AbilityId.BURROWDOWN_WIDOWMINE)
-            return True
-        unit.move(slot)
-        return True
+            if bool(getattr(unit, "is_idle", True)):
+                unit(AbilityId.BURROWDOWN_WIDOWMINE)
+                return True
+            return False
+        return False
 
     @staticmethod
     def _handle_general(*, unit, base_pos: Point2, hold_anchor: Point2, threat: Point2, enemy_near_base, bunkers: list, bunker_sites: list, now: float) -> bool:
         if unit.type_id == U.MEDIVAC:
-            follow = threat.towards(hold_anchor, 6.0)
-            unit.move(follow)
-            return True
+            if bool(getattr(unit, "is_idle", True)):
+                follow = threat.towards(hold_anchor, 6.0)
+                unit.move(follow)
+                return True
+            return False
         if unit.type_id == U.MARINE and bunkers:
             ready_bunkers = [b for b in bunkers if DefendBaseTask._bunker_has_space(b)]
             if ready_bunkers:
                 bunker = min(ready_bunkers, key=lambda b: float(unit.distance_to(b)))
-                if float(unit.distance_to(bunker)) <= 2.0:
-                    unit(AbilityId.SMART, bunker)
-                else:
-                    unit.move(bunker.position)
+                already_loading = False
+                try:
+                    for order in list(getattr(unit, "orders", []) or []):
+                        ab = getattr(getattr(order, "ability", None), "id", None)
+                        if ab is not None and "LOAD" in str(ab).upper():
+                            already_loading = True
+                            break
+                except Exception:
+                    pass
+                if not already_loading:
+                    if float(unit.distance_to(bunker)) <= 6.0:
+                        unit(AbilityId.SMART, bunker)
+                    else:
+                        unit.move(bunker.position)
                 return True
         if unit.type_id == U.MARINE and bunker_sites:
             site = min(bunker_sites, key=lambda b: float(unit.distance_to(b)))
             hold = site.position.towards(hold_anchor, 2.0)
-            if float(unit.distance_to(hold)) > 2.0:
+            if float(unit.distance_to(hold)) > 2.0 and not bool(getattr(unit, "is_moving", False)):
                 unit.move(hold)
             return True
         if int(enemy_near_base.amount) > 0:
             unit.attack(enemy_near_base.closest_to(unit))
             return True
-        # Keep units active on-map even in calm windows.
-        phase = int(float(now) // 4.0)
-        sign = 1.0 if ((int(getattr(unit, "tag", 0) or 0) + phase) % 2 == 0) else -1.0
-        patrol = Point2((float(hold_anchor.x) + (4.0 * sign), float(hold_anchor.y) + (2.5 * sign)))
-        unit.move(patrol)
-        return True
+        # Idle only: move to hold anchor once, don't spam every tick
+        if bool(getattr(unit, "is_idle", True)):
+            if float(unit.distance_to(hold_anchor)) > 3.0:
+                unit.move(hold_anchor)
+                return True
+        return False
 
     async def on_step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult:
         bound_err = self.require_mission_bound(min_tags=1)

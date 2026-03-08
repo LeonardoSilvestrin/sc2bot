@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from ares.consts import BuildingSize
 from sc2.ids.unit_typeid import UnitTypeId as U
 from sc2.position import Point2
 
@@ -60,6 +61,10 @@ class MapControlIntelConfig:
     enemy_macro_lead_max_enemy_presence_power_at_nat: float = 2.75
     rush_refresh_scan_stale_s: float = 12.0
     rush_refresh_min_interval_s: float = 12.0
+    delayed_natural_min_total_power: float = 3.5
+    delayed_natural_min_main_power: float = 2.5
+    delayed_natural_max_enemy_power_at_nat: float = 3.2
+    delayed_natural_max_enemy_presence_power_at_nat: float = 2.8
 
 
 def _point_payload(pos: Point2 | None) -> dict[str, float] | None:
@@ -68,11 +73,102 @@ def _point_payload(pos: Point2 | None) -> dict[str, float] | None:
     return {"x": float(pos.x), "y": float(pos.y)}
 
 
+def _point_from_payload(payload) -> Point2 | None:
+    if not isinstance(payload, dict):
+        return None
+    try:
+        return Point2((float(payload.get("x", 0.0) or 0.0), float(payload.get("y", 0.0) or 0.0)))
+    except Exception:
+        return None
+
+
 def _pathable(bot, pos: Point2) -> bool:
     try:
         return bool(bot.in_pathing_grid(pos))
     except Exception:
         return True
+
+
+def _placements_dict(bot) -> dict:
+    try:
+        return dict(bot.mediator.get_placements_dict or {})
+    except Exception:
+        return {}
+
+
+def _height(bot, pos: Point2 | None) -> float:
+    if pos is None:
+        return -9999.0
+    try:
+        return float(bot.get_terrain_z_height(pos))
+    except Exception:
+        try:
+            return float(bot.get_terrain_height(pos))
+        except Exception:
+            return -9999.0
+
+
+def _ramp_edge_depth(bot, *, pos: Point2, bottom: Point2 | None, lowground_h: float) -> float:
+    if bottom is None:
+        return 9999.0
+    for dist in (0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0):
+        try:
+            probe = pos.towards(bottom, dist)
+        except Exception:
+            continue
+        probe_h = _height(bot, probe)
+        if probe_h <= (float(lowground_h) + 0.25):
+            return float(dist)
+    return 9999.0
+
+
+def _main_ramp_bunker_target(bot) -> Point2 | None:
+    try:
+        ramp = getattr(bot, "main_base_ramp", None)
+        top = getattr(ramp, "top_center", None) if ramp is not None else None
+        barracks_pos = getattr(ramp, "barracks_correct_placement", None) if ramp is not None else None
+        bottom = getattr(ramp, "bottom_center", None) if ramp is not None else None
+        start = getattr(bot, "start_location", None)
+    except Exception:
+        return None
+    if top is None or bottom is None or start is None:
+        return None
+    placements = _placements_dict(bot)
+    per_size = ((placements.get(start, {}) or {}).get(BuildingSize.THREE_BY_THREE, {}) or {})
+    lowground_h = _height(bot, bottom)
+    highground_h = max(_height(bot, top), _height(bot, barracks_pos), _height(bot, start))
+    best: tuple[float, Point2] | None = None
+    for pos, info in per_size.items():
+        if not isinstance(info, dict):
+            continue
+        if not bool(info.get("is_wall", False)) or not bool(info.get("bunker", False)):
+            continue
+        try:
+            if not bool(bot.mediator.can_place_structure(position=pos, structure_type=U.BUNKER)):
+                continue
+        except Exception:
+            continue
+        pos_h = _height(bot, pos)
+        if pos_h <= (float(lowground_h) + 0.25):
+            continue
+        if pos_h < (float(highground_h) - 0.75):
+            continue
+        edge_depth = _ramp_edge_depth(bot, pos=pos, bottom=bottom, lowground_h=lowground_h)
+        if edge_depth > 4.25:
+            continue
+        if float(pos.distance_to(bottom)) > 6.5 or float(pos.distance_to(top)) > 6.5:
+            continue
+        if float(pos.distance_to(start)) < (float(top.distance_to(start)) - 0.75):
+            continue
+        score = 0.0
+        score += max(0.0, 11.0 - float(pos.distance_to(top))) * 3.0
+        score += max(0.0, 11.0 - float(pos.distance_to(bottom))) * 2.5
+        if barracks_pos is not None:
+            score += max(0.0, 8.0 - float(pos.distance_to(barracks_pos))) * 1.0
+        score += max(0.0, 3.5 - abs(float(edge_depth) - 2.25)) * 4.0
+        if best is None or score > best[0]:
+            best = (float(score), pos)
+    return best[1] if best is not None else None
 
 
 def _our_natural(bot) -> Point2 | None:
@@ -205,14 +301,16 @@ def derive_map_control_intel(
     nat_enemy = _enemy_combat_near(bot, center=nat, radius=18.0)
     nat_enemy_power = _enemy_power(nat_enemy)
 
-    nat_taken = False
-    for th in list(getattr(bot, "townhalls", []) or []):
-        try:
-            if float(th.distance_to(nat)) <= 8.0:
-                nat_taken = True
-                break
-        except Exception:
-            continue
+    our_bases = awareness.mem.get(K("intel", "our_bases", "registry"), now=now, default={}) or {}
+    if not isinstance(our_bases, dict):
+        our_bases = {}
+    nat_entry = dict(our_bases.get("NATURAL", {})) if isinstance(our_bases.get("NATURAL", {}), dict) else {}
+    nat_state = str(nat_entry.get("state", "PLANNED") or "PLANNED").upper()
+    nat_current_pos = _point_from_payload(nat_entry.get("current_pos"))
+    nat_owned = bool(nat_entry.get("owned", False) or nat_entry.get("townhall_tag"))
+    nat_flying = bool(nat_entry.get("is_flying", False))
+    nat_taken = bool(nat_state in {"ESTABLISHED", "LANDED_UNSAFE", "SECURING"} and not nat_flying)
+    nat_offsite = bool(nat_owned and not nat_taken)
 
     enemy_build_snapshot = awareness.mem.get(K("enemy", "build", "snapshot"), now=now, default={}) or {}
     if not isinstance(enemy_build_snapshot, dict):
@@ -224,6 +322,9 @@ def derive_map_control_intel(
         int(bases_now) < 2
         and int(enemy_bases_visible) >= int(cfg.enemy_macro_lead_visible_bases)
         and int(enemy_base_gap) >= int(cfg.enemy_macro_lead_gap)
+    )
+    delayed_natural_alarm = bool(
+        awareness.mem.get(K("strategy", "parity", "alarms", "delayed_natural"), now=now, default=False)
     )
 
     rush_state = str(awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
@@ -243,6 +344,25 @@ def derive_map_control_intel(
     own_total_power = _own_total_power(bot)
     own_main_power = _own_power_near(bot, center=bot.start_location, radius=18.0)
     own_nat_power = _own_power_near(bot, center=nat, radius=16.0)
+    own_nat_bunker_count = 0
+    own_nat_tank_count = 0
+    for struct in list(getattr(bot, "structures", []) or []):
+        try:
+            if float(struct.distance_to(nat)) > 12.0:
+                continue
+            if struct.type_id == U.BUNKER and bool(getattr(struct, "is_ready", False)):
+                own_nat_bunker_count += 1
+        except Exception:
+            continue
+    for unit in list(getattr(bot, "units", []) or []):
+        try:
+            if float(unit.distance_to(nat)) > 13.0:
+                continue
+            if unit.type_id in {U.SIEGETANK, U.SIEGETANKSIEGED} and bool(getattr(unit, "is_ready", False)):
+                own_nat_tank_count += 1
+        except Exception:
+            continue
+    fortified = bool(own_nat_bunker_count > 0 or own_nat_tank_count > 0 or own_nat_power >= 7.5)
     no_direct_pressure = bool(not main_threat_active and len(main_enemy) <= 0 and int(attention.combat.primary_enemy_count) <= 0)
 
     nat_scan_t = float(awareness.mem.get(K("intel", "scan", "by_label", "enemy_natural", "last_t"), now=now, default=0.0) or 0.0)
@@ -282,8 +402,21 @@ def derive_map_control_intel(
 
     defer_reason = ""
     should_secure = False
+    safe_to_land = False
     if nat_taken:
         defer_reason = "nat_taken"
+    elif bool(nat_offsite) and bool(no_direct_pressure):
+        if float(own_total_power) < max(4.0, float(cfg.min_total_power) - 2.0):
+            defer_reason = "offsite_nat_army_too_small"
+        elif float(own_main_power) < max(2.0, float(cfg.min_main_power) - 1.0):
+            defer_reason = "offsite_nat_main_hold_too_thin"
+        elif float(presence_nat_side_power) > min(float(cfg.max_enemy_presence_power_at_nat), 1.2):
+            defer_reason = "offsite_nat_enemy_presence"
+        elif float(nat_enemy_power) > min(float(cfg.max_enemy_power_at_nat), 1.2):
+            defer_reason = "offsite_nat_enemy_controls_nat"
+        else:
+            should_secure = True
+            defer_reason = "recover_offsite_nat"
     elif not bool(rush_recent or had_rush_context or enemy_macro_lead_visible):
         defer_reason = "no_expand_context"
     elif not no_direct_pressure:
@@ -302,6 +435,20 @@ def derive_map_control_intel(
         else:
             should_secure = True
             defer_reason = "enemy_macro_lead_secure_nat"
+    elif bool(delayed_natural_alarm):
+        if float(clear_for) < float(cfg.enemy_macro_lead_clear_s):
+            defer_reason = "delayed_nat_pressure_not_clear"
+        elif float(own_total_power) < float(cfg.delayed_natural_min_total_power):
+            defer_reason = "delayed_nat_army_too_small"
+        elif float(own_main_power) < float(cfg.delayed_natural_min_main_power):
+            defer_reason = "delayed_nat_main_hold_too_thin"
+        elif float(presence_nat_side_power) > float(cfg.delayed_natural_max_enemy_presence_power_at_nat):
+            defer_reason = "delayed_nat_enemy_presence"
+        elif float(nat_enemy_power) > float(cfg.delayed_natural_max_enemy_power_at_nat):
+            defer_reason = "delayed_nat_enemy_controls_nat"
+        else:
+            should_secure = True
+            defer_reason = "delayed_nat_alarm_secure_nat"
     else:
         if float(clear_for) < float(cfg.release_clear_s):
             defer_reason = "pressure_not_clear_long_enough"
@@ -316,6 +463,25 @@ def derive_map_control_intel(
         else:
             should_secure = True
             defer_reason = "commit_lowground"
+    if bool(nat_taken):
+        safe_to_land = True
+    elif bool(should_secure):
+        nat_clear_to_land = bool(
+            float(nat_enemy_power) <= min(float(cfg.max_enemy_power_at_nat), 1.1)
+            and float(presence_nat_side_power) <= min(float(cfg.max_enemy_presence_power_at_nat), 1.0)
+            and bool(no_direct_pressure)
+        )
+        # Offsite naturals need a way to break the bunker/tank -> land deadlock.
+        safe_to_land = bool(
+            nat_clear_to_land
+            and (
+                fortified
+                or bool(nat_offsite)
+            )
+        )
+
+    if nat_offsite and not bool(safe_to_land) and bool(should_secure):
+        defer_reason = "secure_before_landing"
 
     payload = {
         "updated_at": float(now),
@@ -325,10 +491,15 @@ def derive_map_control_intel(
         "had_rush_context": bool(had_rush_context),
         "clear_for": float(clear_for),
         "nat_taken": bool(nat_taken),
+        "nat_owned": bool(nat_owned),
+        "nat_offsite": bool(nat_offsite),
+        "nat_state": str(nat_state),
+        "nat_current_pos": _point_payload(nat_current_pos),
         "bases_now": int(bases_now),
         "enemy_bases_visible": int(enemy_bases_visible),
         "enemy_base_gap": int(enemy_base_gap),
         "enemy_macro_lead_visible": bool(enemy_macro_lead_visible),
+        "delayed_natural_alarm": bool(delayed_natural_alarm),
         "main_under_pressure": bool(not no_direct_pressure),
         "main_threat_active": bool(main_threat_active),
         "enemy_main_count": int(len(main_enemy)),
@@ -340,7 +511,11 @@ def derive_map_control_intel(
         "own_total_power": float(round(float(own_total_power), 3)),
         "own_main_power": float(round(float(own_main_power), 3)),
         "own_nat_power": float(round(float(own_nat_power), 3)),
+        "fortified": bool(fortified),
+        "own_nat_bunker_count": int(own_nat_bunker_count),
+        "own_nat_tank_count": int(own_nat_tank_count),
         "should_secure": bool(should_secure),
+        "safe_to_land": bool(safe_to_land),
         "defer_reason": str(defer_reason),
         "need_refresh": bool(refresh_label),
         "refresh_label": str(refresh_label),
@@ -349,6 +524,7 @@ def derive_map_control_intel(
         "target": _point_payload(nat),
         "staging": _point_payload(staging_pos),
         "hold": _point_payload(hold_pos),
+        "main_ramp_bunker_pos": _point_payload(_main_ramp_bunker_target(bot)),
     }
     awareness.mem.set(
         K("intel", "map_control", "our_nat", "snapshot"),
@@ -363,8 +539,27 @@ def derive_map_control_intel(
         ttl=float(cfg.ttl_s),
     )
     awareness.mem.set(
+        K("intel", "map_control", "our_nat", "safe_to_land"),
+        value=bool(safe_to_land),
+        now=now,
+        ttl=float(cfg.ttl_s),
+    )
+    if nat_entry:
+        nat_entry["safe_to_land"] = bool(safe_to_land)
+        nat_entry["safe_to_mine"] = bool(nat_taken or safe_to_land)
+        nat_entry["fortified"] = bool(fortified)
+        nat_entry["updated_at"] = float(now)
+        our_bases["NATURAL"] = dict(nat_entry)
+        awareness.mem.set(K("intel", "our_bases", "registry"), value=dict(our_bases), now=now, ttl=8.0)
+    awareness.mem.set(
         K("intel", "map_control", "our_nat", "last_update_t"),
         value=float(now),
         now=now,
         ttl=None,
+    )
+    awareness.mem.set(
+        K("intel", "placements", "main_ramp_bunker"),
+        value=_point_payload(_main_ramp_bunker_target(bot)),
+        now=now,
+        ttl=float(cfg.ttl_s),
     )

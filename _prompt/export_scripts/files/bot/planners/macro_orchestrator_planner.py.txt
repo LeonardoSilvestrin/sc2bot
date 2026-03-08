@@ -98,9 +98,9 @@ class MacroOrchestratorPlanner(BasePlanner):
     ahead_expand_min_army_supply: float = 24.0
     rush_army_dump_minerals: int = 500
     aggression_army_dump_minerals: int = 900
-    rush_natural_release_clear_s: float = 16.0
-    rush_natural_release_min_army_supply: float = 14.0
-    rush_natural_release_min_tanks: int = 1
+    rush_natural_release_clear_s: float = 4.0
+    rush_natural_release_min_army_supply: float = 6.0
+    rush_natural_release_min_tanks: int = 0
     rush_natural_release_bunker_ok: bool = True
     enemy_macro_catchup_visible_bases: int = 3
     enemy_macro_catchup_base_gap: int = 2
@@ -188,12 +188,6 @@ class MacroOrchestratorPlanner(BasePlanner):
                 for pos, radius in probes:
                     if int(_hostile_count_near(pos, float(radius))) > 0:
                         return True
-        except Exception:
-            pass
-        try:
-            nat = bot.mediator.get_own_nat
-            if nat is not None and int(_hostile_count_near(nat, 8.5)) >= 2:
-                return True
         except Exception:
             pass
         return False
@@ -591,6 +585,8 @@ class MacroOrchestratorPlanner(BasePlanner):
         emergency_dump: bool,
         ahead_expand_push: bool,
         rush_army_dump: bool,
+        enemy_macro_catchup: bool = False,
+        rush_natural_release: bool = False,
     ) -> tuple[list[str], dict[str, float], str]:
         minerals = int(attention.economy.minerals)
         gas = int(attention.economy.gas)
@@ -670,8 +666,12 @@ class MacroOrchestratorPlanner(BasePlanner):
         if rush_army_dump:
             scores["spawn"] += 0.75
             scores["production"] += 0.12
-            scores["expand"] -= 0.65
+            if not rush_natural_release:
+                scores["expand"] -= 0.65
             scores["workers"] -= 0.20
+        if rush_natural_release and enable_expansion:
+            scores["expand"] += 0.60
+            scores["spawn"] -= 0.20
         rush_tier = str(awareness.mem.get(K("enemy", "rush", "tier"), now=now, default="NONE") or "NONE").upper()
         if rush_tier in {"HEAVY", "EXTREME"}:
             scores["production"] += 0.26
@@ -687,6 +687,10 @@ class MacroOrchestratorPlanner(BasePlanner):
             scores["expand"] -= 0.35
             scores["spawn"] += 0.12
             scores["production"] += 0.05
+
+        if enemy_macro_catchup and enable_expansion:
+            scores["expand"] += 0.70
+            scores["spawn"] -= 0.25
 
         if enable_expansion and expand_need > 0 and minerals >= int(self.lane_watchdog_expand_minerals):
             if no_expand_s >= float(self.lane_watchdog_expand_no_progress_s):
@@ -734,7 +738,7 @@ class MacroOrchestratorPlanner(BasePlanner):
         return bool(
             int(attention.combat.primary_urgency) >= int(self.pressure_urgency_high)
             or int(attention.combat.primary_enemy_count) >= int(self.pressure_enemy_count_high)
-            or (rush_is_early and rush_state in {"SUSPECTED", "CONFIRMED", "HOLDING"})
+            or (rush_is_early and rush_state in {"SUSPECTED", "CONFIRMED"})
             or (
                 aggression_state in {"AGGRESSION", "RUSH"}
                 and int(attention.combat.primary_urgency) >= int(self.aggression_urgency_high)
@@ -868,7 +872,14 @@ class MacroOrchestratorPlanner(BasePlanner):
 
         parity_overall = str(awareness.mem.get(K("strategy", "parity", "overall"), now=now, default="EVEN") or "EVEN").upper()
         parity_econ = str(awareness.mem.get(K("strategy", "parity", "econ"), now=now, default="EVEN") or "EVEN").upper()
+        parity_army = str(awareness.mem.get(K("strategy", "parity", "army"), now=now, default="EVEN") or "EVEN").upper()
+        parity_state = str(
+            awareness.mem.get(K("strategy", "parity", "state"), now=now, default="TRADEOFF_MIXED") or "TRADEOFF_MIXED"
+        ).upper()
         parity_expand_bias = int(awareness.mem.get(K("strategy", "parity", "expand_bias"), now=now, default=0) or 0)
+        parity_army_behind = float(
+            awareness.mem.get(K("strategy", "parity", "severity", "army_behind"), now=now, default=0.0) or 0.0
+        )
         try:
             army_supply = float(getattr(bot, "supply_army", 0.0) or 0.0)
         except Exception:
@@ -974,6 +985,30 @@ class MacroOrchestratorPlanner(BasePlanner):
         nat_should_secure = bool(
             awareness.mem.get(K("intel", "map_control", "our_nat", "should_secure"), now=now, default=False)
         )
+        nat_safe_to_land = bool(
+            awareness.mem.get(K("intel", "map_control", "our_nat", "safe_to_land"), now=now, default=False)
+        )
+        our_bases = awareness.mem.get(K("intel", "our_bases", "registry"), now=now, default={}) or {}
+        if not isinstance(our_bases, dict):
+            our_bases = {}
+        nat_base = dict(our_bases.get("NATURAL", {})) if isinstance(our_bases.get("NATURAL", {}), dict) else {}
+        nat_owned = bool(nat_base.get("owned", False) or nat_base.get("townhall_tag"))
+        nat_state = str(nat_base.get("state", "") or "").upper()
+        nat_offsite = bool(nat_owned and nat_state in {"BUILDING_OFFSITE", "FLYING_TO_SITE", "LANDED_UNSAFE"})
+        nat_is_mining = bool(nat_base.get("is_mining", False))
+        nat_snapshot = awareness.mem.get(K("intel", "map_control", "our_nat", "snapshot"), now=now, default={}) or {}
+        if not isinstance(nat_snapshot, dict):
+            nat_snapshot = {}
+        enemy_macro_lead_visible = bool(nat_snapshot.get("enemy_macro_lead_visible", False))
+        delayed_natural_alarm = bool(nat_snapshot.get("delayed_natural_alarm", False))
+        should_expand_offsite = bool(
+            delayed_natural_alarm
+            or enemy_macro_lead_visible
+            or parity_overall == "BEHIND"
+            or parity_army == "BEHIND"
+            or parity_state in {"BEHIND_BOTH", "BEHIND_ARMY_AHEAD_ECON"}
+            or parity_army_behind >= 0.32
+        )
         enemy_macro_catchup_expand = bool(
             int(bases_now) < 2
             and int(enemy_bases_visible) >= int(self.enemy_macro_catchup_visible_bases)
@@ -995,13 +1030,13 @@ class MacroOrchestratorPlanner(BasePlanner):
         )
         rush_natural_release = bool(
             int(bases_now) < 2
-            and (bool(attention.macro.opening_done) or bool(nat_should_secure))
             and not bool(pressure_high)
+            and (bool(attention.macro.opening_done) or bool(nat_should_secure))
             and float(rush_clear_for) >= float(self.rush_natural_release_clear_s)
             and (
                 int(tanks_ready) >= int(self.rush_natural_release_min_tanks)
                 or float(army_supply_now) >= float(self.rush_natural_release_min_army_supply)
-                or (bool(self.rush_natural_release_bunker_ok) and int(bunkers_ready) > 0)
+                or (bool(self.rush_natural_release_bunker_ok) and int(bunkers_ready) > 0 and float(army_supply_now) >= 6.0)
             )
         )
 
@@ -1061,6 +1096,48 @@ class MacroOrchestratorPlanner(BasePlanner):
             enable_expansion = True
             expand_to = max(2, int(expand_to))
 
+        natural_establish_critical = bool(
+            int(bases_now) < 2
+            and bool(nat_should_secure or delayed_natural_alarm or enemy_macro_lead_visible)
+            and (bool(nat_offsite) or not bool(nat_owned) or not bool(nat_is_mining))
+            and not bool(rush_defense_gate_active and not bool(rush_natural_release) and int(attention.combat.primary_enemy_count) > 0)
+        )
+        if natural_establish_critical:
+            enable_expansion = True
+            expand_to = max(2, int(expand_to))
+            enable_production = False
+
+        if bool(nat_offsite) and not bool(rush_defense_gate_active and int(attention.combat.primary_enemy_count) > 0):
+            enable_expansion = True
+            expand_to = min(int(expand_to), 2)
+
+        expand_target_label = ""
+        expand_build_mode = "DIRECT"
+        if int(expand_to) >= 2 and int(bases_now) < 2:
+            expand_target_label = "NATURAL"
+            expand_build_mode = "OFFSITE" if bool(should_expand_offsite) else "DIRECT"
+            if bool(nat_offsite):
+                enable_expansion = False
+        elif int(expand_to) >= 3 and (bool(nat_offsite) or nat_state != "ESTABLISHED"):
+            enable_expansion = False
+            expand_to = min(int(expand_to), 2)
+        offsite_natural_bootstrap = bool(
+            int(bases_now) < 2
+            and bool(should_expand_offsite)
+            and not bool(nat_offsite)
+            and not bool(nat_owned)
+            and (
+                bool(enemy_at_door)
+                or bool(rush_hard_active)
+                or bool(rush_defense_gate_active)
+            )
+        )
+        if offsite_natural_bootstrap:
+            expand_target_label = "NATURAL"
+            expand_build_mode = "OFFSITE"
+            enable_expansion = True
+            expand_to = max(2, int(expand_to))
+
         lane_order, lane_scores, lane_top = self._lane_order(
             awareness=awareness,
             attention=attention,
@@ -1079,6 +1156,8 @@ class MacroOrchestratorPlanner(BasePlanner):
             emergency_dump=bool(emergency_dump),
             ahead_expand_push=bool(ahead_expand_push),
             rush_army_dump=bool(rush_army_dump),
+            enemy_macro_catchup=bool(enemy_macro_catchup_expand),
+            rush_natural_release=bool(rush_natural_release),
         )
         if enemy_at_door:
             preferred = ["spawn", "supply", "workers", "gas"]
@@ -1137,6 +1216,9 @@ class MacroOrchestratorPlanner(BasePlanner):
         awareness.mem.set(K("macro", "exec", "enable_production"), value=bool(enable_production), now=now, ttl=ttl)
         awareness.mem.set(K("macro", "exec", "enable_expansion"), value=bool(enable_expansion), now=now, ttl=ttl)
         awareness.mem.set(K("macro", "exec", "expand_to"), value=int(expand_to), now=now, ttl=ttl)
+        awareness.mem.set(K("macro", "exec", "expand_target_label"), value=str(expand_target_label), now=now, ttl=ttl)
+        awareness.mem.set(K("macro", "exec", "expand_build_mode"), value=str(expand_build_mode), now=now, ttl=ttl)
+        awareness.mem.set(K("macro", "exec", "expand_safe_to_land"), value=bool(nat_safe_to_land), now=now, ttl=ttl)
         awareness.mem.set(K("macro", "exec", "lane_order"), value=list(lane_order), now=now, ttl=ttl)
         awareness.mem.set(K("macro", "exec", "lane_scores"), value=dict(lane_scores), now=now, ttl=ttl)
         awareness.mem.set(K("macro", "exec", "lane_selected"), value=str(lane_top), now=now, ttl=ttl)
@@ -1170,6 +1252,9 @@ class MacroOrchestratorPlanner(BasePlanner):
                 "enable_production": bool(enable_production),
                 "enable_expansion": bool(enable_expansion),
                 "expand_to": int(expand_to),
+                "expand_target_label": str(expand_target_label),
+                "expand_build_mode": str(expand_build_mode),
+                "expand_safe_to_land": bool(nat_safe_to_land),
                 "ahead_expand_push": bool(ahead_expand_push),
                 "lane_order": list(lane_order),
                 "lane_scores": dict(lane_scores),
@@ -1191,6 +1276,15 @@ class MacroOrchestratorPlanner(BasePlanner):
         prod_idle = int(attention.macro.prod_structures_idle)
         pressure_high = self._pressure_high(awareness=awareness, attention=attention, now=now)
         emergency_dump = bool(awareness.mem.get(K("macro", "exec", "emergency_mineral_dump"), now=now, default=False))
+        nat_should_secure = bool(
+            awareness.mem.get(K("intel", "map_control", "our_nat", "should_secure"), now=now, default=False)
+        )
+        our_bases = awareness.mem.get(K("intel", "our_bases", "registry"), now=now, default={}) or {}
+        if not isinstance(our_bases, dict):
+            our_bases = {}
+        nat_base = dict(our_bases.get("NATURAL", {})) if isinstance(our_bases.get("NATURAL", {}), dict) else {}
+        nat_owned = bool(nat_base.get("owned", False) or nat_base.get("townhall_tag"))
+        nat_is_mining = bool(nat_base.get("is_mining", False))
         rush_state = str(awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
         desired_signals = awareness.mem.get(K("macro", "desired", "signals"), now=now, default={}) or {}
         if not isinstance(desired_signals, dict):
@@ -1206,6 +1300,11 @@ class MacroOrchestratorPlanner(BasePlanner):
                 float(lag_prod) >= float(self.tech_pause_prod_lag_threshold)
                 or float(lag_army) >= float(self.tech_pause_army_lag_threshold)
             )
+        )
+        tech_pause_for_expand = bool(
+            int(attention.macro.bases_total) < 2
+            and bool(nat_should_secure)
+            and (not bool(nat_owned) or not bool(nat_is_mining))
         )
         completed_upgrades = set(getattr(getattr(bot, "state", None), "upgrades", set()) or set())
         priority_upgrade_pending = False
@@ -1232,6 +1331,7 @@ class MacroOrchestratorPlanner(BasePlanner):
             and (not emergency_dump)
             and (not rush_tech_locked)
             and (not tech_pause_for_army)
+            and (not tech_pause_for_expand)
         )
         if pressure_high:
             reason = "paused_pressure_high"
@@ -1241,6 +1341,8 @@ class MacroOrchestratorPlanner(BasePlanner):
             reason = "paused_rush_defense_active"
         elif tech_pause_for_army:
             reason = "paused_army_production_lag"
+        elif tech_pause_for_expand:
+            reason = "paused_until_natural_established"
         elif opening_active:
             reason = "paused_opening_active"
         elif not (bool(upgrades) or bool(structures)):

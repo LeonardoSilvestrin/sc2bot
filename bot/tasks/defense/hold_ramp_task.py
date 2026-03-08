@@ -19,6 +19,8 @@ class HoldRampTask(BaseTask):
     threat_pos: Point2 | None = None
     log: DevLogger | None = None
 
+    _sticky: dict = None  # type: ignore[assignment]
+
     def __init__(
         self,
         *,
@@ -32,6 +34,7 @@ class HoldRampTask(BaseTask):
         self.base_pos = base_pos
         self.threat_pos = threat_pos
         self.log = log
+        self._sticky = {}
 
     def _resolve_base_pos(self, bot) -> Point2:
         th = bot.townhalls.find_by_tag(int(self.base_tag))
@@ -63,13 +66,32 @@ class HoldRampTask(BaseTask):
     def _wall_targets(bot, *, depots: list[Point2], barracks_pos: Point2 | None) -> list:
         out = []
         wall_types = {U.SUPPLYDEPOT, U.SUPPLYDEPOTLOWERED, U.BARRACKS, U.BARRACKSREACTOR, U.BARRACKSTECHLAB, U.BUNKER}
+
+        # Localiza o barracks real na wall para detectar reactor/techlab anexados a ele
+        real_barracks_pos: Point2 | None = None
+        for unit in list(getattr(bot, "structures", []) or []):
+            try:
+                tid = getattr(unit, "type_id", None)
+                if tid not in {U.BARRACKS, U.BARRACKSREACTOR, U.BARRACKSTECHLAB}:
+                    continue
+                on_depot = any(float(unit.distance_to(pos)) <= 1.8 for pos in depots)
+                on_ramp = barracks_pos is not None and float(unit.distance_to(barracks_pos)) <= 2.5
+                if on_depot or on_ramp:
+                    real_barracks_pos = unit.position
+                    break
+            except Exception:
+                continue
+
         for unit in list(getattr(bot, "structures", []) or []):
             try:
                 if getattr(unit, "type_id", None) not in wall_types:
                     continue
                 on_wall = any(float(unit.distance_to(pos)) <= 1.8 for pos in depots)
-                if (not on_wall) and barracks_pos is not None:
+                if not on_wall and barracks_pos is not None:
                     on_wall = float(unit.distance_to(barracks_pos)) <= 2.5
+                # Reactor/techlab ficam a ~2.5 tiles do centro do barracks — usa posição real
+                if not on_wall and real_barracks_pos is not None:
+                    on_wall = float(unit.distance_to(real_barracks_pos)) <= 3.0
                 if not on_wall and getattr(unit, "type_id", None) != U.BUNKER:
                     continue
                 out.append(unit)
@@ -120,12 +142,25 @@ class HoldRampTask(BaseTask):
     @staticmethod
     def _bunkers_near_wall(bot, *, top_center: Point2) -> list:
         out = []
-        for unit in list(getattr(bot, "structures", []) or []):
-            try:
-                if getattr(unit, "type_id", None) == U.BUNKER and float(unit.distance_to(top_center)) <= 8.0:
-                    out.append(unit)
-            except Exception:
-                continue
+        seen: set[int] = set()
+        # Busca perto do top_center (raio 16) e também perto da start_location (raio 20)
+        # para cobrir mapas onde o bunker fica perto dos depots no bottom da rampa
+        search_centers = [top_center]
+        try:
+            search_centers.append(bot.start_location)
+        except Exception:
+            pass
+        for center in search_centers:
+            for unit in list(getattr(bot, "structures", []) or []):
+                try:
+                    tag = int(getattr(unit, "tag", -1) or -1)
+                    if tag in seen:
+                        continue
+                    if getattr(unit, "type_id", None) == U.BUNKER and float(unit.distance_to(center)) <= 20.0:
+                        seen.add(tag)
+                        out.append(unit)
+                except Exception:
+                    continue
         return out
 
     @staticmethod
@@ -161,6 +196,36 @@ class HoldRampTask(BaseTask):
         marine_idx = 0
         enemy_count = int(enemy_wall.amount)
 
+        # Distribui SCVs entre alvos de reparo com sticky — evita troca de alvo a cada tick
+        repair_tag_map = {int(getattr(t, "tag", -1)): t for t in repair_targets}
+        scvs = [u for u in units if u.type_id == U.SCV]
+        scv_repair_assign: dict[int, object] = {}
+        repair_load: dict[int, int] = {}
+        for scv in scvs:
+            stag = int(scv.tag)
+            prev = int(self._sticky.get(stag, -1))
+            if prev in repair_tag_map:
+                scv_repair_assign[stag] = repair_tag_map[prev]
+                repair_load[prev] = repair_load.get(prev, 0) + 1
+            else:
+                # Escolhe alvo com menor carga
+                chosen = None
+                for rt in repair_targets:
+                    rtag = int(getattr(rt, "tag", -1))
+                    if repair_load.get(rtag, 0) < 2:
+                        chosen = rt
+                        break
+                if chosen is None and repair_targets:
+                    chosen = repair_targets[0]
+                scv_repair_assign[stag] = chosen
+                if chosen is not None:
+                    ctag = int(getattr(chosen, "tag", -1))
+                    self._sticky[stag] = ctag
+                    repair_load[ctag] = repair_load.get(ctag, 0) + 1
+        # Limpa sticky de SCVs que saíram
+        live_tags = {int(u.tag) for u in scvs}
+        self._sticky = {k: v for k, v in self._sticky.items() if k in live_tags}
+
         for unit in units:
             if unit.type_id == U.SCV:
                 close_enemy = None
@@ -179,12 +244,23 @@ class HoldRampTask(BaseTask):
                             continue
                     except Exception:
                         pass
-                target = repair_targets[0] if repair_targets else None
+                target = scv_repair_assign.get(int(unit.tag))
                 if target is not None:
-                    issued = self._issue_repair(unit, target) or issued
+                    # Só emite repair se idle ou não está já reparando
+                    repairing = False
+                    try:
+                        for order in list(getattr(unit, "orders", []) or []):
+                            name = str(getattr(getattr(order, "ability", None), "name", "") or "").upper()
+                            if "REPAIR" in name:
+                                repairing = True
+                                break
+                    except Exception:
+                        pass
+                    if not repairing:
+                        issued = self._issue_repair(unit, target) or issued
                     continue
                 hold = top_center.towards(base_pos, 1.8)
-                if float(unit.distance_to(hold)) > 1.5:
+                if float(unit.distance_to(hold)) > 1.5 and not bool(getattr(unit, "is_moving", False)):
                     unit.move(hold)
                     issued = True
                 elif close_enemy is not None:
@@ -196,28 +272,38 @@ class HoldRampTask(BaseTask):
                 target = enemy_wall.closest_to(unit)
                 slot = marine_slots[marine_idx % len(marine_slots)] if marine_slots else top_center
                 marine_idx += 1
-                close_to_slot = False
-                try:
-                    close_to_slot = float(unit.distance_to(slot)) <= 1.75
-                except Exception:
-                    close_to_slot = False
-                bunker_ok = bool(bunkers and float(unit.distance_to(target)) <= 5.5 and close_to_slot and enemy_count <= 6)
-                if bunker_ok:
+                # Se há bunker disponível, entra direto — prioridade máxima
+                if bunkers:
                     bunker = min(bunkers, key=lambda b: float(unit.distance_to(b)))
-                    if float(unit.distance_to(bunker)) <= 2.0:
-                        unit(AbilityId.SMART, bunker)
-                    else:
-                        unit.move(bunker.position)
-                    issued = True
+                    dist_to_bunker = float(unit.distance_to(bunker))
+                    # Emite SMART (load) sempre que não está já dentro ou carregando
+                    already_loading = False
+                    try:
+                        for order in list(getattr(unit, "orders", []) or []):
+                            ab = getattr(getattr(order, "ability", None), "id", None)
+                            if ab is not None and "LOAD" in str(ab).upper():
+                                already_loading = True
+                                break
+                    except Exception:
+                        pass
+                    if not already_loading:
+                        if dist_to_bunker <= 6.0:
+                            unit(AbilityId.SMART, bunker)
+                        else:
+                            unit.move(bunker.position)
+                        issued = True
                     continue
                 try:
                     if float(unit.distance_to(slot)) > 1.5:
-                        unit.move(slot)
+                        if not bool(getattr(unit, "is_moving", False)):
+                            unit.move(slot)
+                            issued = True
                     else:
                         unit.attack(target)
+                        issued = True
                 except Exception:
                     unit.attack(target)
-                issued = True
+                    issued = True
                 continue
 
             target = enemy_wall.closest_to(unit)

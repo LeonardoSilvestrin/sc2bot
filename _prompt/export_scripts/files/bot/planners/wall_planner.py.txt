@@ -59,7 +59,7 @@ class WallPlanner:
             for info in nat_two_by_two.values()
         )
         has_wall_three_by_three = any(
-            isinstance(info, dict) and bool(info.get("is_wall", False)) and not bool(info.get("bunker", False))
+            isinstance(info, dict) and bool(info.get("is_wall", False))
             for info in nat_three_by_three.values()
         )
         return bool(has_wall_depots or has_wall_three_by_three)

@@ -96,9 +96,9 @@ class MacroOrchestratorPlanner(BasePlanner):
     ahead_expand_min_army_supply: float = 24.0
     rush_army_dump_minerals: int = 500
     aggression_army_dump_minerals: int = 900
-    rush_natural_release_clear_s: float = 16.0
-    rush_natural_release_min_army_supply: float = 14.0
-    rush_natural_release_min_tanks: int = 1
+    rush_natural_release_clear_s: float = 4.0
+    rush_natural_release_min_army_supply: float = 6.0
+    rush_natural_release_min_tanks: int = 0
     rush_natural_release_bunker_ok: bool = True
     enemy_macro_catchup_visible_bases: int = 3
     enemy_macro_catchup_base_gap: int = 2
@@ -584,6 +584,7 @@ class MacroOrchestratorPlanner(BasePlanner):
         ahead_expand_push: bool,
         rush_army_dump: bool,
         enemy_macro_catchup: bool = False,
+        rush_natural_release: bool = False,
     ) -> tuple[list[str], dict[str, float], str]:
         minerals = int(attention.economy.minerals)
         gas = int(attention.economy.gas)
@@ -663,8 +664,12 @@ class MacroOrchestratorPlanner(BasePlanner):
         if rush_army_dump:
             scores["spawn"] += 0.75
             scores["production"] += 0.12
-            scores["expand"] -= 0.65
+            if not rush_natural_release:
+                scores["expand"] -= 0.65
             scores["workers"] -= 0.20
+        if rush_natural_release and enable_expansion:
+            scores["expand"] += 0.60
+            scores["spawn"] -= 0.20
         rush_tier = str(awareness.mem.get(K("enemy", "rush", "tier"), now=now, default="NONE") or "NONE").upper()
         if rush_tier in {"HEAVY", "EXTREME"}:
             scores["production"] += 0.26
@@ -731,7 +736,7 @@ class MacroOrchestratorPlanner(BasePlanner):
         return bool(
             int(attention.combat.primary_urgency) >= int(self.pressure_urgency_high)
             or int(attention.combat.primary_enemy_count) >= int(self.pressure_enemy_count_high)
-            or (rush_is_early and rush_state in {"SUSPECTED", "CONFIRMED", "HOLDING"})
+            or (rush_is_early and rush_state in {"SUSPECTED", "CONFIRMED"})
             or (
                 aggression_state in {"AGGRESSION", "RUSH"}
                 and int(attention.combat.primary_urgency) >= int(self.aggression_urgency_high)
@@ -1023,13 +1028,13 @@ class MacroOrchestratorPlanner(BasePlanner):
         )
         rush_natural_release = bool(
             int(bases_now) < 2
-            and (bool(attention.macro.opening_done) or bool(nat_should_secure))
             and not bool(pressure_high)
+            and (bool(attention.macro.opening_done) or bool(nat_should_secure))
             and float(rush_clear_for) >= float(self.rush_natural_release_clear_s)
             and (
                 int(tanks_ready) >= int(self.rush_natural_release_min_tanks)
                 or float(army_supply_now) >= float(self.rush_natural_release_min_army_supply)
-                or (bool(self.rush_natural_release_bunker_ok) and int(bunkers_ready) > 0)
+                or (bool(self.rush_natural_release_bunker_ok) and int(bunkers_ready) > 0 and float(army_supply_now) >= 6.0)
             )
         )
 
@@ -1093,13 +1098,14 @@ class MacroOrchestratorPlanner(BasePlanner):
             int(bases_now) < 2
             and bool(nat_should_secure or delayed_natural_alarm or enemy_macro_lead_visible)
             and (bool(nat_offsite) or not bool(nat_owned) or not bool(nat_is_mining))
+            and not bool(rush_defense_gate_active and not bool(rush_natural_release) and int(attention.combat.primary_enemy_count) > 0)
         )
         if natural_establish_critical:
             enable_expansion = True
             expand_to = max(2, int(expand_to))
             enable_production = False
 
-        if bool(nat_offsite):
+        if bool(nat_offsite) and not bool(rush_defense_gate_active and int(attention.combat.primary_enemy_count) > 0):
             enable_expansion = True
             expand_to = min(int(expand_to), 2)
 
@@ -1110,7 +1116,7 @@ class MacroOrchestratorPlanner(BasePlanner):
             expand_build_mode = "OFFSITE" if bool(should_expand_offsite) else "DIRECT"
             if bool(nat_offsite):
                 enable_expansion = False
-        elif int(expand_to) >= 3 and (bool(nat_offsite) or not bool(nat_is_mining)):
+        elif int(expand_to) >= 3 and (bool(nat_offsite) or nat_state != "ESTABLISHED"):
             enable_expansion = False
             expand_to = min(int(expand_to), 2)
         offsite_natural_bootstrap = bool(
@@ -1149,6 +1155,7 @@ class MacroOrchestratorPlanner(BasePlanner):
             ahead_expand_push=bool(ahead_expand_push),
             rush_army_dump=bool(rush_army_dump),
             enemy_macro_catchup=bool(enemy_macro_catchup_expand),
+            rush_natural_release=bool(rush_natural_release),
         )
         if enemy_at_door:
             preferred = ["spawn", "supply", "workers", "gas"]

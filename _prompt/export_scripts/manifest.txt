@@ -1,7 +1,7 @@
 EXPORT META
-generated_at_utc: 2026-03-07T09:04:17.390732+00:00
+generated_at_utc: 2026-03-08T05:14:20.779563+00:00
 repo_root: C:\Users\Asus\Documents\projetos\sc2bot\ares\ares-sc2-bot-template
-files_total: 107
+files_total: 110
 
 FILES
 - bot/__init__.py -> files/bot/__init__.py.txt
@@ -82,7 +82,10 @@ FILES
 - bot/tasks/defense/defend_task.py -> files/bot/tasks/defense/defend_task.py.txt
 - bot/tasks/defense/defense_bunker_task.py -> files/bot/tasks/defense/defense_bunker_task.py.txt
 - bot/tasks/defense/hold_ramp_task.py -> files/bot/tasks/defense/hold_ramp_task.py.txt
+- bot/tasks/defense/land_base_task.py -> files/bot/tasks/defense/land_base_task.py.txt
+- bot/tasks/defense/lift_natural_task.py -> files/bot/tasks/defense/lift_natural_task.py.txt
 - bot/tasks/defense/maintain_wall_task.py -> files/bot/tasks/defense/maintain_wall_task.py.txt
+- bot/tasks/defense/push_task.py -> files/bot/tasks/defense/push_task.py.txt
 - bot/tasks/defense/scv_defensive_pull_task.py -> files/bot/tasks/defense/scv_defensive_pull_task.py.txt
 - bot/tasks/defense/scv_repair_task.py -> files/bot/tasks/defense/scv_repair_task.py.txt
 - bot/tasks/defense/secure_base_task.py -> files/bot/tasks/defense/secure_base_task.py.txt

@@ -203,6 +203,10 @@ def _state_for_base(*, entry: dict[str, Any], unit, intended_pos: Point2 | None)
         return "BUILDING_OFFSITE" if dist_to_site > 8.0 else "SECURING"
     if dist_to_site <= 8.0:
         return "ESTABLISHED"
+    if dist_to_site > 15.0:
+        # CC is ready but far from intended site (e.g. built at main, not yet flown to natural).
+        # Treat as offsite so the fly-down logic is still triggered.
+        return "BUILDING_OFFSITE"
     return "LANDED_UNSAFE"
 
 

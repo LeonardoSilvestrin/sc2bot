@@ -24,6 +24,8 @@ class GameParityIntelConfig:
     econ_behind_norm: float = 18.0
     econ_ahead_norm: float = 18.0
     parity_state_trigger: float = 0.32
+    delayed_natural_alarm_at_s: float = 300.0
+    delayed_natural_pressure_urgency_high: int = 18
 
 
 _WORKER_TYPES: Tuple[U, ...] = (U.SCV, U.PROBE, U.DRONE)
@@ -174,6 +176,24 @@ def derive_game_parity_intel(
     own_workers = int(attention.economy.workers_total)
     own_bases = int(attention.macro.bases_total)
     own_army_power = float(_army_power_from_mediator_dict(army_dict=own_army_dict))
+    our_bases_registry = awareness.mem.get(K("intel", "our_bases", "registry"), now=now, default={}) or {}
+    if not isinstance(our_bases_registry, dict):
+        our_bases_registry = {}
+    nat_entry = dict(our_bases_registry.get("NATURAL", {})) if isinstance(our_bases_registry.get("NATURAL", {}), dict) else {}
+    nat_state = str(nat_entry.get("state", "PLANNED") or "PLANNED").upper()
+    nat_flying = bool(nat_entry.get("is_flying", False))
+    nat_taken = bool(nat_state in {"ESTABLISHED", "LANDED_UNSAFE", "SECURING"} and not nat_flying)
+    pressure_level = int(awareness.mem.get(K("control", "pressure", "level"), now=now, default=1) or 1)
+    pressure_high = bool(
+        int(pressure_level) >= 3
+        or int(getattr(attention.combat, "primary_urgency", 0) or 0) >= int(cfg.delayed_natural_pressure_urgency_high)
+    )
+    delayed_natural_alarm = bool(
+        float(now) >= float(cfg.delayed_natural_alarm_at_s)
+        and int(own_bases) < 2
+        and not bool(nat_taken)
+        and not bool(pressure_high)
+    )
 
     enemy_workers_seen = int(sum_units(enemy_units, _WORKER_TYPES))
     enemy_bases_seen = int(count_enemy_bases(enemy_structs))
@@ -270,6 +290,8 @@ def derive_game_parity_intel(
     if (rush_is_early and rush_state in {"SUSPECTED", "CONFIRMED", "HOLDING"}) or aggression_state == "AGGRESSION":
         army_bias = max(army_bias, 1)
         expand_bias = 0
+    if delayed_natural_alarm:
+        expand_bias = max(expand_bias, 2)
 
     army_behind_severity = max(0.0, min(1.0, (0.0 - float(army_delta)) / max(1e-6, float(cfg.army_behind_norm))))
     army_ahead_severity = max(0.0, min(1.0, float(army_delta) / max(1e-6, float(cfg.army_ahead_norm))))
@@ -304,6 +326,9 @@ def derive_game_parity_intel(
         "army_bias": int(army_bias),
         "rush_state": str(rush_state),
         "aggression_state": str(aggression_state),
+        "nat_taken": bool(nat_taken),
+        "pressure_high": bool(pressure_high),
+        "delayed_natural_alarm": bool(delayed_natural_alarm),
     }
 
     awareness.mem.set(K("enemy", "parity", "workers_est"), value=float(enemy_workers_est), now=now, ttl=float(cfg.ttl_s))
@@ -340,5 +365,11 @@ def derive_game_parity_intel(
         ttl=float(cfg.ttl_s),
     )
     awareness.mem.set(K("strategy", "parity", "state"), value=str(parity_state), now=now, ttl=float(cfg.ttl_s))
+    awareness.mem.set(
+        K("strategy", "parity", "alarms", "delayed_natural"),
+        value=bool(delayed_natural_alarm),
+        now=now,
+        ttl=float(cfg.ttl_s),
+    )
     awareness.mem.set(K("strategy", "parity", "signals"), value=dict(payload), now=now, ttl=float(cfg.ttl_s))
     awareness.mem.set(K("strategy", "parity", "last_update_t"), value=float(now), now=now, ttl=None)
