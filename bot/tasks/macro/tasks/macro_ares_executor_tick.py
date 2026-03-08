@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from ares.consts import BuildingSize
 from ares.behaviors.macro.auto_supply import AutoSupply
 from ares.behaviors.macro.build_workers import BuildWorkers
 from ares.behaviors.macro.build_structure import BuildStructure
@@ -11,6 +12,7 @@ from ares.behaviors.macro.macro_plan import MacroPlan
 from ares.behaviors.macro.production_controller import ProductionController
 from ares.behaviors.macro.spawn_controller import SpawnController
 from ares.behaviors.macro.upgrade_ccs import UpgradeCCs
+from ares.dicts.structure_to_building_size import STRUCTURE_TO_BUILDING_SIZE
 from sc2.ids.ability_id import AbilityId
 from sc2.ids.unit_typeid import UnitTypeId as U
 from sc2.position import Point2
@@ -34,6 +36,7 @@ class MacroAresExecutorTick(BaseTask):
     _next_apply_at: float = 0.0
     _apply_count: int = 0
     _next_addon_cmd_at: float = 0.0
+    _next_clear_build_sites_at: float = 0.0
 
     def __init__(
         self,
@@ -59,6 +62,7 @@ class MacroAresExecutorTick(BaseTask):
         self._next_apply_at = 0.0
         self._apply_count = 0
         self._next_addon_cmd_at = 0.0
+        self._next_clear_build_sites_at = 0.0
 
     def _army_comp(self, *, now: float):
         raw = self.awareness.mem.get(K("macro", "desired", "army_comp"), now=now, default=None)
@@ -203,6 +207,124 @@ class MacroAresExecutorTick(BaseTask):
         except Exception:
             return None
 
+    @staticmethod
+    def _build_site_radius(structure_id: U) -> float:
+        size = STRUCTURE_TO_BUILDING_SIZE.get(structure_id, BuildingSize.THREE_BY_THREE)
+        if size == BuildingSize.FIVE_BY_FIVE:
+            return 3.4
+        if size == BuildingSize.TWO_BY_TWO:
+            return 1.8
+        return 2.4
+
+    @staticmethod
+    def _is_pathable(bot, pos: Point2 | None) -> bool:
+        if pos is None:
+            return False
+        try:
+            return bool(bot.in_pathing_grid(pos))
+        except Exception:
+            return True
+
+    @staticmethod
+    def _is_builder_worker(unit) -> bool:
+        try:
+            if bool(getattr(unit, "is_constructing", False)):
+                return True
+        except Exception:
+            pass
+        try:
+            for order in list(getattr(unit, "orders", []) or []):
+                name = str(getattr(getattr(order, "ability", None), "name", "") or "").upper()
+                if "BUILD" in name or "REPAIR" in name:
+                    return True
+        except Exception:
+            pass
+        return False
+
+    def _active_macro_build_sites(self, *, now: float) -> list[tuple[U, Point2]]:
+        signals = self.awareness.mem.get(K("macro", "placement", "signals"), now=now, default={}) or {}
+        if not isinstance(signals, dict):
+            return []
+        out: list[tuple[U, Point2]] = []
+        for name, payload in signals.items():
+            structure_id = getattr(U, str(name), None)
+            if structure_id is None:
+                continue
+            point = self._point_from_payload(payload)
+            if point is None:
+                continue
+            out.append((structure_id, point))
+        return out
+
+    def _clear_macro_build_sites(self, *, bot, now: float) -> int:
+        if float(now) < float(self._next_clear_build_sites_at):
+            return 0
+        self._next_clear_build_sites_at = float(now) + 0.35
+
+        try:
+            tracker = dict(bot.mediator.get_building_tracker_dict or {})
+        except Exception:
+            tracker = {}
+        reserved_builder_tags = {int(tag) for tag in tracker.keys()}
+        sites = self._active_macro_build_sites(now=now)
+        if not sites:
+            return 0
+
+        displaced = 0
+        for structure_id, site in sites:
+            radius = float(self._build_site_radius(structure_id))
+            try:
+                enemy_close = int(bot.enemy_units.closer_than(radius + 6.0, site).amount)
+            except Exception:
+                enemy_close = 0
+            if enemy_close > 0:
+                continue
+
+            for unit in list(getattr(bot, "units", []) or []):
+                try:
+                    if int(getattr(unit, "tag", -1) or -1) in reserved_builder_tags:
+                        continue
+                    if bool(getattr(unit, "is_flying", False)):
+                        continue
+                    if self._is_builder_worker(unit):
+                        continue
+                    dist = float(unit.distance_to(site))
+                except Exception:
+                    continue
+                if dist > radius:
+                    continue
+
+                try:
+                    fallback = site.towards(bot.start_location, radius + 2.5)
+                except Exception:
+                    fallback = bot.start_location
+                try:
+                    escape = site.towards(unit.position, radius + 2.5)
+                except Exception:
+                    escape = fallback
+                if not self._is_pathable(bot, escape):
+                    escape = fallback
+
+                try:
+                    if getattr(unit, "type_id", None) == U.SIEGETANKSIEGED:
+                        unit(AbilityId.UNSIEGE_UNSIEGE)
+                    elif getattr(unit, "type_id", None) == U.WIDOWMINEBURROWED:
+                        unit(AbilityId.BURROWUP_WIDOWMINE)
+                    else:
+                        unit.move(escape)
+                    displaced += 1
+                except Exception:
+                    continue
+
+        if displaced > 0:
+            self.awareness.mem.set(
+                K("macro", "placement", "clearance", "last"),
+                value={"t": float(now), "displaced": int(displaced)},
+                now=now,
+                ttl=4.0,
+            )
+        return int(displaced)
+
     async def on_step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult:
         bound_err = self.require_mission_bound()
         if bound_err is not None:
@@ -263,6 +385,7 @@ class MacroAresExecutorTick(BaseTask):
         except Exception:
             return TaskResult.running("missing_army_comp")
         self._ensure_key_addons(bot=bot, now=now)
+        self._clear_macro_build_sites(bot=bot, now=now)
 
         if not isinstance(plan_active, dict) or not plan_active:
             return TaskResult.running("macro_plan_missing")
@@ -299,6 +422,9 @@ class MacroAresExecutorTick(BaseTask):
         expand_to = int(plan_active.get("expand_to") or 1)
         expand_target_label = str(plan_active.get("expand_target_label", "") or "")
         expand_build_mode = str(plan_active.get("expand_build_mode", "DIRECT") or "DIRECT").upper()
+        expand_safe_to_land = bool(plan_active.get("expand_safe_to_land"))
+        rush_natural_release = bool(plan_active.get("rush_natural_release"))
+        enemy_macro_catchup_expand = bool(plan_active.get("enemy_macro_catchup_expand"))
         lane_order_raw = plan_active.get("lane_order")
         lane_order = [str(x) for x in lane_order_raw] if isinstance(lane_order_raw, list) else [
             "workers",
@@ -318,9 +444,63 @@ class MacroAresExecutorTick(BaseTask):
             lane_order = forced + [ln for ln in lane_order if ln not in set(forced)]
         default_lanes = ["workers", "supply", "gas", "spawn", "production", "expand"]
         fallback_lanes = list(default_lanes)
+        try:
+            pending_cc = int(bot.already_pending(U.COMMANDCENTER) or 0)
+        except Exception:
+            pending_cc = 0
+        natural_expand_watchdog_active = bool(
+            str(expand_target_label) == "NATURAL"
+            and int(attention.macro.bases_total) < max(2, int(expand_to))
+            and bool(enable_expansion)
+        )
+        natural_expand_stall_started_at = float(
+            self.awareness.mem.get(
+                K("macro", "exec", "natural_expand_stall_started_at"),
+                now=now,
+                default=0.0,
+            )
+            or 0.0
+        )
+        if natural_expand_watchdog_active:
+            if int(pending_cc) > 0:
+                natural_expand_stall_started_at = 0.0
+            elif float(natural_expand_stall_started_at) <= 0.0:
+                natural_expand_stall_started_at = float(now)
+        else:
+            natural_expand_stall_started_at = 0.0
+        self.awareness.mem.set(
+            K("macro", "exec", "natural_expand_stall_started_at"),
+            value=float(natural_expand_stall_started_at),
+            now=now,
+            ttl=45.0,
+        )
+        natural_expand_stalled = bool(
+            natural_expand_watchdog_active
+            and int(pending_cc) <= 0
+            and float(natural_expand_stall_started_at) > 0.0
+            and (float(now) - float(natural_expand_stall_started_at)) >= 10.0
+        )
+        natural_expand_preempt_production = bool(
+            enable_expansion
+            and enable_production
+            and int(attention.macro.bases_total) < max(2, int(expand_to))
+            and str(expand_target_label) == "NATURAL"
+            and int(pending_cc) <= 0
+            and not bool(natural_expand_stalled)
+            and (
+                bool(expand_safe_to_land)
+                or bool(rush_natural_release)
+                or bool(enemy_macro_catchup_expand)
+                or str(expand_build_mode) == "OFFSITE"
+            )
+        )
         if self.lane_whitelist:
             allowed = set(self.lane_whitelist)
             fallback_lanes = [ln for ln in default_lanes if ln in allowed]
+        if natural_expand_preempt_production:
+            enable_production = False
+            lane_order = [ln for ln in lane_order if ln != "production"]
+            fallback_lanes = [ln for ln in fallback_lanes if ln != "production"]
         if allow_rush_opening_support:
             # Keep rush-defense opening in charge of geometry/expansion, but allow
             # unit spawn support so idle barracks/factory do not float resources
@@ -412,6 +592,7 @@ class MacroAresExecutorTick(BaseTask):
                         BuildStructure(
                             base_location=base_location,
                             structure_id=U.COMMANDCENTER,
+                            max_on_route=(3 if natural_expand_stalled else 2),
                             to_count=int(natural_to_count),
                         )
                     )
@@ -483,6 +664,7 @@ class MacroAresExecutorTick(BaseTask):
                     "enable_production": bool(enable_production),
                     "enable_expansion": bool(enable_expansion),
                     "expand_to": int(expand_to),
+                    "natural_expand_stalled": bool(natural_expand_stalled),
                     "enable_orbital_morph": bool(enable_orbital_morph),
                     "lane_order": list(lane_order),
                     "army_comp_count": int(len(army_comp)),

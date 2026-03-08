@@ -17,6 +17,8 @@ from bot.intel.locations.i1_pathing_flow_intel import PathingFlowIntelConfig, de
 from bot.intel.locations.i2_pathing_route_intel import PathingRouteIntelConfig, derive_pathing_route_intel
 from bot.intel.locations.i3_map_control_intel import MapControlIntelConfig, derive_map_control_intel
 from bot.intel.locations.i4_enemy_presence_intel import EnemyPresenceIntelConfig, derive_enemy_presence_intel
+from bot.intel.locations.i5_frontline_intel import FrontlineIntelConfig, derive_frontline_intel
+from bot.intel.strategy.i3_army_posture_intel import ArmyPostureIntelConfig, derive_army_posture_intel
 from bot.intel.mission.i1_mission_unit_threat_intel import MissionUnitThreatIntelConfig, derive_mission_unit_threat_intel
 from bot.intel.mission.i2_mission_value_intel import MissionValueIntelConfig, derive_mission_value_intel
 from bot.sensors.threat_sensor import Threat
@@ -92,6 +94,8 @@ class RuntimeApp:
     pathing_route_cfg: PathingRouteIntelConfig
     map_control_cfg: MapControlIntelConfig
     enemy_presence_cfg: EnemyPresenceIntelConfig
+    frontline_cfg: FrontlineIntelConfig
+    army_posture_cfg: ArmyPostureIntelConfig
     mission_unit_threat_cfg: MissionUnitThreatIntelConfig
     mission_value_cfg: MissionValueIntelConfig
     advantage_game_status_intel: AdvantageGameStatusIntel
@@ -329,6 +333,8 @@ class RuntimeApp:
             pathing_route_cfg=PathingRouteIntelConfig(),
             map_control_cfg=MapControlIntelConfig(),
             enemy_presence_cfg=EnemyPresenceIntelConfig(),
+            frontline_cfg=FrontlineIntelConfig(),
+            army_posture_cfg=ArmyPostureIntelConfig(),
             mission_unit_threat_cfg=MissionUnitThreatIntelConfig(),
             mission_value_cfg=MissionValueIntelConfig(),
             advantage_game_status_intel=AdvantageGameStatusIntel(AdvantageGameStatusIntelConfig()),
@@ -437,6 +443,22 @@ class RuntimeApp:
             attention=attention,
             now=now,
             cfg=self.map_control_cfg,
+        )
+        # Frontline intel: estado espacial das frentes (CLEAR/CONTESTED/COMPROMISED/LOST)
+        # Deve rodar após map_control_intel (usa nat position) e enemy_presence_intel
+        derive_frontline_intel(
+            bot,
+            awareness=self.awareness,
+            now=now,
+            cfg=self.frontline_cfg,
+        )
+        # Army posture intel: deriva postura operacional do bulk (anchor, detach_budget)
+        # Deve rodar após frontline_intel e map_control_intel
+        derive_army_posture_intel(
+            bot,
+            awareness=self.awareness,
+            now=now,
+            cfg=self.army_posture_cfg,
         )
         derive_mission_unit_threat_intel(
             bot,
@@ -864,7 +886,7 @@ class RuntimeApp:
         )
 
     async def _emit_chat_updates(self, bot, *, now: float) -> None:
-        # Keep chat minimal: opening announcement + rush/build alert only.
+        # Opening announcement (once).
         opening_selected, transition_target = require_active_opening_state(awareness=self.awareness, now=now)
         if opening_selected and opening_selected != str(self._chat_last_opening):
             self._chat_last_opening = str(opening_selected)
@@ -874,31 +896,48 @@ class RuntimeApp:
             await self._safe_chat_send(bot, now=now, message=msg)
         self._chat_last_transition = str(transition_target)
 
-        rush_state = str(self.awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
-        rush_active = rush_state in {"SUSPECTED", "CONFIRMED", "HOLDING"}
-        if not rush_active:
-            self._chat_last_rush_state = str(rush_state)
-            self._chat_last_status_sig = ""
-            return
+        # Map controller intent: postura + info inimiga condensada.
+        posture_snap = self.awareness.mem.get(K("strategy", "army", "snapshot"), now=now, default={}) or {}
+        if not isinstance(posture_snap, dict):
+            posture_snap = {}
+        posture = str(posture_snap.get("posture", "HOLD_MAIN_RAMP") or "HOLD_MAIN_RAMP")
+        army_supply = int(posture_snap.get("army_supply", 0) or 0)
+        nat_ground = str(posture_snap.get("nat_ground_state", "CLEAR") or "CLEAR")
+        rush_state = str(posture_snap.get("rush_state", "NONE") or "NONE").upper()
 
         enemy_kind = str(self.awareness.mem.get(K("enemy", "opening", "kind"), now=now, default="NORMAL") or "NORMAL").upper()
-        snapshot = self.awareness.mem.get(K("enemy", "build", "snapshot"), now=now, default={}) or {}
-        if not isinstance(snapshot, dict):
-            snapshot = {}
-        top = snapshot.get("army_comp_top", [])
-        top_unit = "unknown"
+        build_snap = self.awareness.mem.get(K("enemy", "build", "snapshot"), now=now, default={}) or {}
+        if not isinstance(build_snap, dict):
+            build_snap = {}
+        top = build_snap.get("army_comp_top", [])
+        top_unit = "?"
         top_count = 0
         if isinstance(top, list) and top:
             first = top[0] if isinstance(top[0], dict) else {}
-            top_unit = str(first.get("unit", "unknown"))
+            top_unit = str(first.get("unit", "?"))
             top_count = int(first.get("count", 0) or 0)
-        bases_visible = int(snapshot.get("bases_visible", 0) or 0)
 
-        msg = f"Rush {rush_state}: build={enemy_kind}, enemy={top_unit}x{top_count}, bases={bases_visible}"
-        sig = f"{rush_state}|{enemy_kind}|{top_unit}|{top_count}|{bases_visible}"
+        _POSTURE_LABEL = {
+            "HOLD_MAIN_RAMP": "segurando rampa",
+            "HOLD_NAT_CHOKE": "segurando choke nat",
+            "SECURE_NAT": "tomando nat",
+            "CONTROLLED_RETREAT": "recuando",
+            "CONTROLLED_RETAKE": "retomando nat",
+            "PRESS_FORWARD": "avancando",
+            "ABANDON_EXPOSED_BASE": "abandonando base",
+        }
+        posture_label = _POSTURE_LABEL.get(posture, posture.lower())
+
+        enemy_label = f"{top_unit}x{top_count}" if top_count > 0 else enemy_kind.lower()
+        rush_suffix = f" [{rush_state}]" if rush_state not in {"NONE", ""} else ""
+
+        msg = f"[{posture_label}] army={army_supply} nat={nat_ground.lower()} enemy={enemy_label}{rush_suffix}"
+        sig = f"{posture}|{army_supply // 4}|{nat_ground}|{rush_state}|{top_unit}|{top_count // 2}"
+
         if sig != str(self._chat_last_status_sig):
             if await self._safe_chat_send(bot, now=now, message=msg):
                 self._chat_last_status_sig = str(sig)
+
         self._chat_last_rush_state = str(rush_state)
         self._chat_last_aggression_state = ""
 

@@ -98,10 +98,11 @@ class MacroOrchestratorPlanner(BasePlanner):
     ahead_expand_min_army_supply: float = 24.0
     rush_army_dump_minerals: int = 500
     aggression_army_dump_minerals: int = 900
-    rush_natural_release_clear_s: float = 4.0
-    rush_natural_release_min_army_supply: float = 6.0
+    rush_natural_release_clear_s: float = 2.5
+    rush_natural_release_min_army_supply: float = 4.0
     rush_natural_release_min_tanks: int = 0
     rush_natural_release_bunker_ok: bool = True
+    rush_natural_release_requires_opening_done: bool = False
     enemy_macro_catchup_visible_bases: int = 3
     enemy_macro_catchup_base_gap: int = 2
     enemy_macro_catchup_clear_s: float = 4.0
@@ -110,6 +111,7 @@ class MacroOrchestratorPlanner(BasePlanner):
     enemy_macro_catchup_bunker_ok: bool = True
     enemy_at_door_urgency_floor: int = 16
     enemy_at_door_count_floor: int = 2
+    natural_cc_force_minerals: int = 360
 
     housekeeping_score: int = 18
     housekeeping_interval_s: float = 4.0
@@ -1015,10 +1017,10 @@ class MacroOrchestratorPlanner(BasePlanner):
             and int(enemy_base_gap) >= int(self.enemy_macro_catchup_base_gap)
             and not bool(pressure_high)
             and not bool(enemy_at_door)
+            and not bool(rush_active)
             and float(rush_clear_for) >= float(self.enemy_macro_catchup_clear_s)
             and (
                 bool(attention.macro.opening_done)
-                or bool(nat_should_secure)
                 or bool(enemy_natural_on_ground)
             )
             and (
@@ -1031,12 +1033,34 @@ class MacroOrchestratorPlanner(BasePlanner):
         rush_natural_release = bool(
             int(bases_now) < 2
             and not bool(pressure_high)
-            and (bool(attention.macro.opening_done) or bool(nat_should_secure))
+            and (
+                bool(attention.macro.opening_done)
+                or not bool(self.rush_natural_release_requires_opening_done)
+            )
+            and not bool(rush_active)
+            and not bool(enemy_at_door)
             and float(rush_clear_for) >= float(self.rush_natural_release_clear_s)
             and (
+                bool(nat_safe_to_land)
+                or bool(nat_should_secure)
+                or (
                 int(tanks_ready) >= int(self.rush_natural_release_min_tanks)
                 or float(army_supply_now) >= float(self.rush_natural_release_min_army_supply)
                 or (bool(self.rush_natural_release_bunker_ok) and int(bunkers_ready) > 0 and float(army_supply_now) >= 6.0)
+                )
+            )
+        )
+        natural_cc_force_now = bool(
+            int(bases_now) < 2
+            and int(pending_cc) <= 0
+            and int(attention.economy.minerals) >= int(self.natural_cc_force_minerals)
+            and not bool(enemy_at_door)
+            and not bool(rush_active)
+            and (
+                bool(nat_safe_to_land)
+                or bool(rush_natural_release)
+                or bool(nat_should_secure)
+                or bool(enemy_macro_catchup_expand)
             )
         )
 
@@ -1086,6 +1110,8 @@ class MacroOrchestratorPlanner(BasePlanner):
             if bool(rush_natural_release) or bool(enemy_macro_catchup_expand):
                 enable_expansion = True
                 expand_to = 2
+                if bool(nat_safe_to_land):
+                    enable_production = False
             else:
                 enable_expansion = False
                 expand_to = min(int(expand_to), min(2, int(bases_now)))
@@ -1095,17 +1121,23 @@ class MacroOrchestratorPlanner(BasePlanner):
         if bool(enemy_macro_catchup_expand) and not bool(enemy_at_door):
             enable_expansion = True
             expand_to = max(2, int(expand_to))
+        if natural_cc_force_now:
+            enable_expansion = True
+            expand_to = max(2, int(expand_to))
+            enable_production = False
 
         natural_establish_critical = bool(
             int(bases_now) < 2
             and bool(nat_should_secure or delayed_natural_alarm or enemy_macro_lead_visible)
             and (bool(nat_offsite) or not bool(nat_owned) or not bool(nat_is_mining))
-            and not bool(rush_defense_gate_active and not bool(rush_natural_release) and int(attention.combat.primary_enemy_count) > 0)
+            and not bool(rush_defense_gate_active and not bool(rush_natural_release))
         )
         if natural_establish_critical:
             enable_expansion = True
             expand_to = max(2, int(expand_to))
-            enable_production = False
+            # Keep expansion urgent, but do not hard-disable production.
+            # If the expand path stalls on placement/pathing, production must still scale.
+            enable_production = bool(enable_production)
 
         if bool(nat_offsite) and not bool(rush_defense_gate_active and int(attention.combat.primary_enemy_count) > 0):
             enable_expansion = True
@@ -1114,6 +1146,9 @@ class MacroOrchestratorPlanner(BasePlanner):
         expand_target_label = ""
         expand_build_mode = "DIRECT"
         if int(expand_to) >= 2 and int(bases_now) < 2:
+            # While NATURAL is unresolved, never request a third base target yet.
+            # This prevents expansion lanes from reserving extra workers/CC intent.
+            expand_to = min(int(expand_to), 2)
             expand_target_label = "NATURAL"
             expand_build_mode = "OFFSITE" if bool(should_expand_offsite) else "DIRECT"
             if bool(nat_offsite):
@@ -1126,11 +1161,12 @@ class MacroOrchestratorPlanner(BasePlanner):
             and bool(should_expand_offsite)
             and not bool(nat_offsite)
             and not bool(nat_owned)
+            and bool(attention.macro.opening_done)
             and (
                 bool(enemy_at_door)
                 or bool(rush_hard_active)
-                or bool(rush_defense_gate_active)
             )
+            and bool(rush_natural_release)
         )
         if offsite_natural_bootstrap:
             expand_target_label = "NATURAL"
@@ -1245,6 +1281,7 @@ class MacroOrchestratorPlanner(BasePlanner):
                 "rush_severity": float(rush_severity),
                 "rush_clear_for": float(rush_clear_for),
                 "rush_natural_release": bool(rush_natural_release),
+                "natural_cc_force_now": bool(natural_cc_force_now),
                 "enemy_bases_visible": int(enemy_bases_visible),
                 "enemy_base_gap": int(enemy_base_gap),
                 "enemy_macro_catchup_expand": bool(enemy_macro_catchup_expand),

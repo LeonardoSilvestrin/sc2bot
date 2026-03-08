@@ -28,6 +28,9 @@ class DefendBaseTask(BaseTask):
     release_clear_s: float = 5.0
     _clear_since: float = 0.0
 
+    _TANK_UNSIEGE_REPOSITION_RADIUS: float = 11.0
+    _TANK_HOLD_ENEMY_RADIUS: float = 15.0
+
     def __init__(
         self,
         *,
@@ -224,6 +227,59 @@ class DefendBaseTask(BaseTask):
             return True
 
     @staticmethod
+    def _building_tracker(bot) -> dict:
+        try:
+            return dict(bot.mediator.get_building_tracker_dict or {})
+        except Exception:
+            return {}
+
+    @classmethod
+    def _planned_structure_sites(cls, bot, *, centers: list[Point2], structure_types: set[U], radius: float) -> list[Point2]:
+        out: list[Point2] = []
+        for entry in cls._building_tracker(bot).values():
+            if not isinstance(entry, dict):
+                continue
+            if entry.get("structure_type", None) not in structure_types:
+                continue
+            pos = entry.get("target", None) or entry.get("pos", None)
+            if pos is None:
+                continue
+            try:
+                point = Point2((float(pos.x), float(pos.y))) if hasattr(pos, "x") else pos
+            except Exception:
+                point = pos
+            try:
+                if centers and min(float(point.distance_to(center)) for center in centers if center is not None) > float(radius):
+                    continue
+            except Exception:
+                continue
+            duplicate = False
+            for existing in out:
+                try:
+                    if float(existing.distance_to(point)) <= 0.9:
+                        duplicate = True
+                        break
+                except Exception:
+                    continue
+            if not duplicate:
+                out.append(point)
+        return out
+
+    @staticmethod
+    def _nearest_reserved_site(unit, reserved_sites: list[Point2], *, radius: float) -> Point2 | None:
+        best = None
+        best_dist = float(radius)
+        for site in list(reserved_sites or []):
+            try:
+                dist = float(unit.distance_to(site))
+            except Exception:
+                continue
+            if dist <= best_dist:
+                best = site
+                best_dist = dist
+        return best
+
+    @staticmethod
     def _mine_slots(center: Point2) -> list[Point2]:
         out: list[Point2] = []
         for r in (4.5, 7.0):
@@ -232,15 +288,22 @@ class DefendBaseTask(BaseTask):
                 out.append(Point2((float(center.x) + (r * math.cos(ang)), float(center.y) + (r * math.sin(ang)))))
         return out
 
-    def _handle_tank(self, *, unit, anchor: Point2, threat: Point2, enemy_near) -> bool:
+    def _handle_tank(self, *, unit, anchor: Point2, threat: Point2, enemy_near, local_pressure: bool) -> bool:
         if unit.type_id == U.SIEGETANKSIEGED:
             # Só desfaz siege se estiver longe demais E sem inimigos — threshold generoso (8.0)
             # para evitar oscillar quando o anchor muda poucos tiles entre ticks
-            if float(unit.distance_to(anchor)) > 8.0 and int(enemy_near.amount) <= 0:
-                unit(AbilityId.UNSIEGE_UNSIEGE)
-                return True
             if int(enemy_near.amount) > 0:
                 unit.attack(enemy_near.closest_to(unit))
+                return True
+            if bool(local_pressure):
+                return False
+            enemy_hold = bot.enemy_units.closer_than(float(self._TANK_HOLD_ENEMY_RADIUS), unit)
+            if (
+                float(unit.distance_to(anchor)) > float(self._TANK_UNSIEGE_REPOSITION_RADIUS)
+                and int(enemy_near.amount) <= 0
+                and int(enemy_hold.amount) <= 0
+            ):
+                unit(AbilityId.UNSIEGE_UNSIEGE)
                 return True
             # Já sieged e sem inimigos — não faz nada
             return False
@@ -276,13 +339,19 @@ class DefendBaseTask(BaseTask):
         return False
 
     @staticmethod
-    def _handle_general(*, unit, base_pos: Point2, hold_anchor: Point2, threat: Point2, enemy_near_base, bunkers: list, bunker_sites: list, now: float) -> bool:
+    def _handle_general(*, unit, base_pos: Point2, hold_anchor: Point2, threat: Point2, enemy_near_base, bunkers: list, bunker_sites: list, reserved_sites: list[Point2], now: float) -> bool:
         if unit.type_id == U.MEDIVAC:
             if bool(getattr(unit, "is_idle", True)):
                 follow = threat.towards(hold_anchor, 6.0)
                 unit.move(follow)
                 return True
             return False
+        reserved_site = DefendBaseTask._nearest_reserved_site(unit, reserved_sites, radius=2.6)
+        if reserved_site is not None:
+            clear_pos = reserved_site.towards(hold_anchor, 3.2)
+            if float(unit.distance_to(clear_pos)) > 0.8:
+                unit.move(clear_pos)
+                return True
         if unit.type_id == U.MARINE and bunkers:
             ready_bunkers = [b for b in bunkers if DefendBaseTask._bunker_has_space(b)]
             if ready_bunkers:
@@ -304,7 +373,7 @@ class DefendBaseTask(BaseTask):
                 return True
         if unit.type_id == U.MARINE and bunker_sites:
             site = min(bunker_sites, key=lambda b: float(unit.distance_to(b)))
-            hold = site.position.towards(hold_anchor, 2.0)
+            hold = site.position.towards(hold_anchor, 3.25)
             if float(unit.distance_to(hold)) > 2.0 and not bool(getattr(unit, "is_moving", False)):
                 unit.move(hold)
             return True
@@ -337,6 +406,12 @@ class DefendBaseTask(BaseTask):
         enemy_near_base = bot.enemy_units.closer_than(22.0, base_pos)
         bunkers = self._bunkers_near_base(bot, base_pos=base_pos)
         bunker_sites = self._bunker_sites_near_base(bot, base_pos=base_pos)
+        reserved_sites = self._planned_structure_sites(
+            bot,
+            centers=[base_pos, self._ramp_top(bot) or base_pos],
+            structure_types={U.BUNKER, U.COMMANDCENTER, U.ORBITALCOMMAND, U.PLANETARYFORTRESS},
+            radius=16.0,
+        )
         base_urgency = 0
         for th in list(getattr(attention.combat, "base_threats", ()) or ()):
             try:
@@ -360,7 +435,13 @@ class DefendBaseTask(BaseTask):
         for u in units:
             if u.type_id in {U.SIEGETANK, U.SIEGETANKSIEGED}:
                 enemy_near = bot.enemy_units.closer_than(13.0, u.position)
-                issued = self._handle_tank(unit=u, anchor=tank_anchor, threat=threat, enemy_near=enemy_near) or issued
+                issued = self._handle_tank(
+                    unit=u,
+                    anchor=tank_anchor,
+                    threat=threat,
+                    enemy_near=enemy_near,
+                    local_pressure=bool(int(enemy_near_base.amount) > 0 or int(base_urgency) > 0),
+                ) or issued
                 continue
             if u.type_id in {U.WIDOWMINE, U.WIDOWMINEBURROWED}:
                 slot = mine_slots[mine_idx % len(mine_slots)] if mine_slots else mineral_center
@@ -375,6 +456,7 @@ class DefendBaseTask(BaseTask):
                 enemy_near_base=enemy_near_base,
                 bunkers=bunkers,
                 bunker_sites=bunker_sites,
+                reserved_sites=reserved_sites,
                 now=float(tick.time),
             ) or issued
 

@@ -105,6 +105,16 @@ class WorkerExpansionScoutTask(BaseTask):
         self.awareness.mem.set(K("intel", "worker_scout", "by_label", str(label), "last_t"), value=float(now), now=now, ttl=None)
         self.awareness.mem.set(K("intel", "worker_scout", "last_route_t"), value=float(now), now=now, ttl=None)
 
+    def _mark_route_attempt(self, *, now: float, status: str, label: str, target: Point2 | None) -> None:
+        payload = {
+            "last_t": float(now),
+            "status": str(status),
+            "label": str(label),
+            "target": _point_payload(target),
+        }
+        self.awareness.mem.set(K("intel", "worker_scout", "last_route_t"), value=float(now), now=now, ttl=None)
+        self.awareness.mem.set(K("intel", "worker_scout", "last_attempt"), value=payload, now=now, ttl=180.0)
+
     def _enemy_danger_near(self, *, bot, center: Point2) -> int:
         total = 0
         for unit in list(getattr(bot, "enemy_units", []) or []):
@@ -161,6 +171,9 @@ class WorkerExpansionScoutTask(BaseTask):
 
         hp_frac = float(getattr(unit, "health_percentage", 1.0) or 1.0)
         if hp_frac <= float(self.retreat_hp_frac):
+            label = self.labels[min(int(self._idx), len(self.labels) - 1)]
+            target = self.route[min(int(self._idx), len(self.route) - 1)]
+            self._mark_route_attempt(now=now, status="retreat_low_hp", label=label, target=target)
             unit.move(self._retreat_target(bot))
             self._done("scout_retreat_low_hp")
             return TaskResult.done("scout_retreat_low_hp")
@@ -174,6 +187,7 @@ class WorkerExpansionScoutTask(BaseTask):
         label = self.labels[self._idx]
         local_danger = self._enemy_danger_near(bot=bot, center=unit.position)
         if local_danger > 0:
+            self._mark_route_attempt(now=now, status="retreat_danger", label=label, target=target)
             unit.move(self._retreat_target(bot))
             self._done("scout_retreat_danger")
             return TaskResult.done("scout_retreat_danger")
@@ -182,6 +196,7 @@ class WorkerExpansionScoutTask(BaseTask):
             self._mark_target_seen(bot=bot, now=now, label=label, target=target)
             self._idx += 1
             if self._idx >= len(self.route):
+                self._mark_route_attempt(now=now, status="route_complete", label=label, target=target)
                 unit.move(self._retreat_target(bot))
                 self._done("route_complete")
                 return TaskResult.done("route_complete")

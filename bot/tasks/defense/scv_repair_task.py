@@ -17,6 +17,7 @@ class ScvRepairTask(BaseTask):
     base_tag: int
     base_pos: Point2
     threat_pos: Point2 | None = None
+    repair_focus_pos: Point2 | None = None
     log: DevLogger | None = None
     early_window_s: float = 240.0
     max_scvs_per_structure_early: int = 3
@@ -28,6 +29,7 @@ class ScvRepairTask(BaseTask):
         base_tag: int,
         base_pos: Point2,
         threat_pos: Point2 | None = None,
+        repair_focus_pos: Point2 | None = None,
         log: DevLogger | None = None,
         early_window_s: float = 240.0,
         max_scvs_per_structure_early: int = 3,
@@ -36,6 +38,7 @@ class ScvRepairTask(BaseTask):
         self.base_tag = int(base_tag)
         self.base_pos = base_pos
         self.threat_pos = threat_pos
+        self.repair_focus_pos = repair_focus_pos
         self.log = log
         self.early_window_s = float(early_window_s)
         self.max_scvs_per_structure_early = max(1, int(max_scvs_per_structure_early))
@@ -85,6 +88,7 @@ class ScvRepairTask(BaseTask):
                 return []
             depot_positions = list(getattr(ramp, "corner_depots", []) or [])
             barracks_pos = getattr(ramp, "barracks_correct_placement", None)
+            top_center = getattr(ramp, "top_center", None)
         except Exception:
             return []
 
@@ -92,12 +96,15 @@ class ScvRepairTask(BaseTask):
         for s in list(getattr(bot, "structures", []) or []):
             try:
                 tid = getattr(s, "type_id", None)
-                if tid not in {U.SUPPLYDEPOT, U.SUPPLYDEPOTLOWERED, U.BARRACKS, U.BARRACKSREACTOR, U.BARRACKSTECHLAB}:
+                if tid not in {U.SUPPLYDEPOT, U.SUPPLYDEPOTLOWERED, U.BARRACKS, U.BARRACKSREACTOR, U.BARRACKSTECHLAB, U.BUNKER}:
                     continue
                 if any(float(s.distance_to(pos)) <= 1.8 for pos in depot_positions):
                     wall_targets.append(s)
                     continue
                 if barracks_pos is not None and float(s.distance_to(barracks_pos)) <= 2.4:
+                    wall_targets.append(s)
+                    continue
+                if tid == U.BUNKER and top_center is not None and float(s.distance_to(top_center)) <= 20.0:
                     wall_targets.append(s)
             except Exception:
                 continue
@@ -199,7 +206,32 @@ class ScvRepairTask(BaseTask):
                         out.append(wall_unit)
                 except Exception:
                     continue
-        out.sort(key=self._repair_priority, reverse=True)
+        focus_pos = self.repair_focus_pos
+        if focus_pos is not None:
+            focused = []
+            fallback = []
+            for unit in out:
+                try:
+                    if float(unit.distance_to(focus_pos)) <= 12.0:
+                        focused.append(unit)
+                    else:
+                        fallback.append(unit)
+                except Exception:
+                    fallback.append(unit)
+            if focused:
+                out = focused
+
+        def _sort_key(unit) -> tuple[float, float, float]:
+            prio, hp_gap = self._repair_priority(unit)
+            focus_dist = 9999.0
+            if focus_pos is not None:
+                try:
+                    focus_dist = float(unit.distance_to(focus_pos))
+                except Exception:
+                    focus_dist = 9999.0
+            return (float(prio), float(hp_gap), -float(focus_dist))
+
+        out.sort(key=_sort_key, reverse=True)
         return out
 
     def _is_early_game(self, bot) -> bool:

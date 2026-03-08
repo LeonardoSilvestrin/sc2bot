@@ -1,3 +1,5 @@
+# bot/tasks/defense/secure_base_task.py
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -286,12 +288,14 @@ class SecureBaseTask(BaseTask):
             return hold_time >= 2.1
         return hold_time >= 0.8
 
-    def _handle_tank(self, *, unit, anchor: Point2, enemy_near: list) -> bool:
+    def _handle_tank(self, *, unit, anchor: Point2, enemy_near: list, hold_pressure: bool) -> bool:
         if unit.type_id == U.SIEGETANKSIEGED:
             if enemy_near:
                 unit.attack(min(enemy_near, key=lambda e: float(unit.distance_to(e))))
                 return True
-            if float(unit.distance_to(anchor)) > 5.0:
+            if bool(hold_pressure):
+                return True
+            if float(unit.distance_to(anchor)) > 7.5:
                 unit(AbilityId.UNSIEGE_UNSIEGE)
                 return True
             return True
@@ -502,11 +506,21 @@ class SecureBaseTask(BaseTask):
                     else:
                         anchor = forward_staging_anchor if int(tank_idx) == 0 else rear_tank_anchor
                     tank_idx += 1
-                    issued = self._handle_tank(unit=unit, anchor=anchor, enemy_near=enemy_near) or issued
+                    issued = self._handle_tank(
+                        unit=unit,
+                        anchor=anchor,
+                        enemy_near=enemy_near,
+                        hold_pressure=bool(enemy_near or enemy_main),
+                    ) or issued
                     continue
                 anchor = tank_anchors[min(int(tank_idx), len(tank_anchors) - 1)]
                 tank_idx += 1
-                issued = self._handle_tank(unit=unit, anchor=anchor, enemy_near=enemy_near) or issued
+                issued = self._handle_tank(
+                    unit=unit,
+                    anchor=anchor,
+                    enemy_near=enemy_near,
+                    hold_pressure=bool(enemy_near or enemy_main),
+                ) or issued
                 continue
             if unit.type_id in {U.WIDOWMINE, U.WIDOWMINEBURROWED}:
                 slot = mine_slots[mine_idx % len(mine_slots)] if mine_slots else self.base_pos

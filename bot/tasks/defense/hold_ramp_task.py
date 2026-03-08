@@ -160,6 +160,90 @@ class HoldRampTask(BaseTask):
         return False
 
     @staticmethod
+    def _building_tracker(bot) -> dict:
+        try:
+            return dict(bot.mediator.get_building_tracker_dict or {})
+        except Exception:
+            return {}
+
+    @classmethod
+    def _planned_structure_sites(cls, bot, *, centers: list[Point2], structure_types: set[U], radius: float) -> list[Point2]:
+        out: list[Point2] = []
+        for entry in cls._building_tracker(bot).values():
+            if not isinstance(entry, dict):
+                continue
+            if entry.get("structure_type", None) not in structure_types:
+                continue
+            pos = entry.get("target", None) or entry.get("pos", None)
+            if pos is None:
+                continue
+            try:
+                point = Point2((float(pos.x), float(pos.y))) if hasattr(pos, "x") else pos
+            except Exception:
+                point = pos
+            try:
+                if centers and min(float(point.distance_to(center)) for center in centers if center is not None) > float(radius):
+                    continue
+            except Exception:
+                continue
+            duplicate = False
+            for existing in out:
+                try:
+                    if float(existing.distance_to(point)) <= 0.9:
+                        duplicate = True
+                        break
+                except Exception:
+                    continue
+            if not duplicate:
+                out.append(point)
+        return out
+
+    @staticmethod
+    def _nearest_reserved_site(unit, reserved_sites: list[Point2], *, radius: float) -> Point2 | None:
+        best = None
+        best_dist = float(radius)
+        for site in list(reserved_sites or []):
+            try:
+                dist = float(unit.distance_to(site))
+            except Exception:
+                continue
+            if dist <= best_dist:
+                best = site
+                best_dist = dist
+        return best
+
+    @staticmethod
+    def _sanitize_slots(slots: list[Point2], *, reserved_sites: list[Point2], retreat: Point2, fallback: Point2) -> list[Point2]:
+        out: list[Point2] = []
+        for slot in list(slots or []):
+            conflict = False
+            for site in list(reserved_sites or []):
+                try:
+                    if float(slot.distance_to(site)) <= 2.5:
+                        conflict = True
+                        break
+                except Exception:
+                    continue
+            if not conflict:
+                out.append(slot)
+                continue
+            try:
+                shifted = slot.towards(retreat, 2.75)
+            except Exception:
+                shifted = fallback
+            retry_conflict = False
+            for site in list(reserved_sites or []):
+                try:
+                    if float(shifted.distance_to(site)) <= 2.25:
+                        retry_conflict = True
+                        break
+                except Exception:
+                    continue
+            if not retry_conflict:
+                out.append(shifted)
+        return out or [fallback]
+
+    @staticmethod
     def _bunkers_near_wall(bot, *, top_center: Point2) -> list:
         out = []
         seen: set[int] = set()
@@ -229,22 +313,30 @@ class HoldRampTask(BaseTask):
         top_center, depots, barracks_pos = self._wall_context(bot)
         base_pos = self._resolve_base_pos(bot)
         enemy_wall = self._enemy_wall_units(bot, top_center=top_center)
-        if not enemy_wall:
+        repair_targets = self._repair_targets(bot, depots=depots, barracks_pos=barracks_pos)
+        if not enemy_wall and not repair_targets:
             self._assign_role(bot, units, UnitRole.GATHERING)
             self._done("ramp_contact_cleared")
             return TaskResult.done("ramp_contact_cleared")
 
         self._assign_role(bot, units, UnitRole.REPAIRING)
-        repair_targets = self._repair_targets(bot, depots=depots, barracks_pos=barracks_pos)
+        reserved_sites = self._planned_structure_sites(
+            bot,
+            centers=[top_center, base_pos],
+            structure_types={U.BUNKER, U.COMMANDCENTER, U.ORBITALCOMMAND, U.PLANETARYFORTRESS},
+            radius=14.0,
+        )
         scv_hold_slots = self._scv_hold_slots(
             depots=depots,
             barracks_pos=barracks_pos,
             top_center=top_center,
             base_pos=base_pos,
         )
+        scv_hold_slots = self._sanitize_slots(scv_hold_slots, reserved_sites=reserved_sites, retreat=base_pos, fallback=top_center)
         bunkers = [b for b in self._bunkers_near_wall(bot, top_center=top_center) if self._bunker_has_space(b)]
         issued = False
         marine_slots = depots[:] if depots else [top_center]
+        marine_slots = self._sanitize_slots(marine_slots, reserved_sites=reserved_sites, retreat=base_pos, fallback=top_center)
         marine_idx = 0
         scv_idx = 0
         enemy_count = int(len(enemy_wall))
@@ -312,6 +404,11 @@ class HoldRampTask(BaseTask):
                     if not repairing:
                         issued = self._issue_repair(unit, target) or issued
                     continue
+                reserved_site = self._nearest_reserved_site(unit, reserved_sites, radius=2.2)
+                if reserved_site is not None:
+                    unit.move(reserved_site.towards(base_pos, 3.1))
+                    issued = True
+                    continue
                 hold = scv_hold_slots[scv_idx % len(scv_hold_slots)] if scv_hold_slots else top_center
                 scv_idx += 1
                 if float(unit.distance_to(hold)) > 1.5 and not bool(getattr(unit, "is_moving", False)):
@@ -323,9 +420,16 @@ class HoldRampTask(BaseTask):
                 continue
 
             if unit.type_id == U.MARINE:
+                if not enemy_wall:
+                    continue
                 target = min(enemy_wall, key=lambda e: float(unit.distance_to(e)))
                 slot = marine_slots[marine_idx % len(marine_slots)] if marine_slots else top_center
                 marine_idx += 1
+                reserved_site = self._nearest_reserved_site(unit, reserved_sites, radius=2.4)
+                if reserved_site is not None and not bunkers:
+                    unit.move(reserved_site.towards(base_pos, 3.2))
+                    issued = True
+                    continue
                 # Se há bunker disponível, entra direto — prioridade máxima
                 if bunkers:
                     bunker = min(bunkers, key=lambda b: float(unit.distance_to(b)))
@@ -360,6 +464,8 @@ class HoldRampTask(BaseTask):
                     issued = True
                 continue
 
+            if not enemy_wall:
+                continue
             target = min(enemy_wall, key=lambda e: float(unit.distance_to(e)))
             unit.attack(target)
             issued = True
@@ -367,4 +473,7 @@ class HoldRampTask(BaseTask):
         if issued:
             self._active("holding_ramp")
             return TaskResult.running("holding_ramp")
+        if repair_targets:
+            self._active("repairing_ramp_wall")
+            return TaskResult.running("repairing_ramp_wall")
         return TaskResult.noop("hold_ramp_idle")

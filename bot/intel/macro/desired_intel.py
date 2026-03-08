@@ -775,6 +775,7 @@ def _upgrade_names_from_comp(*, comp: dict[str, float], reserve_unit: str) -> li
 def derive_tech_intel(
     *,
     awareness: Awareness,
+    attention: Attention,
     now: float,
     profile: dict[str, Any],
     mode: str,
@@ -845,6 +846,18 @@ def derive_tech_intel(
     upgrades = _merge_upgrade_lists(upgrades, milestone_upgrades)
     rush_tier = str(awareness.mem.get(K("enemy", "rush", "tier"), now=now, default="NONE") or "NONE").upper()
     rush_state = str(awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
+    bases_now = int(getattr(attention.macro, "bases_total", 0) or 0)
+    our_bases = awareness.mem.get(K("intel", "our_bases", "registry"), now=now, default={}) or {}
+    if not isinstance(our_bases, dict):
+        our_bases = {}
+    nat_base = dict(our_bases.get("NATURAL", {})) if isinstance(our_bases.get("NATURAL", {}), dict) else {}
+    nat_state = str(nat_base.get("state", "") or "").upper()
+    nat_owned = bool(nat_base.get("owned", False) or nat_base.get("townhall_tag"))
+    nat_is_mining = bool(nat_base.get("is_mining", False))
+    natural_unresolved = bool(
+        int(bases_now) < 2
+        and (not bool(nat_owned) or nat_state not in {"ESTABLISHED", "SECURING"} or not bool(nat_is_mining))
+    )
     addon_targets: dict[str, int] = {}
     if float(comp.get("SIEGETANK", 0.0) or 0.0) > 0.0 or float(comp.get("CYCLONE", 0.0) or 0.0) > 0.0:
         addon_targets["FACTORYTECHLAB"] = 1
@@ -902,6 +915,13 @@ def derive_tech_intel(
             1,
         )
         production_structure_targets["STARPORT"] = 0
+        production_scale["STARPORT"] = 0.0
+    if opening_selected == "RushDefenseOpen" and natural_unresolved:
+        production_structure_targets["BARRACKS"] = min(int(production_structure_targets.get("BARRACKS", 0) or 0), 2)
+        production_structure_targets["FACTORY"] = min(int(production_structure_targets.get("FACTORY", 0) or 0), 1)
+        production_structure_targets["STARPORT"] = 0
+        production_scale["BARRACKS"] = min(float(production_scale.get("BARRACKS", 0.0) or 0.0), 0.85)
+        production_scale["FACTORY"] = min(float(production_scale.get("FACTORY", 0.0) or 0.0), 0.35)
         production_scale["STARPORT"] = 0.0
     due_structures = _due_structures_by_time(milestones=tech_timing_milestones, now_t=float(now))
     # Contract: structures in tech_targets are due-by-time; phase cap stays in tech_structure_targets.
@@ -979,6 +999,7 @@ def derive_my_army_composition_intel(
     )
     tech_ctx = derive_tech_intel(
         awareness=awareness,
+        attention=attention,
         now=now,
         profile=dict(mode_ctx["profile"]),
         mode=str(mode_ctx["mode"]),

@@ -172,7 +172,6 @@ class HousekeepingPlanner(BasePlanner):
         )
         depot_alert = bool(
             (urgency >= int(self.depot_raise_urgency_min) and enemy_count >= int(self.depot_raise_enemy_count_min))
-            or (rush_active and enemy_count > 0)
             or main_wall_enemy_near
             or main_wall_target_near
             or supply_left <= int(self.depot_supply_left_trigger)
@@ -189,7 +188,7 @@ class HousekeepingPlanner(BasePlanner):
             try:
                 if depot_alert:
                     lowered_wall = int(self._main_wall_lowered_depots(bot))
-                    if lowered_wall > 0 and (rush_active or main_wall_enemy_near or main_wall_target_near):
+                    if lowered_wall > 0 and main_wall_enemy_near:
                         actionable = True
                     elif threat_pos is not None:
                         lowered = bot.structures.of_type({U.SUPPLYDEPOTLOWERED}).ready

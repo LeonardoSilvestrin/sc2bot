@@ -1,5 +1,17 @@
 # bot/planners/map_control_planner.py
 
+"""
+Map Control Planner — dono da posição do bulk do exército.
+
+Responsabilidade:
+    - Ler a postura operacional de army_posture_intel
+    - Propor tasks coerentes com a postura (HoldAnchorTask, SecureBaseTask)
+    - Propor construção de bunker quando a postura exige defesa no choke
+    - NÃO disputar posse do bulk com DefensePlanner
+    - NÃO reagir à base atacada diretamente — isso é responsabilidade da postura
+
+Não usa should_secure como gatilho central. A postura determina o que propor.
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -9,10 +21,12 @@ from sc2.ids.unit_typeid import UnitTypeId as U
 from sc2.position import Point2
 
 from bot.devlog import DevLogger
+from bot.intel.strategy.i3_army_posture_intel import ArmyPosture
 from bot.mind.attention import Attention
 from bot.mind.awareness import Awareness, K
 from bot.planners.utils.proposals import Proposal, TaskSpec, UnitRequirement
 from bot.tasks.defense.defense_bunker_task import DefenseBunkerTask
+from bot.tasks.defense.hold_anchor_task import HoldAnchorTask
 from bot.tasks.defense.land_base_task import LandBaseTask
 from bot.tasks.defense.secure_base_task import SecureBaseTask
 
@@ -77,6 +91,35 @@ class _SecureScvPickPolicy:
         except Exception:
             carrying_penalty = 0.0
         return (hp * 11.0) - dist - carrying_penalty
+
+
+_BULK_UNIT_TYPES = [
+    U.MARINE, U.MARAUDER, U.REAPER,
+    U.HELLION, U.CYCLONE,
+    U.SIEGETANK, U.SIEGETANKSIEGED,
+    U.THOR, U.THORAP,
+    U.MEDIVAC,
+    U.WIDOWMINE, U.WIDOWMINEBURROWED,
+]
+
+
+@dataclass(frozen=True)
+class _BulkPickPolicy:
+    anchor: Point2
+    unit_type: U
+    name: str = "map_control.bulk.anchor.v1"
+
+    def allow(self, unit, *, bot, attention, now: float) -> bool:
+        if unit is None or unit.type_id != self.unit_type:
+            return False
+        return bool(getattr(unit, "is_ready", False))
+
+    def score(self, unit, *, bot, attention, now: float) -> float:
+        try:
+            dist = float(unit.distance_to(self.anchor))
+        except Exception:
+            dist = 9999.0
+        return -dist  # Prefer closest to anchor
 
 
 @dataclass
@@ -155,17 +198,41 @@ class MapControlPlanner:
                 continue
         return False
 
-    def _should_request_nat_bunker(self, *, bot, attention: Attention, snapshot: dict, base_pos: Point2, hold_pos: Point2) -> bool:
+    def _should_request_nat_bunker(
+        self,
+        *,
+        bot,
+        attention: Attention,
+        posture: ArmyPosture,
+        snapshot: dict,
+        base_pos: Point2,
+        hold_pos: Point2,
+    ) -> bool:
+        """
+        Decide se deve construir bunker no choke da nat.
+        Baseado na postura, não em should_secure.
+        """
         if self._nat_bunker_started_or_pending(bot, base_pos=base_pos, hold_pos=hold_pos):
             return False
+
+        # Bunker faz sentido quando vamos segurar o choke da nat
+        posture_wants_bunker = posture in {
+            ArmyPosture.HOLD_NAT_CHOKE,
+            ArmyPosture.SECURE_NAT,
+            ArmyPosture.CONTROLLED_RETAKE,
+        }
+        # rush_active só justifica bunker na nat se a postura já NÃO for HOLD_MAIN_RAMP.
+        # Durante HOLD_MAIN_RAMP o exército precisa estar na rampa, não puxado para a nat.
         rush_state = str(snapshot.get("rush_state", "NONE") or "NONE").upper()
-        rush_active = rush_state in {"CONFIRMED", "HOLDING"}
-        nat_offsite = bool(snapshot.get("nat_offsite", False))
+        rush_active = rush_state in {"CONFIRMED", "HOLDING"} and posture != ArmyPosture.HOLD_MAIN_RAMP
         delayed_natural_alarm = bool(snapshot.get("delayed_natural_alarm", False))
-        enemy_nat_power = float(snapshot.get("enemy_nat_power", 0.0) or 0.0)
-        own_total_power = float(snapshot.get("own_total_power", 0.0) or 0.0)
-        if not (rush_active or nat_offsite or delayed_natural_alarm):
+
+        if not (posture_wants_bunker or rush_active or delayed_natural_alarm):
             return False
+
+        own_total_power = float(snapshot.get("own_total_power", 0.0) or 0.0)
+        enemy_nat_power = float(snapshot.get("enemy_nat_power", 0.0) or 0.0)
+
         if own_total_power < (3.0 if delayed_natural_alarm else 4.0):
             return False
         if enemy_nat_power > (3.2 if delayed_natural_alarm else 2.6):
@@ -181,13 +248,31 @@ class MapControlPlanner:
             return bool((marines + marauders) >= 1 or combat_supply >= 6.0 or int(self._available(bot, U.SIEGETANK)) > 0)
         return bool((marines + marauders) >= 2 or combat_supply >= 8.0 or int(getattr(attention.macro, "bases_total", 0) or 0) >= 2)
 
-    def _requirements(self, *, bot, attention: Attention, hold_pos: Point2, snapshot: dict) -> list[UnitRequirement]:
+    def _requirements(
+        self,
+        *,
+        bot,
+        attention: Attention,
+        hold_pos: Point2,
+        snapshot: dict,
+        posture_snap: dict,
+    ) -> list[UnitRequirement]:
+        """
+        Calcula requerimentos de unidades para SecureBaseTask.
+        Respeita max_detach_supply da postura — o bulk não pode ser sequestrado.
+        """
         enemy_nat_power = float(snapshot.get("enemy_nat_power", 0.0) or 0.0)
         own_total_power = float(snapshot.get("own_total_power", 0.0) or 0.0)
         rush_state = str(snapshot.get("rush_state", "NONE") or "NONE").upper()
         delayed_natural_alarm = bool(snapshot.get("delayed_natural_alarm", False))
         own_nat_bunker_count = int(snapshot.get("own_nat_bunker_count", 0) or 0)
         bases_now = int(getattr(attention.macro, "bases_total", 0) or 0)
+
+        # Orçamento de destacamento da postura operacional
+        max_detach = int(posture_snap.get("max_detach_supply", 8) or 8)
+        # Garantir que o bulk não seja esvaziado — budget total é o max_detach
+        budget_remaining = int(max_detach)
+
         desired_general = 4
         if own_total_power >= 8.0:
             desired_general = 5
@@ -198,6 +283,9 @@ class MapControlPlanner:
         if own_nat_bunker_count > 0:
             desired_general = max(int(desired_general), 6)
 
+        # Cap pelo orçamento de destacamento
+        desired_general = min(int(desired_general), int(budget_remaining))
+
         reqs: list[UnitRequirement] = []
 
         tank_avail = self._available(bot, U.SIEGETANK)
@@ -206,6 +294,15 @@ class MapControlPlanner:
         total_tanks = min(int(desired_tanks), int(tank_avail + sieged_tank_avail))
         take_unsieged = min(int(total_tanks), int(tank_avail))
         take_sieged = min(max(0, int(total_tanks) - int(take_unsieged)), int(sieged_tank_avail))
+
+        # Tanks contam contra o budget (supply real por unidade seria melhor, aqui 2 por tank)
+        tank_supply_cost = (int(take_unsieged) + int(take_sieged)) * 2
+        if int(tank_supply_cost) > int(budget_remaining):
+            take_unsieged = min(int(take_unsieged), int(budget_remaining) // 2)
+            take_sieged = 0
+            tank_supply_cost = int(take_unsieged) * 2
+        budget_remaining -= int(tank_supply_cost)
+
         if take_unsieged > 0:
             reqs.append(
                 UnitRequirement(
@@ -226,7 +323,7 @@ class MapControlPlanner:
             )
 
         mine_avail = self._available(bot, U.WIDOWMINE)
-        if mine_avail > 0:
+        if mine_avail > 0 and budget_remaining >= 2:
             reqs.append(
                 UnitRequirement(
                     unit_type=U.WIDOWMINE,
@@ -235,8 +332,9 @@ class MapControlPlanner:
                     required=len(reqs) == 0,
                 )
             )
+            budget_remaining = max(0, int(budget_remaining) - 2)
 
-        remaining = int(desired_general)
+        remaining = min(int(desired_general), int(budget_remaining))
         general_types = [U.MARINE, U.MARAUDER, U.CYCLONE, U.HELLION, U.THOR, U.THORAP]
         for unit_type in general_types:
             if remaining <= 0:
@@ -258,7 +356,7 @@ class MapControlPlanner:
             remaining -= int(take)
 
         medivac_avail = self._available(bot, U.MEDIVAC)
-        if medivac_avail > 0 and own_total_power >= 7.0:
+        if medivac_avail > 0 and own_total_power >= 7.0 and budget_remaining >= 1:
             reqs.append(
                 UnitRequirement(
                     unit_type=U.MEDIVAC,
@@ -270,9 +368,9 @@ class MapControlPlanner:
         scv_avail = self._available(bot, U.SCV)
         support_scvs = 0
         if bases_now < 2 and rush_state in {"CONFIRMED", "HOLDING"} and own_total_power >= 7.0:
-            support_scvs = 2 if enemy_nat_power <= 1.2 else 3
+            support_scvs = 1 if enemy_nat_power <= 1.2 else 2
         elif delayed_natural_alarm and bases_now < 2 and own_total_power >= 5.0:
-            support_scvs = 2 if enemy_nat_power <= 1.6 else 3
+            support_scvs = 1 if enemy_nat_power <= 1.6 else 2
         elif enemy_nat_power > 0.0 and own_total_power >= 8.0:
             support_scvs = 1
         if scv_avail > 0 and support_scvs > 0:
@@ -286,16 +384,99 @@ class MapControlPlanner:
             )
         return reqs
 
+    def _bulk_requirements(self, *, bot, anchor: Point2) -> list[UnitRequirement]:
+        """Constrói requerimentos para o bulk do exército (sem cap de detach budget — é o bulk total)."""
+        reqs: list[UnitRequirement] = []
+        for unit_type in _BULK_UNIT_TYPES:
+            try:
+                avail = int(bot.units.of_type(unit_type).ready.amount)
+            except Exception:
+                avail = 0
+            if avail <= 0:
+                continue
+            reqs.append(
+                UnitRequirement(
+                    unit_type=unit_type,
+                    count=avail,
+                    pick_policy=_BulkPickPolicy(anchor=anchor, unit_type=unit_type, name=f"map_control.bulk.anchor.{unit_type.name}.v1"),
+                    required=False,
+                )
+            )
+        return reqs
+
     def propose(self, bot, *, awareness: Awareness, attention: Attention) -> list[Proposal]:
         now = float(attention.time)
+
+        # --- Lê postura operacional ---
+        posture_snap = awareness.mem.get(K("strategy", "army", "snapshot"), now=now, default={}) or {}
+        if not isinstance(posture_snap, dict):
+            posture_snap = {}
+        posture_str = str(posture_snap.get("posture", ArmyPosture.HOLD_MAIN_RAMP.value) or ArmyPosture.HOLD_MAIN_RAMP.value)
+        try:
+            posture = ArmyPosture(posture_str)
+        except ValueError:
+            posture = ArmyPosture.HOLD_MAIN_RAMP
+
+        # --- Lê snapshot da nat (fatos estruturais) ---
         snapshot = awareness.mem.get(K("intel", "map_control", "our_nat", "snapshot"), now=now, default={}) or {}
         if not isinstance(snapshot, dict):
             return []
+
         out: list[Proposal] = []
+
+        # --- HoldAnchorTask: bulk do exército posiciona no anchor da postura ---
+        # Proposto para posturas que requerem posicionamento bulk.
+        # Não é proposto para PRESS_FORWARD (bulk avança — outro planner responsável).
+        # SECURE_NAT: bulk avança para tomar a nat — HoldAnchorTask também o posiciona.
+        _POSTURES_NEEDING_HOLD = {
+            ArmyPosture.HOLD_MAIN_RAMP,
+            ArmyPosture.HOLD_NAT_CHOKE,
+            ArmyPosture.SECURE_NAT,
+            ArmyPosture.CONTROLLED_RETREAT,
+            ArmyPosture.CONTROLLED_RETAKE,
+        }
+        anchor_payload = posture_snap.get("anchor")
+        anchor_point = self._point(anchor_payload) if anchor_payload else None
+
+        if posture in _POSTURES_NEEDING_HOLD and anchor_point is not None:
+            hold_pid = self._pid("hold_anchor_bulk")
+            if not awareness.ops_proposal_running(proposal_id=hold_pid, now=now) and self._due(awareness=awareness, now=now, pid=hold_pid):
+                bulk_reqs = self._bulk_requirements(bot=bot, anchor=anchor_point)
+
+                # Não propor se não há unidades — missão com zero assigned falha imediatamente
+                if bulk_reqs:
+                    def _hold_factory(mission_id: str) -> HoldAnchorTask:
+                        return HoldAnchorTask(awareness=awareness, log=self.log)
+
+                    # Score 93: owner do bulk domina SecureBaseTask (82-88) dentro de MAP_CONTROL.
+                    # Defend é domain DEFENSE — domínios não disputam diretamente.
+                    # Dentro de MAP_CONTROL, bulk owner deve ter score mais alto que guarnição local.
+                    out.append(
+                        Proposal(
+                            proposal_id=hold_pid,
+                            domain="MAP_CONTROL",
+                            score=93,
+                            tasks=[
+                                TaskSpec(
+                                    task_id="hold_anchor",
+                                    task_factory=_hold_factory,
+                                    unit_requirements=bulk_reqs,
+                                    lease_ttl=(None if self.lease_ttl_s is None else float(self.lease_ttl_s)),
+                                )
+                            ],
+                            lease_ttl=(None if self.lease_ttl_s is None else float(self.lease_ttl_s)),
+                            cooldown_s=0.0,
+                            risk_level=0,
+                            allow_preempt=True,
+                        )
+                    )
+                    self._mark(awareness=awareness, now=now, pid=hold_pid)
+
+        # --- LandBaseTask: fato safe_to_land (compatibilidade) ---
         safe_to_land = bool(snapshot.get("safe_to_land", False))
         nat_offsite = bool(snapshot.get("nat_offsite", False))
-        delayed_natural_alarm = bool(snapshot.get("delayed_natural_alarm", False))
         base_pos = self._point(snapshot.get("target"))
+
         if bool(safe_to_land) and bool(nat_offsite) and base_pos is not None:
             land_pid = self._pid("land_our_nat")
             if not awareness.ops_proposal_running(proposal_id=land_pid, now=now) and self._due(awareness=awareness, now=now, pid=land_pid):
@@ -327,6 +508,8 @@ class MapControlPlanner:
                     )
                 )
                 self._mark(awareness=awareness, now=now, pid=land_pid)
+
+        # --- DefenseBunkerTask: construir bunker no choke se a postura pede ---
         if base_pos is not None:
             hold_pos_early = self._point(snapshot.get("hold"), fallback=base_pos)
             if hold_pos_early is not None:
@@ -335,6 +518,7 @@ class MapControlPlanner:
                     self._should_request_nat_bunker(
                         bot=bot,
                         attention=attention,
+                        posture=posture,
                         snapshot=snapshot,
                         base_pos=base_pos,
                         hold_pos=hold_pos_early,
@@ -343,6 +527,7 @@ class MapControlPlanner:
                     and self._due(awareness=awareness, now=now, pid=bunker_pid)
                 ):
                     bunker_factory = self._make_bunker_factory(base_pos=base_pos, hold_pos=hold_pos_early)
+                    delayed_natural_alarm = bool(snapshot.get("delayed_natural_alarm", False))
                     out.append(
                         Proposal(
                             proposal_id=bunker_pid,
@@ -370,69 +555,86 @@ class MapControlPlanner:
                         )
                     )
                     self._mark(awareness=awareness, now=now, pid=bunker_pid)
-        if not bool(snapshot.get("should_secure", False)):
-            return out
 
-        pid = self._pid("secure_our_nat")
-        if awareness.ops_proposal_running(proposal_id=pid, now=now):
-            return out
-        if not self._due(awareness=awareness, now=now, pid=pid):
-            return out
+        # --- SecureBaseTask: destacamento local no choke da nat ---
+        # Proposto quando a postura pede guarnição na nat OU quando há rush ativo.
+        # NÃO é o dono do bulk — apenas um destacamento local dentro do max_detach_supply.
+        posture_wants_garrison = posture in {
+            ArmyPosture.HOLD_NAT_CHOKE,
+            ArmyPosture.SECURE_NAT,
+            ArmyPosture.CONTROLLED_RETAKE,
+        }
+        # Compatibilidade: also secure if should_secure (fato legado)
+        should_secure_legacy = bool(snapshot.get("should_secure", False))
 
-        base_pos = self._point(snapshot.get("target"))
-        staging_pos = self._point(snapshot.get("staging"), fallback=base_pos)
-        hold_pos = self._point(snapshot.get("hold"), fallback=base_pos)
-        if base_pos is None or staging_pos is None or hold_pos is None:
-            return out
-
-        reqs = self._requirements(bot=bot, attention=attention, hold_pos=hold_pos, snapshot=snapshot)
-        if not reqs:
-            return out
-
-        def _factory(mission_id: str) -> SecureBaseTask:
-            return SecureBaseTask(
-                awareness=awareness,
-                base_pos=base_pos,
-                staging_pos=staging_pos,
-                hold_pos=hold_pos,
-                label="our_nat",
-                log=self.log,
-            )
-
-        score = 94 if str(snapshot.get("rush_state", "NONE")).upper() in {"CONFIRMED", "HOLDING"} else 88
-        out.append(
-            Proposal(
-                proposal_id=pid,
-                domain="MAP_CONTROL",
-                score=int(score),
-                tasks=[
-                    TaskSpec(
-                        task_id="secure_base",
-                        task_factory=_factory,
-                        unit_requirements=reqs,
-                        lease_ttl=(None if self.lease_ttl_s is None else float(self.lease_ttl_s)),
+        if posture_wants_garrison or should_secure_legacy:
+            pid = self._pid("secure_our_nat")
+            if not awareness.ops_proposal_running(proposal_id=pid, now=now) and self._due(awareness=awareness, now=now, pid=pid):
+                base_pos2 = self._point(snapshot.get("target"))
+                staging_pos = self._point(snapshot.get("staging"), fallback=base_pos2)
+                hold_pos = self._point(snapshot.get("hold"), fallback=base_pos2)
+                if base_pos2 is not None and staging_pos is not None and hold_pos is not None:
+                    reqs = self._requirements(
+                        bot=bot,
+                        attention=attention,
+                        hold_pos=hold_pos,
+                        snapshot=snapshot,
+                        posture_snap=posture_snap,
                     )
-                ],
-                lease_ttl=(None if self.lease_ttl_s is None else float(self.lease_ttl_s)),
-                cooldown_s=0.0,
-                risk_level=0,
-                allow_preempt=True,
-            )
-        )
-        self._mark(awareness=awareness, now=now, pid=pid)
-        if self.log is not None:
-            self.log.emit(
-                "planner_proposed",
-                {
-                    "planner": self.planner_id,
-                    "count": int(len(out)),
-                    "label": "secure_our_nat",
-                    "rush_state": str(snapshot.get("rush_state", "NONE")),
-                    "clear_for": float(round(float(snapshot.get("clear_for", 0.0) or 0.0), 2)),
-                    "enemy_nat_power": float(round(float(snapshot.get("enemy_nat_power", 0.0) or 0.0), 2)),
-                    "safe_to_land": bool(safe_to_land),
-                    "nat_offsite": bool(nat_offsite),
-                },
-                meta={"module": "planner", "component": f"planner.{self.planner_id}"},
-            )
+                    if reqs:
+                        def _factory(mission_id: str) -> SecureBaseTask:
+                            return SecureBaseTask(
+                                awareness=awareness,
+                                base_pos=base_pos2,
+                                staging_pos=staging_pos,
+                                hold_pos=hold_pos,
+                                label="our_nat",
+                                log=self.log,
+                            )
+
+                        rush_state = str(snapshot.get("rush_state", "NONE")).upper()
+                        # Score baseado na postura, não apenas no rush_state
+                        if posture == ArmyPosture.HOLD_NAT_CHOKE and rush_state in {"CONFIRMED", "HOLDING"}:
+                            score = 91  # Abaixo do Defend (90)? Não — destacamento local,
+                            # score um pouco abaixo do defend principal para não disputar bulk
+                            score = 88
+                        elif posture in {ArmyPosture.HOLD_NAT_CHOKE, ArmyPosture.SECURE_NAT}:
+                            score = 85
+                        else:
+                            score = 82
+
+                        out.append(
+                            Proposal(
+                                proposal_id=pid,
+                                domain="MAP_CONTROL",
+                                score=int(score),
+                                tasks=[
+                                    TaskSpec(
+                                        task_id="secure_base",
+                                        task_factory=_factory,
+                                        unit_requirements=reqs,
+                                        lease_ttl=(None if self.lease_ttl_s is None else float(self.lease_ttl_s)),
+                                    )
+                                ],
+                                lease_ttl=(None if self.lease_ttl_s is None else float(self.lease_ttl_s)),
+                                cooldown_s=0.0,
+                                risk_level=0,
+                                allow_preempt=True,
+                            )
+                        )
+                        self._mark(awareness=awareness, now=now, pid=pid)
+                        if self.log is not None:
+                            self.log.emit(
+                                "planner_proposed",
+                                {
+                                    "planner": self.planner_id,
+                                    "count": int(len(out)),
+                                    "label": "secure_our_nat",
+                                    "posture": str(posture.value),
+                                    "rush_state": str(snapshot.get("rush_state", "NONE")),
+                                    "max_detach_supply": int(posture_snap.get("max_detach_supply", 0) or 0),
+                                },
+                                meta={"module": "planner", "component": f"planner.{self.planner_id}"},
+                            )
+
         return out

@@ -1,5 +1,15 @@
 # bot/intel/locations/i3_map_control_intel.py
 
+"""
+Map Control Intel — fatos observáveis da natural e do terreno adjacente.
+
+Responsabilidade: observar estado estrutural da nat (tomada, voando, fortified,
+presença inimiga, geometria de posições defensáveis). NÃO decide postura.
+
+Nota: should_secure e safe_to_land permanecem como fatos derivados simplificados
+para compatibilidade com LandBaseTask e outros consumidores legados. A lógica de
+DECISÃO de postura está em bot/intel/strategy/i3_army_posture_intel.py.
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -65,6 +75,8 @@ class MapControlIntelConfig:
     delayed_natural_min_main_power: float = 2.5
     delayed_natural_max_enemy_power_at_nat: float = 3.2
     delayed_natural_max_enemy_presence_power_at_nat: float = 2.8
+    natural_release_clear_s: float = 3.5
+    natural_release_min_own_nat_power: float = 4.5
 
 
 def _point_payload(pos: Point2 | None) -> dict[str, float] | None:
@@ -400,86 +412,51 @@ def derive_map_control_intel(
     if refresh_target is None:
         refresh_label = ""
 
-    defer_reason = ""
-    should_secure = False
-    safe_to_land = False
-    if nat_taken:
-        defer_reason = "nat_taken"
-    elif bool(nat_offsite) and bool(no_direct_pressure):
-        if float(own_total_power) < max(4.0, float(cfg.min_total_power) - 2.0):
-            defer_reason = "offsite_nat_army_too_small"
-        elif float(own_main_power) < max(2.0, float(cfg.min_main_power) - 1.0):
-            defer_reason = "offsite_nat_main_hold_too_thin"
-        elif float(presence_nat_side_power) > min(float(cfg.max_enemy_presence_power_at_nat), 1.2):
-            defer_reason = "offsite_nat_enemy_presence"
-        elif float(nat_enemy_power) > min(float(cfg.max_enemy_power_at_nat), 1.2):
-            defer_reason = "offsite_nat_enemy_controls_nat"
-        else:
-            should_secure = True
-            defer_reason = "recover_offsite_nat"
-    elif not bool(rush_recent or had_rush_context or enemy_macro_lead_visible):
-        defer_reason = "no_expand_context"
-    elif not no_direct_pressure:
-        defer_reason = "main_under_pressure"
-    elif bool(enemy_macro_lead_visible):
-        if float(clear_for) < float(cfg.enemy_macro_lead_clear_s):
-            defer_reason = "macro_lead_pressure_not_clear"
-        elif float(own_total_power) < float(cfg.enemy_macro_lead_min_total_power):
-            defer_reason = "macro_lead_army_too_small"
-        elif float(own_main_power) < float(cfg.enemy_macro_lead_min_main_power):
-            defer_reason = "macro_lead_main_hold_too_thin"
-        elif float(presence_nat_side_power) > float(cfg.enemy_macro_lead_max_enemy_presence_power_at_nat):
-            defer_reason = "macro_lead_enemy_presence_nat_side"
-        elif float(nat_enemy_power) > float(cfg.enemy_macro_lead_max_enemy_power_at_nat):
-            defer_reason = "macro_lead_enemy_controls_nat"
-        else:
-            should_secure = True
-            defer_reason = "enemy_macro_lead_secure_nat"
-    elif bool(delayed_natural_alarm):
-        if float(clear_for) < float(cfg.enemy_macro_lead_clear_s):
-            defer_reason = "delayed_nat_pressure_not_clear"
-        elif float(own_total_power) < float(cfg.delayed_natural_min_total_power):
-            defer_reason = "delayed_nat_army_too_small"
-        elif float(own_main_power) < float(cfg.delayed_natural_min_main_power):
-            defer_reason = "delayed_nat_main_hold_too_thin"
-        elif float(presence_nat_side_power) > float(cfg.delayed_natural_max_enemy_presence_power_at_nat):
-            defer_reason = "delayed_nat_enemy_presence"
-        elif float(nat_enemy_power) > float(cfg.delayed_natural_max_enemy_power_at_nat):
-            defer_reason = "delayed_nat_enemy_controls_nat"
-        else:
-            should_secure = True
-            defer_reason = "delayed_nat_alarm_secure_nat"
-    else:
-        if float(clear_for) < float(cfg.release_clear_s):
-            defer_reason = "pressure_not_clear_long_enough"
-        elif float(own_total_power) < float(cfg.min_total_power):
-            defer_reason = "army_too_small"
-        elif float(own_main_power) < float(cfg.min_main_power):
-            defer_reason = "main_hold_too_thin"
-        elif float(presence_nat_side_power) > float(cfg.max_enemy_presence_power_at_nat):
-            defer_reason = "enemy_presence_nat_side"
-        elif float(nat_enemy_power) > float(cfg.max_enemy_power_at_nat):
-            defer_reason = "enemy_still_controls_nat"
-        else:
-            should_secure = True
-            defer_reason = "commit_lowground"
+    # ---------------------------------------------------------------------------
+    # should_secure e safe_to_land como FATOS observáveis simplificados.
+    # A DECISÃO de postura (quando/como agir) está em army_posture_intel.
+    # Esses valores são mantidos apenas para compatibilidade com consumidores
+    # legados (LandBaseTask, DefenseBunkerTask, etc.).
+    # ---------------------------------------------------------------------------
+
+    # should_secure: fato — "há contexto para guarnecer a nat"
+    # Critério simples: rush/pressão/alarme + nat não tomada + army mínima + nat não muito quente
+    should_secure = bool(
+        not nat_taken
+        and bool(rush_recent or had_rush_context or enemy_macro_lead_visible or delayed_natural_alarm or nat_offsite)
+        and bool(no_direct_pressure)
+        and float(own_total_power) >= max(3.5, float(cfg.min_total_power) - 2.5)
+        and float(nat_enemy_power) <= float(cfg.max_enemy_power_at_nat)
+        and float(presence_nat_side_power) <= float(cfg.max_enemy_presence_power_at_nat)
+    )
+
+    # safe_to_land: fato — "o terreno permite pousar agora"
+    nat_clear_to_land = bool(
+        float(nat_enemy_power) <= min(float(cfg.max_enemy_power_at_nat), 1.1)
+        and float(presence_nat_side_power) <= min(float(cfg.max_enemy_presence_power_at_nat), 1.0)
+        and bool(no_direct_pressure)
+    )
+    local_nat_cover_ready = bool(
+        own_nat_bunker_count > 0
+        or own_nat_tank_count > 0
+        or float(own_nat_power) >= float(cfg.natural_release_min_own_nat_power)
+    )
+    natural_release_window = bool(
+        bool(no_direct_pressure)
+        and float(clear_for) >= float(cfg.natural_release_clear_s)
+        and bool(local_nat_cover_ready)
+    )
     if bool(nat_taken):
         safe_to_land = True
-    elif bool(should_secure):
-        nat_clear_to_land = bool(
-            float(nat_enemy_power) <= min(float(cfg.max_enemy_power_at_nat), 1.1)
-            and float(presence_nat_side_power) <= min(float(cfg.max_enemy_presence_power_at_nat), 1.0)
-            and bool(no_direct_pressure)
-        )
-        # Offsite naturals need a way to break the bunker/tank -> land deadlock.
-        safe_to_land = bool(
-            nat_clear_to_land
-            and (
-                fortified
-                or bool(nat_offsite)
-            )
-        )
+    elif bool(nat_offsite) and bool(nat_clear_to_land):
+        # Offsite com terreno limpo pode pousar
+        safe_to_land = bool(fortified or bool(nat_clear_to_land))
+    elif bool(should_secure) and bool(nat_clear_to_land):
+        safe_to_land = bool(fortified or natural_release_window)
+    else:
+        safe_to_land = False
 
+    defer_reason = "posture_delegated_to_army_posture_intel"
     if nat_offsite and not bool(safe_to_land) and bool(should_secure):
         defer_reason = "secure_before_landing"
 
@@ -512,6 +489,8 @@ def derive_map_control_intel(
         "own_main_power": float(round(float(own_main_power), 3)),
         "own_nat_power": float(round(float(own_nat_power), 3)),
         "fortified": bool(fortified),
+        "local_nat_cover_ready": bool(local_nat_cover_ready),
+        "natural_release_window": bool(natural_release_window),
         "own_nat_bunker_count": int(own_nat_bunker_count),
         "own_nat_tank_count": int(own_nat_tank_count),
         "should_secure": bool(should_secure),

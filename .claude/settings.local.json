@@ -8,7 +8,8 @@
       "Bash(pip list)",
       "Bash(pip install -e \"ares-sc2\")",
       "Bash(du -sh /c/Users/Asus/Documents/projetos/sc2bot/ares/ares-sc2-bot-template/*)",
-      "Bash(du -sh \"/c/Users/Asus/Documents/StarCraft II/\"*)"
+      "Bash(du -sh \"/c/Users/Asus/Documents/StarCraft II/\"*)",
+      "Bash(grep -E \"\\\\.\\(py\\)$\")"
     ]
   }
 }

@@ -8,7 +8,7 @@ from bot.devlog import DevLogger
 from bot.mind.attention import Attention
 from bot.mind.awareness import Awareness, K
 from bot.planners.utils.proposals import Proposal, TaskSpec
-from bot.tasks.defense.maintain_wall_task import MaintainWallTask
+from bot.tasks.wall.maintain_wall_task import MaintainWallTask
 
 
 @dataclass
@@ -33,6 +33,47 @@ class WallPlanner:
     def _rush_active(*, awareness: Awareness, now: float) -> bool:
         state = str(awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
         return state in {"SUSPECTED", "CONFIRMED", "HOLDING"}
+
+    @staticmethod
+    def _main_wall_contact(bot, *, attention: Attention) -> bool:
+        try:
+            ramp = getattr(bot, "main_base_ramp", None)
+            if ramp is None:
+                return False
+            anchors = list(getattr(ramp, "corner_depots", []) or [])
+            top = getattr(ramp, "top_center", None)
+            if top is not None:
+                anchors.append(top)
+            bottom = getattr(ramp, "bottom_center", None)
+            if bottom is not None:
+                anchors.append(bottom)
+        except Exception:
+            return False
+        if not anchors:
+            return False
+        try:
+            enemies = list(getattr(bot, "enemy_units", []) or [])
+        except Exception:
+            enemies = []
+        for enemy in enemies:
+            try:
+                if bool(getattr(enemy, "is_flying", False)):
+                    continue
+                if any(float(enemy.distance_to(anchor)) <= 11.0 for anchor in anchors):
+                    return True
+            except Exception:
+                continue
+        threat_pos = getattr(attention.combat, "primary_threat_pos", None)
+        if threat_pos is not None:
+            try:
+                if any(float(threat_pos.distance_to(anchor)) <= 11.0 for anchor in anchors):
+                    return True
+            except Exception:
+                pass
+        try:
+            return int(getattr(attention.combat, "primary_enemy_count", 0) or 0) > 0 and int(getattr(attention.combat, "primary_urgency", 0) or 0) >= 10
+        except Exception:
+            return False
 
     @staticmethod
     def _opening_build_active(bot) -> bool:
@@ -79,8 +120,9 @@ class WallPlanner:
         out: list[Proposal] = []
         opening_build_active = bool(self._opening_build_active(bot))
         rush_active = bool(self._rush_active(awareness=awareness, now=now))
+        main_wall_contact = bool(self._main_wall_contact(bot, attention=attention))
 
-        if opening_build_active and not rush_active:
+        if opening_build_active and not rush_active and not main_wall_contact:
             if self.log is not None:
                 self.log.emit(
                     "planner_skipped",
@@ -88,6 +130,7 @@ class WallPlanner:
                         "planner": self.planner_id,
                         "reason": "opening_build_active",
                         "rush_active": bool(rush_active),
+                        "main_wall_contact": bool(main_wall_contact),
                         "bases_total": int(attention.macro.bases_total),
                     },
                     meta={"module": "planner", "component": f"planner.{self.planner_id}"},
@@ -150,6 +193,7 @@ class WallPlanner:
                     "count": len(out),
                     "zones": [str(p.proposal_id).split(":")[-1] for p in out],
                     "rush_active": bool(rush_active),
+                    "main_wall_contact": bool(main_wall_contact),
                     "bases_total": int(attention.macro.bases_total),
                     "nat_supported": bool(nat_supported),
                 },

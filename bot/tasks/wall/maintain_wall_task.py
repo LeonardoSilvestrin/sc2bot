@@ -285,12 +285,46 @@ class MaintainWallTask(BaseTask):
         barracks_pos = getattr(ramp, "barracks_correct_placement", None)
         rush_active = bool(self._rush_active(awareness=self.awareness, now=now))
         main_wall_enemy_near = False
+        main_wall_target_near = False
         try:
             if ramp is not None:
-                wall_center = getattr(ramp, "top_center", None) or bot.start_location
-                main_wall_enemy_near = int(bot.enemy_units.closer_than(10.0, wall_center).amount) > 0
+                wall_anchors = list(getattr(ramp, "corner_depots", []) or [])
+                top = getattr(ramp, "top_center", None)
+                if top is not None:
+                    wall_anchors.append(top)
+                bottom = getattr(ramp, "bottom_center", None)
+                if bottom is not None:
+                    wall_anchors.append(bottom)
+                enemies = list(getattr(bot, "enemy_units", []) or [])
+                main_wall_enemy_near = any(
+                    (not bool(getattr(enemy, "is_flying", False)))
+                    and any(float(enemy.distance_to(anchor)) <= 11.0 for anchor in wall_anchors)
+                    for enemy in enemies
+                )
         except Exception:
             main_wall_enemy_near = False
+        threat_pos = getattr(attention.combat, "primary_threat_pos", None)
+        if threat_pos is not None and ramp is not None:
+            try:
+                wall_anchors = list(getattr(ramp, "corner_depots", []) or [])
+                top = getattr(ramp, "top_center", None)
+                if top is not None:
+                    wall_anchors.append(top)
+                bottom = getattr(ramp, "bottom_center", None)
+                if bottom is not None:
+                    wall_anchors.append(bottom)
+                main_wall_target_near = any(float(threat_pos.distance_to(anchor)) <= 11.0 for anchor in wall_anchors)
+            except Exception:
+                main_wall_target_near = False
+        emergency_wall = bool(
+            rush_active
+            or main_wall_enemy_near
+            or main_wall_target_near
+            or (
+                int(getattr(attention.combat, "primary_enemy_count", 0) or 0) > 0
+                and int(getattr(attention.combat, "primary_urgency", 0) or 0) >= 10
+            )
+        )
         missing_depots = self._missing_exact_targets(
             bot,
             targets=depot_positions,
@@ -328,6 +362,8 @@ class MaintainWallTask(BaseTask):
                 "reactor_required": bool(reactor_required),
                 "reactor_started": bool(reactor_started),
                 "enemy_near": bool(main_wall_enemy_near),
+                "target_near": bool(main_wall_target_near),
+                "emergency_wall": bool(emergency_wall),
                 "complete": bool(
                     depots_done >= len(depot_positions)
                     and three_by_three_done >= 1
@@ -338,11 +374,13 @@ class MaintainWallTask(BaseTask):
             now=now,
             ttl=8.0,
         )
-        if float(now) >= 28.0 and missing_depots:
+        depot_start_at = 0.0 if emergency_wall else 28.0
+        barracks_start_at = 16.0 if emergency_wall else 38.0
+        if float(now) >= float(depot_start_at) and missing_depots:
             if self._issue_exact_build(bot, structure_type=U.SUPPLYDEPOT, pos=missing_depots[0]):
                 self._active("building_main_wall_depot")
                 return TaskResult.running("building_main_wall_depot")
-        if float(now) >= 38.0 and missing_three_by_three:
+        if float(now) >= float(barracks_start_at) and missing_three_by_three:
             if self._issue_exact_build(bot, structure_type=U.BARRACKS, pos=missing_three_by_three[0]):
                 self._active("building_main_wall_three_by_three")
                 return TaskResult.running("building_main_wall_three_by_three")

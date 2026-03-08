@@ -122,6 +122,26 @@ class HoldRampTask(BaseTask):
         return targets
 
     @staticmethod
+    def _scv_hold_slots(*, depots: list[Point2], barracks_pos: Point2 | None, top_center: Point2, base_pos: Point2) -> list[Point2]:
+        slots: list[Point2] = []
+        for pos in list(depots or []):
+            try:
+                slots.append(pos.towards(base_pos, 0.9))
+            except Exception:
+                slots.append(pos)
+        if barracks_pos is not None:
+            try:
+                slots.append(barracks_pos.towards(base_pos, 1.1))
+            except Exception:
+                slots.append(barracks_pos)
+        if not slots:
+            try:
+                slots.append(top_center.towards(base_pos, 1.8))
+            except Exception:
+                slots.append(top_center)
+        return slots
+
+    @staticmethod
     def _issue_repair(scv, target) -> bool:
         try:
             repair_fn = getattr(scv, "repair", None)
@@ -172,6 +192,32 @@ class HoldRampTask(BaseTask):
         except Exception:
             return True
 
+    @staticmethod
+    def _enemy_wall_units(bot, *, top_center: Point2) -> list:
+        out = []
+        seen: set[int] = set()
+        ramp = getattr(bot, "main_base_ramp", None)
+        search_centers = [(top_center, 9.0)]
+        try:
+            bottom = getattr(ramp, "bottom_center", None) if ramp is not None else None
+            if bottom is not None:
+                search_centers.append((bottom, 7.0))
+        except Exception:
+            pass
+        for center, radius in search_centers:
+            for unit in list(getattr(bot, "enemy_units", []) or []):
+                try:
+                    tag = int(getattr(unit, "tag", -1) or -1)
+                    if tag in seen:
+                        continue
+                    if float(unit.distance_to(center)) > float(radius):
+                        continue
+                    seen.add(tag)
+                    out.append(unit)
+                except Exception:
+                    continue
+        return out
+
     async def on_step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult:
         bound_err = self.require_mission_bound(min_tags=1)
         if bound_err is not None:
@@ -184,19 +230,26 @@ class HoldRampTask(BaseTask):
 
         top_center, depots, barracks_pos = self._wall_context(bot)
         base_pos = self._resolve_base_pos(bot)
-        enemy_wall = bot.enemy_units.closer_than(9.0, top_center)
-        if int(enemy_wall.amount) <= 0:
+        enemy_wall = self._enemy_wall_units(bot, top_center=top_center)
+        repair_targets = self._repair_targets(bot, depots=depots, barracks_pos=barracks_pos)
+        if not enemy_wall and not repair_targets:
             self._assign_role(bot, units, UnitRole.GATHERING)
             self._done("ramp_contact_cleared")
             return TaskResult.done("ramp_contact_cleared")
 
         self._assign_role(bot, units, UnitRole.REPAIRING)
-        repair_targets = self._repair_targets(bot, depots=depots, barracks_pos=barracks_pos)
+        scv_hold_slots = self._scv_hold_slots(
+            depots=depots,
+            barracks_pos=barracks_pos,
+            top_center=top_center,
+            base_pos=base_pos,
+        )
         bunkers = [b for b in self._bunkers_near_wall(bot, top_center=top_center) if self._bunker_has_space(b)]
         issued = False
         marine_slots = depots[:] if depots else [top_center]
         marine_idx = 0
-        enemy_count = int(enemy_wall.amount)
+        scv_idx = 0
+        enemy_count = int(len(enemy_wall))
 
         # Distribui SCVs entre alvos de reparo com sticky — evita troca de alvo a cada tick
         repair_tag_map = {int(getattr(t, "tag", -1)): t for t in repair_targets}
@@ -232,7 +285,7 @@ class HoldRampTask(BaseTask):
             if unit.type_id == U.SCV:
                 close_enemy = None
                 try:
-                    close_enemy = enemy_wall.closest_to(unit) if int(enemy_wall.amount) > 0 else None
+                    close_enemy = min(enemy_wall, key=lambda e: float(unit.distance_to(e))) if enemy_wall else None
                 except Exception:
                     close_enemy = None
                 if close_enemy is not None:
@@ -261,7 +314,8 @@ class HoldRampTask(BaseTask):
                     if not repairing:
                         issued = self._issue_repair(unit, target) or issued
                     continue
-                hold = top_center.towards(base_pos, 1.8)
+                hold = scv_hold_slots[scv_idx % len(scv_hold_slots)] if scv_hold_slots else top_center
+                scv_idx += 1
                 if float(unit.distance_to(hold)) > 1.5 and not bool(getattr(unit, "is_moving", False)):
                     unit.move(hold)
                     issued = True
@@ -271,7 +325,9 @@ class HoldRampTask(BaseTask):
                 continue
 
             if unit.type_id == U.MARINE:
-                target = enemy_wall.closest_to(unit)
+                if not enemy_wall:
+                    continue
+                target = min(enemy_wall, key=lambda e: float(unit.distance_to(e)))
                 slot = marine_slots[marine_idx % len(marine_slots)] if marine_slots else top_center
                 marine_idx += 1
                 # Se há bunker disponível, entra direto — prioridade máxima
@@ -308,11 +364,16 @@ class HoldRampTask(BaseTask):
                     issued = True
                 continue
 
-            target = enemy_wall.closest_to(unit)
+            if not enemy_wall:
+                continue
+            target = min(enemy_wall, key=lambda e: float(unit.distance_to(e)))
             unit.attack(target)
             issued = True
 
         if issued:
             self._active("holding_ramp")
             return TaskResult.running("holding_ramp")
+        if repair_targets:
+            self._active("repairing_ramp_wall")
+            return TaskResult.running("repairing_ramp_wall")
         return TaskResult.noop("hold_ramp_idle")

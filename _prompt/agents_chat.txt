@@ -1,0 +1,100 @@
+════════════════════════════════════════════════════════════════════════
+HISTÓRICO COMPACTADO — ares-sc2-bot-template (branch: ares)
+Sessões: 2026-03-08 (múltiplos agentes)
+════════════════════════════════════════════════════════════════════════
+
+[HoldAnchorTask] Tank blocking fix
+- Removido hold_position() do loop de slow units.
+- Tanks sieged: UNSIEGE_UNSIEGE se dist > 12 e sem inimigo próximo (<15 tiles).
+- Tanks unsieged: move(anchor) se dist > 7.
+- Adicionado import AbilityId; _TANK_UNSIEGE_TO_MOVE_RADIUS=12.0, _TANK_LOCAL_HOLD_RADIUS=15.0.
+
+[IntelPlanner] Worker scout route
+- Prioriza expansões não vistas / mais antigas (age-based + distance tiebreak).
+- Removido gate que parava scout quando enemy bases_visible >= 3.
+
+[Worker Scout / MacroOrchestratorPlanner] Natural stall fix
+- worker_expansion_scout_task.py: grava last_attempt e last_route_t no retreat danger/low-hp.
+- intel_planner.py: worker_scout_failure_backoff_s=18.0 bloqueando reproposal pós-retreat.
+- macro_orchestrator_planner.py: natural_establish_critical não desativa mais produção hard.
+
+[DefenseBunkerTask] Bunker posição errada / retry travado
+- _is_valid_main_ramp_bunker_pos(): valida highground, proximidade a top/bottom/barracks, sem escapar para nat/main.
+- Retry: pos rejeitada vai para _blocked_positions; task recalcula novo candidato no próximo ciclo.
+- _main_wall_fallback_targets(): candidatos próximos à wall, alguns tiles atrás em direção à main, priorizando lado mais perto da nat.
+
+[DefensePlanner] Bunker da rampa principal durante rush precoce
+- _should_request_bunker(): gate relaxado para rushs HEAVY/EXTREME/one_base_rush:
+  (depots_done >= 1 OR three_by_three_done >= 1) suficiente.
+- Rushs normais mantêm gate original.
+- Bunker só proposto após wall minimamente materializada (depots_done>=2 AND three_by_three_done>=1 no caso normal).
+
+[ControlDepotsTask / HousekeepingPlanner] Depot da wall fecha cedo demais
+- main_wall_threatened depende apenas de enemy_units terrestres perto da rampa.
+- threat_pos/primary_urgency/rush_active não seguram mais a wall principal fechada por si só.
+
+[SecureBaseTask / HoldRampTask / DefendBaseTask / LandBaseTask] Deadlock CC nat
+- SecureBaseTask: quando enable_expansion==True e expand_target_label=="NATURAL",
+  reservar centro + 4 cantos do footprint 5×5 do CC (offsets ±2,±2) em reserved_sites.
+  Garante que _sanitize_slots empurre marines de toda a área antes de Ares tentar colocar o CC.
+- HoldRampTask / DefendBaseTask: consultam building_tracker para BUNKER/COMMANDCENTER;
+  slots saneados para não cair em cima de sites de construção.
+- LandBaseTask: clearance da zona de pouso ampliada; unidades empurradas mais cedo.
+
+[SecureBaseTask / DefendBaseTask] Tank sit/unsit loop
+- _handle_tank: tank sieged mantém posição enquanto enemy_near ou enemy_main (hold_pressure).
+- Threshold de unsiege: 5.0 → 7.5 tiles.
+- DefendBaseTask: local_pressure análogo (enemy_near_base ou base_urgency > 0).
+
+[MacroOrchestratorPlanner / MapControlIntel / DesiredIntel] Natural travada pós-rush
+- rush_natural_release_clear_s: 4.0 → 2.5; rush_natural_release_min_army_supply: 6.0 → 4.0.
+- Novo natural_cc_force_now: <2 bases, sem CC pendente, 360+ minerais, sem enemy_at_door →
+  força enable_expansion=True e derruba enable_production naquele ciclo.
+- safe_to_land: aceita natural_release_window (pressão limpa + local_nat_cover_ready).
+- desired_intel.py: RushDefenseOpen sem nat resolvida → cap BARRACKS<=2, FACTORY<=1, STARPORT=0.
+
+[MacroAresExecutorTick] Produção travando expansão
+- Gate local: preempta ProductionController quando NATURAL é alvo, ainda falta 2a base,
+  sem CC pendente e há sinal concreto de release (expand_safe_to_land / rush_natural_release /
+  enemy_macro_catchup_expand / expand_build_mode==OFFSITE).
+
+[ReinforceMissionPlanner] Bulk proativo
+- allowed_domains inclui MAP_CONTROL.
+- MapControlReinforcePickPolicy: prefere unidades is_idle, penaliza atacando/movendo.
+- _has_idle_bulk_reserve(): propõe reforço de map_control_planner:hold_anchor_bulk mesmo sem perdas.
+- map_control_score=84; map_control_max_add_per_type=2.
+
+[self.py] Chat em jogo
+- _emit_chat_updates emite sempre (não só rush_active).
+- Mensagem reflete postura operacional + info inimiga condensada.
+- Deduplicação por sig: army_supply em buckets de 4, top_count em buckets de 2.
+
+[SecureBaseTask] Bug: tanks e minas descendo para o choke (lowground) — 2026-03-08
+- Problema: mine_center=hold_pos (lowground do choke da nat); front_tank_anchor=hold_pos.
+  Tanks sitiavam no lowground em vez do highground; minas burravam no choke.
+- Fix:
+  - mine_center: hold_pos → staging_pos (highground da nat), radius 2.8→2.5.
+  - front_tank_anchor: hold_pos → forward_staging_anchor (resultado de _best_ramp_tank_anchor).
+  - _best_ramp_tank_anchor reescrito: preferred_center=staging_pos, candidatos em raios 1-4
+    ao redor do staging_pos, exige h >= highground_h - 0.5 (não apenas > lowground), pontua
+    por (h - lowground_h)*4 + proximidade ao staging_pos*2.
+  - Marines continuam indo para perimeter ao redor do hold_pos (choke) quando lowground_cleared.
+  - Comportamento correto: tanks/minas ficam no highground cobrindo o choke por alcance de siege.
+
+[Refactor] Separação de tasks por responsabilidade de planner — 2026-03-08
+- Criados bot/tasks/map_control/ e bot/tasks/wall/ como novos módulos.
+- Movidos de bot/tasks/defense/ → bot/tasks/map_control/:
+    hold_anchor_task.py, land_base_task.py, secure_base_task.py
+- Movido de bot/tasks/defense/ → bot/tasks/wall/:
+    maintain_wall_task.py
+- Permanecem em bot/tasks/defense/ (exclusivos do DefensePlanner ou base):
+    defend_task.py, defend_base_task.py, defense_bunker_task.py,
+    hold_ramp_task.py, lift_natural_task.py, push_task.py,
+    scv_defensive_pull_task.py, scv_repair_task.py
+- DefenseBunkerTask permanece em defense/ (compartilhada: DefensePlanner + MapControlPlanner).
+- Imports atualizados:
+    map_control_planner.py: HoldAnchorTask, LandBaseTask, SecureBaseTask → bot.tasks.map_control.*
+    wall_planner.py: MaintainWallTask → bot.tasks.wall.maintain_wall_task
+- Espelhos _prompt/export_scripts/files/bot/tasks/ movidos analogamente.
+
+════════════════════════════════════════════════════════════════════════

@@ -147,11 +147,8 @@ class ControlDepots(BaseTask):
 
         issued = 0
         action = "none"
-        main_wall_threatened = bool(
-            main_wall_enemy_near
-            or main_wall_target_near
-            or (rush_active and enemy_count > 0)
-        )
+        # Main-ramp depots should stay raised only while a real enemy is near the ramp.
+        main_wall_threatened = bool(main_wall_enemy_near)
         main_wall_tags = {int(d.tag) for d in self._main_wall_depots(bot)}
         all_depots = list(bot.structures.of_type({U.SUPPLYDEPOT, U.SUPPLYDEPOTLOWERED}).ready)
 

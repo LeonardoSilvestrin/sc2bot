@@ -69,22 +69,45 @@ class LandBaseTask(BaseTask):
             U.COMMANDCENTERFLYING,
             U.ORBITALCOMMANDFLYING,
         }
-        best_unit = None
-        best_score = 9999.0
-        for unit in list(getattr(bot, "townhalls", []) or []) + list(getattr(bot, "structures", []) or []):
+        is_natural_recovery = str(self.base_label).upper() == "NATURAL"
+        all_candidates = list(getattr(bot, "townhalls", []) or []) + list(getattr(bot, "structures", []) or [])
+        seen_tags: set[int] = set()
+        flying_best = None
+        flying_best_score = 9999.0
+        grounded_best = None
+        grounded_best_score = 9999.0
+        for unit in all_candidates:
             try:
                 if getattr(unit, "type_id", None) not in fallback_types:
                     continue
+                tag = int(getattr(unit, "tag", -1) or -1)
+                if tag in seen_tags:
+                    continue
+                seen_tags.add(tag)
                 dist_target = float(unit.distance_to(self.target_pos))
                 dist_main = float(unit.distance_to(bot.start_location))
                 is_flying = bool(getattr(unit, "is_flying", False))
-                score = dist_target - (6.0 if is_flying else 0.0) + (0.35 * dist_main)
-                if score < best_score:
-                    best_score = score
-                    best_unit = unit
+
+                if is_flying:
+                    score = dist_target - 6.0 + ((0.15 if is_natural_recovery else 0.35) * dist_main)
+                    if score < flying_best_score:
+                        flying_best_score = score
+                        flying_best = unit
+                    continue
+
+                # Guardrail: during NATURAL recovery, never lift main as fallback.
+                if is_natural_recovery:
+                    if dist_target > 15.0:
+                        continue
+                    if dist_main <= 11.0:
+                        continue
+                score = dist_target + (0.35 * dist_main)
+                if score < grounded_best_score:
+                    grounded_best_score = score
+                    grounded_best = unit
             except Exception:
                 continue
-        return best_unit
+        return flying_best or grounded_best
 
     def _clear_landing_zone(self, bot, *, target_pos: Point2, landing_unit_tag: int) -> bool:
         issued = False
@@ -99,13 +122,18 @@ class LandBaseTask(BaseTask):
                 if bool(getattr(ally, "is_flying", False)):
                     continue
                 dist = float(ally.distance_to(target_pos))
-                if dist > 3.2:
+                if dist > 4.5:
                     continue
                 if getattr(ally, "type_id", None) == U.WIDOWMINEBURROWED:
                     ally(AbilityId.BURROWUP_WIDOWMINE)
                     issued = True
                     continue
                 retreat = getattr(bot, "start_location", None)
+                try:
+                    if retreat is not None:
+                        retreat = target_pos.towards(retreat, 6.0)
+                except Exception:
+                    retreat = getattr(bot, "start_location", None)
                 if retreat is None:
                     continue
                 ally.move(retreat)

@@ -1,0 +1,175 @@
+"""
+HoldAnchorTask — task de postura do bulk do exército.
+
+Responsabilidade: mover o bulk do exército para o anchor designado pela postura
+operacional e segurá-lo lá. NÃO toma decisões — executa a postura que o planner derivou.
+
+Regras:
+    - Lê o anchor atual de army_posture_intel a cada tick (âncora pode mudar se postura muda)
+    - Unidades lentas/posicionais (tanks) NÃO descem automaticamente — posicionam no anchor
+    - Se a postura mudar para CONTROLLED_RETREAT, segura o fallback anchor
+    - Task não decide quando sair — o planner cancela quando a postura muda
+
+Nota: Esta task é o dono do bulk. SecureBaseTask é um destacamento local distinto.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+from sc2.ids.ability_id import AbilityId
+from sc2.ids.unit_typeid import UnitTypeId as U
+from sc2.position import Point2
+
+from bot.devlog import DevLogger
+from bot.mind.attention import Attention
+from bot.mind.awareness import Awareness, K
+from bot.tasks.base_task import BaseTask, TaskResult, TaskTick
+
+_BULK_TYPES = {
+    U.MARINE,
+    U.MARAUDER,
+    U.REAPER,
+    U.HELLION,
+    U.CYCLONE,
+    U.SIEGETANK,
+    U.SIEGETANKSIEGED,
+    U.THOR,
+    U.THORAP,
+    U.MEDIVAC,
+    U.WIDOWMINE,
+    U.WIDOWMINEBURROWED,
+}
+
+# Unidades que devem ser posicionadas com cuidado — não "correm" para o anchor
+_SLOW_POSITIONAL = {U.SIEGETANK, U.SIEGETANKSIEGED, U.WIDOWMINE, U.WIDOWMINEBURROWED}
+
+# Raio dentro do qual consideramos a unidade "no anchor"
+_AT_ANCHOR_RADIUS = 4.5
+_SLOW_AT_ANCHOR_RADIUS = 7.0
+# Raio a partir do qual tanks sieged recebem unsiege para se mover ao novo anchor.
+# Mantemos histerese maior para evitar "senta/levanta" com anchors oscilando poucos tiles.
+_TANK_UNSIEGE_TO_MOVE_RADIUS = 12.0
+_TANK_LOCAL_HOLD_RADIUS = 15.0
+
+
+def _point_from_payload(payload) -> Point2 | None:
+    if not isinstance(payload, dict):
+        return None
+    try:
+        return Point2((float(payload.get("x", 0.0) or 0.0), float(payload.get("y", 0.0) or 0.0)))
+    except Exception:
+        return None
+
+
+@dataclass
+class HoldAnchorTask(BaseTask):
+    """
+    Segura o anchor da postura operacional atual.
+    O anchor é lido da awareness a cada tick — não é fixo no momento da criação.
+    """
+    awareness: Awareness
+    log: DevLogger | None = None
+    log_every_iters: int = 15
+    _iters: int = field(default=0, init=False, repr=False)
+
+    def __init__(self, *, awareness: Awareness, log: DevLogger | None = None, log_every_iters: int = 15):
+        super().__init__(task_id="hold_anchor", domain="MAP_CONTROL", commitment=86)
+        self.awareness = awareness
+        self.log = log
+        self.log_every_iters = int(log_every_iters)
+        self._iters = 0
+
+    async def on_step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult:
+        self._iters += 1
+        now = float(tick.time)
+
+        # Verificar vínculo de missão — nunca operar sem assigned_tags
+        guard = self.require_mission_bound(min_tags=1)
+        if guard is not None:
+            return guard
+
+        # Lê anchor atual da postura operacional
+        posture_snap = self.awareness.mem.get(K("strategy", "army", "snapshot"), now=now, default={}) or {}
+        if not isinstance(posture_snap, dict):
+            posture_snap = {}
+
+        anchor = _point_from_payload(posture_snap.get("anchor"))
+        posture_str = str(posture_snap.get("posture", "HOLD_MAIN_RAMP") or "HOLD_MAIN_RAMP")
+
+        if anchor is None:
+            return TaskResult.noop("no_anchor_defined")
+
+        # Filtra SOMENTE unidades em assigned_tags — nunca bot.units direto
+        assigned_set = set(int(t) for t in self.assigned_tags)
+        bulk = bot.units.filter(lambda u: int(u.tag) in assigned_set)
+
+        if bulk.amount == 0:
+            return TaskResult.failed("assigned_units_gone")
+
+        medivacs = bulk.of_type({U.MEDIVAC})
+        mobile = bulk - medivacs
+        slow = mobile.of_type(_SLOW_POSITIONAL)
+        fast = mobile - slow
+
+        issued = 0
+
+        # Unidades rápidas: mover para o anchor se não estão lá
+        for unit in fast:
+            try:
+                dist = float(unit.distance_to(anchor))
+                if dist > float(_AT_ANCHOR_RADIUS):
+                    unit.move(anchor)
+                    issued += 1
+                # Se chegou, a-move no anchor para defender
+                elif not bool(getattr(unit, "is_attacking", False)):
+                    unit.attack(anchor)
+                    issued += 1
+            except Exception:
+                continue
+
+        # Unidades lentas/posicionais: mover se estão longe do anchor.
+        # Tanks sieged que estão longe do anchor (postura mudou) recebem unsiege
+        # para se mover. Dentro do raio não interfere — HoldRampTask / Ares cuida.
+        for unit in slow:
+            try:
+                dist = float(unit.distance_to(anchor))
+                is_sieged = unit.type_id == U.SIEGETANKSIEGED
+
+                if is_sieged:
+                    enemy_near = bot.enemy_units.closer_than(_TANK_LOCAL_HOLD_RADIUS, unit)
+                    # Tank sitiado longe do anchor → unsiege para poder reposicionar
+                    if dist > float(_TANK_UNSIEGE_TO_MOVE_RADIUS) and int(enemy_near.amount) <= 0:
+                        unit(AbilityId.UNSIEGE_UNSIEGE)
+                        issued += 1
+                    # Dentro do raio: não interfere — já está onde deve estar
+                elif dist > float(_SLOW_AT_ANCHOR_RADIUS):
+                    # Tank móvel longe do anchor → move
+                    unit.move(anchor)
+                    issued += 1
+                # Dentro do raio: não interfere
+            except Exception:
+                continue
+
+        # Medivacs seguem o bulk
+        if medivacs.amount > 0 and fast.amount > 0:
+            try:
+                follow_target = fast.center
+                for med in medivacs:
+                    med.move(follow_target)
+                    issued += 1
+            except Exception:
+                pass
+
+        if self._iters % self.log_every_iters == 0 and self.log is not None:
+            self.log.emit(
+                "hold_anchor_tick",
+                {
+                    "posture": posture_str,
+                    "anchor": {"x": float(anchor.x), "y": float(anchor.y)},
+                    "bulk_count": int(bulk.amount),
+                    "issued_commands": int(issued),
+                },
+                meta={"module": "task", "component": "hold_anchor_task"},
+            )
+
+        return TaskResult.running("holding_anchor")

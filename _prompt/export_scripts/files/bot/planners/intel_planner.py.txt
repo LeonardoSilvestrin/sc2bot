@@ -86,6 +86,7 @@ class IntelPlanner:
     worker_scout_during_rush_route_len: int = 2
     worker_scout_during_rush_stale_s: float = 35.0
     worker_scout_during_rush_cadence_s: float = 24.0
+    worker_scout_failure_backoff_s: float = 18.0
 
     def _pid_reaper_scout(self) -> str:
         return f"{self.planner_id}:scout:reaper"
@@ -220,25 +221,46 @@ class IntelPlanner:
         last_route_t = float(awareness.mem.get(K("intel", "worker_scout", "last_route_t"), now=now, default=0.0) or 0.0)
         if (float(now) - float(last_route_t)) < float(cadence_s):
             return [], [], post_rush
+        last_attempt = awareness.mem.get(K("intel", "worker_scout", "last_attempt"), now=now, default={}) or {}
+        if not isinstance(last_attempt, dict):
+            last_attempt = {}
+        last_attempt_t = float(last_attempt.get("last_t", 0.0) or 0.0)
+        last_attempt_status = str(last_attempt.get("status", "") or "")
+        if (
+            last_attempt_status in {"retreat_danger", "retreat_low_hp"}
+            and (float(now) - float(last_attempt_t)) < float(self.worker_scout_failure_backoff_s)
+        ):
+            return [], [], post_rush
 
-        labels: list[str] = []
-        route: list[Point2] = []
+        route_len_cap = int(self.worker_scout_during_rush_route_len) if during_rush_followup else int(self.worker_scout_route_len)
+
+        scored: list[tuple[float, float, str, Point2]] = []
         for label, pos in candidates:
             last_t = float(
                 awareness.mem.get(K("intel", "worker_scout", "by_label", str(label), "last_t"), now=now, default=0.0) or 0.0
             )
             if float(last_t) > 0.0 and (float(now) - float(last_t)) < float(stale_s):
                 continue
-            labels.append(str(label))
+            age_s = float(now) - float(last_t) if float(last_t) > 0.0 else 99999.0
+            try:
+                dist = float(pos.distance_to(self._enemy_main(bot)))
+            except Exception:
+                dist = 9999.0
+            # Priority: unseen/oldest first, then closer for tie-breaks.
+            scored.append((age_s, -dist, str(label), pos))
+
+        if not scored:
+            return [], [], post_rush
+        scored.sort(reverse=True)
+
+        labels: list[str] = []
+        route: list[Point2] = []
+        for _age_s, _dist, label, pos in scored:
+            labels.append(label)
             route.append(pos)
-            route_len_cap = int(self.worker_scout_during_rush_route_len) if during_rush_followup else int(self.worker_scout_route_len)
             if len(route) >= route_len_cap:
                 break
 
-        if not route:
-            return [], [], post_rush
-        if (not post_rush) and (not during_rush_followup) and int(bases_visible) >= 3:
-            return [], [], post_rush
         return labels, route, post_rush
 
     @staticmethod

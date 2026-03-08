@@ -36,21 +36,62 @@ class ReinforcePickPolicy:
         return (hp * 8.0) - dist
 
 
+@dataclass(frozen=True)
+class MapControlReinforcePickPolicy:
+    unit_type: object
+    objective: Point2
+    name: str = "reinforce.map_control.idle_anchor_bias.v1"
+
+    def allow(self, unit, *, bot, attention, now: float) -> bool:
+        if unit is None or unit.type_id != self.unit_type:
+            return False
+        if not bool(getattr(unit, "is_ready", False)):
+            return False
+        return float(getattr(unit, "health_percentage", 1.0) or 1.0) >= 0.30
+
+    def score(self, unit, *, bot, attention, now: float) -> float:
+        try:
+            dist = float(unit.distance_to(self.objective))
+        except Exception:
+            dist = 9999.0
+        hp = float(getattr(unit, "health_percentage", 1.0) or 1.0)
+        idle_bonus = 20.0 if bool(getattr(unit, "is_idle", False)) else 0.0
+        attacking_penalty = 6.0 if bool(getattr(unit, "is_attacking", False)) else 0.0
+        moving_penalty = 2.0 if bool(getattr(unit, "is_moving", False)) else 0.0
+        return (hp * 10.0) + idle_bonus - dist - attacking_penalty - moving_penalty
+
+
 @dataclass
 class ReinforceMissionPlanner(BasePlanner):
     planner_id: str = "reinforce_mission_planner"
     log: DevLogger | None = None
-    allowed_domains: tuple[str, ...] = ("HARASS", "DEFENSE")
+    allowed_domains: tuple[str, ...] = ("HARASS", "DEFENSE", "MAP_CONTROL")
     max_add_per_type: int = 1
+    map_control_max_add_per_type: int = 2
     cooldown_s: float = 1.2
     lease_ttl_s: float = 8.0
     score: int = 72
+    map_control_score: int = 84
     min_remaining_s: float = 3.0
     banshee_harass_target_size: int = 2
     defense_tank_target_size: int = 2
     defense_mine_target_size: int = 2
     defense_marine_target_size: int = 4
     defense_bunker_marine_target_size: int = 6
+    map_control_bulk_types: tuple[U, ...] = (
+        U.MARINE,
+        U.MARAUDER,
+        U.REAPER,
+        U.HELLION,
+        U.CYCLONE,
+        U.SIEGETANK,
+        U.SIEGETANKSIEGED,
+        U.THOR,
+        U.THORAP,
+        U.MEDIVAC,
+        U.WIDOWMINE,
+        U.WIDOWMINEBURROWED,
+    )
 
     def _proposal_id(self, mission_id: str, unit_type_name: str) -> str:
         return f"{self.planner_id}:{mission_id}:{unit_type_name}"
@@ -81,6 +122,10 @@ class ReinforceMissionPlanner(BasePlanner):
         return str(mission.domain) == "DEFENSE" and str(mission.proposal_id).startswith("defense_planner:defend:base:")
 
     @staticmethod
+    def _is_map_control_bulk_mission(mission: MissionStatusSnapshot) -> bool:
+        return str(mission.domain) == "MAP_CONTROL" and str(mission.proposal_id).startswith("map_control_planner:hold_anchor_bulk")
+
+    @staticmethod
     def _defense_base_pos(bot, mission: MissionStatusSnapshot) -> Point2 | None:
         try:
             proposal_id = str(mission.proposal_id or "")
@@ -100,6 +145,25 @@ class ReinforceMissionPlanner(BasePlanner):
             return any(float(b.distance_to(base_pos)) <= 16.0 for b in bot.structures(U.BUNKER))
         except Exception:
             return False
+
+    @staticmethod
+    def _free_ready_units(bot, mission: MissionStatusSnapshot, unit_type: U) -> list:
+        alive_tags = {int(tag) for tag in mission.alive_tags}
+        out: list = []
+        for unit in bot.units.of_type(unit_type).ready:
+            if int(unit.tag) in alive_tags:
+                continue
+            out.append(unit)
+        return out
+
+    def _has_idle_bulk_reserve(self, bot, mission: MissionStatusSnapshot) -> bool:
+        if not self._is_map_control_bulk_mission(mission):
+            return False
+        for unit_type in self.map_control_bulk_types:
+            free_units = self._free_ready_units(bot, mission, unit_type)
+            if any(bool(getattr(unit, "is_idle", False)) for unit in free_units):
+                return True
+        return False
 
     def _requirements_for_mission(self, bot, mission: MissionStatusSnapshot, *, awareness: Awareness, now: float) -> list[UnitRequirement]:
         objective = self._mission_objective(bot, mission)
@@ -131,6 +195,16 @@ class ReinforceMissionPlanner(BasePlanner):
                 int(desired_counts.get("WIDOWMINE", 0)),
                 int(self.defense_mine_target_size),
             )
+        if self._is_map_control_bulk_mission(mission):
+            for unit_type in self.map_control_bulk_types:
+                free_ready = self._free_ready_units(bot, mission, unit_type)
+                if not free_ready:
+                    continue
+                unit_name = str(getattr(unit_type, "name", ""))
+                if not unit_name:
+                    continue
+                current_alive = int(desired_counts.get(unit_name, 0))
+                desired_counts[unit_name] = max(int(current_alive), int(current_alive) + len(free_ready))
         alive_counts = self._alive_type_counts(bot, mission)
 
         reqs: list[UnitRequirement] = []
@@ -146,14 +220,18 @@ class ReinforceMissionPlanner(BasePlanner):
             if missing <= 0:
                 continue
             ready_total = int(bot.units.of_type(unit_type).ready.amount)
-            add_n = min(int(self.max_add_per_type), int(missing), int(ready_total))
+            add_cap = int(self.map_control_max_add_per_type) if self._is_map_control_bulk_mission(mission) else int(self.max_add_per_type)
+            add_n = min(int(add_cap), int(missing), int(ready_total))
             if add_n <= 0:
                 continue
+            policy = ReinforcePickPolicy(unit_type=unit_type, objective=objective)
+            if self._is_map_control_bulk_mission(mission):
+                policy = MapControlReinforcePickPolicy(unit_type=unit_type, objective=objective)
             reqs.append(
                 UnitRequirement(
                     unit_type=unit_type,
                     count=int(add_n),
-                    pick_policy=ReinforcePickPolicy(unit_type=unit_type, objective=objective),
+                    pick_policy=policy,
                 )
             )
         return reqs
@@ -178,7 +256,12 @@ class ReinforceMissionPlanner(BasePlanner):
                 self._is_defense_base_mission(mission)
                 and int(mission.alive_count) > 0
             )
-            if not bool(mission.can_reinforce) and not banshee_growth_candidate and not defense_growth_candidate:
+            map_control_growth_candidate = bool(
+                self._is_map_control_bulk_mission(mission)
+                and int(mission.alive_count) > 0
+                and self._has_idle_bulk_reserve(bot, mission)
+            )
+            if not bool(mission.can_reinforce) and not banshee_growth_candidate and not defense_growth_candidate and not map_control_growth_candidate:
                 continue
             if not self._domain_allowed(str(mission.domain), allowed):
                 continue
@@ -199,11 +282,12 @@ class ReinforceMissionPlanner(BasePlanner):
                 def _factory(mission_id: str) -> SupportMission:
                     return SupportMission(awareness=awareness, target_mission_id=target_mission_id)
 
+                proposal_score = int(self.map_control_score) if self._is_map_control_bulk_mission(mission) else int(self.score)
                 out.extend(
                     self.make_single_task_proposal(
                         proposal_id=pid,
                         domain=str(mission.domain),
-                        score=int(self.score),
+                        score=int(proposal_score),
                         reinforce_mission_id=str(mission.mission_id),
                         task_spec=TaskSpec(
                             task_id="support_mission",
