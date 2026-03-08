@@ -268,9 +268,9 @@ class MapControlPlanner:
         scv_avail = self._available(bot, U.SCV)
         support_scvs = 0
         if bases_now < 2 and rush_state in {"CONFIRMED", "HOLDING"} and own_total_power >= 7.0:
-            support_scvs = 2 if enemy_nat_power <= 1.2 else 3
+            support_scvs = 1 if enemy_nat_power <= 1.2 else 2
         elif delayed_natural_alarm and bases_now < 2 and own_total_power >= 5.0:
-            support_scvs = 2 if enemy_nat_power <= 1.6 else 3
+            support_scvs = 1 if enemy_nat_power <= 1.6 else 2
         elif enemy_nat_power > 0.0 and own_total_power >= 8.0:
             support_scvs = 1
         if scv_avail > 0 and support_scvs > 0:

@@ -26,6 +26,7 @@ class SecureBaseTask(BaseTask):
     log: DevLogger | None = None
     _probe_tag: int | None = None
     _probe_cleared_at: float = 0.0
+    _probe_hold_started_at: float = 0.0
 
     def __init__(
         self,
@@ -46,6 +47,7 @@ class SecureBaseTask(BaseTask):
         self.log = log
         self._probe_tag = None
         self._probe_cleared_at = 0.0
+        self._probe_hold_started_at = 0.0
 
     @staticmethod
     def _enemy_combat_near(bot, *, center: Point2, radius: float) -> list:
@@ -257,21 +259,32 @@ class SecureBaseTask(BaseTask):
             return probe
         return None
 
-    def _nat_probe_cleared(self, *, bot, now: float, probe_unit, enemy_near: list) -> bool:
+    def _nat_probe_cleared(self, *, bot, now: float, probe_unit, enemy_near: list, enemy_main: list) -> bool:
         if enemy_near:
             self._probe_cleared_at = 0.0
+            self._probe_hold_started_at = 0.0
             return False
         if probe_unit is None:
+            self._probe_hold_started_at = 0.0
             return False
         try:
             if float(probe_unit.distance_to(self.hold_pos)) > 4.5:
+                self._probe_hold_started_at = 0.0
                 return False
         except Exception:
+            self._probe_hold_started_at = 0.0
             return False
+        if float(self._probe_hold_started_at) <= 0.0:
+            self._probe_hold_started_at = float(now)
         if float(self._probe_cleared_at) <= 0.0:
             self._probe_cleared_at = float(now)
             return False
-        return (float(now) - float(self._probe_cleared_at)) >= 0.8
+        hold_time = float(now) - float(self._probe_cleared_at)
+        # If there is still harassment in main, avoid stalling natural forever:
+        # require a longer, stable hold at the nat choke before releasing lowground.
+        if enemy_main:
+            return hold_time >= 2.1
+        return hold_time >= 0.8
 
     def _handle_tank(self, *, unit, anchor: Point2, enemy_near: list) -> bool:
         if unit.type_id == U.SIEGETANKSIEGED:
@@ -446,10 +459,11 @@ class SecureBaseTask(BaseTask):
 
         self._assign_scv_role(bot, units, UnitRole.REPAIRING)
         probe_unit = self._pick_probe_unit(units)
-        lowground_cleared = self._nat_probe_cleared(bot=bot, now=now, probe_unit=probe_unit, enemy_near=enemy_near)
+        lowground_cleared = self._nat_probe_cleared(bot=bot, now=now, probe_unit=probe_unit, enemy_near=enemy_near, enemy_main=enemy_main)
         perimeter = self._slots(self.hold_pos, radius=4.5, count=max(4, len(units)))
         staging_perimeter = self._slots(self.staging_pos, radius=3.0, count=max(4, len(units)))
-        mine_slots = self._slots(self.base_pos, radius=3.5, count=4)
+        mine_center = self.hold_pos
+        mine_slots = self._slots(mine_center, radius=2.8, count=4)
         support_slots = self._slots(self.hold_pos.towards(self.base_pos, 1.7), radius=1.8, count=3)
         tank_units = [u for u in units if u.type_id in {U.SIEGETANK, U.SIEGETANKSIEGED}]
         forward_staging_anchor = self._best_ramp_tank_anchor(bot)
@@ -464,7 +478,9 @@ class SecureBaseTask(BaseTask):
             fallback=forward_staging_anchor,
         )
         tank_anchors = [front_tank_anchor]
-        if len(tank_units) >= 2:
+        if enemy_main:
+            tank_anchors = [rear_tank_anchor] * len(tank_units)
+        elif len(tank_units) >= 2:
             tank_anchors.append(rear_tank_anchor)
         repair_targets = self._support_targets(bot, base_pos=self.base_pos, hold_pos=self.hold_pos)
         bunkers = self._bunkers_near_base(bot, base_pos=self.base_pos, hold_pos=self.hold_pos)
@@ -481,7 +497,10 @@ class SecureBaseTask(BaseTask):
                 continue
             if unit.type_id in {U.SIEGETANK, U.SIEGETANKSIEGED}:
                 if not lowground_cleared:
-                    anchor = forward_staging_anchor if int(tank_idx) == 0 else rear_tank_anchor
+                    if enemy_main:
+                        anchor = rear_tank_anchor
+                    else:
+                        anchor = forward_staging_anchor if int(tank_idx) == 0 else rear_tank_anchor
                     tank_idx += 1
                     issued = self._handle_tank(unit=unit, anchor=anchor, enemy_near=enemy_near) or issued
                     continue

@@ -1112,6 +1112,9 @@ class MacroOrchestratorPlanner(BasePlanner):
         expand_target_label = ""
         expand_build_mode = "DIRECT"
         if int(expand_to) >= 2 and int(bases_now) < 2:
+            # While NATURAL is unresolved, never request a third base target yet.
+            # This prevents expansion lanes from reserving extra workers/CC intent.
+            expand_to = min(int(expand_to), 2)
             expand_target_label = "NATURAL"
             expand_build_mode = "OFFSITE" if bool(should_expand_offsite) else "DIRECT"
             if bool(nat_offsite):

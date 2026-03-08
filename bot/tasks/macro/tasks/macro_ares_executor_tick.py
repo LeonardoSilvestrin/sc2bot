@@ -407,11 +407,12 @@ class MacroAresExecutorTick(BaseTask):
                     entry = dict(registry.get("NATURAL", {})) if isinstance(registry.get("NATURAL", {}), dict) else {}
                     intended = self._point_from_payload(entry.get("intended_pos"))
                     base_location = bot.start_location if expand_build_mode == "OFFSITE" or intended is None else intended
+                    natural_to_count = min(max(1, int(expand_to)), 2)
                     plan.add(
                         BuildStructure(
                             base_location=base_location,
                             structure_id=U.COMMANDCENTER,
-                            to_count=max(1, int(expand_to)),
+                            to_count=int(natural_to_count),
                         )
                     )
                 else:

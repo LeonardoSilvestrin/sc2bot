@@ -15,7 +15,6 @@ from bot.tasks.defense.hold_ramp_task import HoldRampTask
 from bot.tasks.defense.scv_defensive_pull_task import ScvDefensivePullTask
 from bot.tasks.defense.scv_repair_task import ScvRepairTask
 from bot.tasks.defense.defend_task import Defend
-from bot.tasks.defense.land_base_task import LandBaseTask
 from bot.tasks.defense.lift_natural_task import LiftNaturalTask
 
 
@@ -242,16 +241,6 @@ class DefensePlanner:
             )
         return _factory
 
-    def _make_land_natural_factory(self, *, awareness: Awareness, nat_pos: Point2):
-        def _factory(mission_id: str) -> LandBaseTask:
-            return LandBaseTask(
-                awareness=awareness,
-                base_label="nat",
-                target_pos=nat_pos,
-                log=self.log,
-            )
-        return _factory
-
     @staticmethod
     def _should_lift_natural(bot, *, awareness: Awareness, rush_ctx: dict, now: float) -> bool:
         try:
@@ -454,7 +443,13 @@ class DefensePlanner:
             return base_pos
 
     @classmethod
-    def _proactive_home_threats(cls, bot, *, rush_ctx: dict[str, float | str | bool]) -> list[BaseThreatSnapshot]:
+    def _proactive_home_threats(
+        cls,
+        bot,
+        *,
+        rush_ctx: dict[str, float | str | bool],
+        include_natural: bool = False,
+    ) -> list[BaseThreatSnapshot]:
         if not bool(rush_ctx.get("active", False)):
             return []
 
@@ -509,7 +504,7 @@ class DefensePlanner:
                 )
             )
 
-        if nat_th is not None:
+        if include_natural and nat_th is not None:
             out.append(
                 BaseThreatSnapshot(
                     th_tag=int(getattr(nat_th, "tag", -1) or -1),
@@ -829,12 +824,15 @@ class DefensePlanner:
             probes = []
             top = getattr(ramp, "top_center", None)
             if top is not None:
-                probes.append((top, 5.5))
+                probes.append((top, 8.5))
+            bottom = getattr(ramp, "bottom_center", None)
+            if bottom is not None:
+                probes.append((bottom, 6.5))
             for pos in list(getattr(ramp, "corner_depots", []) or []):
-                probes.append((pos, 4.5))
+                probes.append((pos, 5.5))
             barracks_pos = getattr(ramp, "barracks_correct_placement", None)
             if barracks_pos is not None:
-                probes.append((barracks_pos, 5.0))
+                probes.append((barracks_pos, 6.0))
             for pos, radius in probes:
                 if int(bot.enemy_units.closer_than(float(radius), pos).amount) > 0:
                     return True
@@ -1265,7 +1263,14 @@ class DefensePlanner:
             )
         return reqs
 
-    def _merge_threats(self, *, bot, raw_threats: list[BaseThreatSnapshot], rush_ctx: dict[str, float | str | bool]) -> list[BaseThreatSnapshot]:
+    def _merge_threats(
+        self,
+        *,
+        bot,
+        raw_threats: list[BaseThreatSnapshot],
+        rush_ctx: dict[str, float | str | bool],
+        include_proactive_natural: bool = False,
+    ) -> list[BaseThreatSnapshot]:
         merged: dict[int, BaseThreatSnapshot] = {}
 
         for th in list(raw_threats or []):
@@ -1274,7 +1279,11 @@ class DefensePlanner:
             except Exception:
                 continue
 
-        for th in self._proactive_home_threats(bot, rush_ctx=rush_ctx):
+        for th in self._proactive_home_threats(
+            bot,
+            rush_ctx=rush_ctx,
+            include_natural=bool(include_proactive_natural),
+        ):
             tag = int(getattr(th, "th_tag", -1) or -1)
             current = merged.get(tag)
             if current is None:
@@ -1333,54 +1342,17 @@ class DefensePlanner:
             except Exception:
                 pass
 
-        # Se o CC da nat está voando e a ameaça passou, propõe pousar de volta
-        land_pid = f"{self.planner_id}:land_natural"
-        if (
-            not awareness.ops_proposal_running(proposal_id=lift_pid, now=now)
-            and not awareness.ops_proposal_running(proposal_id=land_pid, now=now)
-            and self._due(awareness=awareness, now=now, pid=land_pid)
-        ):
-            try:
-                flying_nat_cc = None
-                own_nat = bot.mediator.get_own_nat
-                for s in list(getattr(bot, "structures", []) or []):
-                    if s.type_id in {U.COMMANDCENTERFLYING, U.ORBITALCOMMANDFLYING}:
-                        flying_nat_cc = s
-                        break
-                if flying_nat_cc is not None:
-                    nat_snap = awareness.mem.get(K("intel", "map_control", "our_nat", "snapshot"), now=now, default={}) or {}
-                    safe_to_land = bool(nat_snap.get("safe_to_land", False)) if isinstance(nat_snap, dict) else False
-                    if safe_to_land and not self._should_lift_natural(bot, awareness=awareness, rush_ctx=rush_ctx, now=now):
-                        land_factory = self._make_land_natural_factory(awareness=awareness, nat_pos=own_nat)
-                        out.append(
-                            Proposal(
-                                proposal_id=land_pid,
-                                domain="DEFENSE",
-                                score=70,
-                                tasks=[
-                                    TaskSpec(
-                                        task_id="land_natural",
-                                        task_factory=land_factory,
-                                        unit_requirements=[],
-                                        lease_ttl=60.0,
-                                    )
-                                ],
-                                lease_ttl=60.0,
-                                cooldown_s=20.0,
-                                risk_level=0,
-                                allow_preempt=False,
-                            )
-                        )
-                        self._mark_proposed(awareness=awareness, now=now, pid=land_pid)
-            except Exception:
-                pass
-
         secure_natural_commit = bool(
             awareness.mem.get(K("intel", "map_control", "our_nat", "should_secure"), now=now, default=False)
         )
 
         threats_raw = [b for b in self._threats(attention) if int(b.urgency) >= int(self.min_base_urgency)]
-        threats_raw = self._merge_threats(bot=bot, raw_threats=threats_raw, rush_ctx=rush_ctx)
+        threats_raw = self._merge_threats(
+            bot=bot,
+            raw_threats=threats_raw,
+            rush_ctx=rush_ctx,
+            include_proactive_natural=False,
+        )
 
         if threats_raw:
             threats = threats_raw[: max(1, int(self.max_bases_per_tick))]
@@ -1390,7 +1362,12 @@ class DefensePlanner:
             or any(float(self._repair_pressure_near_base(bot, base_pos=th.position)) > 0.0 for th in list(getattr(bot, "townhalls", []) or []))
         ):
             fallback = self._fallback_base_candidates(bot, rush_ctx=rush_ctx)
-            fallback = self._merge_threats(bot=bot, raw_threats=fallback, rush_ctx=rush_ctx)
+            fallback = self._merge_threats(
+                bot=bot,
+                raw_threats=fallback,
+                rush_ctx=rush_ctx,
+                include_proactive_natural=False,
+            )
             threats = fallback[: max(1, int(self.max_bases_per_tick))]
         else:
             threats = []

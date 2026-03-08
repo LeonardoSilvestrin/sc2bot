@@ -9,7 +9,7 @@ from sc2.position import Point2
 
 from bot.devlog import DevLogger
 from bot.mind.attention import Attention
-from bot.mind.awareness import Awareness, K
+from bot.mind.awareness import Awareness
 from bot.tasks.base_task import BaseTask, TaskResult, TaskTick
 
 
@@ -60,15 +60,6 @@ class DefendBaseTask(BaseTask):
         return Point2((x, y))
 
     @staticmethod
-    def _point_from_payload(payload) -> Point2 | None:
-        if not isinstance(payload, dict):
-            return None
-        try:
-            return Point2((float(payload.get("x", 0.0)), float(payload.get("y", 0.0))))
-        except Exception:
-            return None
-
-    @staticmethod
     def _pathable(bot, pos: Point2) -> bool:
         try:
             return bool(bot.in_pathing_grid(pos))
@@ -84,53 +75,9 @@ class DefendBaseTask(BaseTask):
         except Exception:
             return -9999.0
 
-    def _forward_tank_anchor_hint(self, *, bot, now: float, base_pos: Point2) -> Point2 | None:
-        if self.awareness is None or not self._is_main_base(bot, base_pos=base_pos):
-            return None
-        snap = self.awareness.mem.get(K("intel", "map_control", "our_nat", "snapshot"), now=now, default={}) or {}
-        if not isinstance(snap, dict) or not bool(snap.get("should_secure", False)):
-            return None
-        staging = self._point_from_payload(snap.get("staging"))
-        hold = self._point_from_payload(snap.get("hold"))
-        for pos in (staging, hold):
-            if pos is not None and self._pathable(bot, pos):
-                return pos
-        return None
-
-    def _best_forward_tank_anchor(self, bot, *, anchor_hint: Point2, fallback: Point2) -> Point2:
-        candidates = [anchor_hint]
-        for radius in (1.5, 3.0, 4.5, 6.0):
-            for idx in range(16):
-                ang = (2.0 * math.pi * float(idx)) / 16.0
-                candidates.append(
-                    Point2(
-                        (
-                            float(anchor_hint.x) + (float(radius) * math.cos(ang)),
-                            float(anchor_hint.y) + (float(radius) * math.sin(ang)),
-                        )
-                    )
-                )
-        best = anchor_hint if self._pathable(bot, anchor_hint) else fallback
-        best_h = self._height(bot, best)
-        for pos in candidates:
-            if not self._pathable(bot, pos):
-                continue
-            height = self._height(bot, pos)
-            if height > best_h:
-                best = pos
-                best_h = height
-                continue
-            if abs(float(height) - float(best_h)) <= 0.05 and float(pos.distance_to(anchor_hint)) < float(best.distance_to(anchor_hint)):
-                best = pos
-        return best
-
-    def _highground_anchor(self, bot, *, base_pos: Point2, mineral_center: Point2, now: float) -> Point2:
+    def _highground_anchor(self, bot, *, base_pos: Point2, mineral_center: Point2) -> Point2:
         wall_hint = self._wall_hint(bot, base_pos=base_pos)
         is_main = self._is_main_base(bot, base_pos=base_pos)
-        if is_main:
-            forward_hint = self._forward_tank_anchor_hint(bot=bot, now=now, base_pos=base_pos)
-            if forward_hint is not None:
-                return self._best_forward_tank_anchor(bot, anchor_hint=forward_hint, fallback=wall_hint)
         points = [wall_hint] if is_main else [wall_hint, mineral_center]
         if is_main:
             try:
@@ -383,7 +330,7 @@ class DefendBaseTask(BaseTask):
 
         base_pos = self._resolve_base_pos(bot)
         mineral_center = self._mineral_line_center(bot, base_pos)
-        tank_anchor = self._highground_anchor(bot, base_pos=base_pos, mineral_center=mineral_center, now=float(tick.time))
+        tank_anchor = self._highground_anchor(bot, base_pos=base_pos, mineral_center=mineral_center)
         defense_anchor = self._defense_anchor(bot, base_pos=base_pos, tank_anchor=tank_anchor)
         mine_slots = self._mine_slots(mineral_center)
         threat = self.threat_pos or attention.combat.primary_threat_pos or defense_anchor

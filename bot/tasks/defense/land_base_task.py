@@ -86,6 +86,34 @@ class LandBaseTask(BaseTask):
                 continue
         return best_unit
 
+    def _clear_landing_zone(self, bot, *, target_pos: Point2, landing_unit_tag: int) -> bool:
+        issued = False
+        try:
+            own_units = list(getattr(bot, "units", []) or [])
+        except Exception:
+            own_units = []
+        for ally in own_units:
+            try:
+                if int(getattr(ally, "tag", -1) or -1) == int(landing_unit_tag):
+                    continue
+                if bool(getattr(ally, "is_flying", False)):
+                    continue
+                dist = float(ally.distance_to(target_pos))
+                if dist > 3.2:
+                    continue
+                if getattr(ally, "type_id", None) == U.WIDOWMINEBURROWED:
+                    ally(AbilityId.BURROWUP_WIDOWMINE)
+                    issued = True
+                    continue
+                retreat = getattr(bot, "start_location", None)
+                if retreat is None:
+                    continue
+                ally.move(retreat)
+                issued = True
+            except Exception:
+                continue
+        return issued
+
     async def on_step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult:
         bound_err = self.require_mission_bound()
         if bound_err is not None:
@@ -127,6 +155,14 @@ class LandBaseTask(BaseTask):
                 unit.move(self.target_pos)
                 self._active("flying_to_land_site")
                 return TaskResult.running("flying_to_land_site")
+
+            if self._clear_landing_zone(
+                bot,
+                target_pos=self.target_pos,
+                landing_unit_tag=int(getattr(unit, "tag", -1) or -1),
+            ):
+                self._active("clearing_landing_zone")
+                return TaskResult.running("clearing_landing_zone")
 
             if unit.type_id == U.COMMANDCENTERFLYING:
                 unit(AbilityId.LAND_COMMANDCENTER, self.target_pos)

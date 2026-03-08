@@ -22,6 +22,9 @@ class DefenseBunkerTask(BaseTask):
     anchor_mode: str = "BASE"
     awareness: Awareness | None = None
     log: DevLogger | None = None
+    _target_pos: Point2 | None = None
+    _next_issue_at: float = 0.0
+    _issue_attempts: int = 0
 
     def __init__(
         self,
@@ -40,6 +43,9 @@ class DefenseBunkerTask(BaseTask):
         self.threat_pos = threat_pos
         self.anchor_mode = str(anchor_mode or "BASE").upper()
         self.log = log
+        self._target_pos = None
+        self._next_issue_at = 0.0
+        self._issue_attempts = 0
 
     def _resolve_base_pos(self, bot) -> Point2:
         th = bot.townhalls.find_by_tag(int(self.base_tag))
@@ -457,12 +463,26 @@ class DefenseBunkerTask(BaseTask):
             self._done("bunker_ready_or_started")
             return TaskResult.done("bunker_ready_or_started")
 
+        now = float(tick.time)
         anchor = self._bunker_anchor(bot, base_pos=base_pos)
-        pos = await self._choose_bunker_position(bot, base_pos=base_pos, anchor=anchor, now=float(tick.time))
+        pos = self._target_pos
+        if pos is None:
+            pos = await self._choose_bunker_position(bot, base_pos=base_pos, anchor=anchor, now=now)
+            self._target_pos = pos
         if pos is None:
             self._release_worker(bot, worker)
             self._done("bunker_position_unavailable")
             return TaskResult.done("bunker_position_unavailable")
+        try:
+            if float(worker.distance_to(pos)) > 6.0:
+                worker.move(pos)
+                self._active("moving_to_bunker_site")
+                return TaskResult.running("moving_to_bunker_site")
+        except Exception:
+            pass
+        if float(now) < float(self._next_issue_at):
+            self._active("waiting_bunker_retry_window")
+            return TaskResult.running("waiting_bunker_retry_window")
         try:
             if bool(
                 bot.mediator.build_with_specific_worker(
@@ -471,12 +491,23 @@ class DefenseBunkerTask(BaseTask):
                     pos=pos,
                 )
             ):
+                self._issue_attempts = 0
+                self._next_issue_at = float(now) + 0.45
                 self._active("building_defense_bunker")
                 return TaskResult.running("building_defense_bunker")
         except Exception:
             self._release_worker(bot, worker)
             self._done("bunker_build_command_failed")
             return TaskResult.done("bunker_build_command_failed")
-        self._release_worker(bot, worker)
-        self._done("bunker_build_command_rejected")
-        return TaskResult.done("bunker_build_command_rejected")
+        self._issue_attempts += 1
+        self._next_issue_at = float(now) + 0.55
+        try:
+            worker.move(pos)
+        except Exception:
+            pass
+        if int(self._issue_attempts) >= 16:
+            self._release_worker(bot, worker)
+            self._done("bunker_build_command_rejected")
+            return TaskResult.done("bunker_build_command_rejected")
+        self._active("retrying_bunker_build")
+        return TaskResult.running("retrying_bunker_build")
