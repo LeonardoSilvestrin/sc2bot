@@ -1,8 +1,11 @@
 """
 Army Posture Intel — camada de síntese operacional.
 
-Responsabilidade: consumir percepção (frontline_intel, enemy_presence, rush_state, parity)
-e produzir a POSTURA EXPLÍCITA do exército.
+Responsabilidade: consumir a geometria operacional (OperationalGeometryIntel)
+e produzir a POSTURA EXPLÍCITA do exército para compatibilidade com o sistema legado.
+
+A partir da refatoração para OperationalGeometryController, este módulo é uma camada
+de tradução: converte FrontTemplate → ArmyPosture e lê anchor/detach do setor MASS_HOLD.
 
 Não comanda unidades. Não propõe tasks. Só sintetiza e persiste em awareness.
 
@@ -15,12 +18,10 @@ Chaves produzidas:
     K("strategy", "army", "snapshot")           → dict completo
 
 Regras semânticas:
-    - Base atacada NÃO implica convergência automática do bulk
-    - O bulk converge para o anchor da postura ativa
-    - Tanks na main não descem para a nat só porque perigo nat está alto
-    - Se nat CLEAR/NEUTRAL, main pode estar shielded (tank na main é redundante)
-    - Destacamento local (defense) consome de max_detach_supply
-    - Se demand defensiva > max_detach_supply, sinalizar defense_overflow
+    - A postura deriva do FrontTemplate da geometria operacional
+    - O anchor deriva do setor MASS_HOLD da geometria
+    - max_detach_supply deriva da soma de target_power dos setores secundários
+    - Planners devem ler da geometria diretamente quando possível
 """
 from __future__ import annotations
 
@@ -29,6 +30,7 @@ from enum import Enum
 
 from sc2.position import Point2
 
+from bot.intel.geometry.sector_types import FrontTemplate, SectorId, SectorMode
 from bot.mind.awareness import Awareness, K
 
 
@@ -122,6 +124,40 @@ def _parity_score(awareness: Awareness, now: float) -> float:
 # Lógica de derivação de postura
 # ---------------------------------------------------------------------------
 
+_TEMPLATE_TO_POSTURE: dict[str, ArmyPosture] = {
+    FrontTemplate.HOLD_MAIN.value:           ArmyPosture.HOLD_MAIN_RAMP,
+    FrontTemplate.TURTLE_NAT.value:          ArmyPosture.HOLD_NAT_CHOKE,
+    FrontTemplate.STABILIZE_AND_EXPAND.value: ArmyPosture.HOLD_NAT_CHOKE,
+    FrontTemplate.CONTAIN.value:             ArmyPosture.PRESS_FORWARD,
+    FrontTemplate.PREP_PUSH.value:           ArmyPosture.PRESS_FORWARD,
+}
+
+
+def _posture_from_geometry(awareness: Awareness, now: float) -> ArmyPosture:
+    """
+    Deriva ArmyPosture a partir do FrontTemplate ativo na geometria operacional.
+    Fallback para lógica legada se a geometria não estiver disponível.
+    """
+    template_str = awareness.mem.get(K("intel", "geometry", "operational", "template"), now=now, default=None)
+    if template_str is not None:
+        posture = _TEMPLATE_TO_POSTURE.get(str(template_str))
+        if posture is not None:
+            return posture
+
+    # Fallback: lê nat_ground_state diretamente
+    nat_ground_state = str(
+        awareness.mem.get(K("intel", "frontline", "nat", "ground_state"), now=now, default="CLEAR") or "CLEAR"
+    ).upper()
+    main_ground_state = str(
+        awareness.mem.get(K("intel", "frontline", "main", "ground_state"), now=now, default="CLEAR") or "CLEAR"
+    ).upper()
+    if main_ground_state in {"COMPROMISED", "LOST"}:
+        return ArmyPosture.HOLD_MAIN_RAMP
+    if nat_ground_state in {"COMPROMISED", "LOST"}:
+        return ArmyPosture.HOLD_NAT_CHOKE
+    return ArmyPosture.HOLD_MAIN_RAMP
+
+
 def _derive_posture(
     *,
     army_supply: int,
@@ -138,18 +174,9 @@ def _derive_posture(
     cfg: ArmyPostureIntelConfig,
 ) -> ArmyPosture:
     """
-    Derivação de postura — única fonte de verdade.
-
-    Ordem de prioridade (maior urgência primeiro):
-    1. Main comprometida → HOLD_MAIN_RAMP
-    2. Rush ativo → HOLD_MAIN_RAMP (se army pequeno) ou HOLD_NAT_CHOKE
-    3. Nat LOST com retake viável → CONTROLLED_RETAKE
-    4. Nat COMPROMISED e army pequeno → CONTROLLED_RETREAT
-    5. Nat tomada / clear → segurar lá (HOLD_NAT_CHOKE ou SECURE_NAT)
-    6. Paridade favorável → PRESS_FORWARD
-    7. Default → HOLD_MAIN_RAMP
+    Derivação de postura legada — mantida para fallback.
+    Use _posture_from_geometry quando a geometria operacional estiver disponível.
     """
-
     # --- 1. Main sob ataque real ---
     if main_ground_state in {"COMPROMISED", "LOST"}:
         return ArmyPosture.HOLD_MAIN_RAMP
@@ -159,7 +186,6 @@ def _derive_posture(
     if rush_active:
         if int(army_supply) < int(cfg.hold_nat_min_supply):
             return ArmyPosture.HOLD_MAIN_RAMP
-        # Com army suficiente, ir para o choke da nat é melhor que esperar na main
         if nat_ground_state not in {"LOST"}:
             return ArmyPosture.HOLD_NAT_CHOKE
         return ArmyPosture.HOLD_MAIN_RAMP
@@ -180,26 +206,20 @@ def _derive_posture(
 
     # --- 5. Nat clear/contested ---
     if nat_ground_state in {"CLEAR", "CONTESTED"}:
-        # Nat ainda não tomada mas está limpa — avançar para tomar
         if not bool(nat_taken) and bases_now < 2:
             if int(army_supply) >= int(cfg.secure_nat_min_supply):
                 return ArmyPosture.SECURE_NAT
             return ArmyPosture.HOLD_MAIN_RAMP
-
-        # Nat tomada e clara
         if bool(nat_taken):
             if float(parity_score) >= float(cfg.press_parity_threshold) and int(army_supply) >= int(cfg.press_forward_min_supply):
                 return ArmyPosture.PRESS_FORWARD
             if int(army_supply) >= int(cfg.hold_nat_min_supply):
                 return ArmyPosture.HOLD_NAT_CHOKE
             return ArmyPosture.HOLD_MAIN_RAMP
-
-        # Nat contestada e sem TH — segurar o choke
         if int(army_supply) >= int(cfg.hold_nat_min_supply):
             return ArmyPosture.HOLD_NAT_CHOKE
         return ArmyPosture.HOLD_MAIN_RAMP
 
-    # --- 6. Fallback ---
     return ArmyPosture.HOLD_MAIN_RAMP
 
 
@@ -263,9 +283,17 @@ def derive_army_posture_intel(
 ) -> None:
     """
     Sintetiza percepções e deriva a postura operacional do exército.
-    Deve ser chamado APÓS frontline_intel e map_control_intel no pipeline.
+
+    Fonte primária: OperationalGeometryIntel (FrontTemplate → ArmyPosture).
+    Fallback: lógica legada baseada em frontline + rush + parity.
+
+    Deve ser chamado APÓS operational_geometry_intel no pipeline.
     """
-    # --- Lê frontline ---
+    army_supply = _army_supply(bot)
+    parity_score = _parity_score(awareness, now)
+    rush_state = str(awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
+
+    # --- Lê frontline para anchor e fallback ---
     nat_snap = awareness.mem.get(K("intel", "frontline", "nat", "snapshot"), now=now, default={}) or {}
     main_snap = awareness.mem.get(K("intel", "frontline", "main", "snapshot"), now=now, default={}) or {}
     if not isinstance(nat_snap, dict):
@@ -280,15 +308,12 @@ def derive_army_posture_intel(
     nat_forward_anchor = _point_from_payload(nat_snap.get("forward_anchor"))
     nat_fallback_anchor = _point_from_payload(nat_snap.get("fallback_anchor"))
     nat_center = _point_from_payload(nat_snap.get("center"))
-
     main_ground_state = str(main_snap.get("ground_state", "CLEAR") or "CLEAR").upper()
     main_fallback_anchor = _point_from_payload(main_snap.get("fallback_anchor"))
-
     main_shielded_by_nat = bool(
         awareness.mem.get(K("intel", "frontline", "main_shielded_by_nat"), now=now, default=False)
     )
 
-    # --- Lê map_control_intel (apenas fatos, não postura) ---
     mc_snap = awareness.mem.get(K("intel", "map_control", "our_nat", "snapshot"), now=now, default={}) or {}
     if not isinstance(mc_snap, dict):
         mc_snap = {}
@@ -296,52 +321,59 @@ def derive_army_posture_intel(
     nat_offsite = bool(mc_snap.get("nat_offsite", False))
     bases_now = int(mc_snap.get("bases_now", 0) or 0)
 
-    # --- Lê rush state ---
-    rush_state = str(awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
+    # --- Postura: fonte primária é a geometria operacional ---
+    geo_snap = awareness.mem.get(K("intel", "geometry", "operational", "snapshot"), now=now, default=None)
+    use_geometry = isinstance(geo_snap, dict) and geo_snap
 
-    # --- Lê parity ---
-    parity_score = _parity_score(awareness, now)
-
-    # --- Deriva ---
-    army_supply = _army_supply(bot)
-
-    posture = _derive_posture(
-        army_supply=army_supply,
-        parity_score=parity_score,
-        rush_state=rush_state,
-        nat_ground_state=nat_ground_state,
-        nat_control_state=nat_control_state,
-        main_ground_state=main_ground_state,
-        main_shielded_by_nat=main_shielded_by_nat,
-        nat_has_th=nat_has_th,
-        nat_retake_viable=nat_retake_viable,
-        nat_taken=nat_taken,
-        bases_now=bases_now,
-        cfg=cfg,
-    )
+    if use_geometry:
+        posture = _posture_from_geometry(awareness, now)
+        # Anchor: lê o bulk_anchor_pos da geometria operacional
+        bulk_anchor_payload = geo_snap.get("bulk_anchor_pos")
+        anchor_from_geo = _point_from_payload(bulk_anchor_payload) if isinstance(bulk_anchor_payload, dict) else None
+        max_detach_supply = int(geo_snap.get("max_detach_supply", 8) or 8)
+    else:
+        # Fallback legado
+        posture = _derive_posture(
+            army_supply=army_supply,
+            parity_score=parity_score,
+            rush_state=rush_state,
+            nat_ground_state=nat_ground_state,
+            nat_control_state=nat_control_state,
+            main_ground_state=main_ground_state,
+            main_shielded_by_nat=main_shielded_by_nat,
+            nat_has_th=nat_has_th,
+            nat_retake_viable=nat_retake_viable,
+            nat_taken=nat_taken,
+            bases_now=bases_now,
+            cfg=cfg,
+        )
+        anchor_from_geo = None
+        max_detach_supply = _derive_detach_budget(posture=posture, army_supply=army_supply, cfg=cfg)
 
     main_pos = bot.start_location
-    anchor = _derive_anchor(
-        posture=posture,
-        nat_forward_anchor=nat_forward_anchor,
-        nat_fallback_anchor=nat_fallback_anchor,
-        main_fallback_anchor=main_fallback_anchor,
-        nat_center=nat_center,
-        main_pos=main_pos,
-    )
 
-    # secondary_anchor: onde o bulk pode recuar se o anchor primário cair
+    # Anchor: prefere geometria, fallback para lógica legada
+    if anchor_from_geo is not None:
+        anchor = anchor_from_geo
+    else:
+        anchor = _derive_anchor(
+            posture=posture,
+            nat_forward_anchor=nat_forward_anchor,
+            nat_fallback_anchor=nat_fallback_anchor,
+            main_fallback_anchor=main_fallback_anchor,
+            nat_center=nat_center,
+            main_pos=main_pos,
+        )
+
+    # secondary_anchor
     secondary_anchor: Point2 | None = None
     if posture in {ArmyPosture.HOLD_NAT_CHOKE, ArmyPosture.SECURE_NAT, ArmyPosture.CONTROLLED_RETAKE}:
         secondary_anchor = nat_fallback_anchor or main_fallback_anchor
     elif posture == ArmyPosture.PRESS_FORWARD:
         secondary_anchor = nat_center or nat_forward_anchor
 
-    max_detach_supply = _derive_detach_budget(posture=posture, army_supply=army_supply, cfg=cfg)
     min_bulk_supply = max(0, int(army_supply) - int(max_detach_supply))
 
-    # defense_overflow: sinal para indicar que a defesa local precisaria de mais que o orçamento
-    # Por agora é apenas um placeholder — será alimentado pelo DefensePlanner no futuro
     defense_overflow = bool(
         awareness.mem.get(K("strategy", "army", "defense_overflow"), now=now, default=False)
     )
@@ -363,6 +395,7 @@ def derive_army_posture_intel(
         "nat_taken": bool(nat_taken),
         "nat_offsite": bool(nat_offsite),
         "defense_overflow": bool(defense_overflow),
+        "source": "geometry" if use_geometry else "legacy",
     }
 
     awareness.mem.set(K("strategy", "army", "posture"), value=posture.value, now=now, ttl=float(cfg.ttl_s))

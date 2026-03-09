@@ -1,0 +1,292 @@
+# bot/planners/wall_planner.py
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from sc2.ids.unit_typeid import UnitTypeId as U
+from sc2.position import Point2
+
+from ares.consts import BuildingSize
+
+from bot.devlog import DevLogger
+from bot.mind.attention import Attention
+from bot.mind.awareness import Awareness, K
+from bot.planners.utils.proposals import Proposal, TaskSpec, UnitRequirement
+from bot.tasks.wall.maintain_wall_task import MaintainWallTask
+
+
+@dataclass(frozen=True)
+class _WallScvPickPolicy:
+    objective: Point2
+    name: str = "wall.scv.closest.v1"
+
+    def allow(self, unit, *, bot, attention, now: float) -> bool:
+        if unit is None or unit.type_id != U.SCV:
+            return False
+        if not bool(getattr(unit, "is_ready", False)):
+            return False
+        if float(getattr(unit, "health_percentage", 1.0) or 1.0) < 0.45:
+            return False
+        try:
+            if bool(getattr(unit, "is_carrying_resource", False)):
+                return False
+        except Exception:
+            pass
+        try:
+            if bool(getattr(unit, "is_constructing", False)):
+                return False
+        except Exception:
+            pass
+        try:
+            for order in list(getattr(unit, "orders", []) or []):
+                ability_name = str(getattr(getattr(order, "ability", None), "name", "") or "").upper()
+                if "BUILD" in ability_name or "REPAIR" in ability_name:
+                    return False
+        except Exception:
+            pass
+        return True
+
+    def score(self, unit, *, bot, attention, now: float) -> float:
+        try:
+            dist = float(unit.distance_to(self.objective))
+        except Exception:
+            dist = 9999.0
+        carrying_penalty = 0.0
+        try:
+            carrying_penalty = 4.0 if bool(getattr(unit, "is_carrying_resource", False)) else 0.0
+        except Exception:
+            carrying_penalty = 0.0
+        hp = float(getattr(unit, "health_percentage", 1.0) or 1.0)
+        return (hp * 10.0) - dist - carrying_penalty
+
+
+@dataclass
+class WallPlanner:
+    planner_id: str = "wall_planner"
+    log: DevLogger | None = None
+    main_score: int = 84
+    nat_score: int = 82
+    cadence_s: float = 4.0
+
+    def _pid(self, zone: str) -> str:
+        return f"{self.planner_id}:{str(zone)}"
+
+    def _due(self, *, awareness: Awareness, now: float, zone: str) -> bool:
+        last = awareness.mem.get(K("ops", "wall", str(zone), "proposal_last_t"), now=now, default=0.0) or 0.0
+        return (float(now) - float(last)) >= float(self.cadence_s)
+
+    def _mark(self, *, awareness: Awareness, now: float, zone: str) -> None:
+        awareness.mem.set(K("ops", "wall", str(zone), "proposal_last_t"), value=float(now), now=now, ttl=None)
+
+    @staticmethod
+    def _wall_complete_recent(*, awareness: Awareness, now: float, zone: str) -> bool:
+        status = awareness.mem.get(K("ops", "wall", str(zone), "status"), now=now, default=None)
+        if not isinstance(status, dict):
+            return False
+        if not bool(status.get("complete", False)):
+            return False
+        updated_at = status.get("updated_at", None)
+        try:
+            return (float(now) - float(updated_at)) <= 10.0
+        except Exception:
+            return True
+
+    @staticmethod
+    def _rush_active(*, awareness: Awareness, now: float) -> bool:
+        state = str(awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
+        return state in {"SUSPECTED", "CONFIRMED", "HOLDING"}
+
+    @staticmethod
+    def _main_wall_contact(bot, *, attention: Attention) -> bool:
+        try:
+            ramp = getattr(bot, "main_base_ramp", None)
+            if ramp is None:
+                return False
+            anchors = list(getattr(ramp, "corner_depots", []) or [])
+            top = getattr(ramp, "top_center", None)
+            if top is not None:
+                anchors.append(top)
+            bottom = getattr(ramp, "bottom_center", None)
+            if bottom is not None:
+                anchors.append(bottom)
+        except Exception:
+            return False
+        if not anchors:
+            return False
+        try:
+            enemies = list(getattr(bot, "enemy_units", []) or [])
+        except Exception:
+            enemies = []
+        for enemy in enemies:
+            try:
+                if bool(getattr(enemy, "is_flying", False)):
+                    continue
+                if any(float(enemy.distance_to(anchor)) <= 11.0 for anchor in anchors):
+                    return True
+            except Exception:
+                continue
+        threat_pos = getattr(attention.combat, "primary_threat_pos", None)
+        if threat_pos is not None:
+            try:
+                if any(float(threat_pos.distance_to(anchor)) <= 11.0 for anchor in anchors):
+                    return True
+            except Exception:
+                pass
+        try:
+            return int(getattr(attention.combat, "primary_enemy_count", 0) or 0) > 0 and int(getattr(attention.combat, "primary_urgency", 0) or 0) >= 10
+        except Exception:
+            return False
+
+    @staticmethod
+    def _opening_build_active(bot) -> bool:
+        bor = getattr(bot, "build_order_runner", None)
+        if bor is None:
+            return False
+        return not bool(getattr(bor, "build_completed", False))
+
+    @staticmethod
+    def _nat_wall_supported(bot) -> bool:
+        try:
+            nat = bot.mediator.get_own_nat
+            placements = dict(bot.mediator.get_placements_dict or {})
+        except Exception:
+            return False
+        if nat not in placements:
+            return False
+        nat_two_by_two = placements[nat].get(BuildingSize.TWO_BY_TWO, {}) or {}
+        nat_three_by_three = placements[nat].get(BuildingSize.THREE_BY_THREE, {}) or {}
+        has_wall_depots = any(
+            isinstance(info, dict) and bool(info.get("is_wall", False)) and bool(info.get("supply_depot", False))
+            for info in nat_two_by_two.values()
+        )
+        has_wall_three_by_three = any(
+            isinstance(info, dict) and bool(info.get("is_wall", False))
+            for info in nat_three_by_three.values()
+        )
+        return bool(has_wall_depots or has_wall_three_by_three)
+
+    def _main_factory(self, *, awareness: Awareness):
+        def _factory(mission_id: str) -> MaintainWallTask:
+            return MaintainWallTask(awareness=awareness, zone="main", log=self.log)
+
+        return _factory
+
+    def _nat_factory(self, *, awareness: Awareness):
+        def _factory(mission_id: str) -> MaintainWallTask:
+            return MaintainWallTask(awareness=awareness, zone="nat", log=self.log)
+
+        return _factory
+
+    def propose(self, bot, *, awareness: Awareness, attention: Attention) -> list[Proposal]:
+        now = float(attention.time)
+        out: list[Proposal] = []
+        opening_build_active = bool(self._opening_build_active(bot))
+        rush_active = bool(self._rush_active(awareness=awareness, now=now))
+        main_wall_contact = bool(self._main_wall_contact(bot, attention=attention))
+
+        if opening_build_active and not rush_active and not main_wall_contact:
+            if self.log is not None:
+                self.log.emit(
+                    "planner_skipped",
+                    {
+                        "planner": self.planner_id,
+                        "reason": "opening_build_active",
+                        "rush_active": bool(rush_active),
+                        "main_wall_contact": bool(main_wall_contact),
+                        "bases_total": int(attention.macro.bases_total),
+                    },
+                    meta={"module": "planner", "component": f"planner.{self.planner_id}"},
+                )
+            return out
+
+        main_pid = self._pid("main")
+        if (
+            not self._wall_complete_recent(awareness=awareness, now=now, zone="main")
+            and not awareness.ops_proposal_running(proposal_id=main_pid, now=now)
+            and self._due(awareness=awareness, now=now, zone="main")
+        ):
+            out.append(
+                Proposal(
+                    proposal_id=main_pid,
+                    domain="DEFENSE",
+                    score=int(self.main_score),
+                    tasks=[
+                        TaskSpec(
+                            task_id="maintain_main_wall",
+                            task_factory=self._main_factory(awareness=awareness),
+                            unit_requirements=[
+                                UnitRequirement(
+                                    unit_type=U.SCV,
+                                    count=1,
+                                    pick_policy=_WallScvPickPolicy(objective=bot.start_location),
+                                    required=True,
+                                )
+                            ],
+                            lease_ttl=20.0,
+                        )
+                    ],
+                    lease_ttl=20.0,
+                    cooldown_s=0.0,
+                    risk_level=0,
+                    allow_preempt=True,
+                )
+            )
+            self._mark(awareness=awareness, now=now, zone="main")
+
+        nat_supported = bool(self._nat_wall_supported(bot))
+        nat_required = bool(nat_supported and (rush_active or int(attention.macro.bases_total) >= 2))
+        nat_pid = self._pid("nat")
+        if (
+            nat_required
+            and not self._wall_complete_recent(awareness=awareness, now=now, zone="nat")
+            and not awareness.ops_proposal_running(proposal_id=nat_pid, now=now)
+            and self._due(awareness=awareness, now=now, zone="nat")
+        ):
+            try:
+                nat_objective = bot.mediator.get_own_nat
+            except Exception:
+                nat_objective = bot.start_location
+            out.append(
+                Proposal(
+                    proposal_id=nat_pid,
+                    domain="DEFENSE",
+                    score=int(self.nat_score),
+                    tasks=[
+                        TaskSpec(
+                            task_id="maintain_nat_wall",
+                            task_factory=self._nat_factory(awareness=awareness),
+                            unit_requirements=[
+                                UnitRequirement(
+                                    unit_type=U.SCV,
+                                    count=1,
+                                    pick_policy=_WallScvPickPolicy(objective=nat_objective),
+                                    required=True,
+                                )
+                            ],
+                            lease_ttl=20.0,
+                        )
+                    ],
+                    lease_ttl=20.0,
+                    cooldown_s=0.0,
+                    risk_level=0,
+                    allow_preempt=True,
+                )
+            )
+            self._mark(awareness=awareness, now=now, zone="nat")
+
+        if self.log is not None and out:
+            self.log.emit(
+                "planner_proposed",
+                {
+                    "planner": self.planner_id,
+                    "count": len(out),
+                    "zones": [str(p.proposal_id).split(":")[-1] for p in out],
+                    "rush_active": bool(rush_active),
+                    "main_wall_contact": bool(main_wall_contact),
+                    "bases_total": int(attention.macro.bases_total),
+                    "nat_supported": bool(nat_supported),
+                },
+                meta={"module": "planner", "component": f"planner.{self.planner_id}"},
+            )
+        return out

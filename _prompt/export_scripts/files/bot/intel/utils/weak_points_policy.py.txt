@@ -1,0 +1,98 @@
+# bot/intel/utils/weak_points_policy.py
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Tuple
+
+from sc2.ids.unit_typeid import UnitTypeId as U
+
+_TOWNHALL_TYPES: Tuple[U, ...] = (
+    U.HATCHERY,
+    U.LAIR,
+    U.HIVE,
+    U.NEXUS,
+    U.COMMANDCENTER,
+    U.ORBITALCOMMAND,
+    U.PLANETARYFORTRESS,
+)
+
+
+def fort_label(defense_score: float) -> str:
+    if defense_score >= 11.0:
+        return "HEAVY"
+    if defense_score >= 6.0:
+        return "MEDIUM"
+    return "LIGHT"
+
+
+@dataclass(frozen=True)
+class WeakPointsDecision:
+    points: list[dict]
+    primary: dict | None
+
+    def payload(self, *, now: float) -> dict:
+        return {
+            "t": round(float(now), 2),
+            "bases_visible": int(len(self.points)),
+            "primary": dict(self.primary) if self.primary is not None else None,
+            "points": list(self.points),
+        }
+
+
+@dataclass(frozen=True)
+class WeakPointsPolicy:
+    def evaluate(self, bot) -> WeakPointsDecision:
+        if not hasattr(bot, "mediator"):
+            raise RuntimeError("missing_contract:mediator")
+        all_enemy = list(getattr(bot.mediator, "get_all_enemy", []) or [])
+        enemy_structures = [u for u in all_enemy if bool(getattr(u, "is_structure", False))]
+        enemy_units = [u for u in all_enemy if not bool(getattr(u, "is_structure", False))]
+
+        townhalls = [s for s in enemy_structures if s.type_id in _TOWNHALL_TYPES]
+        out: list[dict] = []
+
+        for th in townhalls:
+            base_pos = th.position
+            mobile = [
+                u
+                for u in enemy_units
+                if float(u.position.distance_to(base_pos)) <= 15.0 and bool(getattr(u, "can_attack_ground", False))
+            ]
+            static = [
+                s
+                for s in enemy_structures
+                if float(s.position.distance_to(base_pos)) <= 12.0
+                if bool(getattr(s, "can_attack_ground", False))
+            ]
+            workers = int(
+                len(
+                    [
+                        u
+                        for u in enemy_units
+                        if u.type_id in {U.SCV, U.PROBE, U.DRONE, U.MULE}
+                        and float(u.position.distance_to(base_pos)) <= 14.0
+                    ]
+                )
+            )
+            defense_score = float(len(static) * 3.0 + len(mobile) * 1.2)
+            vulnerability = float(max(0.0, 18.0 - defense_score) + min(8.0, workers * 0.25))
+
+            out.append(
+                {
+                    "x": float(base_pos.x),
+                    "y": float(base_pos.y),
+                    "townhall_type": str(getattr(th.type_id, "name", str(th.type_id))),
+                    "townhall_tag": int(getattr(th, "tag", -1) or -1),
+                    "mobile_defenders": int(len(mobile)),
+                    "static_defenders": int(len(static)),
+                    "workers": int(workers),
+                    "defense_score": round(defense_score, 2),
+                    "vulnerability": round(vulnerability, 2),
+                    "fortification": fort_label(defense_score),
+                }
+            )
+
+        out.sort(key=lambda b: (float(b["defense_score"]), -float(b["vulnerability"]), int(b["mobile_defenders"])))
+        primary = out[0] if out else None
+        return WeakPointsDecision(points=out, primary=primary)

@@ -96,7 +96,7 @@ def main():
 
         print("Starting local game...")
         print(f"Enemy config: race={ENEMY_RACE.name} difficulty={ENEMY_DIFFICULTY.name} build={ENEMY_BUILD.name}")
-    run_game(
+        run_game(
             maps.get(random.choice(map_list)),
             [
                 bot1,

@@ -1,133 +1,206 @@
 # Catalogo de Estado
 
-Este documento descreve o contrato atual de estado do bot:
+Este documento resume o contrato atual de estado do bot.
+
+Fonte principal:
 - `bot/mind/attention.py`
 - `bot/mind/awareness.py`
 
 Regra base:
-- `Attention` = fatos do tick atual
-- `Awareness` = estado persistente, inferencia, cooldown e trilha operacional
+- `Attention` = fatos do tick
+- `Awareness` = inferencia persistente e estado operacional
 
 ---
 
 ## Attention
 
-Fonte:
-- `bot/mind/attention.py`
+Campos principais do objeto `Attention`:
 
-### Estrutura principal
+- `economy`
+- `combat`
+- `intel`
+- `macro`
+- `enemy_build`
+- `unit_threats`
+- `missions`
+- `time`
 
-- `economy: EconomySnapshot`
-- `combat: CombatSnapshot`
-- `unit_threats: UnitThreatsSnapshot`
-- `intel: IntelSnapshot`
-- `macro: MacroSnapshot`
-- `enemy_build: EnemyBuildSnapshot`
-- `missions: MissionSnapshot`
-- `time: float`
+### Economy
 
-### EconomySnapshot
+- `economy.units_ready`
+- `economy.minerals`
+- `economy.gas`
+- `economy.supply_used`
+- `economy.supply_cap`
+- `economy.supply_left`
+- `economy.supply_blocked`
+- `economy.workers_total`
+- `economy.workers_idle`
+- `economy.idle_worker_tags`
+- `economy.idle_worker_pos`
+- `economy.bases_sat`
+- `economy.surplus_mineral_worker_tags`
+- `economy.deficit_mineral_worker_tags`
 
-- `units_ready: dict`
-- `minerals: int`
-- `gas: int`
-- `supply_used: int`
-- `supply_cap: int`
-- `supply_left: int`
-- `supply_blocked: bool`
-- `workers_total: int`
-- `workers_idle: int`
-- `idle_worker_tags: tuple[int, ...]`
-- `idle_worker_pos: tuple[(float,float), ...]`
-- `bases_sat: tuple[BaseSat, ...]`
-- `surplus_mineral_worker_tags: tuple[int, ...]`
-- `deficit_mineral_worker_tags: tuple[int, ...]`
+### Combat
 
-`BaseSat`:
-- `base_id`, `loc`, `th_tag`
-- `geysers_taken`
-- `workers_actual`, `workers_ideal`
-- `mineral_actual`, `mineral_ideal`
-- `gas_saturation`, `gas_ideal`
-- `refinery_tags`
+- `combat.primary_base_tag`
+- `combat.primary_enemy_count`
+- `combat.primary_urgency`
+- `combat.primary_threat_pos`
+- `combat.base_threats`
 
-Nota:
-- o campo legado `economy.bases` foi removido
-- o contrato oficial agora e `bases_sat`
+### Intel
 
-### CombatSnapshot
+- `intel.orbital_ready_to_scan`
+- `intel.orbital_energy`
 
-- `primary_base_tag: Optional[int]`
-- `primary_enemy_count: int`
-- `primary_urgency: int`
-- `primary_threat_pos: Optional[Point2]`
-- `base_threats: tuple[BaseThreatSnapshot, ...]`
+### Macro
 
-### UnitThreatsSnapshot
+- `macro.opening_done`
+- `macro.bases_total`
+- `macro.prod_structures_total`
+- `macro.prod_structures_idle`
+- `macro.prod_structures_active`
+- `macro.addon_total`
+- `macro.addon_reactor_total`
+- `macro.addon_techlab_total`
+- `macro.addon_reactor_ratio`
+- `macro.addon_techlab_ratio`
 
-- `units: tuple[UnitThreatSnapshot, ...]`
-- `missions: tuple[MissionUnitThreatSnapshot, ...]`
+### Enemy build
 
-Uso principal:
-- micro de missao
-- gatilho de reinforce e support
+- `enemy_build.enemy_units`
+- `enemy_build.enemy_structures`
+- `enemy_build.enemy_main_pos`
+- `enemy_build.enemy_natural_pos`
+- `enemy_build.enemy_units_main`
+- `enemy_build.enemy_structures_main`
+- `enemy_build.enemy_structures_progress`
+- `enemy_build.enemy_natural_on_ground`
 
-### IntelSnapshot
+### Missions
 
-- `orbital_ready_to_scan: bool`
-- `orbital_energy: float`
-
-### MacroSnapshot
-
-- `opening_done: bool`
-- `bases_total: int`
-- `prod_structures_total: int`
-- `prod_structures_idle: int`
-- `prod_structures_active: int`
-- `minerals`, `vespene`, `workers_total`, `workers_idle`
-- `bases_under_saturated`, `bases_over_saturated`
-- `supply_used`, `supply_cap`, `supply_left`, `supply_blocked`
-
-### EnemyBuildSnapshot
-
-- `enemy_units`, `enemy_structures`
-- `enemy_main_pos`, `enemy_natural_pos`
-- `enemy_units_main`, `enemy_structures_main`
-- `enemy_structures_progress`
-- `enemy_natural_on_ground`
-- `enemy_natural_townhall_progress`
-- `enemy_natural_townhall_type`
-
-### MissionSnapshot
-
-- `ongoing: tuple[MissionStatusSnapshot, ...]`
-- `ongoing_count`
-- `ongoing_units_alive`
-- `ongoing_units_missing`
-- `needing_support_count`
-
-`MissionStatusSnapshot` inclui:
-- `mission_id`, `proposal_id`, `domain`, `status`
-- `started_at`, `expires_at`, `remaining_s`
-- `assigned_count`, `alive_count`, `missing_count`
-- `original_count`, `original_alive_count`, `original_missing_count`, `original_alive_ratio`
-- `mission_degraded`
-- `original_type_counts`
-- `alive_tags`, `missing_tags`
-- `can_reinforce`
+- `missions.ongoing`
+- `missions.ongoing_count`
+- `missions.ongoing_units_alive`
+- `missions.ongoing_units_missing`
+- `missions.needing_support_count`
 
 ---
 
 ## Awareness.mem
 
-Fonte:
-- `bot/mind/awareness.py`
-
 Formato de chave:
 - tupla `("a", "b", "c")`
-- documentada como `a:b:c`
+- forma textual `a:b:c`
 
-### Ops e missions
+### Enemy
+
+- `enemy:opening:kind`
+- `enemy:opening:confidence`
+- `enemy:opening:signals`
+- `enemy:opening:last_update_t`
+- `enemy:rush:state`
+- `enemy:rush:tier`
+- `enemy:rush:severity`
+- `enemy:rush:last_confirmed_t`
+- `enemy:rush:last_seen_pressure_t`
+- `enemy:rush:ended_t`
+- `enemy:rush:predicted`
+- `enemy:aggression:state`
+- `enemy:aggression:confidence`
+- `enemy:build:snapshot`
+- `enemy:build:units`
+- `enemy:build:structures`
+- `enemy:build:last_seen_t`
+- `enemy:army:comp_summary`
+- `enemy:weak_points:snapshot`
+- `enemy:weak_points:points`
+- `enemy:weak_points:primary`
+
+### Geometria e territorio
+
+- `intel:frontline:main:snapshot`
+- `intel:frontline:nat:snapshot`
+- `intel:frontline:main_shielded_by_nat`
+- `intel:geometry:world:compression`
+- `intel:geometry:operational:snapshot`
+- `intel:geometry:operational:template`
+- `intel:geometry:operational:bulk_anchor`
+- `intel:geometry:operational:max_detach_supply`
+- `intel:geometry:sector:<sector_id>`
+- `intel:territory:defense:snapshot`
+- `intel:territory:defense:active_line`
+
+### Strategy
+
+- `strategy:parity:state`
+- `strategy:parity:army_score_norm`
+- `strategy:parity:severity:army_behind`
+- `strategy:parity:severity:econ_behind`
+- `strategy:army:posture`
+- `strategy:army:anchor`
+- `strategy:army:secondary_anchor`
+- `strategy:army:max_detach_supply`
+- `strategy:army:min_bulk_supply`
+- `strategy:army:defense_overflow`
+- `strategy:army:snapshot`
+
+### Macro desired
+
+- `macro:opening:done`
+- `macro:opening:done_reason`
+- `macro:opening:done_owner`
+- `macro:opening:selected`
+- `macro:opening:transition_target`
+- `macro:opening:requested`
+- `macro:opening:requested_transition_target`
+- `macro:opening:request_reason`
+- `macro:opening:switch_t`
+- `macro:opening:switch_reason`
+- `macro:desired:mode`
+- `macro:desired:phase`
+- `macro:desired:scenario`
+- `macro:desired:signals`
+- `macro:desired:comp`
+- `macro:desired:controller_comp`
+- `macro:desired:priority_units`
+- `macro:desired:reserve_unit`
+- `macro:desired:reserve_minerals`
+- `macro:desired:reserve_gas`
+- `macro:desired:bank_target_minerals`
+- `macro:desired:bank_target_gas`
+- `macro:desired:pid_tuning`
+- `macro:desired:army_supply_milestones`
+- `macro:desired:unit_count_milestones`
+- `macro:desired:timing_attacks`
+- `macro:desired:production_structure_targets`
+- `macro:desired:production_scale`
+- `macro:desired:addon_targets`
+- `macro:desired:tech_structure_targets`
+- `macro:desired:tech_timing_milestones`
+- `macro:desired:tech_targets`
+- `macro:desired:construction_targets`
+
+### Macro exec e control
+
+- `macro:plan:active`
+- `macro:plan:hash`
+- `macro:plan:version`
+- `macro:plan:owner`
+- `macro:plan:changed_at`
+- `macro:exec:*`
+- `macro:gas:status`
+- `macro:gas:target_workers_per_refinery`
+- `control:phase`
+- `control:pressure:level`
+- `control:pressure:threat_pos`
+- `control:priority:lag:*`
+- `control:priority:bank_pi_output`
+- `tech:exec:*`
+
+### Ops
 
 - `ops:mission:<mission_id>:status`
 - `ops:mission:<mission_id>:domain`
@@ -139,76 +212,48 @@ Formato de chave:
 - `ops:mission:<mission_id>:original_type_counts`
 - `ops:mission:<mission_id>:reason`
 - `ops:mission:<mission_id>:ended_at`
-
-### Ops, proposals e cooldown
-
 - `ops:cooldown:<proposal_id>:until`
 - `ops:cooldown:<proposal_id>:reason`
-- `ops:proposal_running:<proposal_id>`
+- `ops:map_control:proposal:<pid>:last_t`
+- `ops:defense:proposal:<pid>:last_t`
+- `ops:harass:proposal:<pid>:last_t`
+- `ops:wall:<zone>:proposal_last_t`
 
-### Intel, scout e scan
+### Scout e scan
 
 - `intel:scv:*`
 - `intel:reaper:scout:*`
 - `intel:scan:*`
-
-### Enemy opening
-
-- `enemy:opening:first_seen_t`
-- `enemy:rush:*`
-- `enemy:opening:kind`
-- `enemy:opening:confidence`
-- `enemy:opening:signals`
-- `enemy:opening:last_update_t`
-
-### Enemy weak points
-
-- `enemy:weak_points:snapshot`
-- `enemy:weak_points:points`
-- `enemy:weak_points:primary`
-- `enemy:weak_points:bases_visible`
-- `enemy:weak_points:last_update_t`
-
-### Macro e housekeeping
-
-- `macro:opening:selected`
-- `macro:opening:transition_target`
-- `macro:opening:build_selected`
-- `macro:opening:build_transition_target`
-- `macro:opening:requested`
-- `macro:opening:requested_transition_target`
-- `macro:opening:request_reason`
-- `macro:opening:switch_t`
-- `macro:opening:switch_reason`
-- `macro:scv:housekeeping:last_done_at`
-- `macro:gas:status`
-- `macro:gas:target_workers_per_refinery`
-- `macro:exec:*`
-- `tech:exec:*`
-- `control:phase`
-- `control:pressure:*`
-- `macro:morph:*`
-- `macro:mules:*`
+- `intel:scan:by_label:*`
+- `intel:worker_scout:*`
+- `intel:my_comp:last_emit_t`
+- `intel:opening:last_emit_t`
 
 ---
 
-## Fluxo alvo de harass
+## Fluxos Relevantes
 
-Fluxo oficial atual:
-1. `weak_points_intel` atualiza `enemy:weak_points:*` na Awareness
-2. `harass_planner` le `enemy:weak_points:primary` e define `objective`
-3. o planner cria `proposal` com `task_factory(..., preferred_target=objective)`
-4. tasks de harass executam somente o alvo recebido
+### Fluxo espacial
 
-Isso centraliza decisao no planner e deixa task focada em execucao.
+1. `frontline` publica estado da main e nat
+2. `world compression` condensa pressao e commitment
+3. `operational geometry` escolhe template e setores
+4. `territorial control` transforma em linhas, zonas e slots
+5. `army posture` publica adaptador legado
+6. `MapControlPlanner` e `DefensePlanner` consomem isso
+
+### Fluxo de harass
+
+1. `weak_points_intel` publica `enemy:weak_points:*`
+2. `HarassPlanner` escolhe alvo primario
+3. task recebe alvo pronto e so executa
 
 ---
 
 ## Manutencao
 
-Ao mudar:
-- campos de `Attention`
+Sempre atualize este arquivo quando mudar:
+- shape de `Attention`
 - chaves de `Awareness.mem`
+- contrato da camada espacial
 - fluxo planner -> task
-
-atualize este arquivo na mesma PR.

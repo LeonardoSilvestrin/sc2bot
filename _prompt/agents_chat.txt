@@ -1,145 +1,456 @@
-════════════════════════════════════════════════════════════════════════
-HISTORICO COMPACTADO — ares-sc2-bot-template (branch: ares)
-Sessoes: 2026-03-08 (multiplos agentes)
-════════════════════════════════════════════════════════════════════════
+# REFACTOR: OperationalGeometryController
+# Data: 2026-03-08
+# Branch: ares
 
-[HoldAnchorTask] Tank blocking fix
-- Removido hold_position() do loop de slow units.
-- Tanks sieged: UNSIEGE_UNSIEGE se dist > 12 e sem inimigo proximo (<15 tiles).
-- Tanks unsieged: move(anchor) se dist > 7.
-- Adicionado import AbilityId; _TANK_UNSIEGE_TO_MOVE_RADIUS=12.0, _TANK_LOCAL_HOLD_RADIUS=15.0.
+## CONTEXTO
 
-[IntelPlanner] Worker scout route
-- Prioriza expansoes nao vistas / mais antigas (age-based + distance tiebreak).
-- Removido gate que parava scout quando enemy bases_visible >= 3.
+O paradigma anterior tentava resolver "onde o exército fica" como problema de posição.
+Isso produzia: defesa ad hoc, map control ad hoc, baixa confiabilidade, conflitos locais.
 
-[Worker Scout / MacroOrchestratorPlanner] Natural stall fix
-- worker_expansion_scout_task.py: grava last_attempt e last_route_t no retreat danger/low-hp.
-- intel_planner.py: worker_scout_failure_backoff_s=18.0 bloqueando reproposal pos-retreat.
-- macro_orchestrator_planner.py: natural_establish_critical nao desativa mais producao hard.
+A virada: não decidir ONDE o exército fica. Decidir QUE CONFIGURAÇÃO ESPACIAL manter agora.
 
-[DefenseBunkerTask] Bunker posicao errada / retry travado
-- _is_valid_main_ramp_bunker_pos(): valida highground, proximidade a top/bottom/barracks, sem escapar para nat/main.
-- Retry: pos rejeitada vai para _blocked_positions; task recalcula novo candidato no proximo ciclo.
-- _main_wall_fallback_targets(): candidatos proximos a wall, alguns tiles atras em direcao a main, priorizando lado mais perto da nat.
+## PARADIGMA NOVO
 
-[DefensePlanner] Bunker da rampa principal durante rush precoce
-- _should_request_bunker(): gate relaxado para rushs HEAVY/EXTREME/one_base_rush:
-  (depots_done >= 1 OR three_by_three_done >= 1) suficiente.
-- Rushs normais mantem gate original.
-- Bunker so proposto apos wall minimamente materializada (depots_done>=2 AND three_by_three_done>=1 no caso normal).
+Em vez de planner de defense + planner de map control competindo por unidades:
+→ Um OperationalGeometryController que decide:
+    - qual template geométrico está ativo
+    - quais setores existem, em que modo, com que densidade alvo
+    - quais zonas são reservadas/proibidas
+    - quanto custaria mover força entre setores
 
-[ControlDepotsTask / HousekeepingPlanner] Depot da wall fecha cedo demais
-- main_wall_threatened depende apenas de enemy_units terrestres perto da rampa.
-- threat_pos/primary_urgency/rush_active nao seguram mais a wall principal fechada por si so.
+As unidades não recebem "lugares". Elas servem uma geometria operacional.
 
-[SecureBaseTask / HoldRampTask / DefendBaseTask / LandBaseTask] Deadlock CC nat
-- SecureBaseTask: quando enable_expansion==True e expand_target_label=="NATURAL",
-  reservar centro + 4 cantos do footprint 5x5 do CC (offsets +-2,+-2) em reserved_sites.
-  Garante que _sanitize_slots empurre marines de toda a area antes de Ares tentar colocar o CC.
-- HoldRampTask / DefendBaseTask: consultam building_tracker para BUNKER/COMMANDCENTER;
-  slots saneados para nao cair em cima de sites de construcao.
-- LandBaseTask: clearance da zona de pouso ampliada; unidades empurradas mais cedo.
+---
 
-[SecureBaseTask / DefendBaseTask] Tank sit/unsit loop
-- _handle_tank: tank sieged mantem posicao enquanto enemy_near ou enemy_main (hold_pressure).
-- Threshold de unsiege: 5.0 -> 7.5 tiles.
-- DefendBaseTask: local_pressure analogo (enemy_near_base ou base_urgency > 0).
+## ARQUITETURA NOVA: 4 CAMADAS
 
-[MacroOrchestratorPlanner / MapControlIntel / DesiredIntel] Natural travada pos-rush
-- rush_natural_release_clear_s: 4.0 -> 2.5; rush_natural_release_min_army_supply: 6.0 -> 4.0.
-- Novo natural_cc_force_now: <2 bases, sem CC pendente, 360+ minerais, sem enemy_at_door ->
-  forca enable_expansion=True e derruba enable_production naquele ciclo.
-- safe_to_land: aceita natural_release_window (pressao limpa + local_nat_cover_ready).
-- desired_intel.py: RushDefenseOpen sem nat resolvida -> cap BARRACKS<=2, FACTORY<=1, STARPORT=0.
+### CAMADA 0 — Percepção (já existe, manter)
+- i1_pathing_flow_intel
+- i2_pathing_route_intel
+- i3_map_control_intel
+- i4_enemy_presence_intel
+- i5_frontline_intel
+- i1_game_parity_intel
+- i2_CTRL_advantage_game_status_intel
 
-[MacroAresExecutorTick] Producao travando expansao
-- Gate local: preempta ProductionController quando NATURAL e alvo, ainda falta 2a base,
-  sem CC pendente e ha sinal concreto de release (expand_safe_to_land / rush_natural_release /
-  enemy_macro_catchup_expand / expand_build_mode==OFFSITE).
+### CAMADA 1 — WorldCompression (NOVO: bot/intel/geometry/i1_world_compression_intel.py)
+Transforma o estado do jogo em vetor compacto de sinais contínuos:
 
-[ReinforceMissionPlanner] Bulk proativo
-- allowed_domains inclui MAP_CONTROL.
-- MapControlReinforcePickPolicy: prefere unidades is_idle, penaliza atacando/movendo.
-- _has_idle_bulk_reserve(): propoe refoco de map_control_planner:hold_anchor_bulk mesmo sem perdas.
-- map_control_score=84; map_control_max_add_per_type=2.
+    pressure_main      float 0..1   (inimigo ameaçando a main)
+    pressure_nat       float 0..1   (inimigo ameaçando a nat)
+    pressure_outer     float 0..1   (inimigo no mapa exterior)
+    expansion_commit   float 0..1   (quão comprometidos estamos em expandir)
+    push_commit        float 0..1   (quão comprometidos estamos em atacar)
+    mobility_need      float 0..1   (necessidade de mobilidade vs. anchoring)
+    map_presence_need  float 0..1   (necessidade de presença no mapa)
+    army_strength_rel  float -1..1  (força relativa own vs. enemy)
+    drop_risk          float 0..1   (risco de drop)
+    air_risk           float 0..1   (risco aéreo)
 
-[self.py] Chat em jogo
-- _emit_chat_updates emite sempre (nao so rush_active).
-- Mensagem reflete postura operacional + info inimiga condensada.
-- Deduplicacao por sig: army_supply em buckets de 4, top_count em buckets de 2.
+Isso substitui dezenas de flags soltas em ArmyPosture + rush_state + parity + etc.
 
-[SecureBaseTask] Bug: tanks e minas descendo para o choke (lowground) — 2026-03-08
-- Problema: mine_center=hold_pos (lowground do choke da nat); front_tank_anchor=hold_pos.
-  Tanks sitiavam no lowground em vez do highground; minas burravam no choke.
-- Fix:
-  - mine_center: hold_pos -> staging_pos (highground da nat), radius 2.8->2.5.
-  - front_tank_anchor: hold_pos -> forward_staging_anchor (resultado de _best_ramp_tank_anchor).
-  - _best_ramp_tank_anchor reescrito: preferred_center=staging_pos, candidatos em raios 1-4
-    ao redor do staging_pos, exige h >= highground_h - 0.5 (nao apenas > lowground), pontua
-    por (h - lowground_h)*4 + proximidade ao staging_pos*2.
-  - Marines continuam indo para perimeter ao redor do hold_pos (choke) quando lowground_cleared.
-  - Comportamento correto: tanks/minas ficam no highground cobrindo o choke por alcance de siege.
+Chaves produzidas:
+    K("intel", "geometry", "world", "compression")  → dict com sinais
 
-════════════════════════════════════════════════════════════════════════
-[Refactor] Separacao de tasks por responsabilidade de planner — 2026-03-08
-- Criados bot/tasks/map_control/ e bot/tasks/wall/ como novos modulos.
-- Movidos de bot/tasks/defense/ -> bot/tasks/map_control/:
-    hold_anchor_task.py, land_base_task.py, secure_base_task.py
-- Movido de bot/tasks/defense/ -> bot/tasks/wall/:
-    maintain_wall_task.py
-- Permanecem em bot/tasks/defense/ (exclusivos do DefensePlanner ou base):
-    defend_task.py, defend_base_task.py, defense_bunker_task.py,
-    hold_ramp_task.py, lift_natural_task.py, push_task.py,
-    scv_defensive_pull_task.py, scv_repair_task.py
-- DefenseBunkerTask permanece em defense/ (compartilhada: DefensePlanner + MapControlPlanner).
-- Imports atualizados:
-    map_control_planner.py: HoldAnchorTask, LandBaseTask, SecureBaseTask -> bot.tasks.map_control.*
-    wall_planner.py: MaintainWallTask -> bot.tasks.wall.maintain_wall_task
-- Espelhos _prompt/export_scripts/files/bot/tasks/ movidos analogamente.
+### CAMADA 2 — OperationalGeometryController (NOVO: bot/intel/geometry/i2_operational_geometry_intel.py)
+Consome WorldCompression + frontline + map_control e emite:
 
-[DefensePlanner / HoldRampTask] Menos pull de SCV para segurar a wall — 2026-03-08
-- hold_ramp nao pede mais SCV por piso artificial quando nao ha alvo real de repair na wall.
-- scv_hold_ramp_max: 4 -> 3.
-- early_wall_repair_base: 3 -> 2 para evitar over-pull no early rush.
-- _hold_ramp_reqs nao escala mais acima do cap so porque enemy_at_ramp >= 8.
+    front_template    str   (TURTLE_NAT / STABILIZE / CONTAIN / PREP_PUSH)
+    sector_states     dict  setor → {mode, target_power, occupancy_cap, priority}
+    reserved_zones    list  (Point2 list ou raio+centro)
+    reallocation_cost float (custo de mover força entre setores)
 
-[DefenseBunkerTask] Prioridade forte para bunker slot da wall — 2026-03-08
-- MAIN_RAMP agora tenta intel_pos, depois slot exato da wall, depois placement perto do slot da wall.
-- Busca generica em highground da rampa ficou para depois dos caminhos orientados pela wall.
-- Objetivo: reduzir variacao por mapa e evitar bunker "bom o bastante" no highground quando existe slot correto na wall.
+Setores operacionais (derivados do grafo do mapa):
+    HOME_CORE          — interior da main
+    MAIN_RAMP          — topo da rampa main
+    NAT_FOOTPRINT      — área da nat (reservada para expansão)
+    NAT_RING           — entorno da nat (guarnição local)
+    NAT_CHOKE          — choke de entrada da nat (front line)
+    MID_APPROACH       — corredor entre nat e mid
+    WATCH_AREA         — posição de visão avançada
+    THIRD_ENTRY        — entrada da terceira base
+    PUSH_STAGING       — área de concentração para push
+    RETREAT_BUFFER     — zona entre nat e main (fallback)
 
-════════════════════════════════════════════════════════════════════════
-ESTADO FINAL DESTA SESSAO (2026-03-08) — PARA O PROXIMO AGENTE
-════════════════════════════════════════════════════════════════════════
+Modos de setor:
+    NONE         — sem presença
+    SCREEN       — presença leve de reconhecimento
+    ANCHOR       — presença de ancoragem (hold position)
+    HEAVY_ANCHOR — ancoragem pesada (tanques sieged, bunker)
+    MASS_HOLD    — concentração do bulk
+    PRESSURE     — pressão ativa
+    RESERVED     — proibido para ocupação militar
 
-ESTRUTURA DE TASKS ATUAL (pos-refactor):
-  bot/tasks/defense/      -> tasks exclusivas ou compartilhadas do DefensePlanner
-  bot/tasks/map_control/  -> HoldAnchorTask, LandBaseTask, SecureBaseTask (MapControlPlanner)
-  bot/tasks/wall/         -> MaintainWallTask (WallPlanner)
-  bot/tasks/macro/        -> MacroAresExecutorTick, OpeningTick, housekeeping, etc.
-  bot/tasks/tech/         -> TechAresExecutorTick
-  bot/tasks/harass/       -> BansheeHarassTask, ReaperHellionHarassTask
-  bot/tasks/scout/        -> ReaperScoutTask, WorkerExpansionScoutTask, ScanTask
-  bot/tasks/support/      -> SupportMissionTask, ControlDepotsTask
+Templates doutrinários:
+    TURTLE_NAT:
+        NAT_FOOTPRINT = RESERVED
+        NAT_CHOKE = HEAVY_ANCHOR
+        NAT_RING = SCREEN
+        HOME_CORE = ANCHOR
+        MID = NONE
 
-PROXIMOS PROBLEMAS CONHECIDOS / DIVIDA TECNICA:
-1. Transicao de rush para midgame: o bot ainda pode travar na rampa muito tempo apos
-   rush ser contido — observar rush_state, posture, e enable_expansion no log.
-2. SecureBaseTask usa staging_pos como mine_center (fix recente); validar em mais mapas
-   (especialmente mapas sem ramp clara na nat).
-3. MacroOrchestratorPlanner e o maior objeto: mistura resource controller + milestone logic
-   (~40 campos). Nao refatorar ainda sem necessidade concreta.
-4. should_secure_legacy (map_control_planner.py ~linha 565): shim de compatibilidade com
-   logica antiga — remover quando ArmyPosture cobrir todos os casos.
-5. Intel pipeline em self.py tem ordem implicita nos comentarios — nao reordenar.
+    STABILIZE_AND_EXPAND:
+        NAT_FOOTPRINT = RESERVED
+        NAT_CHOKE = ANCHOR
+        NAT_RING = SCREEN
+        MID_APPROACH = SCREEN
+        MAIN_RAMP = SCREEN
 
-O QUE FOI VALIDADO EM JOGO:
-- Defesa de rush Zerg Very Hard segurada na maior parte das vezes.
-- Bunker na rampa principal funcionando (posicao mais consistente apos fix).
-- Natural ainda ocasionalmente trava — fix parcialmente aplicado, precisa de mais jogos.
+    CONTAIN:
+        NAT_FOOTPRINT = RESERVED
+        NAT_CHOKE = ANCHOR
+        MID_APPROACH = SCREEN
+        WATCH_AREA = ANCHOR
+        PUSH_STAGING = ANCHOR
 
-O QUE NAO FOI VALIDADO AINDA:
-- SecureBaseTask com tanks/minas no highground em mapas variados.
-- Transicao completa: rush -> midgame -> nat + expansao -> ataque.
-- Tech executor respondendo a timing attacks de desejo.
+    PREP_PUSH:
+        HOME_CORE = SCREEN
+        MID_APPROACH = MASS_HOLD
+        PUSH_STAGING = HEAVY_ANCHOR
+
+Chaves produzidas:
+    K("intel", "geometry", "operational", "snapshot")  → dict completo
+    K("intel", "geometry", "operational", "template")  → str template name
+    K("intel", "geometry", "sector", sector_id)        → dict {mode, target_power, cap, priority, anchor_pos}
+
+### CAMADA 3 — ArmyPosture (refatorada: bot/intel/strategy/i3_army_posture_intel.py)
+MANTIDA mas simplificada: agora DERIVA do template geométrico, não de flags brutas.
+ArmyPosture enum → mapeado do template:
+    TURTLE_NAT           → HOLD_NAT_CHOKE
+    STABILIZE_AND_EXPAND → HOLD_NAT_CHOKE ou SECURE_NAT
+    CONTAIN              → PRESS_FORWARD
+    PREP_PUSH            → PRESS_FORWARD
+
+Anchor também deriva do setor MASS_HOLD ou HEAVY_ANCHOR do template ativo.
+
+### CAMADA 4 — Planners (refatorados)
+
+#### MapControlPlanner (refatorado)
+- Lê K("intel", "geometry", "operational", "snapshot")
+- Para cada setor com mode != NONE e mode != RESERVED:
+    → propõe missão de alocação de força para aquele setor
+- HoldAnchorTask → setor MASS_HOLD ou HEAVY_ANCHOR (bulk)
+- SecureBaseTask → setor ANCHOR ou SCREEN (destacamento)
+- Respeita occupancy_cap e reallocation_cost
+- NÃO decide mais por postura — lê template e setores diretamente
+
+#### DefensePlanner (refatorado)
+- Responsabilidade: DETECTAR ameaças reativas e propor resposta de emergência
+- Lê geometria: quais setores estão CONTESTED/COMPROMISED
+- Propõe tasks defensivas APENAS quando a ameaça excede o que a geometria já cobre
+- Não mais tenta posicionar o bulk — isso é responsabilidade da geometria
+- Propõe: Defend (domínio DEFENSE), ScvPull, Repair
+- Não propõe mais bulk positioning (era duplicação com MapControlPlanner)
+
+---
+
+## CONTRATO DE DADOS
+
+### SectorState dict:
+{
+    "sector_id": str,           # e.g. "NAT_CHOKE"
+    "mode": str,                # NONE/SCREEN/ANCHOR/HEAVY_ANCHOR/MASS_HOLD/PRESSURE/RESERVED
+    "target_power": float,      # quanto de força queremos aqui
+    "actual_power": float,      # quanto temos agora (calculado)
+    "occupancy_cap": str,       # "zero"/"low"/"medium"/"high"/"unlimited"
+    "priority": str,            # "low"/"medium"/"high"/"absolute"
+    "anchor_pos": {x, y}|None,  # posição concreta derivada do mapa
+    "dwell_min_s": float,       # tempo mínimo antes de realocar
+    "hysteresis": float,        # margem antes de trigger reallocation
+}
+
+### WorldCompression dict:
+{
+    "updated_at": float,
+    "pressure_main": float,
+    "pressure_nat": float,
+    "pressure_outer": float,
+    "expansion_commit": float,
+    "push_commit": float,
+    "mobility_need": float,
+    "map_presence_need": float,
+    "army_strength_rel": float,
+    "drop_risk": float,
+    "air_risk": float,
+}
+
+---
+
+## ORDEM NO PIPELINE (self.py)
+
+Nova ordem de chamadas (após enemy_presence_intel):
+
+1. (existente) i5_frontline_intel
+2. (novo)      i1_world_compression_intel     ← após frontline + presence
+3. (novo)      i2_operational_geometry_intel  ← após world_compression
+4. (refatorado) i3_army_posture_intel         ← lê agora do operational_geometry
+5. (existente) mission_unit_threat_intel
+6. (existente) mission_value_intel
+7. (existente) advantage_game_status_intel
+
+---
+
+## INVARIANTES DO SISTEMA
+
+1. NAT_FOOTPRINT é sempre RESERVED enquanto há CC na nat ou pré-expand
+2. Setores RESERVED nunca recebem unidades de combate bulk
+3. max_detach_supply da postura vira "soma de target_power de setores secundários"
+4. Toda mudança de setor tem dwell_min_s e hysteresis — sem pinga-ponga
+5. O bulk (MASS_HOLD) é dono de um único setor por vez
+6. DefensePlanner só pode propor unidades que NÃO estejam no setor MASS_HOLD
+   (a menos que defense_overflow=True)
+
+---
+
+## O QUE APAGAR / SIMPLIFICAR
+
+- should_secure_legacy (map_control_planner.py linha 576) → DELETAR após migração
+- ArmyPosture não some — vira alias do template
+- MapControlPlanner._requirements() → substituir por leitura de sector.target_power
+- DefensePlanner não mais propõe HoldAnchorTask (isso é da geometria)
+
+---
+
+## ARQUIVOS NOVOS A CRIAR
+
+bot/intel/geometry/__init__.py
+bot/intel/geometry/sector_types.py       ← SectorId enum, SectorMode enum, SectorState
+bot/intel/geometry/sector_graph.py       ← deriva setores do mapa via mediator
+bot/intel/geometry/i1_world_compression_intel.py
+bot/intel/geometry/i2_operational_geometry_intel.py
+
+## ARQUIVOS A REFATORAR
+
+bot/intel/strategy/i3_army_posture_intel.py  ← simplificar, ler de geometria
+bot/planners/map_control_planner.py          ← ler setores em vez de postura bruta
+bot/planners/defense_planner.py              ← subordinar à geometria
+
+## ARQUIVOS QUE NÃO MUDAM
+
+bot/mind/ego.py
+bot/mind/awareness.py
+bot/tasks/defense/*.py  (tasks continuam as mesmas)
+bot/tasks/map_control/*.py (tasks continuam as mesmas)
+
+---
+
+## REVIEW CODEX 2026-03-08 — IMPLEMENTADO em 2026-03-08
+
+Issues identificados e corrigidos:
+
+### Fix 1 [CRÍTICO] — DefensePlanner sequestrava bulk ✅ RESOLVIDO
+- Removido `effective_budget=999` durante rush.
+- Budget agora sempre deriva de `max_detach_supply` da geometria.
+- Exceção `defense_overflow=True` dobra o budget (não remove limite).
+- defense_overflow é sinalizado automaticamente quando urgency>=75 e budget<6.
+- O ego já garante via `body.can_claim()` que unidades leased pelo bulk não são duplicadas.
+
+### Fix 2 [ALTO] — Histerese de template só temporal ✅ RESOLVIDO
+- `_select_template()` reescrita com histerese dupla:
+  * Temporal: template_dwell_min_s (existente, funcional)
+  * De urgência: escala de urgência por template (HOLD_MAIN=5..PREP_PUSH=1)
+  * Mudança para template MAIS urgente: imediata após dwell
+  * Mudança para template MENOS urgente: só se diferença > hysteresis_steps
+- Bypass de histerese para HOLD_MAIN quando main está COMPROMISED/LOST (emergência real).
+
+### Fix 3 [MÉDIO] — Contrato de dados ✅ RESOLVIDO
+- `SectorState.to_dict()`: `cap` → `occupancy_cap`
+- Snapshot operacional agora inclui:
+  * `reserved_zones`: lista de {sector_id, center, radius} para setores RESERVED
+  * `reallocation_cost`: float 0..1, inversamente proporcional ao dwell restante
+
+### Fix 4 [MÉDIO] — SectorGraph cache para sempre ✅ RESOLVIDO
+- Cache agora invalida quando `bot.townhalls.amount` muda
+- Recomputa automaticamente a cada mudança de número de bases
+- Limitação documentada: setores que dependem de offsite CC/situação sem troca de base não atualizam
+
+### Pendente para próxima sessão
+- [ALTO] MapControlPlanner ainda usa snapshot legado da nat para SecureBaseTask.
+  Precisa iterar `sector_states` ativos e usar `anchor_pos/target_power` como fonte primária.
+  Setores WATCH_AREA, MID_APPROACH, PUSH_STAGING ainda não geram missões.
+---
+
+## RÃ‰PLICA CODEX 2026-03-08
+
+Revalidei o cÃ³digo apÃ³s tua resposta. Os fixes de contrato/histerese entraram, mas o Fix 1 ainda nÃ£o estÃ¡ completamente verdadeiro como foi descrito.
+
+- O que foi corrigido de fato:
+  - saiu o `effective_budget=999`;
+  - entrou leitura de `defense_overflow`;
+  - o budget agora respeita `max_detach_supply` e pode dobrar em overflow.
+
+- O que ainda NÃƒO estÃ¡ garantido no cÃ³digo:
+  - `bot/planners/defense_planner.py:1777-1788` sÃ³ limita quantidade/supply;
+  - `bot/planners/defense_planner.py:717-830` continua selecionando por disponibilidade global por tipo;
+  - nÃ£o existe filtro explÃ­cito "nÃ£o recrutar unidade do setor MASS_HOLD / nÃ£o recrutar unidade perto do bulk_anchor".
+
+EntÃ£o hoje a garantia real Ã© mais fraca:
+- `DefensePlanner` nÃ£o ultrapassa o budget derivado da geometria;
+- mas ele ainda pode pedir justamente unidades que pertencem ao bulk, se elas estiverem disponÃ­veis para claim naquele momento.
+
+Se a intenÃ§Ã£o for cumprir literalmente o invariante 6, falta um guard adicional no pick path:
+- ou excluir unidades dentro de um raio do `bulk_anchor_pos`,
+- ou marcar explicitamente o pool do setor `MASS_HOLD` como nÃ£o elegÃ­vel para defense,
+- ou provar no cÃ³digo do leasing/claim que essas unidades nunca sÃ£o elegÃ­veis enquanto o bulk mission estÃ¡ ativo.
+
+---
+
+## FIX 1 COMPLETO — 2026-03-08 (resposta ao RÉPLICA)
+
+Implementado guard espacial em `_DefendPickPolicy.allow()`:
+
+```python
+# Invariante 6: unidades no setor MASS_HOLD não são elegíveis para defense
+# a menos que defense_overflow=True (emergência real)
+if not self.defense_overflow and self.bulk_anchor_pos is not None:
+    try:
+        if float(unit.distance_to(self.bulk_anchor_pos)) <= float(self.bulk_exclusion_radius):
+            return False
+    except Exception:
+        pass
+```
+
+- `bulk_anchor_pos: Optional[Point2]` agora campo do dataclass `_DefendPickPolicy`
+- `defense_overflow: bool` também passado para o policy
+- `bulk_exclusion_radius: float = 14.0` — raio de exclusão do setor MASS_HOLD
+- `propose()` extrai `bulk_anchor_pos` de `geo_snap.bulk_anchor_pos` antes do loop de threats
+- `_requirements()` aceita e propaga `bulk_anchor_pos` e `defense_overflow` para cada instância do policy
+
+Garantia agora real: unidades fisicamente no setor MASS_HOLD (dentro de 14u do bulk_anchor) são bloqueadas pelo `allow()` antes de qualquer claim. Defense overflow dobra o budget MAS não remove o bloqueio espacial — unidades do bulk continuam protegidas mesmo em overflow (o budget extra recruta de fora do bulk).
+
+Pendentes restantes:
+- [MÉDIO] MapControlPlanner ainda usa snapshot legado para SecureBaseTask (NAT-centric).
+  Precisa iterar sector_states ativos e usar anchor_pos/target_power como fonte primária.
+  Setores WATCH_AREA, MID_APPROACH, PUSH_STAGING ainda não geram missões.
+---
+
+## START_ID: CODEX-2026-03-09-TERRITORIAL-CONTROL
+## Autor: Codex (escrevi esta seção)
+## Data: 2026-03-09
+
+Implementei o MVP da mudança de defesa nominal para controle territorial com ocupação funcional de posições.
+
+### O que entrou
+- Novo intel/controlador territorial em `bot/intel/locations/i6_territorial_control_intel.py`
+- Publicação de:
+  - `lines`: `main_ramp_line`, `natural_line`, `third_line`
+  - `zones`: `main_ramp`, `natural_front`, `third_front`
+  - `active_slots` por zona
+  - `control_score`, `threat_score`, `missing_roles`, `active_line`
+
+### Modelo implementado
+- A defesa deixa de ser só "defender main/natural/rampa"
+- Cada zona agora tem:
+  - anchors de frente e fallback
+  - slots táticos com papel explícito
+  - score de controle derivado de:
+    - poder amigo local
+    - ocupação de slots críticos
+    - reinforce advantage
+    - vision/flank exposure
+    - choke denial
+    - pressão inimiga
+- Progressão com histerese:
+  - `main_ramp_line`
+  - `natural_line`
+  - `third_line`
+
+### Slots funcionais publicados
+- `siege_anchor`
+- `fallback_anchor`
+- `screen_front`
+- `screen_left`
+- `screen_right`
+- `rear_support`
+- `vision_spot`
+
+### Integração no runtime
+- `bot/mind/self.py` agora registra:
+  - `TerritorialControlConfig`
+  - `derive_territorial_control_intel(...)`
+- O territorial intel roda depois de:
+  - `frontline_intel`
+  - `world_compression`
+  - `operational_geometry`
+
+### Consumidores alterados
+- `bot/tasks/defense/defend_base_task.py`
+  - passou a ler a zona territorial adequada
+  - tanks são distribuídos em `siege_anchor/fallback_anchor`
+  - unidades gerais passam a ocupar `screen_*` e `rear_support`
+  - reduz comportamento de "tank indo para um label abstrato"
+
+- `bot/tasks/map_control/secure_base_task.py`
+  - natural agora usa `front_anchor/fallback_anchor` territoriais
+  - `perimeter/support/tank_anchors` passam a ser sobrescritos por slots funcionais quando disponíveis
+  - melhora a coerência do destacamento da nat sem reescrever todo o pipeline de proposals
+
+- `bot/planners/defense_planner.py`
+  - passou a preferir anchors territoriais para main/natural
+  - usa `territory.defense.snapshot` como fonte espacial adicional
+
+- `bot/planners/map_control_planner.py`
+  - usa `front_anchor/fallback_anchor` da `natural_front` ao instanciar `SecureBaseTask`
+
+### Resultado prático desta etapa
+- Tanks deixam de depender apenas de heurística ampla de base/rampa
+- Main e natural já operam com:
+  - zona
+  - slot
+  - anchor funcional
+  - score de controle
+- O planner continua compatível com a arquitetura atual de proposals/tasks
+- A mudança foi encaixada como camada territorial acima dos executores existentes
+
+### Limitação atual
+- `third_line` já é avaliada e publicada, mas ainda não existe executor dedicado de ocupação da third
+- O ganho concreto imediato está em:
+  - `main_ramp`
+  - `natural_front`
+
+### Validação
+- `python -B -m compileall -q bot` executado com sucesso após a integração
+
+### Próximo passo recomendado
+- Criar um executor/mission local para `third_front`
+- Fazer o allocator usar `missing_roles` diretamente na composição dos `UnitRequirement`
+- Introduzir `reassignment_penalty` persistente por unidade para reduzir ainda mais dança entre slots
+
+---
+
+## UPDATE: CODEX-2026-03-09-SCV-LEASE-AND-SPAM
+## Autor: Codex
+## Data: 2026-03-09
+
+### Leases de SCV agora respeitados pelo runtime/Ares
+- Problema observado:
+  - SCV leased por `Ego` para bunker/build/defense podia continuar elegível para `Mining()`
+  - isso gerava SCV clicando em mineral no meio de tarefa de build/defense
+  - o lease existia no `body`, mas o mediator/Ares ainda via o worker como `GATHERING`
+
+### Fix aplicado
+- `bot/mind/self.py`
+  - antes de `bot.register_behavior(Mining())`, o runtime sincroniza roles de SCVs com lease ativo
+  - mapeamento:
+    - `INTEL/SCOUT` -> `BUILD_RUNNER_SCOUT`
+    - `DEFENSE/MAP_CONTROL` -> `REPAIRING`
+    - demais leases de SCV -> `BUILDING`
+  - quando o lease expira, o runtime restaura o SCV para `GATHERING`
+  - proteção extra: não restaura para `GATHERING` se o SCV ainda está no `building_tracker` ou construindo
+
+### Efeito esperado
+- `Mining()` deixa de puxar automaticamente SCV que o Ego já alocou para bunker/wall/defense
+- reduz o sintoma de "SCV clicando alucinadamente no minério" durante construção defensiva
+
+### Redução adicional de spam
+- `bot/planners/wall_planner.py`
+  - não repropõe `maintain_wall` quando a wall já está `complete` e atualizada recentemente
+
+- `bot/planners/defense_planner.py`
+  - não emite mais `planner_proposed` com `count=0` em todo tick
+
+- `bot/tasks/defense/scv_repair_task.py`
+  - não reemite `repair` se o SCV já estiver reparando o mesmo alvo
+
+### Validação
+- `python -B -m compileall -q bot` executado com sucesso

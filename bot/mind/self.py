@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import Any
 
 from ares.behaviors.macro.mining import Mining
+from ares.consts import UnitRole
+from sc2.ids.unit_typeid import UnitTypeId as U
 from sc2.data import Result
 
 from bot.devlog import DevLogger
@@ -16,6 +18,9 @@ from bot.intel.locations.i2_pathing_route_intel import PathingRouteIntelConfig, 
 from bot.intel.locations.i3_map_control_intel import MapControlIntelConfig, derive_map_control_intel
 from bot.intel.locations.i4_enemy_presence_intel import EnemyPresenceIntelConfig, derive_enemy_presence_intel
 from bot.intel.locations.i5_frontline_intel import FrontlineIntelConfig, derive_frontline_intel
+from bot.intel.locations.i6_territorial_control_intel import TerritorialControlConfig, derive_territorial_control_intel
+from bot.intel.geometry.i1_world_compression_intel import WorldCompressionConfig, derive_world_compression
+from bot.intel.geometry.i2_operational_geometry_intel import OperationalGeometryConfig, derive_operational_geometry
 from bot.intel.strategy.i3_army_posture_intel import ArmyPostureIntelConfig, derive_army_posture_intel
 from bot.intel.mission.i1_mission_unit_threat_intel import MissionUnitThreatIntelConfig, derive_mission_unit_threat_intel
 from bot.intel.mission.i2_mission_value_intel import MissionValueIntelConfig, derive_mission_value_intel
@@ -93,6 +98,9 @@ class RuntimeApp:
     map_control_cfg: MapControlIntelConfig
     enemy_presence_cfg: EnemyPresenceIntelConfig
     frontline_cfg: FrontlineIntelConfig
+    territorial_control_cfg: TerritorialControlConfig
+    world_compression_cfg: WorldCompressionConfig
+    operational_geometry_cfg: OperationalGeometryConfig
     army_posture_cfg: ArmyPostureIntelConfig
     mission_unit_threat_cfg: MissionUnitThreatIntelConfig
     mission_value_cfg: MissionValueIntelConfig
@@ -128,6 +136,7 @@ class RuntimeApp:
     _wall_start_s: float = 0.0
     _scv_state_by_tag: dict[int, dict[str, Any]] = field(default_factory=dict)
     _scv_churn_by_tag: dict[int, dict[str, Any]] = field(default_factory=dict)
+    _lease_managed_scv_tags: set[int] = field(default_factory=set)
 
     @classmethod
     def build(cls, *, log: DevLogger, debug: bool = True) -> "RuntimeApp":
@@ -332,6 +341,9 @@ class RuntimeApp:
             map_control_cfg=MapControlIntelConfig(),
             enemy_presence_cfg=EnemyPresenceIntelConfig(),
             frontline_cfg=FrontlineIntelConfig(),
+            territorial_control_cfg=TerritorialControlConfig(),
+            world_compression_cfg=WorldCompressionConfig(),
+            operational_geometry_cfg=OperationalGeometryConfig(),
             army_posture_cfg=ArmyPostureIntelConfig(),
             mission_unit_threat_cfg=MissionUnitThreatIntelConfig(),
             mission_value_cfg=MissionValueIntelConfig(),
@@ -355,6 +367,7 @@ class RuntimeApp:
         self._wall_start_s = float(time.perf_counter())
         self._scv_state_by_tag.clear()
         self._scv_churn_by_tag.clear()
+        self._lease_managed_scv_tags.clear()
         derive_opening_contract_intel(
             bot,
             awareness=self.awareness,
@@ -370,6 +383,7 @@ class RuntimeApp:
 
     async def on_step(self, bot, *, iteration: int) -> None:
         now = float(getattr(bot, "time", 0.0))
+        self._sync_leased_scv_roles(bot, now=now)
         # Keep Ares resource-manager bookkeeping actively applied each frame.
         bot.register_behavior(Mining())
         derive_opening_contract_intel(bot, awareness=self.awareness, now=now)
@@ -450,8 +464,30 @@ class RuntimeApp:
             now=now,
             cfg=self.frontline_cfg,
         )
+        # WorldCompression: comprime percepções em vetor compacto de sinais
+        # Deve rodar após frontline_intel, enemy_presence_intel, game_parity_intel
+        derive_world_compression(
+            bot,
+            awareness=self.awareness,
+            now=now,
+            cfg=self.world_compression_cfg,
+        )
+        # OperationalGeometry: decide template e setores operacionais
+        # Deve rodar após world_compression_intel
+        derive_operational_geometry(
+            bot,
+            awareness=self.awareness,
+            now=now,
+            cfg=self.operational_geometry_cfg,
+        )
+        derive_territorial_control_intel(
+            bot,
+            awareness=self.awareness,
+            now=now,
+            cfg=self.territorial_control_cfg,
+        )
         # Army posture intel: deriva postura operacional do bulk (anchor, detach_budget)
-        # Deve rodar após frontline_intel e map_control_intel
+        # Agora lê do OperationalGeometry como fonte primária
         derive_army_posture_intel(
             bot,
             awareness=self.awareness,
@@ -502,6 +538,81 @@ class RuntimeApp:
         tick = TaskTick(iteration=int(iteration), time=now)
         await self.ego.tick(bot, tick=tick, attention=attention, awareness=self.awareness)
         self._emit_runtime_clock(iteration=int(iteration), now=now)
+
+    @staticmethod
+    def _scv_roles_by_tag(bot) -> dict[int, UnitRole]:
+        out: dict[int, UnitRole] = {}
+        try:
+            role_dict = getattr(bot.mediator, "get_unit_role_dict", {}) or {}
+            for role, tags in dict(role_dict).items():
+                for tag in list(tags or []):
+                    try:
+                        out[int(tag)] = role
+                    except Exception:
+                        continue
+        except Exception:
+            return {}
+        return out
+
+    def _desired_role_for_leased_scv(self, *, mission_id: str) -> UnitRole:
+        commitment = getattr(self.ego, "_active", {}).get(str(mission_id))
+        domain = str(getattr(commitment, "domain", "") or "").upper()
+        if domain in {"INTEL", "SCOUT"}:
+            return UnitRole.BUILD_RUNNER_SCOUT
+        if domain in {"MAP_CONTROL", "DEFENSE"}:
+            return UnitRole.REPAIRING
+        return UnitRole.BUILDING
+
+    def _sync_leased_scv_roles(self, bot, *, now: float) -> None:
+        role_by_tag = self._scv_roles_by_tag(bot)
+        try:
+            building_tracker = dict(bot.mediator.get_building_tracker_dict or {})
+        except Exception:
+            building_tracker = {}
+
+        leased_now: set[int] = set()
+        for worker in list(getattr(bot, "workers", []) or []):
+            try:
+                if getattr(worker, "type_id", None) != U.SCV:
+                    continue
+                tag = int(getattr(worker, "tag", -1) or -1)
+            except Exception:
+                continue
+            if tag <= 0:
+                continue
+
+            owner = self.body.owner_of(tag, now=now)
+            if not owner:
+                continue
+
+            leased_now.add(tag)
+            desired_role = self._desired_role_for_leased_scv(mission_id=str(owner))
+            current_role = role_by_tag.get(tag)
+            if current_role == desired_role:
+                self._lease_managed_scv_tags.add(tag)
+                continue
+            try:
+                bot.mediator.assign_role(tag=tag, role=desired_role, remove_from_squad=True)
+                self._lease_managed_scv_tags.add(tag)
+            except Exception:
+                continue
+
+        stale_tags = [int(tag) for tag in self._lease_managed_scv_tags if int(tag) not in leased_now]
+        for tag in stale_tags:
+            unit = bot.units.find_by_tag(int(tag))
+            if unit is None or getattr(unit, "type_id", None) != U.SCV:
+                self._lease_managed_scv_tags.discard(int(tag))
+                continue
+            if int(tag) in building_tracker or bool(getattr(unit, "is_constructing", False)):
+                self._lease_managed_scv_tags.discard(int(tag))
+                continue
+            current_role = role_by_tag.get(int(tag))
+            if current_role in {UnitRole.BUILDING, UnitRole.REPAIRING, UnitRole.BUILD_RUNNER_SCOUT}:
+                try:
+                    bot.mediator.assign_role(tag=int(tag), role=UnitRole.GATHERING, remove_from_squad=True)
+                except Exception:
+                    pass
+            self._lease_managed_scv_tags.discard(int(tag))
 
     def _emit_scv_churn_debug(self, bot, *, now: float) -> None:
         if self.log is None:
@@ -938,4 +1049,3 @@ class RuntimeApp:
 
         self._chat_last_rush_state = str(rush_state)
         self._chat_last_aggression_state = ""
-

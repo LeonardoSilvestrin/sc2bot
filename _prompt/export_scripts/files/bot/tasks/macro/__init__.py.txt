@@ -1,0 +1,14 @@
+# bot/tasks/macro/__init__.py
+
+from bot.tasks.macro.tasks import (
+    MacroAresExecutorTick,
+    MacroOpeningTick,
+    ScvHousekeeping,
+)
+
+__all__ = [
+    "MacroAresExecutorTick",
+    "MacroOpeningTick",
+    "ScvHousekeeping",
+]
+

@@ -1,0 +1,390 @@
+"""
+Territorial Control Intel.
+
+Modela a defesa como linhas -> zonas -> slots funcionais.
+Publica score de controle por zona e uma linha ativa progressiva:
+main_ramp -> natural_front -> third_front.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+import math
+
+from sc2.ids.unit_typeid import UnitTypeId as U
+from sc2.position import Point2
+
+from bot.intel.geometry.sector_types import SectorId
+from bot.mind.awareness import Awareness, K
+
+_WORKERS = {U.SCV, U.PROBE, U.DRONE, U.MULE, U.LARVA, U.EGG}
+_POWER = {
+    U.MARINE: 1.0,
+    U.MARAUDER: 1.45,
+    U.REAPER: 1.0,
+    U.HELLION: 0.85,
+    U.CYCLONE: 1.8,
+    U.SIEGETANK: 3.0,
+    U.SIEGETANKSIEGED: 4.5,
+    U.MEDIVAC: 0.6,
+    U.WIDOWMINE: 2.0,
+    U.WIDOWMINEBURROWED: 3.2,
+    U.THOR: 3.2,
+    U.THORAP: 3.2,
+    U.BUNKER: 4.0,
+    U.PLANETARYFORTRESS: 6.0,
+}
+_ROLE_UNITS = {
+    "siege_anchor": {U.SIEGETANK, U.SIEGETANKSIEGED},
+    "fallback_anchor": {U.SIEGETANK, U.SIEGETANKSIEGED, U.BUNKER},
+    "screen_front": {U.MARINE, U.MARAUDER, U.HELLION, U.CYCLONE, U.THOR, U.THORAP},
+    "screen_left": {U.MARINE, U.MARAUDER, U.HELLION, U.CYCLONE},
+    "screen_right": {U.MARINE, U.MARAUDER, U.HELLION, U.CYCLONE},
+    "rear_support": {U.MEDIVAC, U.MARINE, U.MARAUDER, U.SCV},
+    "vision_spot": {U.MARINE, U.REAPER, U.HELLION},
+}
+
+
+@dataclass(frozen=True)
+class TerritorialControlConfig:
+    ttl_s: float = 4.0
+    zone_radius: float = 14.0
+    hold_main_if_below: float = 0.55
+    natural_activate_at: float = 0.62
+    natural_hold_at: float = 0.50
+    third_activate_at: float = 0.74
+    third_hold_at: float = 0.60
+
+
+def _point_payload(pos: Point2 | None) -> dict | None:
+    if pos is None:
+        return None
+    return {"x": float(pos.x), "y": float(pos.y)}
+
+
+def _point_from_payload(payload, fallback: Point2 | None = None) -> Point2 | None:
+    if not isinstance(payload, dict):
+        return fallback
+    try:
+        return Point2((float(payload.get("x", 0.0)), float(payload.get("y", 0.0))))
+    except Exception:
+        return fallback
+
+
+def _pathable(bot, pos: Point2 | None) -> bool:
+    if pos is None:
+        return False
+    try:
+        return bool(bot.in_pathing_grid(pos))
+    except Exception:
+        return True
+
+
+def _safe_point(bot, preferred: Point2 | None, fallback: Point2) -> Point2:
+    if preferred is not None and _pathable(bot, preferred):
+        return preferred
+    return fallback
+
+
+def _clamp01(value: float) -> float:
+    return max(0.0, min(1.0, float(value)))
+
+
+def _power_near(units: list, *, center: Point2, radius: float) -> float:
+    total = 0.0
+    for unit in list(units or []):
+        try:
+            if unit.type_id in _WORKERS:
+                continue
+            if not bool(getattr(unit, "is_ready", True)):
+                continue
+            if float(unit.distance_to(center)) <= float(radius):
+                total += float(_POWER.get(unit.type_id, 0.8))
+        except Exception:
+            continue
+    return float(total)
+
+
+def _offset_perp(origin: Point2, target: Point2, *, forward: float = 0.0, side: float = 0.0) -> Point2:
+    dx = float(target.x) - float(origin.x)
+    dy = float(target.y) - float(origin.y)
+    norm = math.hypot(dx, dy)
+    if norm <= 0.001:
+        return origin
+    ux, uy = dx / norm, dy / norm
+    px, py = -uy, ux
+    return Point2((float(origin.x) + ux * float(forward) + px * float(side), float(origin.y) + uy * float(forward) + py * float(side)))
+
+
+def _slot(name: str, role: str, pos: Point2, priority: float, *, radius: float = 2.5, critical: bool = False) -> dict:
+    return {
+        "name": str(name),
+        "role": str(role),
+        "position": _point_payload(pos),
+        "priority": float(priority),
+        "radius": float(radius),
+        "critical": bool(critical),
+    }
+
+
+def _build_main_slots(*, fallback: Point2, front: Point2) -> list[dict]:
+    return [
+        _slot("main_tank_core", "siege_anchor", fallback, 0.98, radius=2.8, critical=True),
+        _slot("main_tank_cover", "fallback_anchor", _offset_perp(fallback, front, side=2.0), 0.84, radius=2.8),
+        _slot("main_screen_front", "screen_front", _offset_perp(fallback, front, forward=2.2), 0.82, critical=True),
+        _slot("main_screen_left", "screen_left", _offset_perp(fallback, front, forward=1.6, side=-2.0), 0.72),
+        _slot("main_screen_right", "screen_right", _offset_perp(fallback, front, forward=1.6, side=2.0), 0.72),
+        _slot("main_support", "rear_support", _offset_perp(fallback, front, forward=-1.6), 0.52, radius=3.0),
+    ]
+
+
+def _build_natural_slots(*, fallback: Point2, front: Point2) -> list[dict]:
+    return [
+        _slot("nat_tank_front", "siege_anchor", fallback, 0.97, radius=2.8, critical=True),
+        _slot("nat_tank_rear", "fallback_anchor", _offset_perp(fallback, front, forward=-1.2), 0.86, radius=2.8, critical=True),
+        _slot("nat_screen_front", "screen_front", front, 0.90, critical=True),
+        _slot("nat_screen_left", "screen_left", _offset_perp(front, fallback, side=-3.0), 0.78),
+        _slot("nat_screen_right", "screen_right", _offset_perp(front, fallback, side=3.0), 0.78),
+        _slot("nat_support", "rear_support", _offset_perp(fallback, front, forward=-2.0), 0.55, radius=3.0),
+        _slot("nat_vision", "vision_spot", _offset_perp(front, fallback, forward=2.0), 0.48, radius=2.2),
+    ]
+
+
+def _build_third_slots(*, fallback: Point2, front: Point2) -> list[dict]:
+    return [
+        _slot("third_tank_front", "siege_anchor", fallback, 0.94, radius=2.8, critical=True),
+        _slot("third_tank_rear", "fallback_anchor", _offset_perp(fallback, front, forward=-1.4), 0.80, radius=2.8),
+        _slot("third_screen_front", "screen_front", front, 0.84, critical=True),
+        _slot("third_screen_left", "screen_left", _offset_perp(front, fallback, side=-2.8), 0.70),
+        _slot("third_screen_right", "screen_right", _offset_perp(front, fallback, side=2.8), 0.70),
+        _slot("third_support", "rear_support", _offset_perp(fallback, front, forward=-2.2), 0.48, radius=3.0),
+    ]
+
+
+def _occupied_score(bot, *, slot: dict) -> float:
+    pos = _point_from_payload(slot.get("position"))
+    if pos is None:
+        return 0.0
+    role = str(slot.get("role", "") or "")
+    allowed = _ROLE_UNITS.get(role, set())
+    radius = float(slot.get("radius", 2.5) or 2.5)
+    for unit in list(getattr(bot, "units", []) or []) + list(getattr(bot, "structures", []) or []):
+        try:
+            if allowed and getattr(unit, "type_id", None) not in allowed:
+                continue
+            if not bool(getattr(unit, "is_ready", True)):
+                continue
+            if float(unit.distance_to(pos)) <= radius:
+                return 1.0
+        except Exception:
+            continue
+    return 0.0
+
+
+def _zone_status(
+    bot,
+    *,
+    zone_id: str,
+    center: Point2,
+    front: Point2,
+    fallback: Point2,
+    slots: list[dict],
+    cfg: TerritorialControlConfig,
+) -> dict:
+    friendly_power = _power_near(list(getattr(bot, "units", []) or []) + list(getattr(bot, "structures", []) or []), center=center, radius=float(cfg.zone_radius))
+    enemy_power = _power_near(list(getattr(bot, "enemy_units", []) or []) + list(getattr(bot, "enemy_structures", []) or []), center=center, radius=float(cfg.zone_radius))
+    slot_weights = sum(float(s.get("priority", 0.5) or 0.5) for s in slots) or 1.0
+    occupied_weight = 0.0
+    critical_weight = 0.0
+    critical_occupied = 0.0
+    missing_roles: dict[str, float] = {}
+    for slot in slots:
+        weight = float(slot.get("priority", 0.5) or 0.5)
+        occ = _occupied_score(bot, slot=slot)
+        occupied_weight += weight * occ
+        if bool(slot.get("critical", False)):
+            critical_weight += weight
+            critical_occupied += weight * occ
+        if occ < 0.5:
+            role = str(slot.get("role", "") or "unknown")
+            missing_roles[role] = round(float(missing_roles.get(role, 0.0)) + weight, 3)
+    occupied_ratio = _clamp01(occupied_weight / slot_weights)
+    critical_ratio = _clamp01(critical_occupied / max(critical_weight, 0.001))
+    siege_total = sum(float(s.get("priority", 0.0) or 0.0) for s in slots if str(s.get("role", "")).endswith("anchor")) or 1.0
+    siege_occ = sum(
+        float(s.get("priority", 0.0) or 0.0) * _occupied_score(bot, slot=s)
+        for s in slots if str(s.get("role", "")).endswith("anchor")
+    )
+    choke_denial = _clamp01(siege_occ / siege_total)
+    flank_need = [
+        s for s in slots if str(s.get("role", "") or "") in {"screen_left", "screen_right", "vision_spot"}
+    ]
+    flank_occ = sum(_occupied_score(bot, slot=s) for s in flank_need)
+    flank_exposure = 1.0 - _clamp01(flank_occ / max(1, len(flank_need)))
+    reinforce_advantage = _clamp01(1.0 - (float(center.distance_to(bot.start_location)) / 35.0))
+    vision_control = _clamp01(1.0 - (0.5 * flank_exposure))
+    friendly_norm = _clamp01(friendly_power / 12.0)
+    enemy_norm = _clamp01(enemy_power / 10.0)
+    control_score = _clamp01(
+        (0.35 * friendly_norm)
+        + (0.25 * occupied_ratio)
+        + (0.20 * reinforce_advantage)
+        + (0.10 * vision_control)
+        + (0.10 * choke_denial)
+        - (0.40 * enemy_norm)
+        - (0.15 * flank_exposure)
+    )
+    return {
+        "zone_id": str(zone_id),
+        "center": _point_payload(center),
+        "front_anchor": _point_payload(front),
+        "fallback_anchor": _point_payload(fallback),
+        "control_score": float(round(control_score, 3)),
+        "threat_score": float(round(enemy_norm, 3)),
+        "friendly_power": float(round(friendly_power, 3)),
+        "enemy_power": float(round(enemy_power, 3)),
+        "occupied_critical_slots_ratio": float(round(critical_ratio, 3)),
+        "occupied_slots_ratio": float(round(occupied_ratio, 3)),
+        "reinforce_advantage": float(round(reinforce_advantage, 3)),
+        "vision_control": float(round(vision_control, 3)),
+        "choke_denial": float(round(choke_denial, 3)),
+        "flank_exposure": float(round(flank_exposure, 3)),
+        "missing_roles": dict(sorted(missing_roles.items(), key=lambda item: item[1], reverse=True)),
+        "active_slots": list(slots),
+        "is_stable": bool(control_score >= 0.7 and critical_ratio >= 0.66 and enemy_norm <= 0.45),
+    }
+
+
+def derive_territorial_control_intel(
+    bot,
+    *,
+    awareness: Awareness,
+    now: float,
+    cfg: TerritorialControlConfig = TerritorialControlConfig(),
+) -> None:
+    nat_snap = awareness.mem.get(K("intel", "map_control", "our_nat", "snapshot"), now=now, default={}) or {}
+    main_snap = awareness.mem.get(K("intel", "frontline", "main", "snapshot"), now=now, default={}) or {}
+    nat_frontline = awareness.mem.get(K("intel", "frontline", "nat", "snapshot"), now=now, default={}) or {}
+    geo_snap = awareness.mem.get(K("intel", "geometry", "operational", "snapshot"), now=now, default={}) or {}
+    prev = awareness.mem.get(K("intel", "territory", "defense", "snapshot"), now=now, default={}) or {}
+
+    main_center = getattr(bot, "start_location", None) or Point2((0.0, 0.0))
+    main_fallback = _safe_point(bot, _point_from_payload(main_snap.get("fallback_anchor")), main_center)
+    main_front = _safe_point(bot, _point_from_payload(main_snap.get("forward_anchor"), fallback=main_fallback), main_fallback)
+
+    nat_center = _point_from_payload(nat_snap.get("target"))
+    if nat_center is None:
+        try:
+            nat_center = bot.mediator.get_own_nat
+        except Exception:
+            nat_center = main_center
+    nat_fallback = _safe_point(bot, _point_from_payload(nat_snap.get("staging"), fallback=nat_center), nat_center)
+    nat_front = _safe_point(
+        bot,
+        _point_from_payload(nat_snap.get("hold"), fallback=_point_from_payload(nat_frontline.get("forward_anchor"), fallback=nat_center)),
+        nat_center,
+    )
+
+    third_anchor = None
+    sector_states = (geo_snap.get("sector_states") or {}) if isinstance(geo_snap, dict) else {}
+    third_sector = sector_states.get(SectorId.THIRD_ENTRY.value, {}) if isinstance(sector_states, dict) else {}
+    if isinstance(third_sector, dict):
+        third_anchor = _point_from_payload(third_sector.get("anchor_pos"))
+    registry = awareness.mem.get(K("intel", "our_bases", "registry"), now=now, default={}) or {}
+    if third_anchor is None and isinstance(registry, dict):
+        third_entry = registry.get("THIRD", {})
+        if isinstance(third_entry, dict):
+            third_anchor = _point_from_payload(third_entry.get("current_pos")) or _point_from_payload(third_entry.get("intended_pos"))
+    if third_anchor is None:
+        third_anchor = _offset_perp(nat_center, main_center, forward=-7.0)
+    third_center = third_anchor
+    third_fallback = _safe_point(bot, _offset_perp(third_center, nat_center, forward=2.0), nat_center)
+    third_front = _safe_point(bot, third_center, third_fallback)
+
+    zones = {
+        "main_ramp": _zone_status(
+            bot,
+            zone_id="main_ramp",
+            center=main_fallback,
+            front=main_front,
+            fallback=main_fallback,
+            slots=_build_main_slots(fallback=main_fallback, front=main_front),
+            cfg=cfg,
+        ),
+        "natural_front": _zone_status(
+            bot,
+            zone_id="natural_front",
+            center=nat_center,
+            front=nat_front,
+            fallback=nat_fallback,
+            slots=_build_natural_slots(fallback=nat_fallback, front=nat_front),
+            cfg=cfg,
+        ),
+        "third_front": _zone_status(
+            bot,
+            zone_id="third_front",
+            center=third_center,
+            front=third_front,
+            fallback=third_fallback,
+            slots=_build_third_slots(fallback=third_fallback, front=third_front),
+            cfg=cfg,
+        ),
+    }
+
+    rush_state = str(awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
+    rush_active = rush_state in {"SUSPECTED", "CONFIRMED", "HOLDING"}
+    main_score = float(zones["main_ramp"]["control_score"])
+    nat_score = float(zones["natural_front"]["control_score"])
+    third_score = float(zones["third_front"]["control_score"])
+    nat_stable = bool(zones["natural_front"]["is_stable"])
+    third_threat = float(zones["third_front"]["threat_score"])
+    army_supply = int(getattr(bot, "supply_army", 0) or 0)
+    desired_line = "main_ramp_line"
+    if not rush_active and nat_stable and nat_score >= float(cfg.third_activate_at) and third_threat <= 0.35 and army_supply >= 18:
+        desired_line = "third_line"
+    elif nat_score >= float(cfg.natural_activate_at) or bool(nat_snap.get("should_secure", False)) or bool(nat_snap.get("nat_taken", False)):
+        desired_line = "natural_line"
+    if main_score < float(cfg.hold_main_if_below):
+        desired_line = "main_ramp_line"
+
+    prev_line = str(prev.get("active_line", "main_ramp_line") or "main_ramp_line")
+    if prev_line == "third_line" and not rush_active and nat_score >= float(cfg.third_hold_at) and third_score >= float(cfg.third_hold_at):
+        active_line = "third_line"
+    elif prev_line == "natural_line" and nat_score >= float(cfg.natural_hold_at) and main_score >= float(cfg.hold_main_if_below):
+        active_line = "natural_line"
+    else:
+        active_line = desired_line
+
+    lines = {
+        "main_ramp_line": {
+            "zones": ["main_ramp"],
+            "activation_score": float(round(1.0 - main_score, 3)),
+            "hold_score": float(round(main_score, 3)),
+            "collapse_risk": float(round(max(zones["main_ramp"]["threat_score"], 1.0 - main_score), 3)),
+            "progress_score": float(round(main_score, 3)),
+        },
+        "natural_line": {
+            "zones": ["main_ramp", "natural_front"],
+            "activation_score": float(round(nat_score, 3)),
+            "hold_score": float(round(min(main_score, nat_score), 3)),
+            "collapse_risk": float(round(max(zones["natural_front"]["threat_score"], 1.0 - nat_score), 3)),
+            "progress_score": float(round(nat_score, 3)),
+        },
+        "third_line": {
+            "zones": ["natural_front", "third_front"],
+            "activation_score": float(round(third_score, 3)),
+            "hold_score": float(round(min(nat_score, third_score), 3)),
+            "collapse_risk": float(round(max(zones["third_front"]["threat_score"], 1.0 - third_score), 3)),
+            "progress_score": float(round(min(nat_score, third_score), 3)),
+        },
+    }
+
+    snapshot = {
+        "updated_at": float(now),
+        "active_line": str(active_line),
+        "desired_line": str(desired_line),
+        "rush_state": str(rush_state),
+        "lines": lines,
+        "zones": zones,
+    }
+    awareness.mem.set(K("intel", "territory", "defense", "snapshot"), value=snapshot, now=now, ttl=float(cfg.ttl_s))
+    awareness.mem.set(K("intel", "territory", "defense", "active_line"), value=str(active_line), now=now, ttl=float(cfg.ttl_s))

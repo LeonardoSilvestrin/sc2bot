@@ -1,49 +1,54 @@
 # Intel Bus
 
-Este documento define o contrato da camada `Intel`: como fatos do tick em `Attention` viram inferencia persistente em `Awareness`.
+`Intel` transforma fatos do tick em inferencia persistente.
 
 Pipeline oficial:
 
 ```text
-Attention (tick) -> Intel (derive_*) -> Awareness.mem (persistente)
+Attention -> derive_* intel -> Awareness.mem
 ```
 
-Intel:
+Regras:
 - le `Attention`
 - pode ler `Awareness`
-- escreve inferencia em `Awareness`
+- escreve em `Awareness`
 - nao comanda unidades
 
 ---
 
-## Ordem de execucao por tick
+## Ordem De Execucao Atual
 
-Fonte: `bot/mind/self.py` (`RuntimeApp.on_step`)
+Fonte:
+- `bot/mind/self.py`
 
-Ordem atual:
+Ordem:
+
 1. `derive_opening_contract_intel(...)`
-2. `derive_attention(...)`
-3. `derive_enemy_opening_intel(...)`
-4. `derive_enemy_build_intel(...)`
-5. `derive_my_army_composition_intel(...)`
-6. `derive_game_parity_intel(...)`
-
-Racional:
-- opening e rush alimentam macro mode
-- enemy build e weak points alimentam planners de harass e scan
-- macro desired e parity fecham o contexto para planners macro
+2. `derive_enemy_opening_intel(...)`
+3. `derive_enemy_build_intel(...)`
+4. `derive_my_army_composition_intel(...)`
+5. `derive_game_parity_intel(...)`
+6. `derive_pathing_flow_intel(...)`
+7. `derive_pathing_route_intel(...)`
+8. `derive_enemy_presence_intel(...)`
+9. `derive_map_control_intel(...)`
+10. `derive_frontline_intel(...)`
+11. `derive_world_compression(...)`
+12. `derive_operational_geometry(...)`
+13. `derive_territorial_control_intel(...)`
+14. `derive_army_posture_intel(...)`
+15. `derive_mission_unit_threat_intel(...)`
+16. `derive_mission_value_intel(...)`
+17. `AdvantageGameStatusIntel.derive(...)`
 
 ---
 
-## Modulos e contratos
+## Modulos Principais
 
 ### Opening Contract Intel
 
 Arquivo:
 - `bot/intel/enemy/opening_contract.py`
-
-Responsabilidade:
-- publicar status contratual do opening para sensores, planners e controls
 
 Escreve:
 - `macro:opening:done`
@@ -53,97 +58,166 @@ Escreve:
 ### Enemy Opening Intel
 
 Arquivo:
-- `bot/intel/opening_intel.py`
+- `bot/intel/enemy/opening_intel.py`
 
-Entradas principais:
-- `attention.enemy_build.*`
-- estado previo em `enemy:rush:*` e `enemy:opening:*`
+Responsabilidade:
+- classificar opening e rush inimigos
+- acompanhar severidade, tier, confidence e sinais estruturais
 
-Saidas:
+Escreve:
 - `enemy:opening:*`
 - `enemy:rush:*`
 - `enemy:aggression:*`
 - `intel:opening:last_emit_t`
 
-Regras importantes:
-- `rush_state` pode virar `SUSPECTED` ou `HOLDING` por evidencia estrutural
-- apos o fim da janela early, rush ativo e forcado para `ENDED`
-
-### Enemy Build e Weak Points Intel
+### Enemy Build Intel
 
 Arquivo:
-- `bot/intel/enemy_build_intel.py`
-
-Responsabilidade:
-- consolidar visao de composicao e estrutura inimiga
-- atualizar weak points
+- `bot/intel/enemy/enemy_build_intel.py`
 
 Escreve:
 - `enemy:build:*`
 - `enemy:army:*`
-- `enemy:weak_points:*`
 
-### My Army Composition Intel
+### Macro Desired Intel
 
 Arquivo:
-- `bot/intel/my_army_composition_intel.py`
+- `bot/intel/macro/desired_intel.py`
 
 Responsabilidade:
-- gerar objetivo macro desejado para controladores e planners
-
-Sub-modulos:
-- `derive_macro_mode_intel(...)`
-- `derive_army_comp_intel(...)`
-- `derive_tech_intel(...)`
+- resolver opening, fase e profile
+- publicar composicao desejada, prioridades, banco alvo, marcos, tech targets e sinais macro
 
 Escreve:
 - `macro:desired:*`
+- `enemy:rush:predicted`
 - `intel:my_comp:last_emit_t`
 
 ### Game Parity Intel
 
 Arquivo:
-- `bot/intel/game_parity_intel.py`
-
-Responsabilidade:
-- estimar paridade economica e militar
-- produzir bias estrategico
+- `bot/intel/strategy/i1_game_parity_intel.py`
 
 Escreve:
-- `enemy:parity:*`
 - `strategy:parity:*`
+- partes de `enemy:parity:*` se aplicavel
+
+### Pathing e Presenca
+
+Arquivos:
+- `bot/intel/locations/i1_pathing_flow_intel.py`
+- `bot/intel/locations/i2_pathing_route_intel.py`
+- `bot/intel/locations/i4_enemy_presence_intel.py`
+- `bot/intel/locations/i5_frontline_intel.py`
+
+Escrevem:
+- `enemy:pathing:*`
+- snapshots de presenca local
+- `intel:frontline:*`
+
+### World Compression
+
+Arquivo:
+- `bot/intel/geometry/i1_world_compression_intel.py`
+
+Escreve:
+- `intel:geometry:world:compression`
+
+### Operational Geometry
+
+Arquivo:
+- `bot/intel/geometry/i2_operational_geometry_intel.py`
+
+Escreve:
+- `intel:geometry:operational:snapshot`
+- `intel:geometry:operational:template`
+- `intel:geometry:operational:bulk_anchor`
+- `intel:geometry:operational:max_detach_supply`
+- `intel:geometry:sector:<sector_id>`
+
+### Territorial Control
+
+Arquivo:
+- `bot/intel/locations/i6_territorial_control_intel.py`
+
+Escreve:
+- `intel:territory:defense:snapshot`
+- `intel:territory:defense:active_line`
+
+### Army Posture
+
+Arquivo:
+- `bot/intel/strategy/i3_army_posture_intel.py`
+
+Responsabilidade:
+- camada de compatibilidade
+- traduz `FrontTemplate` para `ArmyPosture`
+
+Escreve:
+- `strategy:army:posture`
+- `strategy:army:anchor`
+- `strategy:army:secondary_anchor`
+- `strategy:army:max_detach_supply`
+- `strategy:army:min_bulk_supply`
+- `strategy:army:snapshot`
 
 ---
 
-## Ownership de chaves
+## Contratos Novos Da Camada Espacial
 
-Owners atuais:
-- `enemy:opening:*`, `enemy:rush:*`, `enemy:aggression:*` -> `intel.opening`
-- `enemy:build:*`, `enemy:army:*` -> `intel.enemy_build`
-- `enemy:weak_points:*` -> `intel.weak_points`
-- `macro:desired:*` -> `intel.my_comp`
-- `enemy:parity:*`, `strategy:parity:*` -> `intel.game_parity`
-- `macro:opening:done*` -> `intel.opening_contract`
+### World Compression
 
-Se outro modulo escrever no mesmo prefixo, o override deve ser explicito e documentado.
+Shape esperado:
+- `pressure_main`
+- `pressure_nat`
+- `pressure_outer`
+- `expansion_commit`
+- `push_commit`
+- `mobility_need`
+- `map_presence_need`
+- `army_strength_rel`
+- `drop_risk`
+- `air_risk`
+- metadados como `rush_active`, `nat_taken`, `army_supply`
+
+### Operational Geometry
+
+Shape principal do snapshot:
+- `template`
+- `template_switched`
+- `template_switched_at`
+- `bulk_sector`
+- `bulk_anchor_pos`
+- `max_detach_supply`
+- `sector_states`
+- `reserved_zones`
+- `reallocation_cost`
+
+### Territorial Control
+
+Shape principal:
+- `active_line`
+- `desired_line`
+- `rush_state`
+- `lines`
+- `zones`
+
+Cada zona contem:
+- `center`
+- `front_anchor`
+- `fallback_anchor`
+- `control_score`
+- `threat_score`
+- `missing_roles`
+- `active_slots`
+- `is_stable`
 
 ---
 
 ## Invariantes
 
 1. Intel nao emite comando de unidade.
-2. Intel escreve em `Awareness.mem` com TTL adequado ao sinal.
-3. Sinais persistentes ficam em Awareness, nao em Attention.
-4. `last_update_t` e `*_last_emit_t` ficam sem TTL.
-5. Violacao de contrato deve falhar rapido.
-
----
-
-## Checklist para novo intel
-
-1. Le apenas `Attention` e `Awareness`?
-2. Publica chaves namespaceadas com owner claro?
-3. Define TTL para sinais volateis?
-4. Evita duplicar inferencia existente?
-5. Tem observabilidade minima?
-6. Consumidores estao documentados?
+2. Prefixos escritos precisam de owner claro.
+3. TTL deve ser coerente com a volatilidade do sinal.
+4. Geometria decide forma espacial; planners nao devem duplicar essa decisao.
+5. `ArmyPosture` hoje e adaptador de compatibilidade, nao fonte primaria.

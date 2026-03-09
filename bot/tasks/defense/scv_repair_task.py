@@ -154,6 +154,24 @@ class ScvRepairTask(BaseTask):
         except Exception:
             return False
 
+    @staticmethod
+    def _already_repairing_target(scv, target) -> bool:
+        target_tag = int(getattr(target, "tag", -1) or -1)
+        for order in list(getattr(scv, "orders", []) or []):
+            try:
+                name = str(getattr(getattr(order, "ability", None), "name", "") or "").upper()
+            except Exception:
+                name = ""
+            if "REPAIR" not in name:
+                continue
+            try:
+                order_target = getattr(scv, "order_target", None)
+                if int(order_target or -1) == int(target_tag):
+                    return True
+            except Exception:
+                return True
+        return False
+
     def _repair_targets(self, bot, *, base_pos: Point2) -> list:
         allowed = {
             U.BUNKER,
@@ -342,6 +360,8 @@ class ScvRepairTask(BaseTask):
         for scv in units:
             target = assignments.get(int(scv.tag))
             if target is None:
+                continue
+            if self._already_repairing_target(scv, target):
                 continue
             issued = self._issue_repair(scv, target) or issued
 

@@ -1,85 +1,154 @@
 # Ownership de Namespaces
 
-Mapa de ownership de prefixes da Awareness.
+Mapa de ownership dos prefixes mais importantes em `Awareness.mem`.
+
+Regra base:
+- um prefixo deve ter writer principal claro
+- reader multiplo e normal
+- multi-writer so deve existir quando o contrato explicita isso
 
 ---
 
-## Prefix ownership atual
+## Prefix Ownership Atual
 
-### `macro.desired.*`
+### `enemy:opening:*`, `enemy:rush:*`, `enemy:aggression:*`
 
-- writer: `bot/intel/macro/desired_intel.py`
-- readers: strategy, planners, macro tasks
+- writer principal: `bot/intel/enemy/opening_intel.py`
+- readers: planners, runtime chat, macro intel, defense
 
-### `macro.control.*`
+### `enemy:build:*`, `enemy:army:*`
 
-- writer: `bot/intel/strategy/i2_CTRL_advantage_game_status_intel.py`
-- readers: prioritization intel, macro orchestrator planner
+- writer principal: `bot/intel/enemy/enemy_build_intel.py`
+- readers: `IntelPlanner`, `HarassPlanner`, macro intel, runtime diagnostics
 
-### `strategy.parity.*`
+### `enemy:weak_points:*`
 
-- writer: `bot/intel/strategy/i1_game_parity_intel.py`
-- readers: strategy, planner, runtime diagnostics
+- writer principal: `bot/intel/enemy/weak_points_intel.py`
+- readers: `HarassPlanner`
 
-### `control.priority.*`
+### `enemy:pathing:*`
 
-- writers:
-  - `bot/intel/ego/i1_PI_prioritization_intel.py`
-  - `bot/planners/macro_orchestrator_planner.py`
-  - `bot/mind/ego.py`
-- readers: prioritization intel, planner, runtime diagnostics
+- writers: `i1_pathing_flow_intel`, `i2_pathing_route_intel`
+- readers: world compression, intel planner, runtime clock
 
-### `macro.exec.*`
+### `intel:frontline:*`
 
-- writers:
-  - `bot/planners/macro_orchestrator_planner.py`
-  - `bot/tasks/macro/tasks/macro_ares_executor_tick.py`
-- readers: planner, task, prioritization intel
+- writer principal: `i5_frontline_intel`
+- readers: geometry, posture, defense, territorial control
 
-### `tech.exec.*`
+### `intel:geometry:world:*`
 
-- writers:
-  - `bot/planners/macro_orchestrator_planner.py`
-  - `bot/tasks/tech/tasks/tech_ares_executor_tick.py`
-- readers: planner, tech task
+- writer principal: `i1_world_compression_intel`
+- readers: `i2_operational_geometry_intel`
 
-### `macro.opening.*`
+### `intel:geometry:operational:*`
 
-- writers:
-  - `bot/intel/enemy/opening_intel.py`
-  - `bot/mind/self.py`
-- readers: desired intels, planner, sensors
+- writer principal: `i2_operational_geometry_intel`
+- readers: `MapControlPlanner`, `DefensePlanner`, `ArmyPostureIntel`, territorial control
 
-### `strategy.advantage.*`
+### `intel:geometry:sector:*`
 
-- writer: none found in repository
-- readers: `bot/intel/strategy/i2_CTRL_advantage_game_status_intel.py`
+- writer principal: `i2_operational_geometry_intel`
+- readers: planners e ferramentas de debug
+
+### `intel:territory:defense:*`
+
+- writer principal: `i6_territorial_control_intel`
+- readers: `DefendBaseTask`, `SecureBaseTask`, `DefensePlanner`, `MapControlPlanner`
+
+### `strategy:army:*`
+
+- writer principal: `i3_army_posture_intel`
+- readers: `MapControlPlanner`, `DefensePlanner`, runtime chat
+
+### `strategy:parity:*`
+
+- writer principal: `i1_game_parity_intel`
+- readers: world compression, macro orchestrator, runtime diagnostics
+
+### `macro:desired:*`
+
+- writer principal: `bot/intel/macro/desired_intel.py`
+- readers: `MacroOrchestratorPlanner`, `HarassPlanner`, runtime push planner
+
+### `macro:plan:*`
+
+- writer principal: `bot/planners/macro_orchestrator_planner.py`
+- readers: housekeeping, runtime diagnostics
+
+### `macro:exec:*`
+
+- writer principal desejado: `bot/planners/macro_orchestrator_planner.py`
+- readers: macro executor task, runtime diagnostics
+
+### `tech:exec:*`
+
+- writer principal desejado: `bot/planners/macro_orchestrator_planner.py`
+- readers: tech executor task
+
+### `macro:opening:*`
+
+- writers atuais:
+  - `bot/intel/enemy/opening_contract.py`
+  - `bot/mind/opening_state.py`
+  - runtime sync com build runner
+- readers: sensors, macro intel, runtime chat
+
+### `control:phase`, `control:pressure:*`, `control:priority:*`
+
+- writer principal atual: `bot/planners/macro_orchestrator_planner.py`
+- readers: runtime clock, macro control, possiveis intels de prioridade
+
+### `ops:mission:*`, `ops:cooldown:*`, `ops:proposal_running:*`
+
+- writer principal: `bot/mind/ego.py`
+- readers: mission sensor, planners, runtime diagnostics
+
+### `ops:map_control:*`, `ops:defense:*`, `ops:harass:*`, `ops:wall:*`
+
+- writers: planners e tasks do dominio correspondente
+- readers: o proprio dominio e debug
 
 ---
 
 ## Hotspots
 
-- `macro.exec.*` tem 2 writers
-- `tech.exec.*` tem 2 writers
-- `macro.opening.*` tem 2 writers
-- `control.priority.*` mistura policy, lag metrics e errors
-- `strategy.advantage.*` nao tem writer no repositorio
+### `macro:opening:*`
+
+Ainda e prefixo com ownership espalhado.
+
+Sintoma:
+- opening contractual
+- opening selecionada
+- opening request/transition target
+
+Recomendacao:
+- separar contrato (`macro:opening:done*`) de selecao/request (`macro:opening:selected*`)
+
+### `macro:exec:*`
+
+O planner macro e o writer principal, mas tasks executoras ainda podem refletir estado operacional no mesmo grupo.
+
+Recomendacao:
+- manter `planner` como source de decisao
+- usar subprefixo claro para status de task, se crescer
+
+### `control:priority:*`
+
+Virou namespace de metricas e controle macro.
+
+Recomendacao:
+- manter apenas sinais de arbitragem/prioridade
+- mover telemetria excessiva para prefixo proprio se o grupo crescer mais
 
 ---
 
-## Regra de organizacao recomendada
+## Regra Operacional
 
-Organizar por namespace escrito:
-- modulos que escrevem `macro.desired.*` ficam juntos
-- planners e tasks devem ser agrupados pelo namespace que possuem como writer
-- ownership deve ser explicito antes de expandir qualquer prefixo
+Antes de criar novo prefixo:
 
----
-
-## Cleanup recomendado
-
-1. Tornar `macro.exec.*` single-writer no planner.
-2. Tornar `tech.exec.*` single-writer no planner.
-3. Tornar `macro.opening.*` single-writer em `intel/enemy/opening_intel.py`.
-4. Separar `control.priority.*` em namespaces mais precisos.
-5. Adicionar writer real para `strategy.advantage.*` ou remover seu uso.
+1. defina writer principal
+2. defina shape estavel do `value`
+3. defina TTL
+4. documente consumidores
+5. evite reaproveitar prefixo sem relacao semantica

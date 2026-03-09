@@ -331,6 +331,41 @@ class SecureBaseTask(BaseTask):
         ) or {}
         return snap if isinstance(snap, dict) else {}
 
+    def _territorial_zone(self, *, now: float) -> dict:
+        snap = self.awareness.mem.get(K("intel", "territory", "defense", "snapshot"), now=now, default={}) or {}
+        if not isinstance(snap, dict):
+            return {}
+        zones = snap.get("zones", {})
+        if not isinstance(zones, dict):
+            return {}
+        zone = zones.get("natural_front", {})
+        return dict(zone) if isinstance(zone, dict) else {}
+
+    @staticmethod
+    def _slot_point(slot: dict | None) -> Point2 | None:
+        if not isinstance(slot, dict):
+            return None
+        payload = slot.get("position")
+        if not isinstance(payload, dict):
+            return None
+        try:
+            return Point2((float(payload["x"]), float(payload["y"])))
+        except Exception:
+            return None
+
+    def _slot_positions(self, zone: dict, *, roles: set[str]) -> list[Point2]:
+        out: list[Point2] = []
+        for slot in list(zone.get("active_slots", []) or []):
+            try:
+                if str(slot.get("role", "") or "") not in roles:
+                    continue
+                pos = self._slot_point(slot)
+                if pos is not None:
+                    out.append(pos)
+            except Exception:
+                continue
+        return out
+
     @staticmethod
     def _assign_scv_role(bot, units: list, role: UnitRole) -> None:
         for unit in list(units or []):
@@ -358,6 +393,14 @@ class SecureBaseTask(BaseTask):
                     break
             except Exception:
                 continue
+        # Rush terminou e sem inimigos visíveis → libera independente de should_secure
+        rush_over = rush_state in {"ENDED", "NONE"}
+        if rush_over:
+            return True
+        # HOLDING sem inimigos visíveis e defesa fortified → libera SCVs para minerar
+        # Evita SCVs presos por até 36s enquanto rush_state aguarda transição para ENDED
+        if rush_state == "HOLDING" and bool(fortified):
+            return True
         return bool(
             (not should_secure)
             or (
@@ -584,9 +627,16 @@ class SecureBaseTask(BaseTask):
 
         now = float(tick.time)
         snap = self._snapshot(now=now)
+        zone = self._territorial_zone(now=now)
         self.base_pos = self._point_from_payload(snap.get("target"), fallback=self.base_pos)
         self.staging_pos = self._point_from_payload(snap.get("staging"), fallback=self.staging_pos)
         self.hold_pos = self._point_from_payload(snap.get("hold"), fallback=self.hold_pos)
+        zone_front = self._slot_point({"position": zone.get("front_anchor")}) if zone else None
+        zone_fallback = self._slot_point({"position": zone.get("fallback_anchor")}) if zone else None
+        if zone_fallback is not None:
+            self.staging_pos = zone_fallback
+        if zone_front is not None:
+            self.hold_pos = zone_front
         self.staging_pos = sanitize_natural_defense_point(
             bot,
             pos=self.staging_pos,
@@ -653,9 +703,16 @@ class SecureBaseTask(BaseTask):
         mine_center = self.staging_pos
         mine_slots = self._slots(mine_center, radius=2.5, count=4)
         support_slots = self._slots(self.hold_pos.towards(self.base_pos, 1.7), radius=1.8, count=3)
+        territorial_tank_slots = self._slot_positions(zone, roles={"siege_anchor", "fallback_anchor"})
+        territorial_screen_slots = self._slot_positions(zone, roles={"screen_front", "screen_left", "screen_right"})
+        territorial_support_slots = self._slot_positions(zone, roles={"rear_support", "vision_spot"})
         perimeter = self._sanitize_slots(bot, perimeter, reserved_sites=reserved_sites, retreat=self.staging_pos, fallback=self.staging_pos)
         staging_perimeter = self._sanitize_slots(bot, staging_perimeter, reserved_sites=reserved_sites, retreat=self.staging_pos, fallback=self.staging_pos)
         support_slots = self._sanitize_slots(bot, support_slots, reserved_sites=reserved_sites, retreat=self.staging_pos, fallback=self.staging_pos)
+        if territorial_screen_slots:
+            perimeter = territorial_screen_slots
+        if territorial_support_slots:
+            support_slots = territorial_support_slots
         tank_units = [u for u in units if u.type_id in {U.SIEGETANK, U.SIEGETANKSIEGED}]
         forward_staging_anchor = self._best_ramp_tank_anchor(bot)
         rear_tank_anchor = self._safe_anchor(
@@ -665,6 +722,10 @@ class SecureBaseTask(BaseTask):
         )
         front_tank_anchor = forward_staging_anchor
         tank_anchors = [front_tank_anchor]
+        if territorial_tank_slots:
+            tank_anchors = list(territorial_tank_slots)
+            front_tank_anchor = territorial_tank_slots[0]
+            rear_tank_anchor = territorial_tank_slots[min(1, len(territorial_tank_slots) - 1)]
         if enemy_main:
             tank_anchors = [rear_tank_anchor] * len(tank_units)
         elif len(tank_units) >= 2:

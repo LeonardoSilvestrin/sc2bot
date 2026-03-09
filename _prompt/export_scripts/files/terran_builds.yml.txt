@@ -1,0 +1,73 @@
+# terran_builds.yml
+
+UseData: False
+BuildSelection: Cycle
+MinGamesWinrateBased: 3
+
+BuildChoices:
+  Protoss:
+    BotName: MyBot
+    Cycle: [MechaOpen, BioOpen]
+  Terran:
+    BotName: MyBot
+    Cycle: [MechaOpen, BioOpen]
+  Zerg:
+    BotName: MyBot
+    Cycle: [MechaOpen, BioOpen]
+  Random:
+    BotName: MyBot
+    Cycle: [MechaOpen, BioOpen]
+
+Builds:
+  BioOpen:
+    AutoSupplyAtSupply: 25
+    ConstantWorkerProductionTill: 60
+    OpeningBuildOrder:
+      - 14 supply @ ramp
+      - 16 barracks @ ramp
+      - 16 gas
+      - 15 worker_scout
+      - 0 orbital
+      - 19 expand
+      - 20 supply @ ramp
+      - 20 barracksreactor
+      - 24 factory @ ramp
+      - 24 gas
+      - 24 marine *2
+      - 26 starport
+      - 24 factorytechlab
+      - 30 siegetank
+
+  MechaOpen:
+    AutoSupplyAtSupply: 25
+    ConstantWorkerProductionTill: 60
+    OpeningBuildOrder:
+      - 14 supply @ ramp
+      - 16 barracks @ ramp
+      - 14 worker_scout
+      - 16 gas
+      - 0 orbital
+      - 19 reaper
+      - 19 expand
+      - 19 factory @ ramp
+      - 20 supply @ ramp
+      - 21 barracksreactor
+      - 21 gas
+      - 21 addonswap factory barracksreactor
+      - 23 hellion *2
+      - 24 factory @ ramp
+      - 24 factorytechlab
+
+  RushDefenseOpen:
+    AutoSupplyAtSupply: 23
+    ConstantWorkerProductionTill: 60
+    OpeningBuildOrder:
+      - 14 supply @ ramp
+      - 16 barracks @ ramp
+      - 14 worker_scout
+      - 16 gas
+      - 0 orbital
+      - 19 barracks
+      - 20 marine *1
+      - 20 barracksreactor
+      - 20 supply @ ramp

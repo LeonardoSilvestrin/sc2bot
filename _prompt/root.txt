@@ -431,6 +431,49 @@ GUARDRAILS:
    - throttle/cooldown interno
    - telemetria clara de aplicacao
 7. Se breaking change de contrato, documentar no root.txt e no patch.
+
+========================================================================
+17. UPDATE 2026-03-09 — SCV LEASES E REDUCAO DE SPAM
+========================================================================
+
+Mudancas recentes relevantes para comportamento e debugging:
+
+- Runtime agora sincroniza SCV leased com roles do mediator ANTES de `Mining()`.
+  Arquivo: `bot/mind/self.py`
+  Objetivo:
+  - impedir que Ares trate SCV leased como `GATHERING`
+  - evitar SCV sendo puxado de volta para mineral durante bunker/build/defense
+
+Mapeamento atual:
+  - domain `INTEL/SCOUT`      -> `BUILD_RUNNER_SCOUT`
+  - domain `DEFENSE/MAP_CONTROL` -> `REPAIRING`
+  - demais leases de SCV      -> `BUILDING`
+
+Quando o lease termina:
+  - runtime devolve para `GATHERING`
+  - EXCETO se o worker ainda estiver no `building_tracker` ou `is_constructing=True`
+
+Consequencia pratica:
+  - leases do Ego passam a influenciar o ecossistema Ares/resource manager
+  - reduz conflito entre `Ego.body` e `bot.register_behavior(Mining())`
+
+Reducao de spam:
+
+- `bot/planners/wall_planner.py`
+  - nao repropoe wall se `ops.wall.<zone>.status.complete == True` e o status e recente
+
+- `bot/planners/defense_planner.py`
+  - para de emitir log `planner_proposed` vazio (`count=0`) a cada tick
+
+- `bot/tasks/defense/scv_repair_task.py`
+  - nao reenvia comando de repair se o SCV ja estiver reparando o mesmo alvo
+
+Risco/observacao:
+  - se ainda houver spam de ordens em gameplay, proximo suspeito e `hold_ramp_task.py`
+    porque marine/reaper ainda podem alternar `move/attack` com pouca histerese
+
+Validacao:
+  - `python -B -m compileall -q bot`
 8. NAO editar ares-sc2/ sem necessidade e sem entender o impacto.
 9. NAO reordenar o pipeline de intels em self.py.
 

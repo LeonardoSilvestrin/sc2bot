@@ -2,13 +2,16 @@
 Map Control Planner — dono da posição do bulk do exército.
 
 Responsabilidade:
-    - Ler a postura operacional de army_posture_intel
-    - Propor tasks coerentes com a postura (HoldAnchorTask, SecureBaseTask)
-    - Propor construção de bunker quando a postura exige defesa no choke
+    - Ler a geometria operacional (OperationalGeometryController)
+    - Propor tasks coerentes com os setores ativos:
+        * HoldAnchorTask → setor MASS_HOLD (bulk principal)
+        * SecureBaseTask → setores ANCHOR/HEAVY_ANCHOR/SCREEN secundários
+        * DefenseBunkerTask → quando postura pede defesa no choke
     - NÃO disputar posse do bulk com DefensePlanner
-    - NÃO reagir à base atacada diretamente — isso é responsabilidade da postura
+    - NÃO reagir à base atacada diretamente — isso é responsabilidade da geometria
 
-Não usa should_secure como gatilho central. A postura determina o que propor.
+Fonte primária: K("intel", "geometry", "operational", "snapshot")
+Fallback: postura legada (K("strategy", "army", "snapshot"))
 """
 from __future__ import annotations
 
@@ -19,6 +22,7 @@ from sc2.ids.unit_typeid import UnitTypeId as U
 from sc2.position import Point2
 
 from bot.devlog import DevLogger
+from bot.intel.geometry.sector_types import FrontTemplate, SectorId, SectorMode
 from bot.intel.strategy.i3_army_posture_intel import ArmyPosture
 from bot.mind.attention import Attention
 from bot.mind.awareness import Awareness, K
@@ -411,7 +415,11 @@ class MapControlPlanner:
     def propose(self, bot, *, awareness: Awareness, attention: Attention) -> list[Proposal]:
         now = float(attention.time)
 
-        # --- Lê postura operacional ---
+        # --- Lê geometria operacional (fonte primária) ---
+        geo_snap = awareness.mem.get(K("intel", "geometry", "operational", "snapshot"), now=now, default=None)
+        use_geometry = isinstance(geo_snap, dict) and bool(geo_snap)
+
+        # --- Lê postura legada (fallback e compatibilidade) ---
         posture_snap = awareness.mem.get(K("strategy", "army", "snapshot"), now=now, default={}) or {}
         if not isinstance(posture_snap, dict):
             posture_snap = {}
@@ -425,36 +433,53 @@ class MapControlPlanner:
         snapshot = awareness.mem.get(K("intel", "map_control", "our_nat", "snapshot"), now=now, default={}) or {}
         if not isinstance(snapshot, dict):
             return []
+        territory_snap = awareness.mem.get(K("intel", "territory", "defense", "snapshot"), now=now, default={}) or {}
+        territory_zones = territory_snap.get("zones", {}) if isinstance(territory_snap, dict) else {}
+        nat_zone = territory_zones.get("natural_front", {}) if isinstance(territory_zones, dict) else {}
 
         out: list[Proposal] = []
 
-        # --- HoldAnchorTask: bulk do exército posiciona no anchor da postura ---
-        # Proposto para posturas que requerem posicionamento bulk.
-        # Não é proposto para PRESS_FORWARD (bulk avança — outro planner responsável).
-        # SECURE_NAT: bulk avança para tomar a nat — HoldAnchorTask também o posiciona.
-        _POSTURES_NEEDING_HOLD = {
-            ArmyPosture.HOLD_MAIN_RAMP,
-            ArmyPosture.HOLD_NAT_CHOKE,
-            ArmyPosture.SECURE_NAT,
-            ArmyPosture.CONTROLLED_RETREAT,
-            ArmyPosture.CONTROLLED_RETAKE,
-        }
-        anchor_payload = posture_snap.get("anchor")
-        anchor_point = self._point(anchor_payload) if anchor_payload else None
+        # --- Determina anchor do bulk ---
+        # Fonte primária: setor MASS_HOLD da geometria
+        # Fallback: anchor da postura legada
+        anchor_point: Optional[Point2] = None
 
-        if posture in _POSTURES_NEEDING_HOLD and anchor_point is not None:
+        if use_geometry:
+            bulk_anchor_payload = geo_snap.get("bulk_anchor_pos")
+            if isinstance(bulk_anchor_payload, dict):
+                anchor_point = self._point(bulk_anchor_payload)
+
+        if anchor_point is None:
+            anchor_payload = posture_snap.get("anchor")
+            anchor_point = self._point(anchor_payload) if anchor_payload else None
+
+        # --- HoldAnchorTask: bulk do exército posiciona no setor MASS_HOLD ---
+        # Sempre proposto quando há anchor válido, independente de postura.
+        # A geometria decide ONDE — o planner só propõe a missão.
+        should_hold = anchor_point is not None
+        if use_geometry:
+            # Com geometria: propõe sempre que há bulk_sector definido
+            should_hold = anchor_point is not None and geo_snap.get("bulk_sector") is not None
+        else:
+            # Fallback legado: posturas que requerem hold
+            _POSTURES_NEEDING_HOLD = {
+                ArmyPosture.HOLD_MAIN_RAMP,
+                ArmyPosture.HOLD_NAT_CHOKE,
+                ArmyPosture.SECURE_NAT,
+                ArmyPosture.CONTROLLED_RETREAT,
+                ArmyPosture.CONTROLLED_RETAKE,
+            }
+            should_hold = posture in _POSTURES_NEEDING_HOLD and anchor_point is not None
+
+        if should_hold and anchor_point is not None:
             hold_pid = self._pid("hold_anchor_bulk")
             if not awareness.ops_proposal_running(proposal_id=hold_pid, now=now) and self._due(awareness=awareness, now=now, pid=hold_pid):
                 bulk_reqs = self._bulk_requirements(bot=bot, anchor=anchor_point)
 
-                # Não propor se não há unidades — missão com zero assigned falha imediatamente
                 if bulk_reqs:
                     def _hold_factory(mission_id: str) -> HoldAnchorTask:
                         return HoldAnchorTask(awareness=awareness, log=self.log)
 
-                    # Score 93: owner do bulk domina SecureBaseTask (82-88) dentro de MAP_CONTROL.
-                    # Defend é domain DEFENSE — domínios não disputam diretamente.
-                    # Dentro de MAP_CONTROL, bulk owner deve ter score mais alto que guarnição local.
                     out.append(
                         Proposal(
                             proposal_id=hold_pid,
@@ -565,22 +590,38 @@ class MapControlPlanner:
                     self._mark(awareness=awareness, now=now, pid=bunker_pid)
 
         # --- SecureBaseTask: destacamento local no choke da nat ---
-        # Proposto quando a postura pede guarnição na nat OU quando há rush ativo.
+        # Proposto quando a geometria pede guarnição local (setor NAT_CHOKE / NAT_RING)
+        # OU quando a postura legada pede garrison.
         # NÃO é o dono do bulk — apenas um destacamento local dentro do max_detach_supply.
-        posture_wants_garrison = posture in {
-            ArmyPosture.HOLD_NAT_CHOKE,
-            ArmyPosture.SECURE_NAT,
-            ArmyPosture.CONTROLLED_RETAKE,
-        }
-        # Compatibilidade: also secure if should_secure (fato legado)
-        should_secure_legacy = bool(snapshot.get("should_secure", False))
 
-        if posture_wants_garrison or should_secure_legacy:
+        # Fonte primária: geometria tem setor NAT_CHOKE em ANCHOR/HEAVY_ANCHOR
+        posture_wants_garrison = False
+        if use_geometry:
+            nat_choke_sector = (geo_snap.get("sector_states") or {}).get(SectorId.NAT_CHOKE.value, {})
+            nat_choke_mode = str(nat_choke_sector.get("mode", SectorMode.NONE.value) or SectorMode.NONE.value)
+            nat_choke_target = float(nat_choke_sector.get("target_power", 0.0) or 0.0)
+            posture_wants_garrison = nat_choke_mode in {
+                SectorMode.ANCHOR.value,
+                SectorMode.HEAVY_ANCHOR.value,
+                SectorMode.MASS_HOLD.value,
+            } and nat_choke_target > 0.0
+        else:
+            posture_wants_garrison = posture in {
+                ArmyPosture.HOLD_NAT_CHOKE,
+                ArmyPosture.SECURE_NAT,
+                ArmyPosture.CONTROLLED_RETAKE,
+            }
+
+        if posture_wants_garrison:
             pid = self._pid("secure_our_nat")
             if not awareness.ops_proposal_running(proposal_id=pid, now=now) and self._due(awareness=awareness, now=now, pid=pid):
                 base_pos2 = self._point(snapshot.get("target"))
                 staging_pos = self._point(snapshot.get("staging"), fallback=base_pos2)
                 hold_pos = self._point(snapshot.get("hold"), fallback=base_pos2)
+                if isinstance(nat_zone.get("fallback_anchor"), dict):
+                    staging_pos = self._point(nat_zone.get("fallback_anchor"), fallback=staging_pos)
+                if isinstance(nat_zone.get("front_anchor"), dict):
+                    hold_pos = self._point(nat_zone.get("front_anchor"), fallback=hold_pos)
                 if base_pos2 is not None and staging_pos is not None and hold_pos is not None:
                     reqs = self._requirements(
                         bot=bot,
@@ -601,10 +642,16 @@ class MapControlPlanner:
                             )
 
                         rush_state = str(snapshot.get("rush_state", "NONE")).upper()
-                        # Score baseado na postura, não apenas no rush_state
-                        if posture == ArmyPosture.HOLD_NAT_CHOKE and rush_state in {"CONFIRMED", "HOLDING"}:
-                            score = 91  # Abaixo do Defend (90)? Não — destacamento local,
-                            # score um pouco abaixo do defend principal para não disputar bulk
+                        # Score baseado no template da geometria (quando disponível)
+                        if use_geometry:
+                            template_str = str(geo_snap.get("template", "") or "")
+                            if template_str == FrontTemplate.TURTLE_NAT.value:
+                                score = 88  # Alta urgência — turtle com rush
+                            elif template_str in {FrontTemplate.STABILIZE_AND_EXPAND.value, FrontTemplate.CONTAIN.value}:
+                                score = 85
+                            else:
+                                score = 82
+                        elif posture == ArmyPosture.HOLD_NAT_CHOKE and rush_state in {"CONFIRMED", "HOLDING"}:
                             score = 88
                         elif posture in {ArmyPosture.HOLD_NAT_CHOKE, ArmyPosture.SECURE_NAT}:
                             score = 85

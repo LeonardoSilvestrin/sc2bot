@@ -1,0 +1,3 @@
+# bot/tasks/wall/__init__.py
+
+

@@ -78,6 +78,19 @@ class WallPlanner:
         awareness.mem.set(K("ops", "wall", str(zone), "proposal_last_t"), value=float(now), now=now, ttl=None)
 
     @staticmethod
+    def _wall_complete_recent(*, awareness: Awareness, now: float, zone: str) -> bool:
+        status = awareness.mem.get(K("ops", "wall", str(zone), "status"), now=now, default=None)
+        if not isinstance(status, dict):
+            return False
+        if not bool(status.get("complete", False)):
+            return False
+        updated_at = status.get("updated_at", None)
+        try:
+            return (float(now) - float(updated_at)) <= 10.0
+        except Exception:
+            return True
+
+    @staticmethod
     def _rush_active(*, awareness: Awareness, now: float) -> bool:
         state = str(awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
         return state in {"SUSPECTED", "CONFIRMED", "HOLDING"}
@@ -186,7 +199,11 @@ class WallPlanner:
             return out
 
         main_pid = self._pid("main")
-        if not awareness.ops_proposal_running(proposal_id=main_pid, now=now) and self._due(awareness=awareness, now=now, zone="main"):
+        if (
+            not self._wall_complete_recent(awareness=awareness, now=now, zone="main")
+            and not awareness.ops_proposal_running(proposal_id=main_pid, now=now)
+            and self._due(awareness=awareness, now=now, zone="main")
+        ):
             out.append(
                 Proposal(
                     proposal_id=main_pid,
@@ -218,7 +235,12 @@ class WallPlanner:
         nat_supported = bool(self._nat_wall_supported(bot))
         nat_required = bool(nat_supported and (rush_active or int(attention.macro.bases_total) >= 2))
         nat_pid = self._pid("nat")
-        if nat_required and not awareness.ops_proposal_running(proposal_id=nat_pid, now=now) and self._due(awareness=awareness, now=now, zone="nat"):
+        if (
+            nat_required
+            and not self._wall_complete_recent(awareness=awareness, now=now, zone="nat")
+            and not awareness.ops_proposal_running(proposal_id=nat_pid, now=now)
+            and self._due(awareness=awareness, now=now, zone="nat")
+        ):
             try:
                 nat_objective = bot.mediator.get_own_nat
             except Exception:

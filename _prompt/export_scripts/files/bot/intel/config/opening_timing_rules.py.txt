@@ -1,0 +1,128 @@
+# bot/intel/config/opening_timing_rules.py
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from sc2.ids.unit_typeid import UnitTypeId as U
+
+
+@dataclass(frozen=True)
+class OpeningTimingRule:
+    # Human-readable id for logs/tuning.
+    name: str
+    # "ANY", "ZERG", "TERRAN", "PROTOSS"
+    race: str
+    structure: U
+    # Active only inside this observation window.
+    earliest_t: float = 0.0
+    latest_t: float = 9999.0
+    # Constraints over observed structure counts.
+    min_total_count: int = 1
+    max_total_count: int | None = None
+    min_main_count: int = 0
+    max_main_count: int | None = None
+    # Minimum observed build progress for the structure type.
+    min_progress: float = 0.0
+    # Score contribution and whether it is a hard-rush marker.
+    score: float = 0.0
+    confirm: bool = False
+
+
+# Baseline timing rules (LotV ladder references).
+# Edit this file to tune aggressive detection without touching policy logic.
+DEFAULT_OPENING_TIMING_RULES: tuple[OpeningTimingRule, ...] = (
+    # Zerg pool-first windows.
+    OpeningTimingRule(
+        name="zerg_pool_very_early",
+        race="ZERG",
+        structure=U.SPAWNINGPOOL,
+        earliest_t=0.0,
+        latest_t=120.0,
+        min_total_count=1,
+        min_progress=0.20,
+        score=28.0,
+        confirm=False,
+    ),
+    OpeningTimingRule(
+        name="zerg_pool_hard_confirm",
+        race="ZERG",
+        structure=U.SPAWNINGPOOL,
+        earliest_t=0.0,
+        latest_t=120.0,
+        min_total_count=1,
+        min_progress=0.35,
+        score=24.0,
+        confirm=True,
+    ),
+    # Terran early 2rax / proxy rax windows.
+    OpeningTimingRule(
+        name="terran_2rax_early",
+        race="TERRAN",
+        structure=U.BARRACKS,
+        earliest_t=0.0,
+        latest_t=130.0,
+        min_total_count=2,
+        min_progress=0.0,
+        score=22.0,
+        confirm=True,
+    ),
+    OpeningTimingRule(
+        name="terran_proxy_rax_suspect",
+        race="TERRAN",
+        structure=U.BARRACKS,
+        earliest_t=0.0,
+        latest_t=125.0,
+        min_total_count=1,
+        max_main_count=0,
+        min_progress=0.0,
+        score=20.0,
+        confirm=True,
+    ),
+    # Protoss early 2gate / proxy gate windows.
+    OpeningTimingRule(
+        name="protoss_2gate_early",
+        race="PROTOSS",
+        structure=U.GATEWAY,
+        earliest_t=0.0,
+        latest_t=140.0,
+        min_total_count=2,
+        min_progress=0.0,
+        score=22.0,
+        confirm=True,
+    ),
+    OpeningTimingRule(
+        name="protoss_proxy_gate_suspect",
+        race="PROTOSS",
+        structure=U.GATEWAY,
+        earliest_t=0.0,
+        latest_t=125.0,
+        min_total_count=1,
+        max_main_count=0,
+        min_progress=0.0,
+        score=20.0,
+        confirm=True,
+    ),
+    OpeningTimingRule(
+        name="protoss_2stargate_early",
+        race="PROTOSS",
+        structure=U.STARGATE,
+        earliest_t=0.0,
+        latest_t=210.0,
+        min_total_count=2,
+        min_progress=0.0,
+        score=28.0,
+        confirm=False,
+    ),
+    OpeningTimingRule(
+        name="protoss_3stargate_hard_confirm",
+        race="PROTOSS",
+        structure=U.STARGATE,
+        earliest_t=0.0,
+        latest_t=250.0,
+        min_total_count=3,
+        min_progress=0.0,
+        score=40.0,
+        confirm=True,
+    ),
+)

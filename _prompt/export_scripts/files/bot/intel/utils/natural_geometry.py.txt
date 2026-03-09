@@ -1,0 +1,134 @@
+# bot/intel/utils/natural_geometry.py
+
+from __future__ import annotations
+
+import math
+
+from sc2.position import Point2
+
+
+_NATURAL_DESCENT_CLEARANCE = 4.0
+
+
+def _pathable(bot, pos: Point2 | None) -> bool:
+    if pos is None:
+        return False
+    try:
+        return bool(bot.in_pathing_grid(pos))
+    except Exception:
+        return True
+
+
+def _own_natural(bot) -> Point2 | None:
+    try:
+        return bot.mediator.get_own_nat
+    except Exception:
+        pass
+    exps = list(getattr(bot, "expansion_locations_list", []) or [])
+    if not exps:
+        return None
+    try:
+        ordered = sorted(
+            [p for p in exps if float(p.distance_to(bot.start_location)) > 2.0],
+            key=lambda p: float(bot.start_location.distance_to(p)),
+        )
+    except Exception:
+        ordered = exps
+    return ordered[0] if ordered else None
+
+
+def natural_descent_center(bot, *, nat: Point2 | None = None) -> Point2 | None:
+    nat = nat or _own_natural(bot)
+    try:
+        ramp = getattr(bot, "main_base_ramp", None)
+        bottom = getattr(ramp, "bottom_center", None) if ramp is not None else None
+    except Exception:
+        bottom = None
+    if bottom is None:
+        return None
+    try:
+        if nat is not None and float(bottom.distance_to(nat)) > 20.0:
+            return None
+    except Exception:
+        return None
+    return bottom
+
+
+def is_in_natural_descent_nogo(
+    bot,
+    pos: Point2 | None,
+    *,
+    nat: Point2 | None = None,
+    clearance: float = _NATURAL_DESCENT_CLEARANCE,
+) -> bool:
+    if pos is None:
+        return False
+    center = natural_descent_center(bot, nat=nat)
+    if center is None:
+        return False
+    try:
+        return float(pos.distance_to(center)) < float(clearance)
+    except Exception:
+        return False
+
+
+def sanitize_natural_defense_point(
+    bot,
+    *,
+    pos: Point2 | None,
+    fallback: Point2,
+    prefer_towards: Point2 | None = None,
+    nat: Point2 | None = None,
+    clearance: float = _NATURAL_DESCENT_CLEARANCE,
+) -> Point2:
+    nat = nat or _own_natural(bot)
+    chosen = pos or fallback
+    if _pathable(bot, chosen) and not is_in_natural_descent_nogo(bot, chosen, nat=nat, clearance=clearance):
+        return chosen
+
+    center = natural_descent_center(bot, nat=nat)
+    if center is None:
+        return fallback if _pathable(bot, fallback) else chosen
+
+    prefer = prefer_towards or nat or fallback
+    candidates: list[Point2] = []
+    for probe in (prefer, nat, fallback):
+        if probe is None:
+            continue
+        try:
+            candidates.append(center.towards(probe, float(clearance) + 2.25))
+        except Exception:
+            continue
+
+    for radius in (clearance + 1.0, clearance + 2.5, clearance + 4.0, clearance + 5.5):
+        for idx in range(24):
+            ang = (2.0 * math.pi * float(idx)) / 24.0
+            candidates.append(
+                Point2(
+                    (
+                        float(center.x) + (float(radius) * math.cos(ang)),
+                        float(center.y) + (float(radius) * math.sin(ang)),
+                    )
+                )
+            )
+
+    best = fallback if _pathable(bot, fallback) else chosen
+    best_score = -999999.0
+    for candidate in candidates:
+        if not _pathable(bot, candidate):
+            continue
+        if is_in_natural_descent_nogo(bot, candidate, nat=nat, clearance=clearance):
+            continue
+        try:
+            prefer_dist = float(candidate.distance_to(prefer)) if prefer is not None else 0.0
+        except Exception:
+            prefer_dist = 9999.0
+        try:
+            center_dist = float(candidate.distance_to(center))
+        except Exception:
+            center_dist = 0.0
+        score = (center_dist * 1.5) - prefer_dist
+        if score > best_score:
+            best = candidate
+            best_score = score
+    return best

@@ -1,0 +1,541 @@
+# _prompt/root.txt
+
+Voce e meu parceiro tecnico para evoluir um bot de StarCraft II em Python (Terran).
+Este documento e o handoff oficial do estado atual do sistema.
+Leia COMPLETAMENTE antes de propor qualquer mudanca.
+
+════════════════════════════════════════════════════════════════════════
+1. CONTEXTO DO PROJETO
+════════════════════════════════════════════════════════════════════════
+
+Framework: ares-sc2 (vendored em ares-sc2/, NAO editar sem necessidade)
+Raca: Terran
+Entrada: bot/main.py -> MyBot(AresBot) -> AresWrapper + DevLogger + RuntimeApp
+Branch ativa: ares
+Data do handoff: 2026-03-08
+
+O bot joga SC2 via python-sc2/ares-sc2. Toda logica de jogo fica em bot/.
+O framework Ares gerencia loop de jogo, pathfinding, MacroPlan, behaviors.
+
+════════════════════════════════════════════════════════════════════════
+2. ARQUITETURA — VISAO GERAL
+════════════════════════════════════════════════════════════════════════
+
+CAMADAS (de cima para baixo):
+
+  [RuntimeApp / self.py]
+    Wiring central. on_step: roda pipeline de intels -> ego.tick().
+
+  [Intel Pipeline]
+    Funcoes puras que leem Attention/bot e escrevem Awareness.
+    NAO tomam decisoes de acao — apenas atualizam estado observavel.
+
+  [Ego / ego.py]
+    Arbitro de missoes. Recebe proposals dos planners, admite/preempta
+    por score e policy. Executa step das tasks ativas.
+
+  [Planners]
+    Propoe tasks ao Ego. NAO executam acoes diretamente.
+    Cada planner tem domain e score proprios.
+
+  [Tasks]
+    Unidades de execucao. Recebem unidades via leases. Executam acoes
+    no bot a cada tick. Reportam TaskResult (RUNNING/SUCCESS/FAILURE).
+
+  [Executors]
+    Tasks especiais que aplicam MacroPlan do Ares (macro, tech).
+    Tem throttle interno (apply_min_interval_s).
+
+════════════════════════════════════════════════════════════════════════
+3. PIPELINE DE EXECUCAO (ORDEM IMPORTA — NAO REORDENAR)
+════════════════════════════════════════════════════════════════════════
+
+RuntimeApp.on_step (bot/mind/self.py):
+  1. derive_opening_contract_intel
+  2. derive_attention           (snapshot do estado do jogo)
+  3. derive_enemy_build_intel
+  4. derive_enemy_opening_intel (classifica RUSH/NORMAL/GREEDY)
+  5. derive_pathing_flow_intel
+  6. derive_pathing_route_intel
+  7. derive_map_control_intel
+  8. derive_enemy_presence_intel
+  9. derive_frontline_intel     (i5 — NAT_FRONT / MAIN_FRONT)
+  10. derive_army_posture_intel  (i3 strategy — ArmyPosture enum)
+  11. derive_mission_unit_threat_intel
+  12. derive_mission_value_intel
+  13. derive_my_army_composition_intel
+  14. derive_game_parity_intel   (i1 strategy)
+  15. AdvantageGameStatusIntel.step (i2 strategy — escreve macro.control.*)
+
+Ego.tick (bot/mind/ego.py):
+  1. Coleta proposals de todos os planners
+  2. PrioritizationIntel pre-filtra e reordena
+  3. Admissao / preempcao por score e policy
+  4. Execute step das tasks ativas
+
+════════════════════════════════════════════════════════════════════════
+4. OWNERSHIP DE MEMORIA (NAO NEGOCIAVEL)
+════════════════════════════════════════════════════════════════════════
+
+Quem escreve o que na Awareness:
+
+  Intel functions     -> macro.desired.*  e  strategy.parity.*
+  AdvantageGameStatusIntel -> macro.control.*
+  Planners            -> macro.exec.*  e  tech.exec.*
+  Executors           -> apenas telemetria (register_count, etc.)
+
+NINGUEM fora do planner escreve macro.exec.* ou tech.exec.*.
+NINGUEM fora das intels escreve macro.desired.* ou strategy.parity.*.
+NINGUEM fora de AdvantageGameStatusIntel escreve macro.control.*.
+
+════════════════════════════════════════════════════════════════════════
+5. CONTRATOS DE MEMORIA (CHAVES PRINCIPAIS)
+════════════════════════════════════════════════════════════════════════
+
+macro.desired.* (Intel escreve — desired_intel.py):
+  mode, signals, comp, controller_comp, army_comp, priority_units
+  reserve_unit / reserve_minerals / reserve_gas
+  bank_target_minerals / bank_target_gas
+  army_supply_milestones, unit_count_milestones
+  timing_attacks, tech_targets {upgrades, structures}
+  tech_structure_targets, last_update_t
+
+strategy.parity.* (game_parity_intel.py escreve):
+  overall / econ / army
+  expand_bias / army_bias
+  signals, last_update_t
+
+macro.control.* (AdvantageGameStatusIntel escreve):
+  strategic_mode, attack_posture
+  weights {army, tech, expand, harass}
+  bank_target_minerals / bank_target_gas
+  reserve_minerals / reserve_gas
+  production_scale
+  supervisor.status / supervisor.regime / supervisor.last_update_t / supervisor.next_update_t
+
+macro.exec.* (MacroOrchestratorPlanner escreve):
+  enable_workers, scv_cap
+  enable_supply, enable_gas, gas_target
+  enable_spawn, freeflow_mode, emergency_mineral_dump
+  enable_production, enable_expansion
+  expand_to, ahead_expand_push
+  lane_order / lane_scores / lane_selected
+  cooldown_until, owner, register_count
+
+tech.exec.* (MacroOrchestratorPlanner escreve):
+  enable, targets {upgrades, structures}
+  cooldown_until, owner, register_count
+
+Chaves de Awareness relevantes para defesa/postura:
+  K("enemy", "rush", "state")         -> NONE/SUSPECTED/CONFIRMED/HOLDING
+  K("enemy", "opening", "kind")       -> NORMAL/AGGRESSIVE/GREEDY
+  K("strategy", "parity", "state")    -> TRADEOFF_MIXED/AHEAD_BOTH/etc.
+  K("strategy", "army", "posture")    -> ArmyPosture enum
+  K("strategy", "army", "anchor")     -> Point2 payload do anchor do bulk
+  K("strategy", "army", "max_detach_supply") -> supply max para destacamentos
+  K("intel", "frontline", "nat", "snapshot") -> estado da frente nat
+  K("intel", "frontline", "main_shielded_by_nat") -> bool
+
+════════════════════════════════════════════════════════════════════════
+6. PLANNERS E SEUS DOMINIOS
+════════════════════════════════════════════════════════════════════════
+
+  DefensePlanner       -> DEFENSE (score alto, reativo)
+  HarassPlanner        -> HARASS
+  ReinforceMissionPlanner -> reforco de missoes ativas
+  IntelPlanner         -> scouts, scans
+  MapControlPlanner    -> MAP_CONTROL (postura proativa)
+  WallPlanner          -> WALL (manutencao da wall)
+  HousekeepingPlanner  -> housekeeping (depots, idle workers, etc.)
+  MacroOrchestratorPlanner -> MACRO_EXECUTOR + TECH_EXECUTOR (score 58)
+  OpeningPlanner       -> inline em self.py (abertura)
+
+════════════════════════════════════════════════════════════════════════
+7. TASKS POR MODULO (ESTADO POS-REFACTOR 2026-03-08)
+════════════════════════════════════════════════════════════════════════
+
+bot/tasks/defense/
+  defend_task.py           -> Defend: defesa geral com exercito (domain=DEFENSE, commitment=90)
+  defend_base_task.py      -> DefendBaseTask: defesa de base especifica
+  defense_bunker_task.py   -> DefenseBunkerTask: logica de construcao de bunker na rampa
+  hold_ramp_task.py        -> HoldRampTask: defesa da rampa com SCV+Marine (commitment=88)
+  lift_natural_task.py     -> LiftNaturalTask: levanta CC da nat em emergencia
+  push_task.py             -> PushTask: push ofensivo
+  scv_defensive_pull_task.py -> ScvDefensivePullTask: pull de SCVs para combate
+  scv_repair_task.py       -> ScvRepairTask: reparo de estruturas
+
+bot/tasks/map_control/      (NOVOS — refactor 2026-03-08)
+  hold_anchor_task.py      -> HoldAnchorTask: bulk segurando anchor point
+  land_base_task.py        -> LandBaseTask: pouso de CC voando
+  secure_base_task.py      -> SecureBaseTask: securizar expansao com marines/tanks/minas
+
+bot/tasks/wall/             (NOVO — refactor 2026-03-08)
+  maintain_wall_task.py    -> MaintainWallTask: manutencao da wall
+
+bot/tasks/macro/
+  tasks/macro_ares_executor_tick.py -> MacroAresExecutorTick (executor principal)
+  tasks/tech_ares_executor_tick.py  -> (em bot/tasks/tech/)
+  tasks/opening.py                  -> MacroOpeningTick
+  tasks/scv_housekeeping_task.py    -> housekeeping de SCVs
+
+bot/tasks/tech/
+  tasks/tech_ares_executor_tick.py  -> TechAresExecutorTick
+
+bot/tasks/harass/
+  banshee_harass_task.py
+  reaper_hellion_harass_task.py
+
+bot/tasks/scout/
+  worker_expansion_scout_task.py
+  reaper_scout_task.py
+  scan_task.py
+
+bot/tasks/support/
+  support_mission_task.py
+  control_depots_task.py
+
+════════════════════════════════════════════════════════════════════════
+8. INTEL PIPELINE — ARQUIVOS E RESPONSABILIDADES
+════════════════════════════════════════════════════════════════════════
+
+bot/intel/enemy/
+  enemy_build_intel.py    -> detecta build order inimiga
+  opening_intel.py        -> classifica abertura (RUSH/GREEDY/NORMAL) + rush state machine
+  opening_contract.py     -> contrato de abertura derivado
+  weak_points_intel.py    -> pontos fracos do inimigo
+
+bot/intel/locations/
+  i1_pathing_flow_intel.py   -> fluxo de pathfinding inimigo
+  i2_pathing_route_intel.py  -> rota inimiga
+  i3_map_control_intel.py    -> fatos observaveis da nat (NAO decide postura)
+  i4_enemy_presence_intel.py -> clusters, sides, power do inimigo
+  i5_frontline_intel.py      -> estado NAT_FRONT/MAIN_FRONT: ground_state, control_state, anchors
+
+bot/intel/strategy/
+  i1_game_parity_intel.py             -> sinal ahead/behind e severidade
+  i2_CTRL_advantage_game_status_intel.py -> controlador global (pesos, setpoints em macro.control.*)
+  i3_army_posture_intel.py            -> ArmyPosture enum + anchor + detach_budget
+
+bot/intel/macro/
+  desired_intel.py -> composicao desejada, milestones, tech targets -> macro.desired.*
+
+bot/intel/ego/
+  i1_PI_prioritization_intel.py -> ordering de proposals no Ego
+
+bot/intel/utils/
+  opening_types.py         -> OpeningIntelConfig, enums de opening
+  enemy_econ_estimates.py  -> estimativas de eco inimigo
+  state_store.py, upgrade_catalog.py, weak_points_policy.py, weak_points_types.py
+
+bot/intel/config/
+  opening_timing_rules.py  -> regras de timing para abertura inimiga
+
+bot/intel/mission/
+  i1_mission_unit_threat_intel.py -> ameaca de unidades por missao
+  i2_mission_value_intel.py       -> valor de mi ssoes ativas
+
+════════════════════════════════════════════════════════════════════════
+9. MACRO: COMO FUNCIONA HOJE
+════════════════════════════════════════════════════════════════════════
+
+MacroOrchestratorPlanner roda continuamente e publica "o que gastar" em macro.exec.*.
+MacroAresExecutorTick le macro.exec.* e aplica MacroPlan do Ares com throttle interno.
+
+Lanes atuais: workers / supply / gas / spawn / production / expand
+Selecao de lane usa score com histerese (lane_min_hold_s + lane_switch_margin).
+
+Anti-flood de mineral:
+  freeflow_mode: liga em >700 minerais, desliga em <450 (histerese 8s)
+  emergency_mineral_dump: liga quando banco critico, tem hold/histerese
+
+Gas:
+  macro.exec.gas_target controla quantos refineries abrir
+  macro.gas.target_workers_per_refinery controla saturacao
+  SpendingPolicy (bot/planners/utils/spending_policy.py) gerencia stock/flow
+
+Expansao:
+  enable_expansion + expand_to: planner decide quando e para onde
+  ahead_expand_push: expansao oportunista quando army permite
+  natural_cc_force_now: forca nat quando banco > 360 minerais e sem pressao
+
+Rush defense mode:
+  desired_intel.py: RushDefenseOpen sem nat -> cap BARRACKS<=2, FACTORY<=1, STARPORT=0
+  MacroAresExecutorTick: preempta ProductionController quando nat e alvo e ha sinal de release
+
+Tech executor (TechAresExecutorTick):
+  Consome tech.exec.targets
+  Pausa por: pressure / emergency dump / rush defense / army-production lag
+
+════════════════════════════════════════════════════════════════════════
+10. BUILDS E PERFIS
+════════════════════════════════════════════════════════════════════════
+
+bot/builds/
+  bio_open.py         -> perfil bio padrao
+  mecha_open.py       -> perfil mech
+  rush_defense_open.py -> anti-rush (fases OPENING/MIDGAME/LATEGAME)
+  profile_compact.py  -> perfil compacto
+
+Selecao de perfil: terran_builds.yml (raiz do projeto)
+Opening state: bot/mind/opening_state.py
+
+════════════════════════════════════════════════════════════════════════
+11. MIND — CEREBRO CENTRAL
+════════════════════════════════════════════════════════════════════════
+
+bot/mind/self.py       -> RuntimeApp: wiring de runtime, pipeline de intels, planners
+bot/mind/ego.py        -> Ego: arbitracao, admissao, preempcao de missoes
+bot/mind/awareness.py  -> Awareness: memoria persistente via K() keys (TTL-based)
+bot/mind/attention.py  -> Attention: snapshot derivado por tick (estado atual do jogo)
+bot/mind/body.py       -> UnitLeases: controle de leases de unidades
+bot/mind/opening_state.py -> estado da abertura e selecao de build
+
+Ego config:
+  threat_block_start_at=70
+  threat_force_preempt_at=90
+  Preserva MACRO_ARMY_EXECUTOR e MACRO_ECON_EXECUTOR sob ameaca alta
+
+════════════════════════════════════════════════════════════════════════
+12. PONTOS DE IMPREVISIBILIDADE (OBSERVAR JUNTOS NO LOG)
+════════════════════════════════════════════════════════════════════════
+
+O sistema usa loops simultaneos. Para diagnosticar comportamento inesperado,
+SEMPRE checar esses sinais juntos:
+
+  strategy.parity.state
+  macro.control.strategic_mode
+  macro.control.weights
+  macro.control.bank_target_*
+  macro.control.production_scale
+  macro.exec.freeflow_mode
+  macro.exec.emergency_mineral_dump
+  macro.exec.gas_target
+  macro.exec.expand_to
+  macro.exec.lane_selected
+  ego.exec_budget.macro_enabled / ego.exec_budget.macro_cadence
+
+Se um agente analisar comportamento sem citar esses sinais ou sem apontar
+histerese/cooldown relevante, a analise esta superficial.
+
+════════════════════════════════════════════════════════════════════════
+13. SINAIS DE HEALTH (LOG)
+════════════════════════════════════════════════════════════════════════
+
+  macro_executor_applied
+  tech_executor_applied
+  macro.exec.register_count
+  tech.exec.register_count
+  planner_proposed
+  mission_started / mission_ended
+  runtime_clock
+  macro.gas.status
+  control.priority.notes.*
+  control.priority.components.*
+  macro.control.supervisor.status
+  ego.exec_budget.*
+
+════════════════════════════════════════════════════════════════════════
+14. ROOT MAP (PASTAS DA RAIZ)
+════════════════════════════════════════════════════════════════════════
+
+  .github/     -> CI/workflows
+  .vscode/     -> config local de editor
+  ares-sc2/    -> dependencia/vendor do framework Ares (NAO editar)
+  bot/         -> codigo principal do bot
+  data/        -> dados auxiliares (fora do export por padrao)
+  logs/        -> logs de runtime (NAO exportar)
+  scripts/     -> scripts utilitarios
+  _docs/       -> documentacao complementar
+  _prompt/     -> pacote de export/handoff para outro agente
+  _tools/      -> scripts de validacao local (guardrails)
+
+════════════════════════════════════════════════════════════════════════
+15. ARQUIVOS CRITICOS PARA CADA AREA
+════════════════════════════════════════════════════════════════════════
+
+MACRO / ECO:
+  bot/mind/self.py
+  bot/mind/ego.py
+  bot/intel/strategy/i2_CTRL_advantage_game_status_intel.py
+  bot/planners/macro_orchestrator_planner.py
+  bot/planners/utils/spending_policy.py
+  bot/tasks/macro/tasks/macro_ares_executor_tick.py
+  bot/tasks/tech/tasks/tech_ares_executor_tick.py
+  bot/intel/macro/desired_intel.py
+  bot/intel/strategy/i1_game_parity_intel.py
+
+DEFESA:
+  bot/planners/defense_planner.py
+  bot/tasks/defense/hold_ramp_task.py
+  bot/tasks/defense/defense_bunker_task.py
+  bot/tasks/defense/defend_task.py
+  bot/tasks/defense/defend_base_task.py
+  bot/tasks/defense/scv_defensive_pull_task.py
+  bot/intel/enemy/opening_intel.py
+  bot/intel/utils/opening_types.py
+
+MAP CONTROL / POSTURA:
+  bot/planners/map_control_planner.py
+  bot/intel/strategy/i3_army_posture_intel.py
+  bot/intel/locations/i5_frontline_intel.py
+  bot/tasks/map_control/secure_base_task.py
+  bot/tasks/map_control/hold_anchor_task.py
+  bot/tasks/map_control/land_base_task.py
+
+WALL:
+  bot/planners/wall_planner.py
+  bot/tasks/wall/maintain_wall_task.py
+  bot/planners/utils/building_placement_planner.py
+
+GUARDRAILS:
+  _tools/check_macro_executor_uniqueness.py
+
+════════════════════════════════════════════════════════════════════════
+16. LIMITACOES CONHECIDAS E DIVIDA TECNICA
+════════════════════════════════════════════════════════════════════════
+
+1. MacroOrchestratorPlanner GOD OBJECT:
+   ~40 campos de config, mistura resource controller + planner + milestone logic.
+   NAO refatorar sem necessidade concreta — risco alto de regressao.
+
+2. DefensePlanner atravessa 3 camadas (postura, tatica, operacional):
+   Funcional, mas acoplado. Modificacoes cascadeiam para HoldRampTask,
+   DefenseBunkerTask, ScvDefensivePullTask, ScvRepairTask simultaneamente.
+
+3. Intel pipeline com ordem implicita (comentarios em self.py):
+   NAO reordenar — alguns intels dependem de outros ja calculados.
+
+4. should_secure_legacy em map_control_planner.py (~linha 565):
+   Shim de compatibilidade com logica antiga de postura.
+   Remover somente quando ArmyPosture cobrir todos os casos.
+
+5. SecureBaseTask: fix recente de tanks/minas no highground.
+   Validar em mais mapas (especialmente sem ramp clara na nat).
+
+6. Transicao rush -> midgame ainda incompleta em alguns jogos:
+   Bot pode ficar travado na rampa. Verificar rush_state + posture + enable_expansion no log.
+
+7. Timing attacks em macro.desired.timing_attacks existem no contrato
+   mas NAO sao tratados como erro temporal fechado ainda.
+
+════════════════════════════════════════════════════════════════════════
+17. REGRAS DE ALTERACAO (NAO NEGOCIAVEL)
+════════════════════════════════════════════════════════════════════════
+
+1. NAO reintroduzir tasks macro legadas.
+2. NAO criar novos writers para macro.exec.* ou tech.exec.* fora do planner.
+3. NAO criar writes em macro.desired.* fora de intel.*.
+4. NAO criar writes em macro.control.* fora de AdvantageGameStatusIntel
+   (ou substituto explicito e documentado).
+5. NAO duplicar ownership do gas (planner decide; task executa).
+6. Qualquer executor novo deve ter:
+   - assinatura deterministica
+   - throttle/cooldown interno
+   - telemetria clara de aplicacao
+7. Se breaking change de contrato, documentar no root.txt e no patch.
+
+========================================================================
+17. UPDATE 2026-03-09 — SCV LEASES E REDUCAO DE SPAM
+========================================================================
+
+Mudancas recentes relevantes para comportamento e debugging:
+
+- Runtime agora sincroniza SCV leased com roles do mediator ANTES de `Mining()`.
+  Arquivo: `bot/mind/self.py`
+  Objetivo:
+  - impedir que Ares trate SCV leased como `GATHERING`
+  - evitar SCV sendo puxado de volta para mineral durante bunker/build/defense
+
+Mapeamento atual:
+  - domain `INTEL/SCOUT`      -> `BUILD_RUNNER_SCOUT`
+  - domain `DEFENSE/MAP_CONTROL` -> `REPAIRING`
+  - demais leases de SCV      -> `BUILDING`
+
+Quando o lease termina:
+  - runtime devolve para `GATHERING`
+  - EXCETO se o worker ainda estiver no `building_tracker` ou `is_constructing=True`
+
+Consequencia pratica:
+  - leases do Ego passam a influenciar o ecossistema Ares/resource manager
+  - reduz conflito entre `Ego.body` e `bot.register_behavior(Mining())`
+
+Reducao de spam:
+
+- `bot/planners/wall_planner.py`
+  - nao repropoe wall se `ops.wall.<zone>.status.complete == True` e o status e recente
+
+- `bot/planners/defense_planner.py`
+  - para de emitir log `planner_proposed` vazio (`count=0`) a cada tick
+
+- `bot/tasks/defense/scv_repair_task.py`
+  - nao reenvia comando de repair se o SCV ja estiver reparando o mesmo alvo
+
+Risco/observacao:
+  - se ainda houver spam de ordens em gameplay, proximo suspeito e `hold_ramp_task.py`
+    porque marine/reaper ainda podem alternar `move/attack` com pouca histerese
+
+Validacao:
+  - `python -B -m compileall -q bot`
+8. NAO editar ares-sc2/ sem necessidade e sem entender o impacto.
+9. NAO reordenar o pipeline de intels em self.py.
+
+════════════════════════════════════════════════════════════════════════
+18. REFERENCIAS DESATUALIZADAS (IGNORAR SE CITADAS)
+════════════════════════════════════════════════════════════════════════
+
+- "bot/control/" — NAO existe neste checkout.
+- "AdvantageSupervisor" — hoje e AdvantageGameStatusIntel em bot/intel/strategy/i2_*.
+- "PriorityPolicy" — hoje e i1_PI_prioritization_intel.py em bot/intel/ego/.
+- Qualquer referencia a tasks de defesa em bot/tasks/defense/ para
+  HoldAnchorTask / LandBaseTask / SecureBaseTask — essas foram movidas
+  para bot/tasks/map_control/ no refactor de 2026-03-08.
+- MaintainWallTask em bot/tasks/defense/ — movida para bot/tasks/wall/.
+
+════════════════════════════════════════════════════════════════════════
+19. PROXIMOS PASSOS PRIORITARIOS
+════════════════════════════════════════════════════════════════════════
+
+P0) Validar em 3-5 jogos:
+    - transicao rush -> nat -> midgame sem travar
+    - lane_selected ao longo do tempo
+    - tanks/minas no highground em mapas variados
+    - macro/tech register_count sem oscilacao
+    - freeflow/emergency_dump nao brigando entre si
+
+P1) Transicao de postura pos-rush:
+    - Garantir que ArmyPosture saia de HOLD_MAIN_RAMP para HOLD_NAT_CHOKE
+      ou SECURE_NAT apos rush contido e nat conquistada.
+    - Verificar should_secure_legacy para possivel remocao.
+
+P2) Timing attacks:
+    - macro.desired.timing_attacks existe no contrato mas nao e tratado como
+      erro temporal fechado — implementar ou documentar como WIP.
+
+P3) Tech executor:
+    - Validar que pause/resume do tech nao bloqueia upgrades criticos (STIMPACK).
+
+════════════════════════════════════════════════════════════════════════
+20. CHECKLIST GO/NO-GO ANTES DE CONSIDERAR ESTAVEL
+════════════════════════════════════════════════════════════════════════
+
+[ ] macro register_count cresce por cadence, nao por frame
+[ ] tech register_count cresce por necessidade real
+[ ] sem oscillation rapida de freeflow/gas/expand
+[ ] transicoes de strategic_mode/policy explicaveis a partir de parity + pressure + banks
+[ ] gas workers seguem target do planner
+[ ] sem missing_contract/invalid_contract em loop
+[ ] rush -> nat -> midgame sem travar em 3+ jogos seguidos
+[ ] tanks/minas ficam no highground em nat (nao descem para o choke)
+
+════════════════════════════════════════════════════════════════════════
+21. ENTREGA ESPERADA DO AGENTE
+════════════════════════════════════════════════════════════════════════
+
+1. Diagnostico objetivo: causa raiz + arquivo/linha/chave de Awareness.
+2. Patch pequeno e coerente com o contrato atual.
+3. Validacoes executadas (compile/import + evidencias de log).
+4. Ao citar arquitetura, distinguir claramente:
+   - fato observado no codigo (cite arquivo + linha)
+   - inferencia arquitetural
+   - risco hipotetico
+5. Se a mudanca afeta ownership de memoria, documentar aqui.

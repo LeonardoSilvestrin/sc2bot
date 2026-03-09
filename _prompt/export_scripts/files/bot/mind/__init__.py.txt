@@ -1,0 +1,5 @@
+# bot/mind/__init__.py
+
+from bot.mind.self import RuntimeApp
+
+__all__ = ["RuntimeApp"]

@@ -1,17 +1,19 @@
 # Awareness Bus
 
-Este documento define o contrato da `Awareness`, memoria persistente entre ticks.
+`Awareness` e a memoria persistente entre ticks.
 
-Awareness e o blackboard do runtime:
-- recebe inferencias de Intel
-- recebe estado operacional de Ego, Planners, Tasks e Controls
-- serve como fonte para decisao no tick atual
+Fonte:
+- `bot/mind/awareness.py`
+
+Ela guarda:
+- inferencias de intel
+- estado operacional de planners, ego e tasks
+- cooldowns
+- indices de missoes em execucao
 
 ---
 
-## Modelo de dados
-
-Fonte: `bot/mind/awareness.py`
+## Modelo De Dados
 
 Tipos centrais:
 
@@ -22,9 +24,9 @@ MemoryStore._facts: dict[Key, Fact]
 ```
 
 Semantica:
-- `t`: timestamp em segundos de jogo (`bot.time`)
-- `ttl`: validade do fact em segundos
-- `confidence`: metadado opcional
+- `t`: segundos de jogo (`bot.time`)
+- `ttl`: validade opcional em segundos
+- `confidence`: metadado numerico opcional
 
 API principal:
 - `set(key, value, now, ttl=None, confidence=1.0)`
@@ -35,13 +37,9 @@ API principal:
 - `snapshot(now, prefix=None, max_age=None)`
 - `prune(now, mission_retention_s=120, cooldown_retention_s=60)`
 
-Importante:
-- `get(...)` respeita `ttl` e `max_age`
-- item expirado pode continuar armazenado ate `prune(...)`
-
 ---
 
-## Formato de chave
+## Formato De Chave
 
 Construtor oficial:
 - `K("a", "b", "c") -> ("a", "b", "c")`
@@ -50,155 +48,120 @@ Representacao textual:
 - `a:b:c`
 
 Regra:
-- evitar chaves achatadas em string no write path
-- sempre usar tupla via `K(...)`
+- usar sempre tupla no write path
+- evitar strings achatadas como chave canonica
 
 ---
 
-## Namespaces atuais
+## Recursos Extras Da Classe `Awareness`
 
-### `enemy:*`
+### Eventos
 
-Writers principais:
-- `intel.opening`
-- `intel.enemy_build`
-- `intel.weak_points`
-- `intel.game_parity`
+API:
+- `emit(name, now, data=None)`
+- `tail_events(n=10)`
 
-Chaves relevantes:
+Uso:
+- lifecycle discreto
+- observabilidade
+
+Nao usar para stream de alta frequencia.
+
+### Indice De Proposals Em Execucao
+
+Metodos:
+- `ops_proposal_running(...)`
+- `mark_mission_running(...)`
+- `mark_mission_ended(...)`
+
+Objetivo:
+- evitar scan completo do namespace `ops:mission:*` a cada tick
+
+### Helpers De Scout
+
+Helpers embutidos:
+- `intel_scv_dispatched`
+- `intel_scv_arrived_main`
+- `intel_scanned_enemy_main`
+- `mark_scv_dispatched`
+- `mark_scv_arrived_main`
+- `mark_scanned_enemy_main`
+- `intel_reaper_scout_dispatched`
+- `mark_reaper_scout_dispatched`
+- `mark_reaper_scout_done`
+
+---
+
+## Namespaces Mais Importantes
+
+### Enemy e estrategia
+
 - `enemy:opening:*`
 - `enemy:rush:*`
 - `enemy:aggression:*`
 - `enemy:build:*`
 - `enemy:army:*`
 - `enemy:weak_points:*`
-- `enemy:parity:*`
-
-### `strategy:*`
-
-Writer principal:
-- `intel.game_parity`
-
-Chaves:
 - `strategy:parity:*`
+- `strategy:army:*`
 
-### `macro:*`
+### Geometria e territorio
 
-Writers principais:
-- Intel: `macro:desired:*`, `macro:opening:done*`
-- bootstrap: `macro:opening:selected`, `macro:opening:transition_target`
-- planners e tasks: `macro:exec:*`, `macro:plan:*`, `macro:morph:*`, `macro:mules:*`
+- `intel:frontline:*`
+- `intel:geometry:world:*`
+- `intel:geometry:operational:*`
+- `intel:geometry:sector:*`
+- `intel:territory:defense:*`
 
-Subgrupos:
+### Macro
+
 - `macro:opening:*`
 - `macro:desired:*`
-- `macro:exec:*`
+- `macro:control:*`
 - `macro:plan:*`
+- `macro:exec:*`
+- `macro:gas:*`
 - `macro:morph:*`
 - `macro:mules:*`
+- `tech:exec:*`
 
-### `ops:*`
+### Operacional
 
-Writers principais:
-- `ego`
-- planners
-- tasks
-
-Subgrupos:
 - `ops:mission:<mission_id>:*`
 - `ops:cooldown:<proposal_id>:*`
 - `ops:proposal_running:*`
+- `ops:defense:*`
+- `ops:map_control:*`
 - `ops:harass:*`
+- `ops:wall:*`
 - `ops:macro:*`
 
-### `intel:*`
+### Utilitarios e scouting
 
-Writers:
-- tasks
-- scout
-- intel
-
-Chaves comuns:
-- `intel:scv:*`
 - `intel:scan:*`
 - `intel:scan:by_label:*`
+- `intel:worker_scout:*`
 - `intel:reaper:scout:*`
-- `intel:opening:last_emit_t`
-- `intel:my_comp:last_emit_t`
-
-### `control:*` e `tech:*`
-
-Writers:
-- controls
-- planners
-- tasks
-
-Chaves:
-- `control:priority:*`
-- `control:phase`
-- `control:pressure:*`
-- `tech:exec:*`
-
-### `ego:*`
-
-Writer:
-- `ego`
-
-Chaves:
-- `ego:exec_budget:*`
+- `intel:scv:*`
 
 ---
 
-## Eventos
+## Politica De Retencao
 
-`Awareness.emit(name, now, data)`:
-- salva evento em buffer interno
-- envia para logger como `awareness_event` quando log ativo
+`prune(...)` remove:
 
-Leitura:
-- `tail_events(n=10)`
+1. facts expirados por TTL
+2. arvores `ops:mission:<id>:*` apos `mission_retention_s`
+3. entradas `ops:cooldown:<proposal_id>:*` apos `until + cooldown_retention_s`
 
-Uso recomendado:
-- eventos discretos de lifecycle
-- nao usar como stream de telemetria de alta frequencia
-
----
-
-## Politica de retencao
-
-`MemoryStore.prune(...)` executa:
-1. remocao de facts expirados por TTL
-2. remocao de `ops:mission:<id>:*` apos `mission_retention_s`
-3. remocao de `ops:cooldown:<proposal_id>:*` apos `until + cooldown_retention_s`
-
-Sem `prune`, chaves sem TTL podem crescer indefinidamente.
+Sem `prune`, chaves sem TTL crescem indefinidamente.
 
 ---
 
 ## Invariantes
 
-1. Awareness e persistente entre ticks; Attention nao e.
-2. Escritas devem ser idempotentes no mesmo tick.
-3. Prefixo de chave deve ter owner unico.
-4. Timestamps usam segundos de jogo.
-5. Ausencia de chave e estado valido e deve ter fallback explicito.
-
----
-
-## Anti-patterns
-
-1. Gravar blobs gigantes em `value`.
-2. Reusar prefixo de outro modulo sem owner definido.
-3. Depender de fact expirado sem `max_age`.
-4. Usar Awareness para dado estritamente de tick.
-
----
-
-## Checklist para nova chave
-
-1. Prefixo e owner estao definidos?
-2. Tipo de `value` e estavel?
-3. TTL esta coerente?
-4. Precisa de `last_update_t` sem TTL?
-5. Existe risco de crescimento infinito?
-6. Existe consumidor real?
+1. `Awareness` persiste entre ticks; `Attention` nao.
+2. Prefixo deve ter writer principal claro.
+3. Leitura de sinal velho deve usar `max_age` quando relevante.
+4. Chaves sem TTL precisam de controle explicito de crescimento.
+5. Estado estritamente do tick nao deve ir para `Awareness`.

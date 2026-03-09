@@ -1,0 +1,405 @@
+"""
+Operational Geometry Intel — controla a configuração espacial do mapa.
+
+Responsabilidade:
+    Consumir WorldCompression e decidir:
+    - qual FrontTemplate está ativo agora
+    - quais setores existem, em que modo, com que target_power
+    - quais zonas são reservadas
+    - calcular actual_power por setor (força real presente)
+
+    NÃO comanda unidades. NÃO propõe tasks.
+    Produz a geometria que os planners consomem.
+
+Chaves produzidas:
+    K("intel", "geometry", "operational", "snapshot")  → dict completo
+    K("intel", "geometry", "operational", "template")  → str nome do template
+    K("intel", "geometry", "sector", sector_id)        → SectorState dict por setor
+
+Histerese:
+    O template só muda quando a diferença nos sinais for suficientemente grande
+    E respeitando dwell_min_s para evitar pinga-ponga.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Optional
+
+from sc2.ids.unit_typeid import UnitTypeId as U
+from sc2.position import Point2
+
+from bot.intel.geometry.sector_graph import SectorGraph
+from bot.intel.geometry.sector_types import (
+    FrontTemplate,
+    OccupancyCap,
+    SectorId,
+    SectorMode,
+    SectorPriority,
+    SectorState,
+    template_sector_config,
+)
+from bot.mind.awareness import Awareness, K
+
+
+@dataclass(frozen=True)
+class OperationalGeometryConfig:
+    ttl_s: float = 4.0
+    template_dwell_min_s: float = 8.0   # Tempo mínimo antes de trocar de template
+    template_hysteresis:  float = 0.15  # Diferença mínima nos sinais para mudar template
+
+    # Pesos de unidades para calcular actual_power por setor
+    # (mesmo sistema da frontline_intel mas mais completo)
+
+
+# ---------------------------------------------------------------------------
+# Pesos de força por unidade
+# ---------------------------------------------------------------------------
+
+_UNIT_POWER: dict[U, float] = {
+    U.MARINE: 1.0,
+    U.MARAUDER: 1.45,
+    U.REAPER: 1.0,
+    U.HELLION: 0.85,
+    U.CYCLONE: 1.8,
+    U.SIEGETANK: 3.0,
+    U.SIEGETANKSIEGED: 4.5,
+    U.THOR: 3.2,
+    U.THORAP: 3.2,
+    U.MEDIVAC: 0.5,
+    U.WIDOWMINE: 2.0,
+    U.WIDOWMINEBURROWED: 3.2,
+    U.GHOST: 2.0,
+    U.VIKINGFIGHTER: 1.5,
+    U.VIKINGASSAULT: 1.5,
+    U.BUNKER: 4.0,
+    U.PLANETARYFORTRESS: 6.0,
+}
+
+_WORKER_TYPES = {U.SCV, U.PROBE, U.DRONE, U.MULE}
+
+
+def _actual_power_near(bot, *, center: Point2, radius: float) -> float:
+    """Calcula força própria (combate) próxima de um ponto."""
+    total = 0.0
+    for unit in list(getattr(bot, "units", []) or []):
+        try:
+            if unit.type_id in _WORKER_TYPES:
+                continue
+            w = float(_UNIT_POWER.get(unit.type_id, 0.0))
+            if w <= 0.0:
+                continue
+            if not bool(getattr(unit, "is_ready", True)):
+                continue
+            if float(unit.distance_to(center)) <= float(radius):
+                total += w
+        except Exception:
+            continue
+    for struct in list(getattr(bot, "structures", []) or []):
+        try:
+            w = float(_UNIT_POWER.get(struct.type_id, 0.0))
+            if w <= 0.0:
+                continue
+            if float(struct.distance_to(center)) <= float(radius):
+                total += w
+        except Exception:
+            continue
+    return round(float(total), 2)
+
+
+# ---------------------------------------------------------------------------
+# Selector de template
+# ---------------------------------------------------------------------------
+
+_TEMPLATE_URGENCY: dict[str, int] = {
+    FrontTemplate.HOLD_MAIN.value:            5,
+    FrontTemplate.TURTLE_NAT.value:           4,
+    FrontTemplate.STABILIZE_AND_EXPAND.value: 3,
+    FrontTemplate.CONTAIN.value:              2,
+    FrontTemplate.PREP_PUSH.value:            1,
+}
+
+
+def _select_template(compression: dict, *, last_template: Optional[str], last_switch_t: float, now: float, cfg: OperationalGeometryConfig) -> FrontTemplate:
+    """
+    Seleciona o FrontTemplate baseado no vetor de compressão.
+
+    Histerese dupla:
+    - Temporal: template_dwell_min_s — mínimo de tempo antes de qualquer troca
+    - De urgência: template_hysteresis — só muda para template MENOS urgente se a diferença
+      de urgência entre desired e current for maior que a margem configurada.
+      Mudanças para template MAIS urgente são sempre permitidas após dwell.
+
+    Regras de prioridade (maior urgência primeiro):
+    1. Main sob ataque → HOLD_MAIN (sempre, imediato)
+    2. Rush e pressão na nat pesada → TURTLE_NAT
+    3. Nat comprometida/perdida → TURTLE_NAT ou HOLD_MAIN
+    4. Rush leve → TURTLE_NAT
+    5. Nat sem pressão, poderíamos expandir → STABILIZE
+    6. Nat tomada, pressão baixa, vantagem → CONTAIN ou PREP_PUSH
+    7. Pressão moderada → STABILIZE
+    8. Pressão alta → TURTLE_NAT
+    """
+    pressure_main = float(compression.get("pressure_main", 0.0) or 0.0)
+    pressure_nat = float(compression.get("pressure_nat", 0.0) or 0.0)
+    rush_active = bool(compression.get("rush_active", False))
+    nat_taken = bool(compression.get("nat_taken", False))
+    bases_now = int(compression.get("bases_now", 0) or 0)
+    army_strength_rel = float(compression.get("army_strength_rel", 0.0) or 0.0)
+    push_commit = float(compression.get("push_commit", 0.0) or 0.0)
+    nat_ground_state = str(compression.get("nat_ground_state", "CLEAR") or "CLEAR").upper()
+    main_ground_state = str(compression.get("main_ground_state", "CLEAR") or "CLEAR").upper()
+    army_supply = int(compression.get("army_supply", 0) or 0)
+
+    # --- Derivação do template desejado ---
+    # 1. Main sob ataque sério — emergência, bypass de histerese temporal
+    if main_ground_state in {"COMPROMISED", "LOST"}:
+        return FrontTemplate.HOLD_MAIN
+
+    # 2. Rush pesado OU nat comprometida/perdida
+    if rush_active and float(pressure_nat) >= 0.6:
+        desired = FrontTemplate.TURTLE_NAT
+    elif nat_ground_state in {"COMPROMISED", "LOST"}:
+        desired = FrontTemplate.HOLD_MAIN if float(pressure_main) >= 0.4 else FrontTemplate.TURTLE_NAT
+    # 3. Rush leve — segurar nat
+    elif rush_active:
+        desired = FrontTemplate.TURTLE_NAT
+    # 4. Nat sem pressão, ainda não tomada → expandir
+    elif not nat_taken and int(army_supply) >= 6 and float(pressure_nat) < 0.3:
+        desired = FrontTemplate.STABILIZE_AND_EXPAND
+    # 5. Nat tomada, pressão baixa
+    elif nat_taken and float(pressure_nat) < 0.25:
+        if float(push_commit) >= 0.4 and int(army_supply) >= 14:
+            desired = FrontTemplate.PREP_PUSH
+        elif float(army_strength_rel) >= 0.25 and int(bases_now) >= 2 and int(army_supply) >= 12:
+            desired = FrontTemplate.CONTAIN
+        else:
+            desired = FrontTemplate.STABILIZE_AND_EXPAND
+    # 6. Pressão moderada
+    elif float(pressure_nat) < 0.5:
+        desired = FrontTemplate.STABILIZE_AND_EXPAND
+    # 7. Pressão alta
+    else:
+        desired = FrontTemplate.TURTLE_NAT
+
+    # --- Sem template anterior → usa desired diretamente ---
+    if last_template is None:
+        return desired
+
+    try:
+        current = FrontTemplate(str(last_template))
+    except ValueError:
+        return desired
+
+    # Se já está no template desejado, não precisa trocar
+    if current == desired:
+        return current
+
+    # --- Histerese temporal: dwell mínimo antes de qualquer troca ---
+    elapsed = float(now) - float(last_switch_t)
+    can_switch = elapsed >= float(cfg.template_dwell_min_s)
+    if not can_switch:
+        return current
+
+    # --- Histerese de urgência ---
+    # Mudanças para template MAIS urgente: permitidas imediatamente após dwell
+    # Mudanças para template MENOS urgente: só se a diferença de urgência for > hysteresis steps
+    current_urgency = int(_TEMPLATE_URGENCY.get(current.value, 3))
+    desired_urgency = int(_TEMPLATE_URGENCY.get(desired.value, 3))
+
+    if desired_urgency >= current_urgency:
+        # Mais urgente ou igual → troca imediata (após dwell)
+        return desired
+
+    # Menos urgente → aplica margem de histerese
+    # Só troca se a diferença de urgência for > cfg.template_hysteresis (em unidades de urgência)
+    urgency_drop = float(current_urgency - desired_urgency)
+    hysteresis_steps = max(1.0, float(cfg.template_hysteresis) * 10.0)  # 0.15 → ~1.5 steps
+    if float(urgency_drop) > float(hysteresis_steps):
+        return desired
+
+    # Diferença pequena → mantém template atual
+    return current
+
+
+# ---------------------------------------------------------------------------
+# Singleton do SectorGraph (singleton por processo, não por instância)
+# ---------------------------------------------------------------------------
+
+_SECTOR_GRAPH = SectorGraph()
+
+
+# ---------------------------------------------------------------------------
+# Função principal
+# ---------------------------------------------------------------------------
+
+def derive_operational_geometry(
+    bot,
+    *,
+    awareness: Awareness,
+    now: float,
+    cfg: OperationalGeometryConfig = OperationalGeometryConfig(),
+) -> None:
+    """
+    Deriva a geometria operacional ativa e persiste em awareness.
+
+    Deve ser chamado APÓS:
+        - i5_frontline_intel
+        - i1_world_compression_intel
+    """
+    # Garante que o SectorGraph está computado
+    _SECTOR_GRAPH.compute(bot)
+
+    # Lê compressão
+    compression = awareness.mem.get(K("intel", "geometry", "world", "compression"), now=now, default={}) or {}
+    if not isinstance(compression, dict):
+        compression = {}
+
+    # Lê estado anterior para histerese
+    prev_snap = awareness.mem.get(K("intel", "geometry", "operational", "snapshot"), now=now, default={}) or {}
+    if not isinstance(prev_snap, dict):
+        prev_snap = {}
+    last_template = prev_snap.get("template")
+    last_switch_t = float(prev_snap.get("template_switched_at", 0.0) or 0.0)
+
+    # Seleciona template
+    template = _select_template(
+        compression,
+        last_template=last_template,
+        last_switch_t=last_switch_t,
+        now=now,
+        cfg=cfg,
+    )
+
+    # Detecta troca de template
+    template_switched = (last_template != template.value)
+    if template_switched:
+        last_switch_t = float(now)
+
+    # Obtém config de setores para o template
+    sector_cfg = template_sector_config(template)
+
+    # Constrói SectorState para cada setor
+    sector_states: dict[str, dict] = {}
+    sector_radii = {
+        SectorId.HOME_CORE:      18.0,
+        SectorId.MAIN_RAMP:      10.0,
+        SectorId.RETREAT_BUFFER: 12.0,
+        SectorId.NAT_FOOTPRINT:  10.0,
+        SectorId.NAT_RING:       14.0,
+        SectorId.NAT_CHOKE:      12.0,
+        SectorId.MID_APPROACH:   14.0,
+        SectorId.WATCH_AREA:     12.0,
+        SectorId.THIRD_ENTRY:    12.0,
+        SectorId.PUSH_STAGING:   14.0,
+    }
+
+    for sector_id, (mode, cap, priority, target_power) in sector_cfg.items():
+        pos = _SECTOR_GRAPH.get(sector_id)
+        radius = float(sector_radii.get(sector_id, 12.0))
+
+        # Calcula actual_power (força real presente)
+        actual_power = 0.0
+        if pos is not None and mode != SectorMode.RESERVED and mode != SectorMode.NONE:
+            actual_power = _actual_power_near(bot, center=pos, radius=radius)
+
+        state = SectorState(
+            sector_id=sector_id,
+            mode=mode,
+            target_power=float(target_power),
+            actual_power=float(actual_power),
+            cap=cap,
+            priority=priority,
+            anchor_pos=pos,
+            dwell_min_s=4.0,
+            hysteresis=1.5,
+        )
+        sector_states[sector_id.value] = state.to_dict()
+
+        # Persiste setor individualmente para leitura rápida pelos planners
+        awareness.mem.set(
+            K("intel", "geometry", "sector", sector_id.value),
+            value=state.to_dict(),
+            now=now,
+            ttl=float(cfg.ttl_s),
+        )
+
+    # Identifica o setor principal (MASS_HOLD)
+    bulk_sector = None
+    bulk_anchor_pos = None
+    for sid_str, sdict in sector_states.items():
+        if sdict.get("mode") == SectorMode.MASS_HOLD.value:
+            bulk_sector = sid_str
+            ap = sdict.get("anchor_pos")
+            if isinstance(ap, dict):
+                try:
+                    bulk_anchor_pos = {"x": float(ap["x"]), "y": float(ap["y"])}
+                except Exception:
+                    pass
+            break
+
+    # Calcula max_detach_supply = soma de target_power de setores não-MASS_HOLD ativos
+    max_detach = 0.0
+    for sdict in sector_states.values():
+        mode_str = str(sdict.get("mode", "NONE"))
+        if mode_str not in {SectorMode.NONE.value, SectorMode.RESERVED.value, SectorMode.MASS_HOLD.value}:
+            max_detach += float(sdict.get("target_power", 0.0) or 0.0)
+    max_detach_supply = int(min(max_detach, 16.0))
+
+    # Zonas reservadas — setores com mode=RESERVED publicados como lista de {center, radius}
+    reserved_zones = []
+    for sid_str, sdict in sector_states.items():
+        if str(sdict.get("mode", "")) == SectorMode.RESERVED.value:
+            ap = sdict.get("anchor_pos")
+            if isinstance(ap, dict):
+                reserved_zones.append({
+                    "sector_id": sid_str,
+                    "center": ap,
+                    "radius": float(next((v for k, v in sector_radii.items() if k.value == sid_str), 10.0)),
+                })
+
+    # Custo de realocação: inversamente proporcional ao template_dwell restante
+    # Alta inércia no início do dwell, decresce conforme se aproxima da janela de troca
+    elapsed_since_switch = max(0.0, float(now) - float(last_switch_t))
+    dwell_progress = min(1.0, float(elapsed_since_switch) / max(1.0, float(cfg.template_dwell_min_s)))
+    # 1.0 = muito caro mover (recém trocou), 0.0 = livre para mover (dwell expirou)
+    reallocation_cost = round(max(0.0, 1.0 - float(dwell_progress)), 3)
+
+    snapshot = {
+        "updated_at":        float(now),
+        "template":          template.value,
+        "template_switched": bool(template_switched),
+        "template_switched_at": float(last_switch_t),
+        "bulk_sector":       bulk_sector,
+        "bulk_anchor_pos":   bulk_anchor_pos,
+        "max_detach_supply": int(max_detach_supply),
+        "sector_states":     sector_states,
+        "reserved_zones":    reserved_zones,
+        "reallocation_cost": float(reallocation_cost),
+    }
+
+    awareness.mem.set(
+        K("intel", "geometry", "operational", "snapshot"),
+        value=snapshot,
+        now=now,
+        ttl=float(cfg.ttl_s),
+    )
+    awareness.mem.set(
+        K("intel", "geometry", "operational", "template"),
+        value=template.value,
+        now=now,
+        ttl=float(cfg.ttl_s),
+    )
+    # Bulk anchor também publicado de forma flat para compatibilidade com planners existentes
+    if bulk_anchor_pos is not None:
+        awareness.mem.set(
+            K("intel", "geometry", "operational", "bulk_anchor"),
+            value=bulk_anchor_pos,
+            now=now,
+            ttl=float(cfg.ttl_s),
+        )
+    awareness.mem.set(
+        K("intel", "geometry", "operational", "max_detach_supply"),
+        value=int(max_detach_supply),
+        now=now,
+        ttl=float(cfg.ttl_s),
+    )

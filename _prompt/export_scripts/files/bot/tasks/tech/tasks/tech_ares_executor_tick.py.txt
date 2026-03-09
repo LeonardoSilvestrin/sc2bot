@@ -1,0 +1,153 @@
+# bot/tasks/tech/tasks/tech_ares_executor_tick.py
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from ares.behaviors.macro.build_structure import BuildStructure
+from ares.behaviors.macro.macro_plan import MacroPlan
+from ares.behaviors.macro.upgrade_controller import UpgradeController
+from sc2.dicts.unit_research_abilities import RESEARCH_INFO
+from sc2.dicts.upgrade_researched_from import UPGRADE_RESEARCHED_FROM
+from sc2.ids.unit_typeid import UnitTypeId as U
+from sc2.ids.upgrade_id import UpgradeId as Up
+
+from bot.devlog import DevLogger
+from bot.mind.attention import Attention
+from bot.mind.awareness import Awareness, K
+from bot.tasks.base_task import BaseTask, TaskResult, TaskTick
+
+
+@dataclass
+class TechAresExecutorTick(BaseTask):
+    awareness: Awareness
+    log: DevLogger | None = None
+    apply_min_interval_s: float = 1.0
+
+    _last_sig: str = ""
+    _next_apply_at: float = 0.0
+    _apply_count: int = 0
+
+    def __init__(
+        self,
+        *,
+        awareness: Awareness,
+        log: DevLogger | None = None,
+        apply_min_interval_s: float = 1.0,
+    ):
+        super().__init__(task_id="tech_ares_executor", domain="TECH_EXECUTOR", commitment=8)
+        self.awareness = awareness
+        self.log = log
+        self.apply_min_interval_s = float(apply_min_interval_s)
+        self._last_sig = ""
+        self._next_apply_at = 0.0
+        self._apply_count = 0
+
+    @staticmethod
+    def _read_upgrades(raw: list[str]) -> list:
+        out: list = []
+        for name in raw:
+            up = getattr(Up, str(name), None)
+            if up is None:
+                continue
+            researched_from = UPGRADE_RESEARCHED_FROM.get(up, None)
+            if researched_from is None:
+                continue
+            if researched_from not in RESEARCH_INFO:
+                continue
+            if up not in RESEARCH_INFO[researched_from]:
+                continue
+            out.append(up)
+        return out
+
+    @staticmethod
+    def _read_structures(raw: dict[str, int]) -> dict:
+        out: dict = {}
+        for name, count in raw.items():
+            uid = getattr(U, str(name), None)
+            if uid is None:
+                continue
+            try:
+                n = int(count)
+            except Exception:
+                continue
+            if n > 0:
+                out[uid] = int(n)
+        return out
+
+    @staticmethod
+    def _sig(enable: bool, upgrades: list[str], structures: dict[str, int]) -> str:
+        ups = ",".join(sorted(str(x) for x in upgrades))
+        sts = ",".join(f"{k}:{int(v)}" for k, v in sorted(structures.items(), key=lambda kv: kv[0]))
+        return f"en:{int(enable)}|u:{ups}|s:{sts}"
+
+    async def on_step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult:
+        bound_err = self.require_mission_bound()
+        if bound_err is not None:
+            return bound_err
+
+        now = float(tick.time)
+        bor = getattr(bot, "build_order_runner", None)
+        if bor is not None and not bool(getattr(bor, "build_completed", False)):
+            return TaskResult.running("opening_buildorder_active")
+
+        enable = bool(self.awareness.mem.get(K("tech", "exec", "enable"), now=now, default=False))
+        if not enable:
+            return TaskResult.running("tech_exec_disabled")
+
+        cooldown_until = float(self.awareness.mem.get(K("tech", "exec", "cooldown_until"), now=now, default=0.0) or 0.0)
+        if now < cooldown_until:
+            return TaskResult.running("tech_executor_cooldown")
+
+        raw_targets = self.awareness.mem.get(K("tech", "exec", "targets"), now=now, default={}) or {}
+        raw_upgrades = list(raw_targets.get("upgrades", [])) if isinstance(raw_targets, dict) else []
+        raw_structures = dict(raw_targets.get("structures", {})) if isinstance(raw_targets, dict) else {}
+
+        upgrades = self._read_upgrades(raw_upgrades)
+        structures = self._read_structures(raw_structures)
+
+        sig = self._sig(enable=enable, upgrades=[str(x.name) for x in upgrades], structures={str(k.name): int(v) for k, v in structures.items()})
+        if not upgrades and not structures:
+            return TaskResult.running("tech_targets_empty")
+
+        sig_changed = str(sig) != str(self._last_sig)
+        plan = MacroPlan()
+        for uid, to_count in structures.items():
+            plan.add(
+                BuildStructure(
+                    base_location=bot.start_location,
+                    structure_id=uid,
+                    to_count=int(to_count),
+                    upgrade_structure=True,
+                )
+            )
+        if upgrades:
+            plan.add(
+                UpgradeController(
+                    upgrade_list=list(upgrades),
+                    base_location=bot.start_location,
+                    auto_tech_up_enabled=True,
+                    prioritize=False,
+                )
+            )
+        bot.register_behavior(plan)
+
+        self._last_sig = str(sig)
+        self._next_apply_at = float(now) + max(0.1, float(self.apply_min_interval_s))
+        self._apply_count += 1
+        self.awareness.mem.set(K("tech", "exec", "register_count"), value=int(self._apply_count), now=now, ttl=None)
+
+        if self.log is not None and (
+            (int(tick.iteration) % 22 == 0) or bool(sig_changed)
+        ):
+            self.log.emit(
+                "tech_executor_applied",
+                {
+                    "iter": int(tick.iteration),
+                    "t": round(float(now), 2),
+                    "apply_count": int(self._apply_count),
+                    "upgrade_count": int(len(upgrades)),
+                    "structure_targets": {str(uid.name): int(v) for uid, v in structures.items()},
+                },
+            )
+        return TaskResult.running("tech_executor_plan_registered")

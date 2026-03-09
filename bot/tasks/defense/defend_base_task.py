@@ -9,7 +9,7 @@ from sc2.position import Point2
 
 from bot.devlog import DevLogger
 from bot.mind.attention import Attention
-from bot.mind.awareness import Awareness
+from bot.mind.awareness import Awareness, K
 from bot.tasks.base_task import BaseTask, TaskResult, TaskTick
 
 
@@ -52,6 +52,50 @@ class DefendBaseTask(BaseTask):
         if th is not None:
             return th.position
         return self.base_pos
+
+    def _territorial_zone(self, bot, *, now: float, base_pos: Point2) -> dict:
+        if self.awareness is None:
+            return {}
+        snap = self.awareness.mem.get(K("intel", "territory", "defense", "snapshot"), now=now, default={}) or {}
+        if not isinstance(snap, dict):
+            return {}
+        zones = snap.get("zones", {})
+        if not isinstance(zones, dict):
+            return {}
+        try:
+            if float(base_pos.distance_to(bot.start_location)) <= 10.0:
+                return dict(zones.get("main_ramp", {}) or {})
+            own_nat = bot.mediator.get_own_nat
+            if own_nat is not None and float(base_pos.distance_to(own_nat)) <= 10.0:
+                return dict(zones.get("natural_front", {}) or {})
+        except Exception:
+            pass
+        return {}
+
+    @staticmethod
+    def _slot_point(slot: dict | None) -> Point2 | None:
+        if not isinstance(slot, dict):
+            return None
+        payload = slot.get("position")
+        if not isinstance(payload, dict):
+            return None
+        try:
+            return Point2((float(payload["x"]), float(payload["y"])))
+        except Exception:
+            return None
+
+    def _slot_positions(self, zone: dict, *, roles: set[str]) -> list[Point2]:
+        out: list[Point2] = []
+        for slot in list(zone.get("active_slots", []) or []):
+            try:
+                if str(slot.get("role", "") or "") not in roles:
+                    continue
+                pos = self._slot_point(slot)
+                if pos is not None:
+                    out.append(pos)
+            except Exception:
+                continue
+        return out
 
     @staticmethod
     def _mineral_line_center(bot, base_pos: Point2) -> Point2:
@@ -288,7 +332,7 @@ class DefendBaseTask(BaseTask):
                 out.append(Point2((float(center.x) + (r * math.cos(ang)), float(center.y) + (r * math.sin(ang)))))
         return out
 
-    def _handle_tank(self, *, unit, anchor: Point2, threat: Point2, enemy_near, local_pressure: bool) -> bool:
+    def _handle_tank(self, *, bot, unit, anchor: Point2, threat: Point2, enemy_near, local_pressure: bool) -> bool:
         if unit.type_id == U.SIEGETANKSIEGED:
             # Só desfaz siege se estiver longe demais E sem inimigos — threshold generoso (8.0)
             # para evitar oscillar quando o anchor muda poucos tiles entre ticks
@@ -398,9 +442,16 @@ class DefendBaseTask(BaseTask):
             return TaskResult.failed("no_defenders_alive")
 
         base_pos = self._resolve_base_pos(bot)
+        zone = self._territorial_zone(bot, now=float(tick.time), base_pos=base_pos)
         mineral_center = self._mineral_line_center(bot, base_pos)
         tank_anchor = self._highground_anchor(bot, base_pos=base_pos, mineral_center=mineral_center)
         defense_anchor = self._defense_anchor(bot, base_pos=base_pos, tank_anchor=tank_anchor)
+        tank_slots = self._slot_positions(zone, roles={"siege_anchor", "fallback_anchor"})
+        screen_slots = self._slot_positions(zone, roles={"screen_front", "screen_left", "screen_right", "rear_support"})
+        if tank_slots:
+            tank_anchor = tank_slots[0]
+        if screen_slots:
+            defense_anchor = screen_slots[0]
         mine_slots = self._mine_slots(mineral_center)
         threat = self.threat_pos or attention.combat.primary_threat_pos or defense_anchor
         enemy_near_base = bot.enemy_units.closer_than(22.0, base_pos)
@@ -432,12 +483,17 @@ class DefendBaseTask(BaseTask):
 
         issued = False
         mine_idx = 0
+        tank_idx = 0
+        general_idx = 0
         for u in units:
             if u.type_id in {U.SIEGETANK, U.SIEGETANKSIEGED}:
                 enemy_near = bot.enemy_units.closer_than(13.0, u.position)
+                anchor = tank_slots[min(int(tank_idx), len(tank_slots) - 1)] if tank_slots else tank_anchor
+                tank_idx += 1
                 issued = self._handle_tank(
+                    bot=bot,
                     unit=u,
-                    anchor=tank_anchor,
+                    anchor=anchor,
                     threat=threat,
                     enemy_near=enemy_near,
                     local_pressure=bool(int(enemy_near_base.amount) > 0 or int(base_urgency) > 0),
@@ -448,10 +504,12 @@ class DefendBaseTask(BaseTask):
                 mine_idx += 1
                 issued = self._handle_mine(unit=u, slot=slot, threat=threat, enemy_near_base=enemy_near_base) or issued
                 continue
+            hold_anchor = screen_slots[min(int(general_idx), len(screen_slots) - 1)] if screen_slots else defense_anchor
+            general_idx += 1
             issued = self._handle_general(
                 unit=u,
                 base_pos=base_pos,
-                hold_anchor=defense_anchor,
+                hold_anchor=hold_anchor,
                 threat=threat,
                 enemy_near_base=enemy_near_base,
                 bunkers=bunkers,

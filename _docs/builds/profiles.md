@@ -1,6 +1,20 @@
 # Perfis de Build
 
-Voce pode continuar usando `PROFILE` legado ou migrar para o formato compacto.
+O bot aceita dois formatos:
+- formato canonico atual: profile compacto por `modes`
+- formato em selecao de cenario: um profile de fase com `scenarios`
+
+O arquivo de expansao e:
+- `bot/builds/profile_compact.py`
+
+A resolucao final fica em:
+- `bot/intel/macro/desired_intel.py`
+
+---
+
+## Formato Compacto
+
+Exemplo:
 
 ```python
 PROFILE = {
@@ -21,59 +35,119 @@ PROFILE = {
         "PUNISH": {...},
         "RUSH_RESPONSE": {...},
     },
-    "transition_overrides": {
-        "BANSHEE": {
-            "priority_standard": ["BANSHEE", "HELLION", "SIEGETANK", "MARINE", "MARAUDER", "MEDIVAC"]
-        }
-    },
+    "transition_overrides": {...},
     "scenario_overrides_by_phase": {
-        "OPENING": {
-            "AGGRESSIVE": {
-                "comp_rush_response": {"MARINE": 0.60, "SIEGETANK": 0.22, "HELLION": 0.12, "MEDIVAC": 0.06}
-            },
-            "NORMAL": {},
-            "GREEDY": {
-                "comp_punish": {"MARINE": 0.46, "MARAUDER": 0.22, "SIEGETANK": 0.18, "MEDIVAC": 0.14}
-            }
-        },
-        "MIDGAME": {"AGGRESSIVE": {}, "NORMAL": {}, "GREEDY": {}},
-        "LATEGAME": {"AGGRESSIVE": {}, "NORMAL": {}, "GREEDY": {}}
+        "OPENING": {"AGGRESSIVE": {...}, "NORMAL": {...}, "GREEDY": {...}},
+        "MIDGAME": {"AGGRESSIVE": {...}, "NORMAL": {...}, "GREEDY": {...}},
+        "LATEGAME": {"AGGRESSIVE": {...}, "NORMAL": {...}, "GREEDY": {...}},
     },
+    "seed": {...},
 }
 ```
 
-O engine expande isso para o schema legado esperado por `build_catalog`.
+O expansor converte isso para o contrato legado esperado pelos consumidores antigos:
+- `comp_<mode>`
+- `priority_<mode>`
+- `*_by_mode`
 
 ---
 
-## Guia rapido
+## Formato Com `scenarios`
 
-- `modes.<MODE>.comp`: pesos da composicao alvo
-- `modes.<MODE>.priority`: desempate entre unidades buildaveis
-- `army_supply_milestones`: expectativa de army supply por tempo
-- `unit_count_milestones`: expectativa de unidades por tempo
-- `production_structure_targets`: baseline duro de producao
-- `production_scale`: crescimento por base
-- `tech_timing_milestones`: upgrades e tech por tempo
-- `scenario_overrides_by_phase.<PHASE>.<SCENARIO>`: override opcional apos transicao
+O formato novo tambem aceita um profile de fase assim:
 
----
+```python
+PROFILE = {
+    "scenarios": {
+        "AGGRESSIVE": {...},
+        "NORMAL": {...},
+        "GREEDY": {...},
+    },
+    "transition_overrides": {...},
+    "scenario_overrides_by_phase": {...},
+}
+```
 
-## Contrato de runtime
-
-- Intel resolve fase como `OPENING | EARLY | MID | LATE`
-- Intel resolve scenario inimigo como `AGGRESSIVE | NORMAL | GREEDY`
-
-Mapeamento para profiles:
-- `OPENING -> OPENING`
-- `EARLY/MID -> MIDGAME`
-- `LATE -> LATEGAME`
-
-O resolver pode aplicar override por fase mapeada e scenario.
+Regra importante:
+- `expand_compact_profile(...)` falha se receber `scenarios` sem que um cenario ja tenha sido selecionado
+- a selecao do cenario precisa acontecer antes em `resolve_build_profile(...)`
 
 ---
 
-## Afinacao pratica
+## Resolucao Em Runtime
 
-- Se a terceira base sai tarde, reduza pressao inicial ou aumente `production_scale`
-- Se o exercito sai tarde, aumente prioridade das core units e antecipe milestones
+Pipeline atual em `derive_macro_mode_intel(...)`:
+
+1. resolve opening e transition target ativos
+2. determina fase do jogo: `OPENING | EARLY | MID | LATE`
+3. mapeia fase para profile:
+   - `OPENING -> OPENING`
+   - `EARLY/MID -> MIDGAME`
+   - `LATE -> LATEGAME`
+4. hoje o `scenario` operacional e fixado como `NORMAL`
+5. carrega o profile da opening e da fase
+6. aplica `transition_overrides`
+7. aplica `scenario_overrides_by_phase` quando houver
+8. aplica adaptacao dinamica via `seed`
+
+---
+
+## Adaptacao Dinamica Via `seed`
+
+O profile pode carregar um bloco `seed` consumido por `_apply_seed_adaptive_profile(...)`.
+
+Ele ajusta em runtime:
+- `army_supply_milestones`
+- `unit_count_milestones`
+- `production_scale`
+- `production_structure_targets`
+
+Sinais usados:
+- flood mineral (`minerals` vs `macro:control:bank_target_minerals`)
+- pressao de combate
+- rush/aggression state
+
+Objetivo:
+- evitar profile estatico demais
+- acelerar producao sob flood
+- segurar estrutura quando a pressao esta alta
+
+---
+
+## Campos Publicados Em Awareness
+
+`derive_my_army_composition_intel(...)` publica, entre outros:
+- `macro:desired:mode`
+- `macro:desired:phase`
+- `macro:desired:scenario`
+- `macro:desired:signals`
+- `macro:desired:comp`
+- `macro:desired:priority_units`
+- `macro:desired:bank_target_minerals`
+- `macro:desired:bank_target_gas`
+- `macro:desired:army_supply_milestones`
+- `macro:desired:unit_count_milestones`
+- `macro:desired:timing_attacks`
+- `macro:desired:production_structure_targets`
+- `macro:desired:production_scale`
+- `macro:desired:addon_targets`
+- `macro:desired:tech_structure_targets`
+- `macro:desired:tech_targets`
+
+---
+
+## Regras E Restricoes
+
+1. `bank_setpoint_minerals` e `bank_setpoint_gas` estao obsoletos e geram erro.
+2. `bank_minerals` e `bank_gas` tambem sao rejeitados.
+3. Todo profile expandido precisa conter as chaves obrigatorias listadas em `_REQUIRED_KEYS`.
+4. `transition_overrides` e `scenario_overrides_by_phase` sao merges, nao substituicao bruta.
+
+---
+
+## Afinacao Pratica
+
+- Se o bot boia mineral cedo, ajuste `seed.adapt_gain_production` ou targets de producao.
+- Se a opening mecha esta quebrando contra rush, ajuste `RushDefenseOpen` e floors de barracks/factory.
+- Se timings de ataque estao entrando cedo demais, revise `timing_attacks` e `army_supply_milestones`.
+- Se o profile precisa comportamento por fase, prefira staged profile por opening em vez de logica especial no planner.

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import ClassVar
+from typing import ClassVar, Optional
 
 from sc2.ids.unit_typeid import UnitTypeId as U
 from sc2.position import Point2
 
 from bot.devlog import DevLogger
+from bot.intel.geometry.sector_types import SectorId, SectorMode
 from bot.intel.strategy.i3_army_posture_intel import ArmyPosture
 from bot.mind.attention import Attention, BaseThreatSnapshot
 from bot.mind.awareness import Awareness, K
@@ -25,6 +26,9 @@ from bot.tasks.defense.reaper_nat_patrol_task import ReaperPatrolTask
 class _DefendPickPolicy:
     objective: Point2
     unit_type: U
+    bulk_anchor_pos: Optional[Point2] = None
+    defense_overflow: bool = False
+    bulk_exclusion_radius: float = 14.0
     name: str = "defense.base.nearest_objective.v1"
 
     def allow(self, unit, *, bot, attention, now: float) -> bool:
@@ -32,7 +36,17 @@ class _DefendPickPolicy:
             return False
         if not bool(getattr(unit, "is_ready", False)):
             return False
-        return float(getattr(unit, "health_percentage", 1.0) or 1.0) >= 0.30
+        if float(getattr(unit, "health_percentage", 1.0) or 1.0) < 0.30:
+            return False
+        # Invariante 6: unidades no setor MASS_HOLD não são elegíveis para defense
+        # a menos que defense_overflow=True (emergência real)
+        if not self.defense_overflow and self.bulk_anchor_pos is not None:
+            try:
+                if float(unit.distance_to(self.bulk_anchor_pos)) <= float(self.bulk_exclusion_radius):
+                    return False
+            except Exception:
+                pass
+        return True
 
     def score(self, unit, *, bot, attention, now: float) -> float:
         try:
@@ -713,7 +727,7 @@ class DefensePlanner:
         U.SCV: 1,
     }
 
-    def _requirements(self, *, bot, th: BaseThreatSnapshot, objective: Point2, rush_ctx: dict[str, float | str | bool], max_detach_supply: int = 999) -> list[UnitRequirement]:
+    def _requirements(self, *, bot, th: BaseThreatSnapshot, objective: Point2, rush_ctx: dict[str, float | str | bool], max_detach_supply: int = 999, bulk_anchor_pos: Optional[Point2] = None, defense_overflow: bool = False) -> list[UnitRequirement]:
         urgency = int(th.urgency)
         enemy_count = int(th.enemy_count)
         outer_base = self._is_outer_base(bot, base_pos=th.th_pos)
@@ -764,7 +778,7 @@ class DefensePlanner:
                     UnitRequirement(
                         unit_type=U.SIEGETANK,
                         count=int(take_unsieged),
-                        pick_policy=_DefendPickPolicy(objective=objective, unit_type=U.SIEGETANK),
+                        pick_policy=_DefendPickPolicy(objective=objective, unit_type=U.SIEGETANK, bulk_anchor_pos=bulk_anchor_pos, defense_overflow=defense_overflow),
                         required=True,
                     )
                 )
@@ -777,7 +791,7 @@ class DefensePlanner:
                     UnitRequirement(
                         unit_type=U.SIEGETANKSIEGED,
                         count=int(take_sieged),
-                        pick_policy=_DefendPickPolicy(objective=objective, unit_type=U.SIEGETANKSIEGED),
+                        pick_policy=_DefendPickPolicy(objective=objective, unit_type=U.SIEGETANKSIEGED, bulk_anchor_pos=bulk_anchor_pos, defense_overflow=defense_overflow),
                         required=len(reqs) == 0,
                     )
                 )
@@ -791,7 +805,7 @@ class DefensePlanner:
                     UnitRequirement(
                         unit_type=U.WIDOWMINE,
                         count=int(take_mines),
-                        pick_policy=_DefendPickPolicy(objective=objective, unit_type=U.WIDOWMINE),
+                        pick_policy=_DefendPickPolicy(objective=objective, unit_type=U.WIDOWMINE, bulk_anchor_pos=bulk_anchor_pos, defense_overflow=defense_overflow),
                         required=len(reqs) == 0,
                     )
                 )
@@ -819,7 +833,7 @@ class DefensePlanner:
                 UnitRequirement(
                     unit_type=t,
                     count=int(take),
-                    pick_policy=_DefendPickPolicy(objective=objective, unit_type=t),
+                    pick_policy=_DefendPickPolicy(objective=objective, unit_type=t, bulk_anchor_pos=bulk_anchor_pos, defense_overflow=defense_overflow),
                     required=len(reqs) == 0,
                 )
             )
@@ -1482,7 +1496,21 @@ class DefensePlanner:
         out: list[Proposal] = []
         rush_ctx = self._rush_ctx(awareness=awareness, now=now)
 
-        # --- Lê postura operacional para saber orçamento de destacamento ---
+        # --- Lê geometria operacional (fonte primária) ---
+        geo_snap = awareness.mem.get(K("intel", "geometry", "operational", "snapshot"), now=now, default=None)
+        use_geometry = isinstance(geo_snap, dict) and bool(geo_snap)
+
+        # Extrai bulk_anchor_pos para o guard de exclusão espacial do MASS_HOLD
+        bulk_anchor_pos: Optional[Point2] = None
+        if use_geometry:
+            _bap = geo_snap.get("bulk_anchor_pos")
+            if isinstance(_bap, dict):
+                try:
+                    bulk_anchor_pos = Point2((float(_bap["x"]), float(_bap["y"])))
+                except Exception:
+                    pass
+
+        # --- Lê postura operacional para orçamento de destacamento ---
         posture_snap = awareness.mem.get(K("strategy", "army", "snapshot"), now=now, default={}) or {}
         if not isinstance(posture_snap, dict):
             posture_snap = {}
@@ -1491,13 +1519,36 @@ class DefensePlanner:
             posture = ArmyPosture(posture_str)
         except ValueError:
             posture = ArmyPosture.HOLD_MAIN_RAMP
-        # Orçamento de supply para destacamentos locais. 0 quando postura é muito pressionada.
-        max_detach_supply = int(posture_snap.get("max_detach_supply", 8) or 8)
+
+        # Orçamento de supply: fonte primária é a geometria, fallback é a postura
+        if use_geometry:
+            max_detach_supply = int(geo_snap.get("max_detach_supply", 8) or 8)
+        else:
+            max_detach_supply = int(posture_snap.get("max_detach_supply", 8) or 8)
+
+        # Guard: quando a geometria tem NAT_CHOKE em MASS_HOLD, o bulk já está lá
+        # DefensePlanner NÃO deve propor unidades que estejam no setor MASS_HOLD
+        # (a menos que defense_overflow — situação de emergência)
+        geometry_owns_nat = False
+        if use_geometry:
+            nat_choke_sector = (geo_snap.get("sector_states") or {}).get(SectorId.NAT_CHOKE.value, {})
+            nat_choke_mode = str(nat_choke_sector.get("mode", SectorMode.NONE.value) or SectorMode.NONE.value)
+            geometry_owns_nat = nat_choke_mode == SectorMode.MASS_HOLD.value
+        if not geometry_owns_nat:
+            geometry_owns_nat = posture in {
+                ArmyPosture.HOLD_NAT_CHOKE,
+                ArmyPosture.SECURE_NAT,
+                ArmyPosture.CONTROLLED_RETAKE,
+            }
 
         # --- Lê anchors do frontline_intel para objetivos mais honestos ---
         nat_snap = awareness.mem.get(K("intel", "frontline", "nat", "snapshot"), now=now, default={}) or {}
         if not isinstance(nat_snap, dict):
             nat_snap = {}
+        territory_snap = awareness.mem.get(K("intel", "territory", "defense", "snapshot"), now=now, default={}) or {}
+        if not isinstance(territory_snap, dict):
+            territory_snap = {}
+        territory_zones = territory_snap.get("zones", {}) if isinstance(territory_snap.get("zones", {}), dict) else {}
         _nat_forward_raw = nat_snap.get("forward_anchor")
         _nat_fallback_raw = nat_snap.get("fallback_anchor")
         nat_forward_anchor: Point2 | None = None
@@ -1512,6 +1563,15 @@ class DefensePlanner:
                 nat_fallback_anchor = Point2((float(_nat_fallback_raw["x"]), float(_nat_fallback_raw["y"])))
             except Exception:
                 pass
+        main_zone = territory_zones.get("main_ramp", {}) if isinstance(territory_zones.get("main_ramp", {}), dict) else {}
+        nat_zone = territory_zones.get("natural_front", {}) if isinstance(territory_zones.get("natural_front", {}), dict) else {}
+        territory_main_anchor = Point2((float(main_zone["front_anchor"]["x"]), float(main_zone["front_anchor"]["y"]))) if isinstance(main_zone.get("front_anchor"), dict) else None
+        territory_main_fallback = Point2((float(main_zone["fallback_anchor"]["x"]), float(main_zone["fallback_anchor"]["y"]))) if isinstance(main_zone.get("fallback_anchor"), dict) else None
+        territory_nat_anchor = Point2((float(nat_zone["front_anchor"]["x"]), float(nat_zone["front_anchor"]["y"]))) if isinstance(nat_zone.get("front_anchor"), dict) else None
+        if territory_nat_anchor is not None:
+            nat_forward_anchor = territory_nat_anchor
+        if territory_main_fallback is not None:
+            nat_fallback_anchor = territory_main_fallback
 
         lift_pid = f"{self.planner_id}:lift_natural"
         if (
@@ -1629,14 +1689,9 @@ class DefensePlanner:
             except Exception:
                 pass
 
-        # Guardrail: se MapControlPlanner já está segurando a nat (postura ativa),
+        # Guardrail: se a geometria / MapControlPlanner já está segurando a nat,
         # DefensePlanner não aciona o fallback de existência para a nat.
-        # Usa postura ao invés de should_secure legado.
-        map_control_owns_nat = posture in {
-            ArmyPosture.HOLD_NAT_CHOKE,
-            ArmyPosture.SECURE_NAT,
-            ArmyPosture.CONTROLLED_RETAKE,
-        }
+        map_control_owns_nat = geometry_owns_nat
 
         threats_raw = [b for b in self._threats(attention) if int(b.urgency) >= int(self.min_base_urgency)]
         threats_raw = self._merge_threats(
@@ -1701,6 +1756,16 @@ class DefensePlanner:
                     threat_pos=nat_fallback_anchor,
                 )
                 th = improved_th
+            elif is_main_base and territory_main_anchor is not None:
+                improved_th = BaseThreatSnapshot(
+                    th_tag=th.th_tag,
+                    th_pos=th.th_pos,
+                    enemy_count=th.enemy_count,
+                    enemy_power=th.enemy_power,
+                    urgency=th.urgency,
+                    threat_pos=territory_main_anchor,
+                )
+                th = improved_th
 
             objective = self._objective(th)
 
@@ -1755,11 +1820,24 @@ class DefensePlanner:
                 )
                 self._mark_proposed(awareness=awareness, now=now, pid=bunker_pid)
 
-            # Durante rush ativo, permite budget total (defesa é prioridade).
-            # Fora de rush, respeita orçamento de destacamento quantitativamente.
-            effective_budget = int(max_detach_supply) if not bool(rush_ctx.get("active", False)) else 999
-            reqs = self._requirements(bot=bot, th=th, objective=objective, rush_ctx=rush_ctx, max_detach_supply=int(effective_budget))
+            # Budget: sempre respeita max_detach_supply da geometria.
+            # Exceção: defense_overflow=True permite usar supply além do budget normal.
+            # Isso garante que o DefensePlanner NUNCA sequestra o bulk do MASS_HOLD
+            # exceto em situação de emergência explicitamente sinalizada.
+            defense_overflow = bool(
+                awareness.mem.get(K("strategy", "army", "defense_overflow"), now=now, default=False)
+            )
+            effective_budget = int(max_detach_supply) if not defense_overflow else int(max_detach_supply) * 2
+            # Cap absoluto: nunca mais que army_supply disponível (evita solicitar inexistente)
+            army_supply = int(getattr(bot, "supply_army", 0) or 0)
+            effective_budget = min(int(effective_budget), int(army_supply))
+            reqs = self._requirements(bot=bot, th=th, objective=objective, rush_ctx=rush_ctx, max_detach_supply=int(effective_budget), bulk_anchor_pos=bulk_anchor_pos, defense_overflow=bool(defense_overflow))
             base_pos = th.th_pos
+
+            # Sinaliza defense_overflow se a ameaça é grave e o budget normal não basta
+            # Isso permite que o army_posture_intel propague a emergência no próximo tick
+            if not defense_overflow and int(th.urgency) >= 75 and int(max_detach_supply) < 6:
+                awareness.mem.set(K("strategy", "army", "defense_overflow"), value=True, now=now, ttl=8.0)
 
             if reqs:
                 factory = self._make_defend_factory(
@@ -1928,7 +2006,7 @@ class DefensePlanner:
                 )
                 self._mark_proposed(awareness=awareness, now=now, pid=repair_pid)
 
-        if self.log is not None:
+        if self.log is not None and out:
             self.log.emit(
                 "planner_proposed",
                 {

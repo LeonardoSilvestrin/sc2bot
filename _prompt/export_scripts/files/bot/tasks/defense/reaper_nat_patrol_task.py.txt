@@ -1,0 +1,173 @@
+# bot/tasks/defense/reaper_nat_patrol_task.py
+
+"""
+ReaperPatrolTask — roam genérico com Reapers num raio ao redor de um ponto.
+
+Reutilizável em qualquer contexto: rush, harass, scouting reativo.
+
+Parâmetros:
+    roam_center   — ponto central do roam (ex: choke da nat)
+    roam_radius   — raio de patrulha ao redor do roam_center
+    safe_point    — ponto de retirada quando HP está crítico (ex: topo da rampa)
+    engage_radius — raio para detectar e engajar inimigos
+    task_id       — permite reusar a mesma task com IDs distintos
+    log           — logger opcional
+
+Comportamento por tick por reaper:
+    1. HP crítico (<= kite_hp_threshold): recua para safe_point imediatamente
+    2. HP recuperado (>= reengage_hp_threshold) ao chegar perto do safe_point: retorna ao roam
+    3. Inimigo dentro de engage_radius do roam_center:
+        - Se no range de ataque do reaper (5.5): ataca
+        - Senão: move para roam_center para interceptar
+    4. Limpo: patrulha entre roam_center e a borda do raio em direção oposta ao safe_point
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+from sc2.ids.unit_typeid import UnitTypeId as U
+from sc2.position import Point2
+
+from bot.devlog import DevLogger
+from bot.mind.attention import Attention
+from bot.tasks.base_task import BaseTask, TaskResult, TaskTick
+
+_REAPER_ATTACK_RANGE = 5.5
+_DEFAULT_ENGAGE_RADIUS = 12.0
+_DEFAULT_ROAM_RADIUS = 7.0
+_DEFAULT_KITE_HP = 0.30
+_DEFAULT_REENGAGE_HP = 0.65
+# Distância até o safe_point para considerar "chegou" e poder re-engajar
+_SAFE_POINT_ARRIVAL_DIST = 4.0
+
+
+@dataclass
+class ReaperPatrolTask(BaseTask):
+    """
+    Roam genérico com Reapers: kita para safe_point quando HP crítico,
+    patrulha e engaja dentro do raio do roam_center quando saudável.
+    """
+
+    roam_center: Point2
+    safe_point: Point2
+    roam_radius: float = _DEFAULT_ROAM_RADIUS
+    engage_radius: float = _DEFAULT_ENGAGE_RADIUS
+    kite_hp_threshold: float = _DEFAULT_KITE_HP
+    reengage_hp_threshold: float = _DEFAULT_REENGAGE_HP
+    log: DevLogger | None = None
+
+    # Estado interno por reaper: True = está em modo de retirada
+    _retreating: dict = field(default_factory=dict, init=False, repr=False)
+
+    def __init__(
+        self,
+        *,
+        roam_center: Point2,
+        safe_point: Point2,
+        roam_radius: float = _DEFAULT_ROAM_RADIUS,
+        engage_radius: float = _DEFAULT_ENGAGE_RADIUS,
+        kite_hp_threshold: float = _DEFAULT_KITE_HP,
+        reengage_hp_threshold: float = _DEFAULT_REENGAGE_HP,
+        task_id: str = "reaper_patrol",
+        log: DevLogger | None = None,
+    ) -> None:
+        super().__init__(task_id=str(task_id), domain="DEFENSE", commitment=87)
+        self.roam_center = roam_center
+        self.safe_point = safe_point
+        self.roam_radius = float(roam_radius)
+        self.engage_radius = float(engage_radius)
+        self.kite_hp_threshold = float(kite_hp_threshold)
+        self.reengage_hp_threshold = float(reengage_hp_threshold)
+        self.log = log
+        self._retreating = {}
+
+    def _patrol_target(self, reaper) -> Point2:
+        """Alterna entre roam_center e um ponto na borda oposta ao safe_point."""
+        try:
+            dist = float(reaper.distance_to(self.roam_center))
+            if dist < 2.0:
+                # Chegou ao centro — vai para a borda oposta ao safe_point
+                return self.roam_center.towards(self.safe_point, -self.roam_radius)
+        except Exception:
+            pass
+        return self.roam_center
+
+    async def on_step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult:
+        guard = self.require_mission_bound(min_tags=1)
+        if guard is not None:
+            return guard
+
+        assigned_set = {int(t) for t in self.assigned_tags}
+        reapers = [u for u in bot.units if int(u.tag) in assigned_set and u.type_id == U.REAPER]
+
+        if not reapers:
+            return TaskResult.failed("no_reapers_alive")
+
+        # Limpa estado de reapers que morreram
+        live_tags = {int(u.tag) for u in reapers}
+        self._retreating = {k: v for k, v in self._retreating.items() if k in live_tags}
+
+        # Inimigos próximos ao roam_center
+        enemies_near: list = []
+        try:
+            enemies_near = list(bot.enemy_units.closer_than(self.engage_radius, self.roam_center))
+        except Exception:
+            enemies_near = []
+
+        issued = 0
+        for reaper in reapers:
+            try:
+                tag = int(reaper.tag)
+                hp_pct = float(getattr(reaper, "health_percentage", 1.0) or 1.0)
+                dist_to_safe = float(reaper.distance_to(self.safe_point))
+
+                # --- Modo retirada ---
+                if self._retreating.get(tag, False):
+                    if hp_pct >= self.reengage_hp_threshold and dist_to_safe <= _SAFE_POINT_ARRIVAL_DIST:
+                        # HP suficiente e está perto do safe — pode re-engajar
+                        self._retreating[tag] = False
+                    else:
+                        reaper.move(self.safe_point)
+                        issued += 1
+                        continue
+
+                # --- HP crítico → inicia retirada ---
+                if hp_pct <= self.kite_hp_threshold:
+                    self._retreating[tag] = True
+                    reaper.move(self.safe_point)
+                    issued += 1
+                    continue
+
+                # --- Engajar inimigos ---
+                if enemies_near:
+                    target = min(enemies_near, key=lambda e: float(reaper.distance_to(e)))
+                    dist_to_target = float(reaper.distance_to(target))
+                    dist_to_center = float(reaper.distance_to(self.roam_center))
+
+                    if dist_to_target <= _REAPER_ATTACK_RANGE:
+                        reaper.attack(target)
+                    elif dist_to_center <= self.roam_radius:
+                        # Dentro do raio de roam: a-move em direção ao alvo
+                        reaper.attack(target.position)
+                    else:
+                        # Fora do raio: move para o centro primeiro
+                        reaper.move(self.roam_center)
+                    issued += 1
+                    continue
+
+                # --- Limpo: patrulha ---
+                dist_to_center = float(reaper.distance_to(self.roam_center))
+                if dist_to_center > self.roam_radius:
+                    reaper.move(self.roam_center)
+                    issued += 1
+                elif not bool(getattr(reaper, "is_attacking", False)) and not bool(getattr(reaper, "is_moving", False)):
+                    reaper.patrol(self._patrol_target(reaper))
+                    issued += 1
+
+            except Exception:
+                continue
+
+        if issued > 0:
+            self._active(self.task_id)
+            return TaskResult.running(self.task_id)
+        return TaskResult.noop(f"{self.task_id}_idle")

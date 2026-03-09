@@ -5,6 +5,8 @@ from typing import Any
 
 from ares.behaviors.macro.auto_supply import AutoSupply
 from ares.behaviors.macro.expansion_controller import ExpansionController
+from ares.consts import BuildingSize
+from ares.dicts.structure_to_building_size import STRUCTURE_TO_BUILDING_SIZE
 from cython_extensions import cy_distance_to_squared
 from sc2.ids.unit_typeid import UnitTypeId as U
 from sc2.position import Point2
@@ -18,6 +20,15 @@ UPGRADE_STRUCTURE_IDS: set[U] = {
     U.ARMORY,
     U.FUSIONCORE,
     U.GHOSTACADEMY,
+}
+TOWNHALL_STRUCTURE_IDS: set[U] = {
+    U.COMMANDCENTER,
+    U.ORBITALCOMMAND,
+    U.PLANETARYFORTRESS,
+    U.NEXUS,
+    U.HATCHERY,
+    U.LAIR,
+    U.HIVE,
 }
 
 
@@ -41,6 +52,13 @@ def payload_to_point(payload: Any) -> Point2 | None:
 @dataclass
 class BuildingPlacementPlanner:
     ttl_s: float = 12.0
+
+    @staticmethod
+    def _is_generic_preview_supported(structure_id: U) -> bool:
+        if structure_id in TOWNHALL_STRUCTURE_IDS:
+            return False
+        size = STRUCTURE_TO_BUILDING_SIZE.get(structure_id, BuildingSize.THREE_BY_THREE)
+        return size != BuildingSize.FIVE_BY_FIVE
 
     @staticmethod
     def _offsite_cc_anchor(bot, *, target: Point2 | None) -> Point2:
@@ -102,6 +120,8 @@ class BuildingPlacementPlanner:
         previous_signals: dict[str, Any],
         source: str,
     ) -> dict[str, Any] | None:
+        if not self._is_generic_preview_supported(structure_id):
+            return None
         anchor = payload_to_point(previous_signals.get(str(structure_id.name)))
         if anchor is None:
             anchor = bot.start_location
@@ -209,6 +229,8 @@ class BuildingPlacementPlanner:
                 structure_id = getattr(U, str(name), None)
                 if structure_id is None:
                     continue
+                if structure_id in TOWNHALL_STRUCTURE_IDS:
+                    continue
                 if self._current_structure_count(bot, structure_id) >= max(0, int(target or 0)):
                     continue
                 payload = self._preview_structure(
@@ -227,6 +249,8 @@ class BuildingPlacementPlanner:
                 for name, target in tech_structures.items():
                     structure_id = getattr(U, str(name), None)
                     if structure_id is None:
+                        continue
+                    if structure_id in TOWNHALL_STRUCTURE_IDS:
                         continue
                     if self._current_structure_count(bot, structure_id) >= max(0, int(target or 0)):
                         continue

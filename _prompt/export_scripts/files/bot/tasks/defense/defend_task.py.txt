@@ -1,0 +1,91 @@
+# bot/tasks/defense/defend_task.py
+
+# bot/tasks/defend_task.py
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from sc2.ids.unit_typeid import UnitTypeId as U
+
+from bot.devlog import DevLogger
+from bot.mind.attention import Attention
+from bot.tasks.base_task import BaseTask, TaskTick, TaskResult
+
+
+@dataclass
+class Defend(BaseTask):
+    """
+    Defesa reativa das bases.
+    """
+    log: DevLogger | None = None
+    log_every_iters: int = 11
+
+    def __init__(self, *, log: DevLogger | None = None, log_every_iters: int = 11):
+        super().__init__(task_id="defend_bases", domain="DEFENSE", commitment=90)
+        self.log = log
+        self.log_every_iters = int(log_every_iters)
+
+    async def on_step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult:
+        if int(attention.combat.primary_urgency) <= 0:
+            self._paused("no_threat")
+            return TaskResult.noop("no_threat")
+
+        target_pos = attention.combat.primary_threat_pos
+        if target_pos is None:
+            self._paused("no_threat_pos")
+            return TaskResult.noop("no_threat_pos")
+
+        defenders = bot.units.of_type(
+            {
+                U.MARINE,
+                U.MARAUDER,
+                U.SIEGETANK,
+                U.SIEGETANKSIEGED,
+                U.HELLION,
+                U.CYCLONE,
+                U.THOR,
+                U.THORAP,
+                U.MEDIVAC,
+            }
+        )
+        if defenders.amount == 0:
+            self._paused("no_defenders")
+            return TaskResult.noop("no_defenders")
+
+        local = defenders.closer_than(45, target_pos)
+        if local.amount == 0:
+            local = defenders
+
+        medivacs = local(U.MEDIVAC)
+        army = local - medivacs
+
+        issued = False
+
+        for u in army:
+            if u.is_idle:
+                u.attack(target_pos)
+                issued = True
+
+        for m in medivacs:
+            if m.is_idle:
+                m.move(target_pos.towards(bot.start_location, 6))
+                issued = True
+
+        if issued:
+            self._active("defending")
+            if self.log and (tick.iteration % self.log_every_iters == 0):
+                self.log.emit(
+                    "defend_tick",
+                    {
+                        "iteration": int(tick.iteration),
+                        "time": round(float(getattr(bot, "time", 0.0)), 2),
+                        "enemy_count": int(attention.combat.primary_enemy_count),
+                        "urgency": int(attention.combat.primary_urgency),
+                        "pos": [round(target_pos.x, 1), round(target_pos.y, 1)],
+                        "primary_base_tag": int(attention.combat.primary_base_tag or -1),
+                    },
+                )
+            return TaskResult.running("defending")
+        else:
+            self._active("defending_no_orders")
+            return TaskResult.noop("defending_no_orders")
