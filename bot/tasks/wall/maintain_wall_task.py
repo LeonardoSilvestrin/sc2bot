@@ -123,7 +123,9 @@ class MaintainWallTask(BaseTask):
     @staticmethod
     def _reserve_worker(bot, worker) -> None:
         try:
-            bot.mediator.assign_role(tag=int(worker.tag), role=UnitRole.BUILDING, remove_from_squad=True)
+            # Keep the worker out of GATHERING without tripping Ares BuildingManager's
+            # "BUILDING but not in tracker" auto-return-to-mining path.
+            bot.mediator.assign_role(tag=int(worker.tag), role=UnitRole.REPAIRING, remove_from_squad=True)
         except Exception:
             pass
 
