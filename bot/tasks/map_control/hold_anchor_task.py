@@ -1,16 +1,8 @@
 """
-HoldAnchorTask — task de postura do bulk do exército.
+HoldAnchorTask: posture task for the army bulk.
 
-Responsabilidade: mover o bulk do exército para o anchor designado pela postura
-operacional e segurá-lo lá. NÃO toma decisões — executa a postura que o planner derivou.
-
-Regras:
-    - Lê o anchor atual de army_posture_intel a cada tick (âncora pode mudar se postura muda)
-    - Unidades lentas/posicionais (tanks) NÃO descem automaticamente — posicionam no anchor
-    - Se a postura mudar para CONTROLLED_RETREAT, segura o fallback anchor
-    - Task não decide quando sair — o planner cancela quando a postura muda
-
-Nota: Esta task é o dono do bulk. SecureBaseTask é um destacamento local distinto.
+Responsibility: move the army bulk to the current posture anchor and hold it there.
+This task executes posture; it does not derive posture.
 """
 from __future__ import annotations
 
@@ -21,6 +13,7 @@ from sc2.ids.unit_typeid import UnitTypeId as U
 from sc2.position import Point2
 
 from bot.devlog import DevLogger
+from bot.intel.strategy.i3_army_posture_intel import ArmyPosture
 from bot.mind.attention import Attention
 from bot.mind.awareness import Awareness, K
 from bot.tasks.base_task import BaseTask, TaskResult, TaskTick
@@ -40,7 +33,7 @@ _BULK_TYPES = {
     U.WIDOWMINEBURROWED,
 }
 
-# Unidades que devem ser posicionadas com cuidado — não "correm" para o anchor
+# Units that need extra care instead of blindly rushing the anchor.
 _SLOW_POSITIONAL = {U.SIEGETANK, U.SIEGETANKSIEGED, U.WIDOWMINE, U.WIDOWMINEBURROWED}
 
 # Raio dentro do qual consideramos a unidade "no anchor"
@@ -61,12 +54,22 @@ def _point_from_payload(payload) -> Point2 | None:
         return None
 
 
+def _nat_landing_reservation(awareness: Awareness, *, now: float) -> tuple[Point2 | None, Point2 | None]:
+    snap = awareness.mem.get(K("intel", "map_control", "our_nat", "snapshot"), now=now, default={}) or {}
+    if not isinstance(snap, dict):
+        return None, None
+    if not bool(snap.get("nat_offsite", False) or snap.get("safe_to_land", False)):
+        return None, None
+    return _point_from_payload(snap.get("target")), _point_from_payload(snap.get("staging"))
+
+
 @dataclass
 class HoldAnchorTask(BaseTask):
     """
-    Segura o anchor da postura operacional atual.
-    O anchor é lido da awareness a cada tick — não é fixo no momento da criação.
+    Hold the current operational posture anchor.
+    The anchor is read from awareness each tick and is not fixed at creation time.
     """
+
     awareness: Awareness
     log: DevLogger | None = None
     log_every_iters: int = 15
@@ -83,23 +86,21 @@ class HoldAnchorTask(BaseTask):
         self._iters += 1
         now = float(tick.time)
 
-        # Verificar vínculo de missão — nunca operar sem assigned_tags
         guard = self.require_mission_bound(min_tags=1)
         if guard is not None:
             return guard
 
-        # Lê anchor atual da postura operacional
         posture_snap = self.awareness.mem.get(K("strategy", "army", "snapshot"), now=now, default={}) or {}
         if not isinstance(posture_snap, dict):
             posture_snap = {}
 
         anchor = _point_from_payload(posture_snap.get("anchor"))
         posture_str = str(posture_snap.get("posture", "HOLD_MAIN_RAMP") or "HOLD_MAIN_RAMP")
+        nat_landing_target, nat_landing_fallback = _nat_landing_reservation(self.awareness, now=now)
 
         if anchor is None:
             return TaskResult.noop("no_anchor_defined")
 
-        # Filtra SOMENTE unidades em assigned_tags — nunca bot.units direto
         assigned_set = set(int(t) for t in self.assigned_tags)
         bulk = bot.units.filter(lambda u: int(u.tag) in assigned_set)
 
@@ -113,44 +114,71 @@ class HoldAnchorTask(BaseTask):
 
         issued = 0
 
-        # Unidades rápidas: mover para o anchor se não estão lá
         for unit in fast:
             try:
+                if nat_landing_target is not None and float(unit.distance_to(nat_landing_target)) <= 4.75:
+                    retreat = nat_landing_fallback or anchor
+                    if float(unit.distance_to(retreat)) > 1.5:
+                        unit.move(retreat)
+                    else:
+                        unit.attack(retreat)
+                    issued += 1
+                    continue
+
                 dist = float(unit.distance_to(anchor))
                 if dist > float(_AT_ANCHOR_RADIUS):
                     unit.move(anchor)
                     issued += 1
-                # Se chegou, a-move no anchor para defender
                 elif not bool(getattr(unit, "is_attacking", False)):
                     unit.attack(anchor)
                     issued += 1
             except Exception:
                 continue
 
-        # Unidades lentas/posicionais: mover se estão longe do anchor.
-        # Tanks sieged que estão longe do anchor (postura mudou) recebem unsiege
-        # para se mover. Dentro do raio não interfere — HoldRampTask / Ares cuida.
         for unit in slow:
             try:
+                if nat_landing_target is not None and float(unit.distance_to(nat_landing_target)) <= 4.9:
+                    if unit.type_id == U.SIEGETANKSIEGED:
+                        unit(AbilityId.UNSIEGE_UNSIEGE)
+                        issued += 1
+                        continue
+                    if unit.type_id == U.WIDOWMINEBURROWED:
+                        unit(AbilityId.BURROWUP_WIDOWMINE)
+                        issued += 1
+                        continue
+                    retreat = nat_landing_fallback or anchor
+                    if float(unit.distance_to(retreat)) > 1.5:
+                        unit.move(retreat)
+                        issued += 1
+                    continue
+
                 dist = float(unit.distance_to(anchor))
                 is_sieged = unit.type_id == U.SIEGETANKSIEGED
 
                 if is_sieged:
                     enemy_near = bot.enemy_units.closer_than(_TANK_LOCAL_HOLD_RADIUS, unit)
-                    # Tank sitiado longe do anchor → unsiege para poder reposicionar
                     if dist > float(_TANK_UNSIEGE_TO_MOVE_RADIUS) and int(enemy_near.amount) <= 0:
                         unit(AbilityId.UNSIEGE_UNSIEGE)
                         issued += 1
-                    # Dentro do raio: não interfere — já está onde deve estar
-                elif dist > float(_SLOW_AT_ANCHOR_RADIUS):
-                    # Tank móvel longe do anchor → move
+                    continue
+
+                if dist > float(_SLOW_AT_ANCHOR_RADIUS):
                     unit.move(anchor)
                     issued += 1
-                # Dentro do raio: não interfere
+                    continue
+
+                if unit.type_id == U.SIEGETANK and posture_str in {
+                    ArmyPosture.HOLD_NAT_CHOKE.value,
+                    ArmyPosture.SECURE_NAT.value,
+                    ArmyPosture.CONTROLLED_RETAKE.value,
+                }:
+                    enemy_too_close = bot.enemy_units.closer_than(4.0, unit)
+                    if int(enemy_too_close.amount) <= 0:
+                        unit(AbilityId.SIEGEMODE_SIEGEMODE)
+                        issued += 1
             except Exception:
                 continue
 
-        # Medivacs seguem o bulk
         if medivacs.amount > 0 and fast.amount > 0:
             try:
                 follow_target = fast.center
