@@ -410,7 +410,7 @@ class DefendBaseTask(BaseTask):
                 except Exception:
                     pass
                 if not already_loading:
-                    if float(unit.distance_to(bunker)) <= 6.0:
+                    if float(unit.distance_to(bunker)) <= 8.0:
                         unit(AbilityId.SMART, bunker)
                     else:
                         unit.move(bunker.position)

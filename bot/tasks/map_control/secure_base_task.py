@@ -562,7 +562,7 @@ class SecureBaseTask(BaseTask):
             ready_bunkers = [b for b in bunkers if self._bunker_has_space(b)]
             if ready_bunkers:
                 bunker = min(ready_bunkers, key=lambda b: float(unit.distance_to(b)))
-                if float(unit.distance_to(bunker)) <= 2.0:
+                if float(unit.distance_to(bunker)) <= 6.0:
                     unit(AbilityId.SMART, bunker)
                 else:
                     unit.move(bunker.position)

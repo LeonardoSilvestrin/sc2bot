@@ -43,6 +43,7 @@ _SLOW_AT_ANCHOR_RADIUS = 7.0
 # Mantemos histerese maior para evitar "senta/levanta" com anchors oscilando poucos tiles.
 _TANK_UNSIEGE_TO_MOVE_RADIUS = 12.0
 _TANK_LOCAL_HOLD_RADIUS = 15.0
+_MAIN_RAMP_BUNKER_RADIUS = 14.0
 
 
 def _point_from_payload(payload) -> Point2 | None:
@@ -61,6 +62,112 @@ def _nat_landing_reservation(awareness: Awareness, *, now: float) -> tuple[Point
     if not bool(snap.get("nat_offsite", False) or snap.get("safe_to_land", False)):
         return None, None
     return _point_from_payload(snap.get("target")), _point_from_payload(snap.get("staging"))
+
+
+def _building_tracker(bot) -> dict:
+    try:
+        return dict(bot.mediator.get_building_tracker_dict or {})
+    except Exception:
+        return {}
+
+
+def _cc_footprint_sites(center: Point2) -> list[Point2]:
+    offsets = (
+        (0.0, 0.0),
+        (2.0, 0.0),
+        (-2.0, 0.0),
+        (0.0, 2.0),
+        (0.0, -2.0),
+        (2.0, 2.0),
+        (2.0, -2.0),
+        (-2.0, 2.0),
+        (-2.0, -2.0),
+    )
+    return [Point2((float(center.x) + dx, float(center.y) + dy)) for dx, dy in offsets]
+
+
+def _nat_reserved_sites(awareness: Awareness, bot, *, now: float) -> tuple[list[Point2], Point2 | None]:
+    snap = awareness.mem.get(K("intel", "map_control", "our_nat", "snapshot"), now=now, default={}) or {}
+    if not isinstance(snap, dict):
+        return [], None
+
+    target = _point_from_payload(snap.get("target"))
+    staging = _point_from_payload(snap.get("staging"))
+    hold = _point_from_payload(snap.get("hold"))
+    centers = [p for p in (target, staging, hold) if p is not None]
+    out: list[Point2] = []
+
+    for entry in _building_tracker(bot).values():
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("structure_type", None) not in {U.BUNKER, U.COMMANDCENTER, U.ORBITALCOMMAND, U.PLANETARYFORTRESS}:
+            continue
+        pos = entry.get("target", None) or entry.get("pos", None)
+        if pos is None:
+            continue
+        try:
+            point = Point2((float(pos.x), float(pos.y))) if hasattr(pos, "x") else pos
+        except Exception:
+            point = pos
+        try:
+            if centers and min(float(point.distance_to(center)) for center in centers) > 12.0:
+                continue
+        except Exception:
+            continue
+        if not any(float(point.distance_to(existing)) <= 0.9 for existing in out):
+            out.append(point)
+
+    if target is not None and bool(snap.get("nat_offsite", False) or snap.get("safe_to_land", False)):
+        for point in _cc_footprint_sites(target):
+            if not any(float(point.distance_to(existing)) <= 0.9 for existing in out):
+                out.append(point)
+
+    return out, staging
+
+
+def _main_ramp_top(bot) -> Point2 | None:
+    try:
+        return bot.main_base_ramp.top_center
+    except Exception:
+        return None
+
+
+def _main_ramp_bunkers(bot) -> list:
+    top = _main_ramp_top(bot)
+    if top is None:
+        return []
+    out = []
+    for bunker in list(getattr(bot, "structures", []) or []):
+        try:
+            if getattr(bunker, "type_id", None) != U.BUNKER:
+                continue
+            if not bool(getattr(bunker, "is_ready", False)):
+                continue
+            cargo_used = int(getattr(bunker, "cargo_used", 0) or 0)
+            cargo_max = int(getattr(bunker, "cargo_max", 4) or 4)
+            if cargo_used >= cargo_max:
+                continue
+            if min(float(bunker.distance_to(top)), float(bunker.distance_to(bot.start_location))) > float(_MAIN_RAMP_BUNKER_RADIUS):
+                continue
+            out.append(bunker)
+        except Exception:
+            continue
+    return out
+
+
+def _main_ramp_enemy_pressure(bot) -> bool:
+    top = _main_ramp_top(bot)
+    if top is None:
+        return False
+    for enemy in list(getattr(bot, "enemy_units", []) or []):
+        try:
+            if bool(getattr(enemy, "is_flying", False)):
+                continue
+            if float(enemy.distance_to(top)) <= 12.0 or float(enemy.distance_to(bot.start_location)) <= 14.0:
+                return True
+        except Exception:
+            continue
+    return False
 
 
 @dataclass
@@ -97,6 +204,9 @@ class HoldAnchorTask(BaseTask):
         anchor = _point_from_payload(posture_snap.get("anchor"))
         posture_str = str(posture_snap.get("posture", "HOLD_MAIN_RAMP") or "HOLD_MAIN_RAMP")
         nat_landing_target, nat_landing_fallback = _nat_landing_reservation(self.awareness, now=now)
+        nat_reserved_sites, nat_reserved_fallback = _nat_reserved_sites(self.awareness, bot, now=now)
+        main_ramp_bunkers = _main_ramp_bunkers(bot)
+        main_ramp_pressure = _main_ramp_enemy_pressure(bot)
 
         if anchor is None:
             return TaskResult.noop("no_anchor_defined")
@@ -116,6 +226,37 @@ class HoldAnchorTask(BaseTask):
 
         for unit in fast:
             try:
+                if unit.type_id == U.MARINE and main_ramp_pressure and main_ramp_bunkers:
+                    bunker = min(main_ramp_bunkers, key=lambda b: float(unit.distance_to(b)))
+                    already_loading = False
+                    try:
+                        for order in list(getattr(unit, "orders", []) or []):
+                            ab = getattr(getattr(order, "ability", None), "id", None)
+                            if ab is not None and "LOAD" in str(ab).upper():
+                                already_loading = True
+                                break
+                    except Exception:
+                        pass
+                    if not already_loading:
+                        if float(unit.distance_to(bunker)) <= 8.0:
+                            unit(AbilityId.SMART, bunker)
+                        else:
+                            unit.move(bunker.position)
+                        issued += 1
+                    continue
+                reserved_site = None
+                for site in nat_reserved_sites:
+                    if float(unit.distance_to(site)) <= 2.6:
+                        reserved_site = site
+                        break
+                if reserved_site is not None:
+                    retreat = nat_reserved_fallback or nat_landing_fallback or anchor
+                    if float(unit.distance_to(retreat)) > 1.5:
+                        unit.move(retreat)
+                    else:
+                        unit.attack(retreat)
+                    issued += 1
+                    continue
                 if nat_landing_target is not None and float(unit.distance_to(nat_landing_target)) <= 4.75:
                     retreat = nat_landing_fallback or anchor
                     if float(unit.distance_to(retreat)) > 1.5:
@@ -137,6 +278,25 @@ class HoldAnchorTask(BaseTask):
 
         for unit in slow:
             try:
+                reserved_site = None
+                for site in nat_reserved_sites:
+                    if float(unit.distance_to(site)) <= 2.6:
+                        reserved_site = site
+                        break
+                if reserved_site is not None:
+                    retreat = nat_reserved_fallback or nat_landing_fallback or anchor
+                    if unit.type_id == U.SIEGETANKSIEGED:
+                        unit(AbilityId.UNSIEGE_UNSIEGE)
+                        issued += 1
+                        continue
+                    if unit.type_id == U.WIDOWMINEBURROWED:
+                        unit(AbilityId.BURROWUP_WIDOWMINE)
+                        issued += 1
+                        continue
+                    if float(unit.distance_to(retreat)) > 1.5:
+                        unit.move(retreat)
+                        issued += 1
+                    continue
                 if nat_landing_target is not None and float(unit.distance_to(nat_landing_target)) <= 4.9:
                     if unit.type_id == U.SIEGETANKSIEGED:
                         unit(AbilityId.UNSIEGE_UNSIEGE)
