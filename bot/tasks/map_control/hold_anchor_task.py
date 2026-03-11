@@ -13,6 +13,7 @@ from sc2.ids.unit_typeid import UnitTypeId as U
 from sc2.position import Point2
 
 from bot.devlog import DevLogger
+from bot.intel.geometry.sector_types import FrontTemplate, SectorMode
 from bot.intel.strategy.i3_army_posture_intel import ArmyPosture
 from bot.mind.attention import Attention
 from bot.mind.awareness import Awareness, K
@@ -21,7 +22,8 @@ from bot.tasks.base_task import BaseTask, TaskResult, TaskTick
 _BULK_TYPES = {
     U.MARINE,
     U.MARAUDER,
-    U.REAPER,
+    # REAPER excluído do bulk: é unidade de harass/scout, não faz sentido
+    # segurar no anchor. Sem missão, deve ficar livre no mapa.
     U.HELLION,
     U.CYCLONE,
     U.SIEGETANK,
@@ -29,8 +31,6 @@ _BULK_TYPES = {
     U.THOR,
     U.THORAP,
     U.MEDIVAC,
-    U.WIDOWMINE,
-    U.WIDOWMINEBURROWED,
 }
 
 # Units that need extra care instead of blindly rushing the anchor.
@@ -40,10 +40,14 @@ _SLOW_POSITIONAL = {U.SIEGETANK, U.SIEGETANKSIEGED, U.WIDOWMINE, U.WIDOWMINEBURR
 _AT_ANCHOR_RADIUS = 4.5
 _SLOW_AT_ANCHOR_RADIUS = 7.0
 # Raio a partir do qual tanks sieged recebem unsiege para se mover ao novo anchor.
-# Mantemos histerese maior para evitar "senta/levanta" com anchors oscilando poucos tiles.
-_TANK_UNSIEGE_TO_MOVE_RADIUS = 12.0
+# Valor alto por design: o anchor pode oscilar alguns tiles entre ticks (geometria),
+# então só unsiegeia se realmente precisar se reposicionar muito.
+_TANK_UNSIEGE_TO_MOVE_RADIUS = 16.0
 _TANK_LOCAL_HOLD_RADIUS = 15.0
 _MAIN_RAMP_BUNKER_RADIUS = 14.0
+# Distância recuada do anchor da rampa para posicionar o tank em siege (fora do range inimigo).
+# O anchor de MAIN_RAMP já está 4.5 tiles atrás do ramp_top — recuo extra pequeno.
+_TANK_RAMP_SIEGE_RETREAT = 2.0
 
 
 def _point_from_payload(payload) -> Point2 | None:
@@ -155,6 +159,65 @@ def _main_ramp_bunkers(bot) -> list:
     return out
 
 
+def _anchor_bunkers(bot, *, anchor: Point2, radius: float = 14.0) -> list:
+    """Retorna bunkers prontos com espaço dentro do raio do anchor (excluindo bunkers da rampa principal)."""
+    top = _main_ramp_top(bot)
+    out = []
+    for bunker in list(getattr(bot, "structures", []) or []):
+        try:
+            if getattr(bunker, "type_id", None) != U.BUNKER:
+                continue
+            if not bool(getattr(bunker, "is_ready", False)):
+                continue
+            cargo_used = int(getattr(bunker, "cargo_used", 0) or 0)
+            cargo_max = int(getattr(bunker, "cargo_max", 4) or 4)
+            if cargo_used >= cargo_max:
+                continue
+            if float(bunker.distance_to(anchor)) > float(radius):
+                continue
+            # Exclui bunkers que pertencem à rampa principal
+            if top is not None and float(bunker.distance_to(top)) <= float(_MAIN_RAMP_BUNKER_RADIUS):
+                continue
+            out.append(bunker)
+        except Exception:
+            continue
+    return out
+
+
+def _bulk_sector_mode(awareness: Awareness, *, now: float) -> str:
+    """Retorna o SectorMode do setor onde o bulk está (bulk_sector da geometria)."""
+    geo_snap = awareness.mem.get(K("intel", "geometry", "operational", "snapshot"), now=now, default=None)
+    if not isinstance(geo_snap, dict):
+        return SectorMode.NONE.value
+    bulk_sector = geo_snap.get("bulk_sector")
+    if not bulk_sector:
+        return SectorMode.NONE.value
+    sector_states = geo_snap.get("sector_states") or {}
+    if not isinstance(sector_states, dict):
+        return SectorMode.NONE.value
+    sector = sector_states.get(str(bulk_sector), {})
+    if not isinstance(sector, dict):
+        return SectorMode.NONE.value
+    return str(sector.get("mode", SectorMode.NONE.value) or SectorMode.NONE.value)
+
+
+def _template_allows_siege(template_str: str) -> bool:
+    """Templates em que o bulk deve sentar tanks e burrar mines quando no anchor."""
+    return template_str in {
+        FrontTemplate.HOLD_MAIN.value,
+        FrontTemplate.TURTLE_NAT.value,
+        FrontTemplate.STABILIZE_AND_EXPAND.value,
+        FrontTemplate.CONTAIN.value,
+    }
+
+
+def _geo_template(awareness: Awareness, *, now: float) -> str:
+    geo_snap = awareness.mem.get(K("intel", "geometry", "operational", "snapshot"), now=now, default=None)
+    if not isinstance(geo_snap, dict):
+        return ""
+    return str(geo_snap.get("template", "") or "")
+
+
 def _main_ramp_enemy_pressure(bot) -> bool:
     top = _main_ramp_top(bot)
     if top is None:
@@ -207,6 +270,26 @@ class HoldAnchorTask(BaseTask):
         nat_reserved_sites, nat_reserved_fallback = _nat_reserved_sites(self.awareness, bot, now=now)
         main_ramp_bunkers = _main_ramp_bunkers(bot)
         main_ramp_pressure = _main_ramp_enemy_pressure(bot)
+        anchor_bunkers = _anchor_bunkers(bot, anchor=anchor) if anchor is not None else []
+        # Keep at most one tank on the main-ramp highground while holding the nat.
+        # More than that can clog the main and soft-lock pathing for the army.
+        ramp_top = _main_ramp_top(bot)
+        nat_defense_postures = {
+            ArmyPosture.HOLD_NAT_CHOKE.value,
+            ArmyPosture.SECURE_NAT.value,
+            ArmyPosture.CONTROLLED_RETAKE.value,
+        }
+        _NAT_TANK_HIGHGROUND_MAX = 1
+        # Lê modo do setor bulk e template para decidir siege/burrow
+        bulk_sector_mode_str = _bulk_sector_mode(self.awareness, now=now)
+        geo_template_str = _geo_template(self.awareness, now=now)
+        # Bulk deve sentar/burrar quando no modo de hold (não em push)
+        bulk_hold_modes = {SectorMode.MASS_HOLD.value, SectorMode.HEAVY_ANCHOR.value, SectorMode.ANCHOR.value}
+        bulk_in_hold = bulk_sector_mode_str in bulk_hold_modes
+        # Template permite siege? (não quando prep_push — nesse caso o bulk está mobile)
+        template_siege_ok = _template_allows_siege(geo_template_str) if geo_template_str else True
+        # Siege ativo: bulk parado num setor de hold com template defensivo
+        bulk_siege_active = bulk_in_hold and template_siege_ok
 
         if anchor is None:
             return TaskResult.noop("no_anchor_defined")
@@ -222,12 +305,42 @@ class HoldAnchorTask(BaseTask):
         slow = mobile.of_type(_SLOW_POSITIONAL)
         fast = mobile - slow
 
+        # Assign highground tags: up to _NAT_TANK_HIGHGROUND_MAX siege tanks go to ramp_top
+        # when defending the nat. Sorted by distance to ramp_top (closest first).
+        highground_tank_tags: set[int] = set()
+        if (
+            posture_str in nat_defense_postures
+            and ramp_top is not None
+        ):
+            tanks = slow.of_type({U.SIEGETANK, U.SIEGETANKSIEGED})
+            sorted_tanks = sorted(tanks, key=lambda u: float(u.distance_to(ramp_top)))
+            for t in sorted_tanks[:_NAT_TANK_HIGHGROUND_MAX]:
+                highground_tank_tags.add(int(t.tag))
+
         issued = 0
 
         for unit in fast:
             try:
                 if unit.type_id == U.MARINE and main_ramp_pressure and main_ramp_bunkers:
                     bunker = min(main_ramp_bunkers, key=lambda b: float(unit.distance_to(b)))
+                    already_loading = False
+                    try:
+                        for order in list(getattr(unit, "orders", []) or []):
+                            ab = getattr(getattr(order, "ability", None), "id", None)
+                            if ab is not None and "LOAD" in str(ab).upper():
+                                already_loading = True
+                                break
+                    except Exception:
+                        pass
+                    if not already_loading:
+                        if float(unit.distance_to(bunker)) <= 8.0:
+                            unit(AbilityId.SMART, bunker)
+                        else:
+                            unit.move(bunker.position)
+                        issued += 1
+                    continue
+                if unit.type_id == U.MARINE and anchor_bunkers:
+                    bunker = min(anchor_bunkers, key=lambda b: float(unit.distance_to(b)))
                     already_loading = False
                     try:
                         for order in list(getattr(unit, "orders", []) or []):
@@ -312,7 +425,56 @@ class HoldAnchorTask(BaseTask):
                         issued += 1
                     continue
 
-                dist = float(unit.distance_to(anchor))
+                # Widowmines burrowed: desenterrar se bulk em modo de push ou longe do anchor
+                if unit.type_id == U.WIDOWMINEBURROWED:
+                    dist_burrowed = float(unit.distance_to(anchor))
+                    if not bulk_siege_active or dist_burrowed > float(_TANK_UNSIEGE_TO_MOVE_RADIUS):
+                        enemy_near_burrowed = bot.enemy_units.closer_than(_TANK_LOCAL_HOLD_RADIUS, unit)
+                        if int(enemy_near_burrowed.amount) <= 0:
+                            unit(AbilityId.BURROWUP_WIDOWMINE)
+                            issued += 1
+                    continue
+
+                # Highground tanks: primeiros N tanks ficam no topo da rampa cobrindo a nat.
+                if (
+                    int(unit.tag) in highground_tank_tags
+                    and ramp_top is not None
+                ):
+                    hg_dist = float(unit.distance_to(ramp_top))
+                    is_sieged_hg = unit.type_id == U.SIEGETANKSIEGED
+                    if is_sieged_hg:
+                        enemy_near = bot.enemy_units.closer_than(_TANK_LOCAL_HOLD_RADIUS, unit)
+                        if hg_dist > float(_TANK_UNSIEGE_TO_MOVE_RADIUS) and int(enemy_near.amount) <= 0:
+                            unit(AbilityId.UNSIEGE_UNSIEGE)
+                            issued += 1
+                        continue
+                    if hg_dist > float(_SLOW_AT_ANCHOR_RADIUS):
+                        unit.move(ramp_top)
+                        issued += 1
+                        continue
+                    # No topo da rampa: siegia para cobrir o choke da nat.
+                    if unit.type_id == U.SIEGETANK:
+                        enemy_too_close = bot.enemy_units.closer_than(4.0, unit)
+                        if int(enemy_too_close.amount) <= 0:
+                            unit(AbilityId.SIEGEMODE_SIEGEMODE)
+                            issued += 1
+                    continue
+
+                # Tanks na postura HOLD_MAIN_RAMP sob pressão devem sentar recuados do
+                # topo da rampa — no range de ataque mas fora do alcance inimigo (adeptos, etc.).
+                tank_ramp_defense = bool(
+                    unit.type_id in {U.SIEGETANK, U.SIEGETANKSIEGED}
+                    and posture_str == ArmyPosture.HOLD_MAIN_RAMP.value
+                    and main_ramp_pressure
+                )
+                effective_anchor = anchor
+                if tank_ramp_defense:
+                    try:
+                        effective_anchor = anchor.towards(bot.start_location, float(_TANK_RAMP_SIEGE_RETREAT))
+                    except Exception:
+                        effective_anchor = anchor
+
+                dist = float(unit.distance_to(effective_anchor))
                 is_sieged = unit.type_id == U.SIEGETANKSIEGED
 
                 if is_sieged:
@@ -322,16 +484,34 @@ class HoldAnchorTask(BaseTask):
                         issued += 1
                     continue
 
+                # Widowmines: burrar quando no anchor em modo de hold
+                if unit.type_id == U.WIDOWMINE:
+                    if bulk_siege_active and dist <= float(_SLOW_AT_ANCHOR_RADIUS):
+                        enemy_too_close = bot.enemy_units.closer_than(4.0, unit)
+                        if int(enemy_too_close.amount) <= 0:
+                            unit(AbilityId.BURROWDOWN_WIDOWMINE)
+                            issued += 1
+                    elif dist > float(_SLOW_AT_ANCHOR_RADIUS):
+                        unit.move(effective_anchor)
+                        issued += 1
+                    continue
+
                 if dist > float(_SLOW_AT_ANCHOR_RADIUS):
-                    unit.move(anchor)
+                    unit.move(effective_anchor)
                     issued += 1
                     continue
 
-                if unit.type_id == U.SIEGETANK and posture_str in {
-                    ArmyPosture.HOLD_NAT_CHOKE.value,
-                    ArmyPosture.SECURE_NAT.value,
-                    ArmyPosture.CONTROLLED_RETAKE.value,
-                }:
+                should_siege = unit.type_id == U.SIEGETANK and (
+                    (
+                        posture_str == ArmyPosture.HOLD_MAIN_RAMP.value
+                        and main_ramp_pressure
+                    )
+                    or (
+                        bulk_siege_active
+                        and posture_str == ArmyPosture.HOLD_MAIN_RAMP.value
+                    )
+                )
+                if should_siege:
                     enemy_too_close = bot.enemy_units.closer_than(4.0, unit)
                     if int(enemy_too_close.amount) <= 0:
                         unit(AbilityId.SIEGEMODE_SIEGEMODE)

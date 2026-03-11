@@ -103,9 +103,13 @@ class ScvRepairTask(BaseTask):
                 if any(float(s.distance_to(pos)) <= 1.8 for pos in depot_positions):
                     wall_targets.append(s)
                     continue
-                if barracks_pos is not None and float(s.distance_to(barracks_pos)) <= 2.4:
-                    wall_targets.append(s)
-                    continue
+                if barracks_pos is not None:
+                    # Addons (reactor/techlab) ficam lateralmente na barracks — raio maior
+                    addon_types = {U.BARRACKSREACTOR, U.BARRACKSTECHLAB}
+                    radius = 4.0 if tid in addon_types else 2.4
+                    if float(s.distance_to(barracks_pos)) <= radius:
+                        wall_targets.append(s)
+                        continue
                 if tid == U.BUNKER and top_center is not None and float(s.distance_to(top_center)) <= 20.0:
                     wall_targets.append(s)
             except Exception:
@@ -318,6 +322,16 @@ class ScvRepairTask(BaseTask):
 
         return assignments
 
+    @staticmethod
+    def _threat_still_active(bot, threat_pos: Point2 | None) -> bool:
+        """Retorna True se ainda há inimigos perto da base que justifiquem manter os SCVs."""
+        if threat_pos is None:
+            return False
+        try:
+            return int(bot.enemy_units.closer_than(18.0, threat_pos).amount) > 0
+        except Exception:
+            return False
+
     async def on_step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult:
         bound_err = self.require_mission_bound(min_tags=1)
         if bound_err is not None:
@@ -330,11 +344,12 @@ class ScvRepairTask(BaseTask):
 
         base_pos = self._resolve_base_pos(bot)
 
-        # Quando inimigo está em contato com a wall, prioriza reparar wall targets — não sai
-
         targets = self._repair_targets(bot, base_pos=base_pos)
         if not targets:
-            self._assign_role(bot, units, UnitRole.GATHERING)
+            # Só encerra se a ameaça também dissipou — evita SCVs saindo e voltando
+            if self._threat_still_active(bot, self.threat_pos):
+                self._active("scv_repair_holding_threat")
+                return TaskResult.noop("scv_repair_holding_threat")
             self._done("repair_targets_cleared")
             return TaskResult.done("repair_targets_cleared")
 

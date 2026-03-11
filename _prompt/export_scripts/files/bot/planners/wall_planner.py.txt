@@ -235,7 +235,7 @@ class WallPlanner:
             self._mark(awareness=awareness, now=now, zone="main")
 
         nat_supported = bool(self._nat_wall_supported(bot))
-        nat_required = bool(nat_supported and (rush_active or int(attention.macro.bases_total) >= 2))
+        nat_required = bool(nat_supported and int(attention.macro.bases_total) >= 2)
         nat_pid = self._pid("nat")
         if (
             nat_required

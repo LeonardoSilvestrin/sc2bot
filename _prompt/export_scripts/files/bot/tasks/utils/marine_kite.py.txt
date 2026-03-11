@@ -1,0 +1,43 @@
+# bot/tasks/utils/marine_kite.py
+
+"""
+marine_kite_step: stutter-step kite para marines.
+
+Lógica:
+- Weapon pronta (cooldown <= threshold): atira no target
+- Weapon recarregando: move em direção ao ponto de recuo (retreat)
+
+Usar quando o marine está sob pressão e o caller sabe qual é o safe spot
+para recuar (ex: main ramp top, start_location, anchor da wall).
+"""
+from __future__ import annotations
+
+from sc2.position import Point2
+
+_WEAPON_READY_THRESHOLD = 0.1  # segundos — cooldown abaixo disso = atirar
+
+
+def marine_kite_step(
+    unit,
+    *,
+    target,
+    retreat: Point2,
+    weapon_ready_threshold: float = _WEAPON_READY_THRESHOLD,
+) -> None:
+    """
+    Emite um único comando de stutter-step para um marine.
+
+    Args:
+        unit: o marine
+        target: unidade inimiga para atacar quando pronto
+        retreat: ponto para recuar quando a arma está recarregando
+    """
+    wc = float(getattr(unit, "weapon_cooldown", 0.0) or 0.0)
+    if wc <= weapon_ready_threshold:
+        unit.attack(target)
+    else:
+        try:
+            if float(unit.distance_to(retreat)) > 1.5:
+                unit.move(retreat)
+        except Exception:
+            unit.move(retreat)

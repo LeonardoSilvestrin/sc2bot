@@ -339,7 +339,6 @@ class HoldRampTask(BaseTask):
         enemy_wall = self._enemy_wall_units(bot, top_center=top_center)
         repair_targets = self._repair_targets(bot, depots=depots, barracks_pos=barracks_pos)
         if not enemy_wall and not repair_targets:
-            self._assign_role(bot, units, UnitRole.GATHERING)
             self._done("ramp_contact_cleared")
             return TaskResult.done("ramp_contact_cleared")
 

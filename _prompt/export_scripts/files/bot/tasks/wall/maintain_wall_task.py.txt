@@ -125,7 +125,9 @@ class MaintainWallTask(BaseTask):
     @staticmethod
     def _reserve_worker(bot, worker) -> None:
         try:
-            bot.mediator.assign_role(tag=int(worker.tag), role=UnitRole.BUILDING, remove_from_squad=True)
+            # Keep the worker out of GATHERING without tripping Ares BuildingManager's
+            # "BUILDING but not in tracker" auto-return-to-mining path.
+            bot.mediator.assign_role(tag=int(worker.tag), role=UnitRole.REPAIRING, remove_from_squad=True)
         except Exception:
             pass
 
@@ -430,9 +432,6 @@ class MaintainWallTask(BaseTask):
             return TaskResult.noop("nat_unknown")
         rush_state = str(self.awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
         rush_active = rush_state in {"SUSPECTED", "CONFIRMED", "HOLDING"}
-        enemy_count = int(getattr(attention.combat, "primary_enemy_count", 0) or 0)
-        if not rush_active and enemy_count <= 0:
-            return TaskResult.noop("nat_fort_not_required")
         depot_targets = self._wall_positions(
             bot,
             base_location=nat,

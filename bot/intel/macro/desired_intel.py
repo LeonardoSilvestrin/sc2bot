@@ -327,23 +327,51 @@ def derive_macro_mode_intel(
         )
         or (
             rush_state == "SUSPECTED"
-            and (bool(enemy_at_door) or rush_tier in {"HEAVY", "EXTREME"} or float(rush_severity) >= 0.72)
+            and (
+                bool(enemy_at_door)
+                or (
+                    rush_tier in {"HEAVY", "EXTREME"}
+                    and float(rush_severity) >= 0.80
+                )
+            )
         )
     )
     if str(opening_selected) == "MechaOpen" and bool(mecha_should_abort_to_rush_defense):
         requested_opening = "RushDefenseOpen"
         requested_transition_target = "STIM"
         opening_request_reason = "enemy_rush_pressure"
-    rush_stable_clear = bool(
+    # Read enemy expansion evidence for accelerated rush-defense exit.
+    enemy_build_snapshot = awareness.mem.get(K("enemy", "build", "snapshot"), now=now, default={}) or {}
+    if not isinstance(enemy_build_snapshot, dict):
+        enemy_build_snapshot = {}
+    enemy_bases_visible = int(enemy_build_snapshot.get("bases_visible", 0) or 0)
+    enemy_nat_on_ground = bool(enemy_build_snapshot.get("natural_on_ground", False))
+    clear_for_s = max(0.0, float(now) - float(rush_last_seen_pressure_t)) if float(rush_last_seen_pressure_t) > 0.0 else 0.0
+
+    # Fast exit: rush is fully cleared (NONE or ENDED) AND enemy has clearly committed to
+    # expanding (nat established, 2+ bases visible). Does NOT require opening_done — this
+    # handles the case where the bot stayed in RushDefenseOpen past opening completion.
+    # HOLDING is intentionally excluded: we must wait for the rush to be over first.
+    rush_stable_clear_fast = bool(
+        str(opening_selected) == "RushDefenseOpen"
+        and enemy_nat_on_ground
+        and int(enemy_bases_visible) >= 2
+        and rush_state in {"NONE", "ENDED"}
+        and not bool(enemy_at_door)
+        and float(clear_for_s) >= 18.0
+    )
+    # Normal exit: opening finished, rush fully cleared, waited enough.
+    rush_stable_clear_normal = bool(
         str(opening_selected) == "RushDefenseOpen"
         and bool(attention.macro.opening_done)
         and rush_state in {"NONE", "ENDED"}
-        and (float(now) - float(rush_last_seen_pressure_t)) >= 28.0
+        and float(clear_for_s) >= 20.0
     )
+    rush_stable_clear = rush_stable_clear_fast or rush_stable_clear_normal
     if rush_stable_clear:
         requested_opening = "BioOpen"
         requested_transition_target = "STIM"
-        opening_request_reason = "rush_stable_clear"
+        opening_request_reason = "rush_stable_clear_fast" if rush_stable_clear_fast else "rush_stable_clear"
 
     set_requested_opening_state(
         awareness=awareness,
@@ -374,7 +402,11 @@ def derive_macro_mode_intel(
     rush_detected = bool((rush_is_early and rush_state in {"CONFIRMED", "HOLDING", "SUSPECTED"}) or aggression_state == "RUSH")
     pressure = float(adaptive.get("pressure", 0.0) or 0.0)
     flood = float(adaptive.get("flood", 0.0) or 0.0)
-    if rush_tier in {"HEAVY", "EXTREME"}:
+    if rush_stable_clear:
+        # Enemy has committed to expanding — do not stay in RUSH_RESPONSE/DEFENSIVE mode.
+        # The opening transition to BioOpen was already requested above; mode follows.
+        mode = "STANDARD"
+    elif rush_tier in {"HEAVY", "EXTREME"}:
         mode = "RUSH_RESPONSE"
     elif rush_detected and float(pressure) >= 0.70:
         mode = "RUSH_RESPONSE"
@@ -405,6 +437,10 @@ def derive_macro_mode_intel(
             "requested_transition_target": str(requested_transition_target),
             "opening_request_reason": str(opening_request_reason),
             "rush_stable_clear": bool(rush_stable_clear),
+            "rush_stable_clear_fast": bool(rush_stable_clear_fast),
+            "enemy_nat_on_ground": bool(enemy_nat_on_ground),
+            "enemy_bases_visible": int(enemy_bases_visible),
+            "clear_for_s": float(round(clear_for_s, 1)),
             "banshee_harass_done": bool(banshee_harass_done),
             "build_phase": str(phase),
             "phase_profile": str(phase_profile),
@@ -484,6 +520,14 @@ def _boost_unit_comp_bias(comp: dict[str, float], *, unit_name: str, weight: flo
     return _normalize(out)
 
 
+def _scale_unit_comp_bias(comp: dict[str, float], *, unit_name: str, factor: float) -> dict[str, float]:
+    out = dict(comp)
+    if str(unit_name) not in out:
+        return _normalize(out)
+    out[str(unit_name)] = max(0.0, float(out.get(str(unit_name), 0.0) or 0.0) * float(factor))
+    return _normalize(out)
+
+
 def _controller_comp(comp: dict[str, float], priority_units: list[str]) -> dict[str, dict[str, float | int]]:
     ordered = sorted(comp.items(), key=lambda kv: float(kv[1]), reverse=True)
     if priority_units:
@@ -513,6 +557,73 @@ def _unit_reserve_cost(unit_name: str) -> tuple[int, int]:
     except Exception:
         pass
     return 0, 0
+
+
+def _unit_is_bias_ready(*, attention: Attention, unit_name: str) -> bool:
+    name = str(unit_name).upper()
+    if name in {"SIEGETANK", "CYCLONE"}:
+        return bool(int(getattr(attention.macro, "factory_techlab", 0) or 0) > 0)
+    if name in {"THOR", "BATTLECRUISER"}:
+        return False
+    if name in {"MARAUDER"}:
+        return bool(int(getattr(attention.macro, "barracks_techlab", 0) or 0) > 0)
+    if name in {"GHOST"}:
+        ready = dict(getattr(attention.economy, "units_ready", {}) or {})
+        return bool(int(getattr(attention.macro, "barracks_techlab", 0) or 0) > 0 and int(ready.get(U.GHOSTACADEMY, 0) or 0) > 0)
+    if name in {"BANSHEE", "RAVEN"}:
+        return bool(int(getattr(attention.macro, "starport_techlab", 0) or 0) > 0)
+    if name in {"MEDIVAC", "VIKINGFIGHTER", "LIBERATOR"}:
+        ready = dict(getattr(attention.economy, "units_ready", {}) or {})
+        return bool(int(ready.get(U.STARPORT, 0) or 0) > 0)
+    return True
+
+
+def _apply_gas_overflow_unit_bias(
+    comp: dict[str, float],
+    *,
+    priority_units: list[str],
+    attention: Attention,
+    now: float,
+    awareness: Awareness,
+    opening_selected: str,
+    enemy_at_door: bool,
+    rush_active: bool,
+    aggression_state: str,
+) -> tuple[dict[str, float], list[str]]:
+    gas = int(getattr(attention.economy, "gas", 0) or 0)
+    minerals = int(getattr(attention.economy, "minerals", 0) or 0)
+    bank_target_g = int(awareness.mem.get(K("macro", "desired", "bank_target_gas"), now=now, default=220) or 220)
+    overflow = max(0, int(gas) - int(bank_target_g))
+    if overflow <= 90 or bool(enemy_at_door) or bool(rush_active) or str(aggression_state) in {"RUSH", "AGGRESSION"}:
+        return dict(comp), list(priority_units)
+
+    candidates: list[tuple[float, str, int, int]] = []
+    for unit_name, weight in dict(comp).items():
+        if float(weight) <= 0.0:
+            continue
+        m_cost, g_cost = _unit_reserve_cost(str(unit_name))
+        if g_cost < 50:
+            continue
+        if not _unit_is_bias_ready(attention=attention, unit_name=str(unit_name)):
+            continue
+        if minerals < max(75, int(m_cost * 0.85)):
+            continue
+        gas_ratio = float(g_cost) / max(1.0, float(m_cost))
+        score = (0.60 * float(g_cost)) + (0.25 * float(gas_ratio)) + (0.15 * float(weight * 100.0))
+        candidates.append((float(score), str(unit_name), int(m_cost), int(g_cost)))
+    if not candidates:
+        return dict(comp), list(priority_units)
+
+    candidates.sort(reverse=True)
+    chosen = str(candidates[0][1])
+    boost = 0.10 if overflow < 220 else 0.18
+    out_comp = _boost_unit_comp_bias(dict(comp), unit_name=str(chosen), weight=float(boost))
+    out_prio = _prepend_unique(list(priority_units), str(chosen))
+
+    if str(opening_selected) == "MechaOpen" and chosen == "SIEGETANK" and float(out_comp.get("HELLION", 0.0) or 0.0) > 0.0:
+        damp = 0.78 if overflow < 220 else 0.60
+        out_comp = _scale_unit_comp_bias(out_comp, unit_name="HELLION", factor=float(damp))
+    return dict(out_comp), list(out_prio)
 
 
 def _infer_bank_targets(*, comp: dict[str, float], mode: str) -> tuple[int, int]:
@@ -546,6 +657,41 @@ def _infer_bank_targets(*, comp: dict[str, float], mode: str) -> tuple[int, int]
     bank_m = int(max(300, min(980, round(base_m * float(mode_mul[0])))))
     bank_g = int(max(90, min(520, round(base_g * float(mode_mul[1])))))
     return int(bank_m), int(bank_g)
+
+
+def _clamp_low_base_production(
+    *,
+    production_structure_targets: dict[str, int],
+    production_scale: dict[str, float],
+    bases_now: int,
+    nat_is_mining: bool,
+    rush_state: str,
+    opening_selected: str,
+) -> tuple[dict[str, int], dict[str, float]]:
+    targets = {str(k): max(0, int(v or 0)) for k, v in dict(production_structure_targets).items()}
+    scales = {str(k): max(0.0, float(v or 0.0)) for k, v in dict(production_scale).items()}
+    rush_active = str(rush_state).upper() in {"SUSPECTED", "CONFIRMED", "HOLDING"}
+    if rush_active:
+        return targets, scales
+
+    if int(bases_now) < 2 or not bool(nat_is_mining):
+        cap_targets = {"BARRACKS": 2, "FACTORY": 1, "STARPORT": 0}
+        cap_scales = {"BARRACKS": 0.95, "FACTORY": 0.45, "STARPORT": 0.0}
+    elif int(bases_now) == 2:
+        if str(opening_selected) == "MechaOpen":
+            cap_targets = {"BARRACKS": 3, "FACTORY": 2, "STARPORT": 1}
+            cap_scales = {"BARRACKS": 1.10, "FACTORY": 0.85, "STARPORT": 0.55}
+        else:
+            cap_targets = {"BARRACKS": 4, "FACTORY": 1, "STARPORT": 1}
+            cap_scales = {"BARRACKS": 1.45, "FACTORY": 0.55, "STARPORT": 0.55}
+    else:
+        return targets, scales
+
+    for name, cap in cap_targets.items():
+        targets[str(name)] = min(int(targets.get(str(name), 0) or 0), int(cap))
+    for name, cap in cap_scales.items():
+        scales[str(name)] = min(float(scales.get(str(name), 0.0) or 0.0), float(cap))
+    return targets, scales
 
 
 def _harass_missing_unit_from_cooldown(*, awareness: Awareness, now: float) -> str | None:
@@ -742,6 +888,18 @@ def derive_army_comp_intel(
             for unit_name in priority_units
             if str(unit_name) in allowed_units and str(unit_name) not in {"MARINE", "SIEGETANK", "MARAUDER"}
         ]
+
+    comp, priority_units = _apply_gas_overflow_unit_bias(
+        comp=dict(comp),
+        priority_units=list(priority_units),
+        attention=attention,
+        now=float(now),
+        awareness=awareness,
+        opening_selected=str(opening_selected),
+        enemy_at_door=bool(enemy_at_door),
+        rush_active=bool(rush_active),
+        aggression_state=str(aggression_state),
+    )
 
     comp = _normalize(comp)
     controller_comp = _controller_comp(comp=comp, priority_units=priority_units)
@@ -972,6 +1130,14 @@ def derive_tech_intel(
             production_scale["BARRACKS"] = min(float(production_scale.get("BARRACKS", 0.0) or 0.0), 0.85)
             production_scale["FACTORY"] = min(float(production_scale.get("FACTORY", 0.0) or 0.0), 0.35)
             production_scale["STARPORT"] = 0.0
+    production_structure_targets, production_scale = _clamp_low_base_production(
+        production_structure_targets=dict(production_structure_targets),
+        production_scale=dict(production_scale),
+        bases_now=int(bases_now),
+        nat_is_mining=bool(nat_is_mining),
+        rush_state=str(rush_state),
+        opening_selected=str(opening_selected),
+    )
     due_structures = _due_structures_by_time(milestones=tech_timing_milestones, now_t=float(now))
     # Contract: structures in tech_targets are due-by-time; phase cap stays in tech_structure_targets.
     tech_targets = {"upgrades": list(upgrades), "structures": dict(due_structures)}

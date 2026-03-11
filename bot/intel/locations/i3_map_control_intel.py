@@ -16,6 +16,12 @@ from ares.consts import BuildingSize
 from sc2.ids.unit_typeid import UnitTypeId as U
 from sc2.position import Point2
 
+from bot.intel.utils.defensive_placements import (
+    ensure_nat_wall_placements,
+    point_payload,
+    points_payload,
+    solve_perimeter_bunker_position,
+)
 from bot.intel.utils.natural_geometry import sanitize_natural_defense_point
 from bot.mind.attention import Attention
 from bot.mind.awareness import Awareness, K
@@ -79,9 +85,7 @@ class MapControlIntelConfig:
 
 
 def _point_payload(pos: Point2 | None) -> dict[str, float] | None:
-    if pos is None:
-        return None
-    return {"x": float(pos.x), "y": float(pos.y)}
+    return point_payload(pos)
 
 
 def _point_from_payload(payload) -> Point2 | None:
@@ -200,6 +204,25 @@ def _our_natural(bot) -> Point2 | None:
     return ordered[0] if ordered else None
 
 
+def _outer_base_positions(bot, *, nat: Point2) -> list[Point2]:
+    out: list[Point2] = []
+    for th in list(getattr(bot, "townhalls", []) or []):
+        try:
+            pos = th.position
+            if float(pos.distance_to(bot.start_location)) <= 8.0:
+                continue
+            if float(pos.distance_to(nat)) <= 4.5:
+                continue
+            out.append(pos)
+        except Exception:
+            continue
+    try:
+        out.sort(key=lambda p: float(p.distance_to(bot.start_location)))
+    except Exception:
+        pass
+    return out
+
+
 def _main_townhall(bot):
     ths = list(getattr(bot, "townhalls", []) or [])
     if not ths:
@@ -308,6 +331,23 @@ def derive_map_control_intel(
         hold_pos = nat
     if not _pathable(bot, staging_pos):
         staging_pos = nat
+
+    nat_wall_layout = ensure_nat_wall_placements(bot, nat=nat)
+    nat_wall_depots = list(nat_wall_layout.get("depots", []) or [])
+    nat_wall_three_by_three = list(nat_wall_layout.get("three_by_three", []) or [])
+    nat_bunker_pos = nat_wall_three_by_three[0] if nat_wall_three_by_three else None
+    outer_bunker_positions: list[dict[str, dict[str, float] | str]] = []
+    for outer_base in _outer_base_positions(bot, nat=nat):
+        bunker_pos = solve_perimeter_bunker_position(bot, base_pos=outer_base, threat_pos=None)
+        if bunker_pos is None:
+            continue
+        outer_bunker_positions.append(
+            {
+                "base": _point_payload(outer_base),
+                "pos": _point_payload(bunker_pos),
+                "mode": "PERIMETER",
+            }
+        )
 
     main_th = _main_townhall(bot)
     main_th_tag = int(getattr(main_th, "tag", -1) or -1)
@@ -452,6 +492,12 @@ def derive_map_control_intel(
         and float(presence_nat_side_power) <= min(float(cfg.max_enemy_presence_power_at_nat), 1.0)
         and bool(no_direct_pressure)
     )
+    # Quando a nat está offsite (CC voando), basta a nat estar limpa para pousar —
+    # não exige no_direct_pressure, pois a main pode estar sob pressão enquanto o CC retorna.
+    nat_clear_to_land_offsite = bool(
+        float(nat_enemy_power) <= min(float(cfg.max_enemy_power_at_nat), 1.1)
+        and float(presence_nat_side_power) <= min(float(cfg.max_enemy_presence_power_at_nat), 1.0)
+    )
     local_nat_cover_ready = bool(
         own_nat_bunker_count > 0
         or own_nat_tank_count > 0
@@ -473,9 +519,9 @@ def derive_map_control_intel(
     )
     if bool(nat_taken):
         safe_to_land = True
-    elif bool(nat_offsite) and bool(nat_clear_to_land):
-        # Offsite com terreno limpo pode pousar
-        safe_to_land = bool(fortified or bool(nat_clear_to_land))
+    elif bool(nat_offsite) and bool(nat_clear_to_land_offsite):
+        # Offsite com nat limpa pode pousar — não exige pressão na main zerada
+        safe_to_land = True
     elif bool(should_secure) and bool(nat_clear_to_land):
         safe_to_land = bool(fortified or natural_release_window or strategic_nat_cover_ready)
     else:
@@ -530,6 +576,13 @@ def derive_map_control_intel(
         "staging": _point_payload(staging_pos),
         "hold": _point_payload(hold_pos),
         "main_ramp_bunker_pos": _point_payload(_main_ramp_bunker_target(bot)),
+        "nat_wall_source": str(nat_wall_layout.get("source", "none") or "none"),
+        "nat_wall_supported": bool(nat_wall_layout.get("supported", False)),
+        "nat_wall_anchor": _point_payload(nat_wall_layout.get("anchor")),
+        "nat_wall_depots": points_payload(nat_wall_depots),
+        "nat_wall_three_by_three": points_payload(nat_wall_three_by_three),
+        "nat_bunker_pos": _point_payload(nat_bunker_pos),
+        "outer_bunker_positions": list(outer_bunker_positions),
     }
     awareness.mem.set(
         K("intel", "map_control", "our_nat", "snapshot"),
@@ -565,6 +618,30 @@ def derive_map_control_intel(
     awareness.mem.set(
         K("intel", "placements", "main_ramp_bunker"),
         value=_point_payload(_main_ramp_bunker_target(bot)),
+        now=now,
+        ttl=float(cfg.ttl_s),
+    )
+    awareness.mem.set(
+        K("intel", "placements", "nat_bunker"),
+        value=_point_payload(nat_bunker_pos),
+        now=now,
+        ttl=float(cfg.ttl_s),
+    )
+    awareness.mem.set(
+        K("intel", "placements", "nat_wall"),
+        value={
+            "source": str(nat_wall_layout.get("source", "none") or "none"),
+            "supported": bool(nat_wall_layout.get("supported", False)),
+            "anchor": _point_payload(nat_wall_layout.get("anchor")),
+            "depots": points_payload(nat_wall_depots),
+            "three_by_three": points_payload(nat_wall_three_by_three),
+        },
+        now=now,
+        ttl=float(cfg.ttl_s),
+    )
+    awareness.mem.set(
+        K("intel", "placements", "outer_bunkers"),
+        value=list(outer_bunker_positions),
         now=now,
         ttl=float(cfg.ttl_s),
     )

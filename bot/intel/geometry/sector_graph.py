@@ -105,7 +105,16 @@ class SectorGraph:
         if ramp is not None:
             ramp_top = getattr(ramp, "top_center", None)
             ramp_bottom = getattr(ramp, "bottom_center", None)
-        self._positions[SectorId.MAIN_RAMP] = _safe(ramp_top, main)
+        # Posição do setor MAIN_RAMP: recuada 4.5 tiles para dentro da main,
+        # atrás da wall — tanks siegam aqui sem bloquear a rampa, marines atacam pela wall
+        if ramp_top is not None:
+            try:
+                ramp_sector_pos = ramp_top.towards(main, 4.5)
+            except Exception:
+                ramp_sector_pos = ramp_top
+        else:
+            ramp_sector_pos = main
+        self._positions[SectorId.MAIN_RAMP] = ramp_sector_pos
 
         # NAT_FOOTPRINT
         self._positions[SectorId.NAT_FOOTPRINT] = nat

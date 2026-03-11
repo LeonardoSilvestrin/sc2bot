@@ -48,6 +48,15 @@ class LandBaseTask(BaseTask):
         snapshot = awareness.mem.get(K("intel", "map_control", "our_nat", "snapshot"), now=now, default={}) or {}
         return dict(snapshot) if isinstance(snapshot, dict) else {}
 
+    @staticmethod
+    def _point_from_payload(payload, *, fallback: Point2 | None = None) -> Point2 | None:
+        if not isinstance(payload, dict):
+            return fallback
+        try:
+            return Point2((float(payload.get("x", 0.0)), float(payload.get("y", 0.0))))
+        except Exception:
+            return fallback
+
     def _target_unit(self, bot, *, now: float):
         entry = self._registry_entry(self.awareness, now=now, label=self.base_label)
         tag = int(entry.get("townhall_tag", 0) or 0)
@@ -113,6 +122,16 @@ class LandBaseTask(BaseTask):
 
     def _clear_landing_zone(self, bot, *, target_pos: Point2, landing_unit_tag: int) -> bool:
         issued = False
+        now = float(getattr(bot, "time", 0.0) or 0.0)
+        snapshot = self._nat_snapshot(self.awareness, now=now)
+        fallback = self._point_from_payload(snapshot.get("staging"), fallback=None)
+        if fallback is None:
+            fallback = getattr(bot, "start_location", None)
+        try:
+            if fallback is not None and float(fallback.distance_to(target_pos)) < 7.0:
+                fallback = target_pos.towards(fallback, 9.5)
+        except Exception:
+            pass
         try:
             own_units = list(getattr(bot, "units", []) or [])
         except Exception:
@@ -130,12 +149,7 @@ class LandBaseTask(BaseTask):
                     ally(AbilityId.BURROWUP_WIDOWMINE)
                     issued = True
                     continue
-                retreat = getattr(bot, "start_location", None)
-                try:
-                    if retreat is not None:
-                        retreat = target_pos.towards(retreat, 8.0)
-                except Exception:
-                    retreat = getattr(bot, "start_location", None)
+                retreat = fallback
                 if retreat is None:
                     continue
                 ally.move(retreat)

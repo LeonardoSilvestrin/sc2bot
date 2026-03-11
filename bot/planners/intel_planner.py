@@ -10,6 +10,7 @@ from bot.devlog import DevLogger
 from bot.mind.attention import Attention
 from bot.mind.awareness import Awareness, K
 from bot.planners.utils.proposals import Proposal, TaskSpec, UnitRequirement
+from bot.tasks.defense.reaper_nat_patrol_task import ReaperPatrolTask
 from bot.tasks.scout.scan_task import ScanAt
 from bot.tasks.scout.reaper_scout_task import ReaperScout, ReaperScoutObjective
 from bot.tasks.scout.worker_expansion_scout_task import WorkerExpansionScoutTask
@@ -85,9 +86,19 @@ class IntelPlanner:
     worker_scout_during_rush_stale_s: float = 35.0
     worker_scout_during_rush_cadence_s: float = 24.0
     worker_scout_failure_backoff_s: float = 18.0
+    # Reaper expansion scout (periodic after initial main scout is done)
+    reaper_expansion_scout_clear_s: float = 20.0   # only dispatch when no pressure for this long
+    reaper_expansion_scout_cadence_s: float = 60.0  # minimum gap between dispatches
+    reaper_expansion_scout_until_s: float = 480.0   # stop after this game time
 
     def _pid_reaper_scout(self) -> str:
         return f"{self.planner_id}:scout:reaper"
+
+    def _pid_reaper_expansion_scout(self) -> str:
+        return f"{self.planner_id}:scout:reaper_expansion"
+
+    def _pid_reaper_patrol(self) -> str:
+        return f"{self.planner_id}:patrol:reaper_home"
 
     def _pid_scan(self, label: str) -> str:
         return f"{self.planner_id}:scan:{label}"
@@ -97,6 +108,12 @@ class IntelPlanner:
 
     def _enemy_main(self, bot) -> Point2:
         return bot.enemy_start_locations[0]
+
+    def _own_natural(self, bot) -> Point2:
+        try:
+            return bot.mediator.get_own_nat
+        except Exception:
+            return bot.start_location
 
     def _enemy_natural(self, bot) -> Point2:
         enemy_main = self._enemy_main(bot)
@@ -111,6 +128,63 @@ class IntelPlanner:
     def _reaper_objective(self) -> ReaperScoutObjective:
         # Main-first scout: SCV already checks early pathing/opening outside.
         return ReaperScoutObjective.CONFIRM_MAIN_RAMP
+
+    @staticmethod
+    def _nat_choke_anchor(bot, *, base_pos: Point2) -> Point2:
+        try:
+            enemy_main = bot.enemy_start_locations[0]
+            return base_pos.towards(enemy_main, 4.5)
+        except Exception:
+            return base_pos
+
+    @staticmethod
+    def _reaper_patrol_points(bot, *, own_nat: Point2, nat_anchor: Point2) -> tuple[Point2, ...]:
+        points: list[Point2] = []
+        try:
+            ramp = getattr(bot, "main_base_ramp", None)
+            bottom = getattr(ramp, "bottom_center", None) if ramp is not None else None
+            if isinstance(bottom, Point2):
+                points.append(bottom)
+        except Exception:
+            pass
+        points.extend([own_nat, nat_anchor])
+        extras: list[Point2] = []
+        try:
+            expansions = list(getattr(getattr(bot, "mediator", None), "get_own_expansions", []) or [])
+        except Exception:
+            expansions = []
+        for item in expansions:
+            try:
+                pos = item[0] if isinstance(item, tuple) else item
+            except Exception:
+                pos = item
+            if not isinstance(pos, Point2):
+                continue
+            try:
+                if float(pos.distance_to(own_nat)) <= 4.5:
+                    continue
+                if float(pos.distance_to(bot.start_location)) <= 8.0:
+                    continue
+                if float(pos.distance_to(own_nat)) > 16.0:
+                    continue
+            except Exception:
+                continue
+            extras.append(pos)
+        try:
+            extras.sort(key=lambda p: float(own_nat.distance_to(p)))
+        except Exception:
+            pass
+        points.extend(extras[:2])
+
+        deduped: list[Point2] = []
+        for pos in points:
+            try:
+                if any(float(pos.distance_to(existing)) <= 2.0 for existing in deduped):
+                    continue
+            except Exception:
+                pass
+            deduped.append(pos)
+        return tuple(deduped)
 
     def _target_for_objective(self, bot, obj: ReaperScoutObjective) -> Point2:
         if obj == ReaperScoutObjective.CONFIRM_NATURAL:
@@ -186,7 +260,13 @@ class IntelPlanner:
     def _worker_scout_route(self, *, bot, awareness: Awareness, attention: Attention, now: float) -> tuple[list[str], list[Point2], bool]:
         if int(attention.economy.workers_total) < int(self.worker_scout_min_workers):
             return [], [], False
-        if int(attention.combat.primary_urgency) > 0 or int(attention.combat.primary_enemy_count) > 0:
+        # Block only when the enemy is literally at our door (high urgency + many units near base).
+        # During a hold rush, primary_urgency > 0 is constant noise — don't let it suppress expansion scouting.
+        enemy_at_door = bool(
+            int(attention.combat.primary_urgency) >= 18
+            and int(attention.combat.primary_enemy_count) >= 3
+        )
+        if enemy_at_door:
             return [], [], False
         rush_state = str(awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
         last_confirmed_t = float(awareness.mem.get(K("enemy", "rush", "last_confirmed_t"), now=now, default=0.0) or 0.0)
@@ -338,6 +418,150 @@ class IntelPlanner:
                         },
                         meta={"module": "planner", "component": f"planner.{self.planner_id}"},
                     )
+
+        # -------------------------
+        # 0.1) Reaper expansion scout (periodic — finds 3rd/4th base during and after rush)
+        # -------------------------
+        already_done_reaper = float(awareness.intel_last_reaper_scout_done_at(now=now)) > 0.0
+        reaper_expansion_pid = self._pid_reaper_expansion_scout()
+        if (
+            reapers_ready >= 1
+            and already_done_reaper
+            and float(now) <= float(self.reaper_expansion_scout_until_s)
+            and not awareness.ops_proposal_running(proposal_id=reaper_expansion_pid, now=now)
+            and not awareness.ops_proposal_running(proposal_id=self._pid_reaper_scout(), now=now)
+        ):
+            last_exp_scout_t = float(
+                awareness.mem.get(K("intel", "reaper", "expansion_scout", "last_t"), now=now, default=0.0) or 0.0
+            )
+            rush_st_check = str(awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
+            rush_lp_t = float(awareness.mem.get(K("enemy", "rush", "last_seen_pressure_t"), now=now, default=0.0) or 0.0)
+            rush_cf = max(0.0, float(now) - float(rush_lp_t)) if float(rush_lp_t) > 0.0 else 9999.0
+            pressure_clear = float(rush_cf) >= float(self.reaper_expansion_scout_clear_s)
+            cadence_ok = (float(now) - float(last_exp_scout_t)) >= float(self.reaper_expansion_scout_cadence_s)
+            # Dispatch when: pressure has cleared OR rush is not hard-active (state = SUSPECTED/NONE/ENDED)
+            rush_hard_now = rush_st_check in {"CONFIRMED", "HOLDING"}
+            should_exp_scout = bool(cadence_ok and (pressure_clear or not rush_hard_now))
+            if should_exp_scout:
+                candidates = self._enemy_expansion_candidates(bot)
+                # Pick the expansion unseen longest (or never seen)
+                best_label = None
+                best_pos = None
+                best_age = -1.0
+                for label, pos in candidates[:4]:
+                    last_t = float(
+                        awareness.mem.get(K("intel", "worker_scout", "by_label", str(label), "last_t"), now=now, default=0.0) or 0.0
+                    )
+                    age = float(now) - float(last_t) if float(last_t) > 0.0 else 99999.0
+                    if age > best_age:
+                        best_age = age
+                        best_label = label
+                        best_pos = pos
+                if best_pos is not None:
+                    _exp_target = best_pos
+                    _exp_label = best_label
+
+                    def _reaper_exp_factory(mission_id: str) -> ReaperScout:
+                        return ReaperScout(
+                            awareness=awareness,
+                            log=self.log,
+                            objective=ReaperScoutObjective.CONFIRM_NATURAL,
+                            arrive_radius_nat=9.0,
+                        )
+
+                    proposals.append(
+                        Proposal(
+                            proposal_id=reaper_expansion_pid,
+                            domain="INTEL",
+                            score=62,
+                            tasks=[
+                                TaskSpec(
+                                    task_id="reaper_scout",
+                                    task_factory=_reaper_exp_factory,
+                                    unit_requirements=[
+                                        UnitRequirement(
+                                            unit_type=U.REAPER,
+                                            count=1,
+                                            pick_policy=ReaperScoutPickPolicy(objective=_exp_target),
+                                        )
+                                    ],
+                                )
+                            ],
+                            lease_ttl=float(self.reaper_scout_lease_ttl_s),
+                            cooldown_s=float(self.reaper_expansion_scout_cadence_s),
+                            risk_level=1,
+                            allow_preempt=True,
+                        )
+                    )
+                    awareness.mem.set(K("intel", "reaper", "expansion_scout", "last_t"), value=float(now), now=now, ttl=None)
+
+        rush_state = str(awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
+        rush_last_pressure_t = float(awareness.mem.get(K("enemy", "rush", "last_seen_pressure_t"), now=now, default=0.0) or 0.0)
+        rush_clear_for = max(0.0, float(now) - float(rush_last_pressure_t)) if float(rush_last_pressure_t) > 0.0 else 9999.0
+        nat_snapshot = awareness.mem.get(K("intel", "map_control", "our_nat", "snapshot"), now=now, default={}) or {}
+        if not isinstance(nat_snapshot, dict):
+            nat_snapshot = {}
+        nat_enemy_power = float(nat_snapshot.get("enemy_nat_power", 0.0) or 0.0)
+        nat_presence_power = float(nat_snapshot.get("enemy_presence_nat_side_power", 0.0) or 0.0)
+        # Always propose a patrol so the reaper has something to do (low score = easily preempted).
+        # Raise priority when there is real nat threat or recent rush pressure.
+        rush_hard = rush_state in {"CONFIRMED", "HOLDING"}
+        nat_threat = bool(nat_enemy_power >= 0.5 or nat_presence_power >= 0.5)
+        rush_active_pressure = bool(rush_hard and float(rush_clear_for) < 20.0)
+        patrol_pid = self._pid_reaper_patrol()
+        reaper_scout_running = awareness.ops_proposal_running(proposal_id=self._pid_reaper_scout(), now=now)
+        reaper_exp_running = awareness.ops_proposal_running(proposal_id=self._pid_reaper_expansion_scout(), now=now)
+        if (
+            reapers_ready >= 1
+            and not reaper_scout_running
+            and not reaper_exp_running
+            and not awareness.ops_proposal_running(proposal_id=patrol_pid, now=now)
+        ):
+            own_nat = self._own_natural(bot)
+            nat_anchor = self._nat_choke_anchor(bot, base_pos=own_nat)
+            patrol_points = self._reaper_patrol_points(bot, own_nat=own_nat, nat_anchor=nat_anchor)
+            roam_center = nat_anchor
+            objective = patrol_points[0] if patrol_points else roam_center
+            safe_point = getattr(getattr(bot, "main_base_ramp", None), "top_center", None) or bot.start_location
+            engage_radius = 13.0 if rush_state in {"CONFIRMED", "HOLDING"} else 11.5
+
+            def _reaper_patrol_factory(mission_id: str) -> ReaperPatrolTask:
+                return ReaperPatrolTask(
+                    roam_center=roam_center,
+                    safe_point=safe_point,
+                    roam_radius=7.0,
+                    engage_radius=engage_radius,
+                    patrol_points=patrol_points,
+                    task_domain="INTEL",
+                    task_id="reaper_home_patrol",
+                    log=self.log,
+                )
+
+            proposals.append(
+                Proposal(
+                    proposal_id=patrol_pid,
+                    domain="INTEL",
+                    score=78 if rush_active_pressure else (70 if nat_threat else 38),
+                    tasks=[
+                        TaskSpec(
+                            task_id="reaper_home_patrol",
+                            task_factory=_reaper_patrol_factory,
+                            unit_requirements=[
+                                UnitRequirement(
+                                    unit_type=U.REAPER,
+                                    count=1,
+                                    pick_policy=ReaperScoutPickPolicy(objective=objective),
+                                )
+                            ],
+                            lease_ttl=20.0,
+                        )
+                    ],
+                    lease_ttl=20.0,
+                    cooldown_s=5.0,
+                    risk_level=1,
+                    allow_preempt=True,
+                )
+            )
 
         # -------------------------
         # 0.5) Worker expansion scout

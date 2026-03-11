@@ -8,6 +8,7 @@ from sc2.position import Point2
 from ares.consts import BuildingSize
 
 from bot.devlog import DevLogger
+from bot.intel.utils.defensive_placements import ensure_nat_wall_placements
 from bot.mind.attention import Attention
 from bot.mind.awareness import Awareness, K
 from bot.planners.utils.proposals import Proposal, TaskSpec, UnitRequirement
@@ -151,7 +152,11 @@ class WallPlanner:
         except Exception:
             return False
         if nat not in placements:
-            return False
+            try:
+                layout = ensure_nat_wall_placements(bot, nat=nat)
+                return bool(layout.get("supported", False))
+            except Exception:
+                return False
         nat_two_by_two = placements[nat].get(BuildingSize.TWO_BY_TWO, {}) or {}
         nat_three_by_three = placements[nat].get(BuildingSize.THREE_BY_THREE, {}) or {}
         has_wall_depots = any(
@@ -162,6 +167,12 @@ class WallPlanner:
             isinstance(info, dict) and bool(info.get("is_wall", False))
             for info in nat_three_by_three.values()
         )
+        if not bool(has_wall_depots or has_wall_three_by_three):
+            try:
+                layout = ensure_nat_wall_placements(bot, nat=nat)
+                return bool(layout.get("supported", False))
+            except Exception:
+                return False
         return bool(has_wall_depots or has_wall_three_by_three)
 
     def _main_factory(self, *, awareness: Awareness):
@@ -233,7 +244,7 @@ class WallPlanner:
             self._mark(awareness=awareness, now=now, zone="main")
 
         nat_supported = bool(self._nat_wall_supported(bot))
-        nat_required = bool(nat_supported and (rush_active or int(attention.macro.bases_total) >= 2))
+        nat_required = bool(nat_supported and int(attention.macro.bases_total) >= 2)
         nat_pid = self._pid("nat")
         if (
             nat_required

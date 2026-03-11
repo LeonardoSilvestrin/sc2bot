@@ -66,12 +66,14 @@ class BuildingPlacementPlanner:
             ramp = getattr(bot, "main_base_ramp", None)
             top = getattr(ramp, "top_center", None) if ramp is not None else None
             if top is not None:
-                return top.towards(bot.start_location, 6.0)
+                # 10 tiles dentro da main — longe o suficiente do anchor do exército (~4.5 tiles)
+                # para não conflitar com o _clear_macro_build_sites
+                return top.towards(bot.start_location, 10.0)
         except Exception:
             pass
         if target is not None:
             try:
-                return target.towards(bot.start_location, 12.0)
+                return target.towards(bot.start_location, 14.0)
             except Exception:
                 pass
         return bot.start_location
@@ -124,7 +126,12 @@ class BuildingPlacementPlanner:
             return None
         anchor = payload_to_point(previous_signals.get(str(structure_id.name)))
         if anchor is None:
-            anchor = bot.start_location
+            if structure_id == U.SUPPLYDEPOT:
+                ramp = getattr(bot, "main_base_ramp", None)
+                top = getattr(ramp, "top_center", None) if ramp is not None else None
+                anchor = top.towards(bot.start_location, 6.0) if top is not None else bot.start_location
+            else:
+                anchor = bot.start_location
         try:
             point = bot.mediator.request_building_placement(
                 base_location=bot.start_location,

@@ -10,6 +10,7 @@ from sc2.ids.unit_typeid import UnitTypeId as U
 from sc2.position import Point2
 
 from bot.devlog import DevLogger
+from bot.intel.utils.defensive_placements import ensure_nat_wall_placements
 from bot.mind.attention import Attention
 from bot.mind.awareness import Awareness, K
 from bot.tasks.base_task import BaseTask, TaskResult, TaskTick
@@ -430,9 +431,6 @@ class MaintainWallTask(BaseTask):
             return TaskResult.noop("nat_unknown")
         rush_state = str(self.awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
         rush_active = rush_state in {"SUSPECTED", "CONFIRMED", "HOLDING"}
-        enemy_count = int(getattr(attention.combat, "primary_enemy_count", 0) or 0)
-        if not rush_active and enemy_count <= 0:
-            return TaskResult.noop("nat_fort_not_required")
         depot_targets = self._wall_positions(
             bot,
             base_location=nat,
@@ -447,6 +445,25 @@ class MaintainWallTask(BaseTask):
             include_bunkers=True,
         )
         three_by_three_targets = [pos for pos, _info in three_by_three_entries]
+        if not depot_targets and not three_by_three_targets:
+            try:
+                ensure_nat_wall_placements(bot, nat=nat)
+            except Exception:
+                pass
+            depot_targets = self._wall_positions(
+                bot,
+                base_location=nat,
+                size=BuildingSize.TWO_BY_TWO,
+                require_supply_depot=True,
+            )
+            three_by_three_entries = self._wall_entries(
+                bot,
+                base_location=nat,
+                size=BuildingSize.THREE_BY_THREE,
+                require_supply_depot=False,
+                include_bunkers=True,
+            )
+            three_by_three_targets = [pos for pos, _info in three_by_three_entries]
         if not depot_targets and not three_by_three_targets:
             self.awareness.mem.set(
                 K("ops", "wall", "nat", "status"),

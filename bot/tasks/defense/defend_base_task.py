@@ -11,6 +11,7 @@ from bot.devlog import DevLogger
 from bot.mind.attention import Attention
 from bot.mind.awareness import Awareness, K
 from bot.tasks.base_task import BaseTask, TaskResult, TaskTick
+from bot.tasks.utils.marine_kite import marine_kite_step
 
 
 @dataclass
@@ -46,6 +47,8 @@ class DefendBaseTask(BaseTask):
         self.base_pos = base_pos
         self.threat_pos = threat_pos
         self.log = log
+        # Cache de anchor por tag de tank — evita oscillação por instabilidade do _highground_anchor
+        self._tank_anchor_cache: dict[int, Point2] = {}
 
     def _resolve_base_pos(self, bot) -> Point2:
         th = bot.townhalls.find_by_tag(int(self.base_tag))
@@ -332,10 +335,27 @@ class DefendBaseTask(BaseTask):
                 out.append(Point2((float(center.x) + (r * math.cos(ang)), float(center.y) + (r * math.sin(ang)))))
         return out
 
+    def _stable_tank_anchor(self, *, unit, computed_anchor: Point2) -> Point2:
+        """Retorna anchor estável para o tank, evitando oscillação por instabilidade do cálculo a cada tick.
+        Só atualiza o cache se o computed_anchor estiver muito longe do cached (mudança geométrica real)."""
+        tag = int(getattr(unit, "tag", 0) or 0)
+        cached = self._tank_anchor_cache.get(tag)
+        if cached is None:
+            self._tank_anchor_cache[tag] = computed_anchor
+            return computed_anchor
+        try:
+            if float(cached.distance_to(computed_anchor)) > 4.0:
+                # Mudança real de geometria — atualiza
+                self._tank_anchor_cache[tag] = computed_anchor
+                return computed_anchor
+        except Exception:
+            pass
+        return cached
+
     def _handle_tank(self, *, bot, unit, anchor: Point2, threat: Point2, enemy_near, local_pressure: bool) -> bool:
+        stable_anchor = self._stable_tank_anchor(unit=unit, computed_anchor=anchor)
         if unit.type_id == U.SIEGETANKSIEGED:
-            # Só desfaz siege se estiver longe demais E sem inimigos — threshold generoso (8.0)
-            # para evitar oscillar quando o anchor muda poucos tiles entre ticks
+            # Só desfaz siege se estiver longe demais E sem inimigos
             if int(enemy_near.amount) > 0:
                 unit.attack(enemy_near.closest_to(unit))
                 return True
@@ -343,7 +363,7 @@ class DefendBaseTask(BaseTask):
                 return False
             enemy_hold = bot.enemy_units.closer_than(float(self._TANK_HOLD_ENEMY_RADIUS), unit)
             if (
-                float(unit.distance_to(anchor)) > float(self._TANK_UNSIEGE_REPOSITION_RADIUS)
+                float(unit.distance_to(stable_anchor)) > float(self._TANK_UNSIEGE_REPOSITION_RADIUS)
                 and int(enemy_near.amount) <= 0
                 and int(enemy_hold.amount) <= 0
             ):
@@ -352,9 +372,9 @@ class DefendBaseTask(BaseTask):
             # Já sieged e sem inimigos — não faz nada
             return False
 
-        if float(unit.distance_to(anchor)) > 2.5:
+        if float(unit.distance_to(stable_anchor)) > 2.5:
             if not bool(getattr(unit, "is_moving", False)):
-                unit.move(anchor)
+                unit.move(stable_anchor)
                 return True
             return False
         # Defensive posture by default: once in position, siege — só se idle
@@ -383,7 +403,7 @@ class DefendBaseTask(BaseTask):
         return False
 
     @staticmethod
-    def _handle_general(*, unit, base_pos: Point2, hold_anchor: Point2, threat: Point2, enemy_near_base, bunkers: list, bunker_sites: list, reserved_sites: list[Point2], now: float) -> bool:
+    def _handle_general(*, unit, base_pos: Point2, hold_anchor: Point2, threat: Point2, enemy_near_base, bunkers: list, bunker_sites: list, reserved_sites: list[Point2], now: float, safe_retreat: Point2 | None = None) -> bool:
         if unit.type_id == U.MEDIVAC:
             if bool(getattr(unit, "is_idle", True)):
                 follow = threat.towards(hold_anchor, 6.0)
@@ -422,6 +442,11 @@ class DefendBaseTask(BaseTask):
                 unit.move(hold)
             return True
         if int(enemy_near_base.amount) > 0:
+            if unit.type_id == U.MARINE:
+                closest = enemy_near_base.closest_to(unit)
+                kite_target = safe_retreat if safe_retreat is not None else hold_anchor
+                marine_kite_step(unit, target=closest, retreat=kite_target)
+                return True
             unit.attack(enemy_near_base.closest_to(unit))
             return True
         # Idle only: move to hold anchor once, don't spam every tick
@@ -506,6 +531,13 @@ class DefendBaseTask(BaseTask):
                 continue
             hold_anchor = screen_slots[min(int(general_idx), len(screen_slots) - 1)] if screen_slots else defense_anchor
             general_idx += 1
+            # safe_retreat: marines kitam em direção à main quando sob pressão na nat
+            safe_retreat: Point2 | None = None
+            try:
+                if not self._is_main_base(bot, base_pos=base_pos):
+                    safe_retreat = bot.start_location
+            except Exception:
+                pass
             issued = self._handle_general(
                 unit=u,
                 base_pos=base_pos,
@@ -516,6 +548,7 @@ class DefendBaseTask(BaseTask):
                 bunker_sites=bunker_sites,
                 reserved_sites=reserved_sites,
                 now=float(tick.time),
+                safe_retreat=safe_retreat,
             ) or issued
 
         if issued:

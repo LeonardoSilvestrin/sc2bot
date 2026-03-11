@@ -152,6 +152,17 @@ def _site_labels(bot) -> list[tuple[str, Point2]]:
             exps.sort(key=lambda p: float(start.distance_to(p)))
     except Exception:
         pass
+
+    # Pin the true natural using mediator so distance ties don't misplace it.
+    try:
+        own_nat = getattr(getattr(bot, "mediator", None), "get_own_nat", None)
+        if own_nat is not None and isinstance(own_nat, Point2) and exps:
+            nat_idx = min(range(len(exps)), key=lambda i: float(exps[i].distance_to(own_nat)))
+            if nat_idx != 0:
+                exps[0], exps[nat_idx] = exps[nat_idx], exps[0]
+    except Exception:
+        pass
+
     labels = ["NATURAL", "THIRD", "FOURTH", "FIFTH", "SIXTH"]
     for idx, pos in enumerate(exps):
         label = labels[idx] if idx < len(labels) else f"BASE_{idx + 2}"

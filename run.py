@@ -40,7 +40,7 @@ MY_BOT_NAME: str = "MyBotName"
 MY_BOT_RACE: str = "MyBotRace"
 ENEMY_RACE: Race = Race.Protoss
 ENEMY_DIFFICULTY: Difficulty = Difficulty.VeryHard
-ENEMY_BUILD: AIBuild = AIBuild.Rush
+ENEMY_BUILD: AIBuild = AIBuild.Macro
 
 
 def main():

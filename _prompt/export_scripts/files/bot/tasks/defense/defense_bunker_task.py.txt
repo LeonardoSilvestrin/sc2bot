@@ -67,7 +67,9 @@ class DefenseBunkerTask(BaseTask):
     @staticmethod
     def _reserve_worker(bot, worker) -> None:
         try:
-            bot.mediator.assign_role(tag=int(worker.tag), role=UnitRole.BUILDING, remove_from_squad=True)
+            # BUILDING before entering building_tracker makes Ares snap the SCV
+            # back to GATHERING and issue a mineral gather order.
+            bot.mediator.assign_role(tag=int(worker.tag), role=UnitRole.REPAIRING, remove_from_squad=True)
         except Exception:
             pass
 

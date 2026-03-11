@@ -454,6 +454,12 @@ def derive_map_control_intel(
         and float(presence_nat_side_power) <= min(float(cfg.max_enemy_presence_power_at_nat), 1.0)
         and bool(no_direct_pressure)
     )
+    # Quando a nat está offsite (CC voando), basta a nat estar limpa para pousar —
+    # não exige no_direct_pressure, pois a main pode estar sob pressão enquanto o CC retorna.
+    nat_clear_to_land_offsite = bool(
+        float(nat_enemy_power) <= min(float(cfg.max_enemy_power_at_nat), 1.1)
+        and float(presence_nat_side_power) <= min(float(cfg.max_enemy_presence_power_at_nat), 1.0)
+    )
     local_nat_cover_ready = bool(
         own_nat_bunker_count > 0
         or own_nat_tank_count > 0
@@ -475,9 +481,9 @@ def derive_map_control_intel(
     )
     if bool(nat_taken):
         safe_to_land = True
-    elif bool(nat_offsite) and bool(nat_clear_to_land):
-        # Offsite com terreno limpo pode pousar
-        safe_to_land = bool(fortified or bool(nat_clear_to_land))
+    elif bool(nat_offsite) and bool(nat_clear_to_land_offsite):
+        # Offsite com nat limpa pode pousar — não exige pressão na main zerada
+        safe_to_land = True
     elif bool(should_secure) and bool(nat_clear_to_land):
         safe_to_land = bool(fortified or natural_release_window or strategic_nat_cover_ready)
     else:

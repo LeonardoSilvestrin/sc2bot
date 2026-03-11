@@ -195,6 +195,25 @@ class AdvantageGameStatusIntel:
                 continue
 
         ttl = float(self.cfg.ttl_s)
+        # ownership trace: documents what was decided and why, for debugging and auditability.
+        awareness.mem.set(
+            K("macro", "control", "ownership_trace"),
+            value={
+                "owner": "AdvantageGameStatusIntel",
+                "updated_at": float(now),
+                "regime": str(regime),
+                "strategic_mode": str(strategic_mode),
+                "strategic_mode_source": str(strategic_mode_source),
+                "bank_target_minerals": int(bank_m),
+                "bank_target_gas": int(bank_g),
+                "phase": str(desired_phase),
+                "adv_score": float(adv_score),
+                "adv_adjusted": float(adv_adjusted),
+                "weights": dict(weights),
+            },
+            now=now,
+            ttl=ttl,
+        )
         awareness.mem.set(K("macro", "control", "weights"), value=dict(weights), now=now, ttl=ttl)
         awareness.mem.set(K("macro", "control", "bank_target_minerals"), value=int(bank_m), now=now, ttl=ttl)
         awareness.mem.set(K("macro", "control", "bank_target_gas"), value=int(bank_g), now=now, ttl=ttl)

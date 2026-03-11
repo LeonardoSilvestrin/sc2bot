@@ -12,6 +12,7 @@ from bot.devlog import DevLogger
 from bot.mind.attention import Attention
 from bot.mind.awareness import Awareness, K
 from bot.planners.utils.proposals import Proposal, TaskSpec, UnitRequirement
+from bot.tasks.defense.reaper_nat_patrol_task import ReaperPatrolTask
 from bot.tasks.scout.scan_task import ScanAt
 from bot.tasks.scout.reaper_scout_task import ReaperScout, ReaperScoutObjective
 from bot.tasks.scout.worker_expansion_scout_task import WorkerExpansionScoutTask
@@ -91,6 +92,9 @@ class IntelPlanner:
     def _pid_reaper_scout(self) -> str:
         return f"{self.planner_id}:scout:reaper"
 
+    def _pid_reaper_patrol(self) -> str:
+        return f"{self.planner_id}:patrol:reaper_home"
+
     def _pid_scan(self, label: str) -> str:
         return f"{self.planner_id}:scan:{label}"
 
@@ -99,6 +103,12 @@ class IntelPlanner:
 
     def _enemy_main(self, bot) -> Point2:
         return bot.enemy_start_locations[0]
+
+    def _own_natural(self, bot) -> Point2:
+        try:
+            return bot.mediator.get_own_nat
+        except Exception:
+            return bot.start_location
 
     def _enemy_natural(self, bot) -> Point2:
         enemy_main = self._enemy_main(bot)
@@ -113,6 +123,63 @@ class IntelPlanner:
     def _reaper_objective(self) -> ReaperScoutObjective:
         # Main-first scout: SCV already checks early pathing/opening outside.
         return ReaperScoutObjective.CONFIRM_MAIN_RAMP
+
+    @staticmethod
+    def _nat_choke_anchor(bot, *, base_pos: Point2) -> Point2:
+        try:
+            enemy_main = bot.enemy_start_locations[0]
+            return base_pos.towards(enemy_main, 4.5)
+        except Exception:
+            return base_pos
+
+    @staticmethod
+    def _reaper_patrol_points(bot, *, own_nat: Point2, nat_anchor: Point2) -> tuple[Point2, ...]:
+        points: list[Point2] = []
+        try:
+            ramp = getattr(bot, "main_base_ramp", None)
+            bottom = getattr(ramp, "bottom_center", None) if ramp is not None else None
+            if isinstance(bottom, Point2):
+                points.append(bottom)
+        except Exception:
+            pass
+        points.extend([own_nat, nat_anchor])
+        extras: list[Point2] = []
+        try:
+            expansions = list(getattr(getattr(bot, "mediator", None), "get_own_expansions", []) or [])
+        except Exception:
+            expansions = []
+        for item in expansions:
+            try:
+                pos = item[0] if isinstance(item, tuple) else item
+            except Exception:
+                pos = item
+            if not isinstance(pos, Point2):
+                continue
+            try:
+                if float(pos.distance_to(own_nat)) <= 4.5:
+                    continue
+                if float(pos.distance_to(bot.start_location)) <= 8.0:
+                    continue
+                if float(pos.distance_to(own_nat)) > 16.0:
+                    continue
+            except Exception:
+                continue
+            extras.append(pos)
+        try:
+            extras.sort(key=lambda p: float(own_nat.distance_to(p)))
+        except Exception:
+            pass
+        points.extend(extras[:2])
+
+        deduped: list[Point2] = []
+        for pos in points:
+            try:
+                if any(float(pos.distance_to(existing)) <= 2.0 for existing in deduped):
+                    continue
+            except Exception:
+                pass
+            deduped.append(pos)
+        return tuple(deduped)
 
     def _target_for_objective(self, bot, obj: ReaperScoutObjective) -> Point2:
         if obj == ReaperScoutObjective.CONFIRM_NATURAL:
@@ -340,6 +407,69 @@ class IntelPlanner:
                         },
                         meta={"module": "planner", "component": f"planner.{self.planner_id}"},
                     )
+
+        rush_state = str(awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
+        nat_snapshot = awareness.mem.get(K("intel", "map_control", "our_nat", "snapshot"), now=now, default={}) or {}
+        if not isinstance(nat_snapshot, dict):
+            nat_snapshot = {}
+        nat_enemy_power = float(nat_snapshot.get("enemy_nat_power", 0.0) or 0.0)
+        nat_presence_power = float(nat_snapshot.get("enemy_presence_nat_side_power", 0.0) or 0.0)
+        reaper_patrol_needed = bool(rush_state in {"SUSPECTED", "CONFIRMED", "HOLDING"}) or bool(
+            nat_enemy_power >= 0.5 or nat_presence_power >= 0.5
+        )
+        patrol_pid = self._pid_reaper_patrol()
+        reaper_scout_running = awareness.ops_proposal_running(proposal_id=self._pid_reaper_scout(), now=now)
+        if (
+            reapers_ready >= 1
+            and reaper_patrol_needed
+            and not reaper_scout_running
+            and not awareness.ops_proposal_running(proposal_id=patrol_pid, now=now)
+        ):
+            own_nat = self._own_natural(bot)
+            nat_anchor = self._nat_choke_anchor(bot, base_pos=own_nat)
+            patrol_points = self._reaper_patrol_points(bot, own_nat=own_nat, nat_anchor=nat_anchor)
+            roam_center = nat_anchor
+            objective = patrol_points[0] if patrol_points else roam_center
+            safe_point = getattr(getattr(bot, "main_base_ramp", None), "top_center", None) or bot.start_location
+            engage_radius = 13.0 if rush_state in {"CONFIRMED", "HOLDING"} else 11.5
+
+            def _reaper_patrol_factory(mission_id: str) -> ReaperPatrolTask:
+                return ReaperPatrolTask(
+                    roam_center=roam_center,
+                    safe_point=safe_point,
+                    roam_radius=7.0,
+                    engage_radius=engage_radius,
+                    patrol_points=patrol_points,
+                    task_domain="INTEL",
+                    task_id="reaper_home_patrol",
+                    log=self.log,
+                )
+
+            proposals.append(
+                Proposal(
+                    proposal_id=patrol_pid,
+                    domain="INTEL",
+                    score=78 if rush_state in {"CONFIRMED", "HOLDING"} else 70,
+                    tasks=[
+                        TaskSpec(
+                            task_id="reaper_home_patrol",
+                            task_factory=_reaper_patrol_factory,
+                            unit_requirements=[
+                                UnitRequirement(
+                                    unit_type=U.REAPER,
+                                    count=1,
+                                    pick_policy=ReaperScoutPickPolicy(objective=objective),
+                                )
+                            ],
+                            lease_ttl=20.0,
+                        )
+                    ],
+                    lease_ttl=20.0,
+                    cooldown_s=5.0,
+                    risk_level=1,
+                    allow_preempt=True,
+                )
+            )
 
         # -------------------------
         # 0.5) Worker expansion scout

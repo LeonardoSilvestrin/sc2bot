@@ -206,7 +206,32 @@ class ReaperHellionHarass(BaseTask):
         uy = dy / n
         return Point2((float(unit_pos.x) + (ux * float(step)), float(unit_pos.y) + (uy * float(step))))
 
-    def _stutter_attack_ground(self, *, unit, local_enemies, fallback_target: Point2, attack_range: float, now: float) -> None:
+    @staticmethod
+    def _orbit_point(unit_pos: Point2, target_pos: Point2, desired_range: float, forward_target: Point2 | None = None) -> Point2:
+        """Ponto de kite "para frente": orbita ao redor do alvo mantendo o range ótimo.
+        Em vez de recuar, move lateralmente/mantendo distância — permanece agressivo.
+        """
+        dx = float(unit_pos.x) - float(target_pos.x)
+        dy = float(unit_pos.y) - float(target_pos.y)
+        n = math.hypot(dx, dy)
+        if n <= 1e-6:
+            return Point2((float(unit_pos.x) + float(desired_range), float(unit_pos.y)))
+        # Mantém a distância desejada: move radialmente para o range ótimo
+        # (se muito perto → recua um pouco, se distância certa → fica)
+        if forward_target is not None:
+            fx = float(forward_target.x) - float(target_pos.x)
+            fy = float(forward_target.y) - float(target_pos.y)
+            fn = math.hypot(fx, fy)
+            if fn > 1e-6:
+                return Point2((
+                    float(target_pos.x) + (fx / fn) * float(desired_range),
+                    float(target_pos.y) + (fy / fn) * float(desired_range),
+                ))
+        ux = dx / n
+        uy = dy / n
+        return Point2((float(target_pos.x) + ux * float(desired_range), float(target_pos.y) + uy * float(desired_range)))
+
+    def _stutter_attack_ground(self, *, unit, local_enemies, fallback_target: Point2, attack_range: float, now: float, press_forward: bool = False) -> None:
         if unit is None:
             return
         ground_enemies = [e for e in local_enemies if bool(getattr(e, "is_flying", False)) is False]
@@ -241,7 +266,12 @@ class ReaperHellionHarass(BaseTask):
         melee_pressure = target_melee and (dist <= (float(attack_range) + 2.2))
         too_close_vs_melee = target_melee and (dist <= (float(attack_range) - 0.8))
         if (wc > fire_window and (danger_close or melee_pressure)) or too_close_vs_melee:
-            kite_to = self._retreat_point(unit.position, target.position, float(self.kite_step))
+            if press_forward and not too_close_vs_melee:
+                # Em vantagem: orbita mantendo range ótimo em vez de recuar
+                kite_to = self._orbit_point(unit.position, target.position, float(attack_range) - 0.3, fallback_target)
+            else:
+                # Em desvantagem ou encurralado: recua
+                kite_to = self._retreat_point(unit.position, target.position, float(self.kite_step))
             unit.move(kite_to)
             return
         # Attack-follow is only safe when cooldown is close to ready.
@@ -322,6 +352,46 @@ class ReaperHellionHarass(BaseTask):
         harass_target = base_target.towards(enemy_main, 2.0)
         retreat_target = self._our_natural(bot)
 
+        # press_forward: estamos em vantagem no engajamento local?
+        # True → kite orbita (mantém pressão), False → kite recua.
+        # Critérios: can_win_value alto, ou só workers/melee na volta (sem ranged threats).
+        _mt_can_win = 0
+        if mission_threat is not None:
+            try:
+                _mt_can_win = int(getattr(mission_threat, "can_win_value", 0) or 0)
+            except Exception:
+                _mt_can_win = 0
+        # Detectar se há unidades ranged inimigas perto do grupo
+        _group_center = None
+        _group_all = ([reaper] if reaper is not None else []) + hellions
+        if _group_all:
+            try:
+                _group_center = Point2((
+                    sum(float(u.position.x) for u in _group_all) / len(_group_all),
+                    sum(float(u.position.y) for u in _group_all) / len(_group_all),
+                ))
+            except Exception:
+                _group_center = None
+        _ranged_threats_near = 0
+        if _group_center is not None:
+            try:
+                for e in bot.enemy_units.closer_than(12.0, _group_center):
+                    if bool(getattr(e, "is_flying", False)):
+                        continue
+                    rng = float(getattr(e, "ground_range", 0.0) or 0.0)
+                    if rng >= 3.0 and bool(getattr(e, "can_attack_ground", False)):
+                        _ranged_threats_near += 1
+            except Exception:
+                pass
+        press_forward = bool(
+            _mt_can_win >= int(self.commit_min_can_win)
+            or (float(now) < float(self._commit_until) and _mt_can_win > 0)
+            or (_ranged_threats_near == 0 and _mt_can_win >= 0)
+        )
+        # Se há reforços inimigas chegando (ranged units), nunca press_forward
+        if _ranged_threats_near >= 2:
+            press_forward = False
+
         if self._phase == 0:
             group = ([reaper] if reaper is not None else []) + hellions
             if group:
@@ -333,7 +403,7 @@ class ReaperHellionHarass(BaseTask):
                     for u in group:
                         local = local_enemies.closer_than(11.0, u.position)
                         ar = float(self.reaper_attack_range if u.type_id == U.REAPER else self.hellion_attack_range)
-                        self._stutter_attack_ground(unit=u, local_enemies=local, fallback_target=staging, attack_range=ar, now=now)
+                        self._stutter_attack_ground(unit=u, local_enemies=local, fallback_target=staging, attack_range=ar, now=now, press_forward=press_forward)
                     self._active("harass_route_skirmish")
                     self._log_tick(
                         now=now,
@@ -359,6 +429,7 @@ class ReaperHellionHarass(BaseTask):
                     fallback_target=harass_target,
                     attack_range=float(self.reaper_attack_range),
                     now=now,
+                    press_forward=press_forward,
                 )
 
             for h in hellions:
@@ -369,6 +440,7 @@ class ReaperHellionHarass(BaseTask):
                     fallback_target=harass_target,
                     attack_range=float(self.hellion_attack_range),
                     now=now,
+                    press_forward=press_forward,
                 )
 
             self._active("harass_enemy_natural")

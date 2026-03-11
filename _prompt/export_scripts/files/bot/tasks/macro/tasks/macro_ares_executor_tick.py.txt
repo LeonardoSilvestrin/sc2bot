@@ -493,7 +493,7 @@ class MacroAresExecutorTick(BaseTask):
                 current_opening == "RushDefenseOpen"
                 or (
                     current_opening == "MechaOpen"
-                    and str(plan_active.get("rush_tier", "NONE") or "NONE").upper() in {"HEAVY", "EXTREME"}
+                    and str(plan_active.get("rush_state", "NONE") or "NONE").upper() in {"CONFIRMED", "HOLDING"}
                 )
                 or bool(plan_active.get("enemy_at_door"))
                 or bool(plan_active.get("rush_army_dump"))
@@ -763,16 +763,32 @@ class MacroAresExecutorTick(BaseTask):
                                 max_pending=1,
                             )
                         )
-                    else:
-                        base_location = bot.start_location
+                    elif expand_build_mode == "OFFSITE":
+                        # Modo offsite: constrói CC na main para depois voar para a nat.
+                        # BuildStructure não funciona com CC (FIVE_BY_FIVE sem bookkeeping no ares).
+                        # Posição: suficientemente dentro da main para não conflitar com o
+                        # anchor do exército na rampa (que fica ~4.5 tiles atrás do ramp_top).
+                        try:
+                            ramp = getattr(bot, "main_base_ramp", None)
+                            ramp_top = getattr(ramp, "top_center", None) if ramp is not None else None
+                            if ramp_top is not None:
+                                offsite_pos = ramp_top.towards(bot.start_location, 10.0)
+                            elif intended is not None:
+                                offsite_pos = intended.towards(bot.start_location, 14.0)
+                            else:
+                                offsite_pos = bot.start_location
+                        except Exception:
+                            offsite_pos = bot.start_location
                         plan.add(
-                            BuildStructure(
-                                base_location=base_location,
-                                structure_id=U.COMMANDCENTER,
-                                max_on_route=(3 if natural_expand_stalled else 2),
+                            TargetedTownhallBuild(
+                                target_pos=offsite_pos,
                                 to_count=int(natural_to_count),
+                                max_pending=1,
                             )
                         )
+                    else:
+                        # intended is None, sem label claro — fallback para ExpansionController
+                        plan.add(ExpansionController(to_count=max(1, int(natural_to_count))))
                 else:
                     plan.add(ExpansionController(to_count=max(1, int(expand_to))))
                 return

@@ -48,6 +48,7 @@ from bot.planners.housekeeping_planner import HousekeepingPlanner
 from bot.planners.intel_planner import IntelPlanner
 from bot.planners.map_control_planner import MapControlPlanner
 from bot.planners.reinforce_mission_planner import ReinforceMissionPlanner
+from bot.planners.widowmine_planner import WidowminePlanner
 from bot.planners.wall_planner import WallPlanner
 
 from bot.planners.macro_orchestrator_planner import MacroOrchestratorPlanner
@@ -174,6 +175,7 @@ class RuntimeApp:
         defense_planner = DefensePlanner(defend_task=defend_task, log=log)
         harass_planner = HarassPlanner(log=log)
         reinforce_mission_planner = ReinforceMissionPlanner(log=log)
+        widowmine_planner = WidowminePlanner(log=log)
         intel_planner = IntelPlanner(awareness=awareness, log=log)
         wall_planner = WallPlanner(log=log)
         housekeeping_planner = HousekeepingPlanner(log=log)
@@ -315,6 +317,7 @@ class RuntimeApp:
                 defense_planner,
                 harass_planner,
                 reinforce_mission_planner,
+                widowmine_planner,
                 intel_planner,
                 map_control_planner,
                 wall_planner,

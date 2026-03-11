@@ -44,6 +44,8 @@ class SpendingPolicy:
         lag_spend: float,
         lag_prod: float,
         cfg,
+        bank_target_minerals: int | None = None,
+        bank_target_gas: int | None = None,
     ) -> SpendingPolicyDecision:
         bases = int(attention.macro.bases_total)
         gas_stock = int(attention.economy.gas)
@@ -79,8 +81,12 @@ class SpendingPolicy:
         spend_sum = max(1e-3, m_spend_ema + g_spend_ema)
         gas_mix = g_spend_ema / spend_sum
 
-        target_m = max(1.0, float(getattr(cfg, "bank_target_minerals", 650)))
-        target_g = max(1.0, float(getattr(cfg, "bank_target_gas", 220)))
+        # bank targets: prefer explicit value from macro.control.* (policy layer),
+        # fall back to cfg field (planner default) only if not provided.
+        _bank_target_source_m = "macro.control" if bank_target_minerals is not None else "planner.default"
+        _bank_target_source_g = "macro.control" if bank_target_gas is not None else "planner.default"
+        target_m = max(1.0, float(bank_target_minerals if bank_target_minerals is not None else getattr(cfg, "bank_target_minerals", 650)))
+        target_g = max(1.0, float(bank_target_gas if bank_target_gas is not None else getattr(cfg, "bank_target_gas", 220)))
         norm_m = float(mineral_stock) / target_m
         norm_g = float(gas_stock) / target_g
         imbalance = norm_g - norm_m
@@ -141,7 +147,14 @@ class SpendingPolicy:
             target_refineries = max(0, target_refineries - 1)
             mode = "flow_shift_soft_to_minerals"
 
-        if tech_pressure >= 0.70:
+        # tech_pressure boosts gas workers, but not when gas stock is already above the
+        # hard ratio threshold — in that case the gas overflow takes priority to avoid
+        # workers accumulating gas that can't be spent.
+        gas_above_ratio_hard = (
+            gas_stock >= int(cfg.gas_ratio_min_stock_hard)
+            and gas_stock >= int(float(cfg.gas_to_mineral_ratio_hard) * max(1.0, float(mineral_stock)))
+        )
+        if tech_pressure >= 0.70 and not gas_above_ratio_hard:
             workers_per_refinery = max(2, int(workers_per_refinery))
             mode = "tech_pressure"
 
@@ -172,6 +185,22 @@ class SpendingPolicy:
                     changed = False
         changed_at = float(now) if changed else float(prev_changed_at)
 
+        awareness.mem.set(
+            K("control", "resource", "spending_policy_trace"),
+            value={
+                "owner": "SpendingPolicy",
+                "updated_at": float(now),
+                "mode": str(mode),
+                "bank_target_minerals": int(target_m),
+                "bank_target_source_minerals": str(_bank_target_source_m),
+                "bank_target_gas": int(target_g),
+                "bank_target_source_gas": str(_bank_target_source_g),
+                "target_refineries": int(target_refineries),
+                "workers_per_refinery": int(workers_per_refinery),
+            },
+            now=now,
+            ttl=20.0,
+        )
         awareness.mem.set(
             K("control", "resource", "flow", "prev"),
             value={

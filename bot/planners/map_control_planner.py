@@ -101,12 +101,14 @@ class _SecureScvPickPolicy:
 
 
 _BULK_UNIT_TYPES = [
-    U.MARINE, U.MARAUDER, U.REAPER,
+    U.MARINE, U.MARAUDER,
+    # REAPER excluído: reapers são unidades de harass/scout independentes.
+    # Quando não estão em missão de harass, ficam livres para se mover pelo mapa.
+    # Inclui-los no bulk faz o reaper ficar parado no anchor esperando.
     U.HELLION, U.CYCLONE,
     U.SIEGETANK, U.SIEGETANKSIEGED,
     U.THOR, U.THORAP,
     U.MEDIVAC,
-    U.WIDOWMINE, U.WIDOWMINEBURROWED,
 ]
 
 
@@ -329,18 +331,6 @@ class MapControlPlanner:
                     required=len(reqs) == 0,
                 )
             )
-
-        mine_avail = self._available(bot, U.WIDOWMINE)
-        if mine_avail > 0 and budget_remaining >= 2:
-            reqs.append(
-                UnitRequirement(
-                    unit_type=U.WIDOWMINE,
-                    count=min(1, int(mine_avail)),
-                    pick_policy=_SecureBasePickPolicy(objective=hold_pos, unit_type=U.WIDOWMINE),
-                    required=len(reqs) == 0,
-                )
-            )
-            budget_remaining = max(0, int(budget_remaining) - 2)
 
         remaining = min(int(desired_general), int(budget_remaining))
         general_types = [U.MARINE, U.MARAUDER, U.CYCLONE, U.HELLION, U.THOR, U.THORAP]
@@ -603,7 +593,6 @@ class MapControlPlanner:
             posture_wants_garrison = nat_choke_mode in {
                 SectorMode.ANCHOR.value,
                 SectorMode.HEAVY_ANCHOR.value,
-                SectorMode.MASS_HOLD.value,
             } and nat_choke_target > 0.0
         else:
             posture_wants_garrison = posture in {
@@ -618,6 +607,21 @@ class MapControlPlanner:
                 base_pos2 = self._point(snapshot.get("target"))
                 staging_pos = self._point(snapshot.get("staging"), fallback=base_pos2)
                 hold_pos = self._point(snapshot.get("hold"), fallback=base_pos2)
+                rush_state = str(snapshot.get("rush_state", "NONE")).upper()
+                delayed_natural_alarm = bool(snapshot.get("delayed_natural_alarm", False))
+                enemy_nat_power = float(snapshot.get("enemy_nat_power", 0.0) or 0.0)
+                own_nat_bunker_count = int(snapshot.get("own_nat_bunker_count", 0) or 0)
+                nat_take_in_progress = bool(snapshot.get("nat_offsite", False) or snapshot.get("safe_to_land", False))
+                secure_needed = bool(
+                    delayed_natural_alarm
+                    or rush_state in {"CONFIRMED", "HOLDING"}
+                    or enemy_nat_power >= 0.6
+                    or own_nat_bunker_count > 0
+                    or nat_take_in_progress
+                    or posture in {ArmyPosture.SECURE_NAT, ArmyPosture.CONTROLLED_RETAKE}
+                )
+                if not secure_needed:
+                    return out
                 if isinstance(nat_zone.get("fallback_anchor"), dict):
                     staging_pos = self._point(nat_zone.get("fallback_anchor"), fallback=staging_pos)
                 if isinstance(nat_zone.get("front_anchor"), dict):
@@ -641,22 +645,23 @@ class MapControlPlanner:
                                 log=self.log,
                             )
 
-                        rush_state = str(snapshot.get("rush_state", "NONE")).upper()
                         # Score baseado no template da geometria (quando disponível)
                         if use_geometry:
                             template_str = str(geo_snap.get("template", "") or "")
-                            if template_str == FrontTemplate.TURTLE_NAT.value:
+                            if delayed_natural_alarm or rush_state in {"CONFIRMED", "HOLDING"}:
+                                score = 88
+                            elif template_str == FrontTemplate.TURTLE_NAT.value:
                                 score = 88  # Alta urgência — turtle com rush
-                            elif template_str in {FrontTemplate.STABILIZE_AND_EXPAND.value, FrontTemplate.CONTAIN.value}:
+                            elif template_str in {FrontTemplate.STABILIZE_AND_EXPAND.value, FrontTemplate.CONTAIN.value} and enemy_nat_power >= 0.6:
                                 score = 85
                             else:
-                                score = 82
+                                score = 74
                         elif posture == ArmyPosture.HOLD_NAT_CHOKE and rush_state in {"CONFIRMED", "HOLDING"}:
                             score = 88
-                        elif posture in {ArmyPosture.HOLD_NAT_CHOKE, ArmyPosture.SECURE_NAT}:
+                        elif posture in {ArmyPosture.HOLD_NAT_CHOKE, ArmyPosture.SECURE_NAT} and (enemy_nat_power >= 0.6 or nat_take_in_progress):
                             score = 85
                         else:
-                            score = 82
+                            score = 74
 
                         out.append(
                             Proposal(

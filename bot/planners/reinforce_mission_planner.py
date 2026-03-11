@@ -75,7 +75,6 @@ class ReinforceMissionPlanner(BasePlanner):
     min_remaining_s: float = 3.0
     banshee_harass_target_size: int = 2
     defense_tank_target_size: int = 2
-    defense_mine_target_size: int = 2
     defense_marine_target_size: int = 4
     defense_bunker_marine_target_size: int = 6
     map_control_bulk_types: tuple[U, ...] = (
@@ -89,8 +88,6 @@ class ReinforceMissionPlanner(BasePlanner):
         U.THOR,
         U.THORAP,
         U.MEDIVAC,
-        U.WIDOWMINE,
-        U.WIDOWMINEBURROWED,
     )
 
     def _proposal_id(self, mission_id: str, unit_type_name: str) -> str:
@@ -190,10 +187,6 @@ class ReinforceMissionPlanner(BasePlanner):
             desired_counts["SIEGETANK"] = max(
                 int(desired_counts.get("SIEGETANK", 0)),
                 int(self.defense_tank_target_size),
-            )
-            desired_counts["WIDOWMINE"] = max(
-                int(desired_counts.get("WIDOWMINE", 0)),
-                int(self.defense_mine_target_size),
             )
         if self._is_map_control_bulk_mission(mission):
             for unit_type in self.map_control_bulk_types:

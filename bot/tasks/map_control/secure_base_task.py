@@ -378,13 +378,22 @@ class SecureBaseTask(BaseTask):
 
     def _should_release(self, *, bot, now: float, enemy_near: list, enemy_main: list) -> bool:
         snap = self._snapshot(now=now)
-        if enemy_main:
+        rush_state = str(self.awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
+        rush_active = rush_state in {"SUSPECTED", "CONFIRMED", "HOLDING"}
+        # Com rush ativo e inimigos visíveis perto ou na nat → nunca libera aqui
+        if enemy_near and rush_active:
+            return False
+        # Com inimigos só na main e rush ativo → não libera: deixa o DefensePlanner lidar
+        # (liberar destruiria a missão sem que ninguém tomasse conta da nat)
+        if enemy_main and rush_active:
+            return False
+        # Sem rush ativo e inimigos só na main → libera (nat está safe, defender a main)
+        if enemy_main and not rush_active:
             return True
         if enemy_near:
             return False
         should_secure = bool(snap.get("should_secure", False))
         fortified = bool(snap.get("fortified", False))
-        rush_state = str(self.awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
         nat_taken = False
         for th in list(getattr(bot, "townhalls", []) or []):
             try:
@@ -398,7 +407,6 @@ class SecureBaseTask(BaseTask):
         if rush_over:
             return True
         # HOLDING sem inimigos visíveis e defesa fortified → libera SCVs para minerar
-        # Evita SCVs presos por até 36s enquanto rush_state aguarda transição para ENDED
         if rush_state == "HOLDING" and bool(fortified):
             return True
         return bool(
@@ -406,7 +414,7 @@ class SecureBaseTask(BaseTask):
             or (
                 nat_taken
                 and fortified
-                and rush_state not in {"SUSPECTED", "CONFIRMED", "HOLDING"}
+                and not rush_active
             )
         )
 

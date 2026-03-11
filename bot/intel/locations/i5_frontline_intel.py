@@ -253,13 +253,17 @@ def _nat_fallback_anchor(bot, *, nat: Point2) -> Point2:
 
 
 def _main_fallback_anchor(bot) -> Point2:
-    """Anchor da main — topo da rampa principal."""
+    """Anchor da main — atrás da wall, alguns tiles dentro da main.
+    Não pode ser o top_center diretamente pois coloca unidades em cima dos depots.
+    """
     try:
         ramp = getattr(bot, "main_base_ramp", None)
         if ramp is not None:
             top = getattr(ramp, "top_center", None)
             if top is not None:
-                return top
+                # Recua 4.5 tiles para dentro da main — atrás da wall,
+                # mas próximo o suficiente para cobrir a rampa
+                return top.towards(bot.start_location, 4.5)
     except Exception:
         pass
     return bot.start_location

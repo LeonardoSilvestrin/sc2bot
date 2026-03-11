@@ -12,7 +12,6 @@ from ares.behaviors.macro.macro_behavior import MacroBehavior
 from ares.behaviors.macro.macro_plan import MacroPlan
 from ares.behaviors.macro.production_controller import ProductionController
 from ares.behaviors.macro.spawn_controller import SpawnController
-from ares.behaviors.macro.upgrade_ccs import UpgradeCCs
 from ares.dicts.structure_to_building_size import STRUCTURE_TO_BUILDING_SIZE
 from sc2.ids.ability_id import AbilityId
 from sc2.ids.unit_typeid import UnitTypeId as U
@@ -358,6 +357,100 @@ class MacroAresExecutorTick(BaseTask):
             pass
         return False
 
+    def _morph_ccs_selective(self, *, bot, now: float) -> None:
+        """Morfa CCs idle para Orbital (bases seguras: main/nat/third) ou Planetary Fortress (resto).
+
+        Regras:
+        - Main, Natural e Third → Orbital Command (padrão Terran econômico)
+        - Qualquer base além da third → Planetary Fortress
+        - Base contestada (presença inimiga recente) → Planetary Fortress
+        - CCs extras do cc_boom pousados perto de bases safe (nat/third/main) → Orbital
+        Natural nunca vira PF (sempre Orbital).
+        """
+        # Posições de referência das bases seguras
+        safe_orbital_positions: list[Point2] = []
+        try:
+            safe_orbital_positions.append(bot.start_location)
+        except Exception:
+            pass
+        registry = self.awareness.mem.get(K("intel", "our_bases", "registry"), now=now, default={}) or {}
+        if not isinstance(registry, dict):
+            registry = {}
+        for label in ("NATURAL", "THIRD"):
+            entry = registry.get(label, {})
+            if not isinstance(entry, dict):
+                continue
+            pos = self._point_from_payload(
+                entry.get("current_pos") or entry.get("intended_pos")
+            )
+            if pos is not None:
+                safe_orbital_positions.append(pos)
+
+        # Raio de proximidade para considerar "perto de base segura"
+        safe_radius = 12.0
+
+        def _is_safe_orbital_pos(pos: Point2) -> bool:
+            for ref in safe_orbital_positions:
+                try:
+                    if float(pos.distance_to(ref)) <= float(safe_radius):
+                        return True
+                except Exception:
+                    pass
+            return False
+
+        def _base_is_contested(pos: Point2) -> bool:
+            # Verifica presença inimiga recente perto da base
+            try:
+                for unit in list(getattr(bot, "enemy_units", []) or []):
+                    if float(unit.distance_to(pos)) <= 15.0:
+                        return True
+            except Exception:
+                pass
+            return False
+
+        try:
+            ccs = [
+                th
+                for th in bot.mediator.get_own_structures_dict.get(U.COMMANDCENTER, [])
+                if bool(getattr(th, "is_ready", False)) and bool(getattr(th, "is_idle", False))
+            ]
+        except Exception:
+            ccs = []
+
+        for cc in ccs:
+            try:
+                pos = cc.position
+                contested = _base_is_contested(pos)
+                # Natural nunca vira PF
+                nat_entry = registry.get("NATURAL", {})
+                nat_pos = self._point_from_payload(
+                    nat_entry.get("current_pos") or nat_entry.get("intended_pos")
+                ) if isinstance(nat_entry, dict) else None
+                is_natural = (
+                    nat_pos is not None
+                    and float(pos.distance_to(nat_pos)) <= 6.0
+                )
+                if is_natural:
+                    # Natural → sempre Orbital
+                    if bot.can_afford(U.ORBITALCOMMAND):
+                        cc(AbilityId.UPGRADETOORBITAL_ORBITALCOMMAND)
+                    continue
+                if contested or not _is_safe_orbital_pos(pos):
+                    # Base além das seguras, ou contestada → PF (requer Engineering Bay)
+                    pf_tech_ok = bool(bot.tech_requirement_progress(U.PLANETARYFORTRESS) == 1.0)
+                    if pf_tech_ok and bot.can_afford(U.PLANETARYFORTRESS):
+                        cc(AbilityId.UPGRADETOPLANETARYFORTRESS_PLANETARYFORTRESS)
+                    elif not pf_tech_ok and bot.can_afford(U.ORBITALCOMMAND):
+                        # Tech ainda não pronto: morfa para Orbital temporariamente
+                        # (não faz sentido deixar CC idle esperando EBay numa base avançada)
+                        cc(AbilityId.UPGRADETOORBITAL_ORBITALCOMMAND)
+                else:
+                    # Perto de main/nat/third → Orbital
+                    if bot.can_afford(U.ORBITALCOMMAND):
+                        cc(AbilityId.UPGRADETOORBITAL_ORBITALCOMMAND)
+            except Exception:
+                continue
+
     def _active_macro_build_sites(self, *, now: float) -> list[tuple[U, Point2]]:
         signals = self.awareness.mem.get(K("macro", "placement", "signals"), now=now, default={}) or {}
         if not isinstance(signals, dict):
@@ -491,7 +584,7 @@ class MacroAresExecutorTick(BaseTask):
                 current_opening == "RushDefenseOpen"
                 or (
                     current_opening == "MechaOpen"
-                    and str(plan_active.get("rush_tier", "NONE") or "NONE").upper() in {"HEAVY", "EXTREME"}
+                    and str(plan_active.get("rush_state", "NONE") or "NONE").upper() in {"CONFIRMED", "HOLDING"}
                 )
                 or bool(plan_active.get("enemy_at_door"))
                 or bool(plan_active.get("rush_army_dump"))
@@ -710,7 +803,7 @@ class MacroAresExecutorTick(BaseTask):
 
         plan = MacroPlan()
         if bool(enable_orbital_morph):
-            plan.add(UpgradeCCs(to=U.ORBITALCOMMAND, prioritize=True))
+            self._morph_ccs_selective(bot=bot, now=now)
 
         def _add_lane(lane: str) -> None:
             if lane == "workers" and enable_workers:
@@ -761,16 +854,32 @@ class MacroAresExecutorTick(BaseTask):
                                 max_pending=1,
                             )
                         )
-                    else:
-                        base_location = bot.start_location
+                    elif expand_build_mode == "OFFSITE":
+                        # Modo offsite: constrói CC na main para depois voar para a nat.
+                        # BuildStructure não funciona com CC (FIVE_BY_FIVE sem bookkeeping no ares).
+                        # Posição: suficientemente dentro da main para não conflitar com o
+                        # anchor do exército na rampa (que fica ~4.5 tiles atrás do ramp_top).
+                        try:
+                            ramp = getattr(bot, "main_base_ramp", None)
+                            ramp_top = getattr(ramp, "top_center", None) if ramp is not None else None
+                            if ramp_top is not None:
+                                offsite_pos = ramp_top.towards(bot.start_location, 10.0)
+                            elif intended is not None:
+                                offsite_pos = intended.towards(bot.start_location, 14.0)
+                            else:
+                                offsite_pos = bot.start_location
+                        except Exception:
+                            offsite_pos = bot.start_location
                         plan.add(
-                            BuildStructure(
-                                base_location=base_location,
-                                structure_id=U.COMMANDCENTER,
-                                max_on_route=(3 if natural_expand_stalled else 2),
+                            TargetedTownhallBuild(
+                                target_pos=offsite_pos,
                                 to_count=int(natural_to_count),
+                                max_pending=1,
                             )
                         )
+                    else:
+                        # intended is None, sem label claro — fallback para ExpansionController
+                        plan.add(ExpansionController(to_count=max(1, int(natural_to_count))))
                 else:
                     plan.add(ExpansionController(to_count=max(1, int(expand_to))))
                 return
