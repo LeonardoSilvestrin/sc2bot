@@ -55,6 +55,11 @@ class MacroOrchestratorPlanner(BasePlanner):
     freeflow_off_minerals: int = 450
     freeflow_hold_s: float = 8.0
 
+    cc_boom_minerals_on: int = 1000
+    cc_boom_minerals_off: int = 700
+    cc_boom_min_supply: int = 100
+    cc_boom_max_extra_ccs: int = 2
+
     scv_cap_opening: int = 50
     scv_cap_mid: int = 66
     scv_cap_late: int = 78
@@ -845,10 +850,22 @@ class MacroOrchestratorPlanner(BasePlanner):
             awareness.mem.get(K("enemy", "aggression", "state"), now=now, default="NONE") or "NONE"
         ).upper()
         rush_is_early = bool(float(now) <= float(self.rush_phase_max_s))
+        # SUSPECTED alone (no real combat contact) should not lock the entire economy.
+        # Only CONFIRMED/HOLDING counts as hard pressure; SUSPECTED requires actual combat signal.
+        rush_hard = rush_is_early and rush_state in {"CONFIRMED", "HOLDING"}
+        rush_suspected_with_contact = bool(
+            rush_is_early
+            and rush_state == "SUSPECTED"
+            and (
+                int(attention.combat.primary_urgency) >= int(self.aggression_urgency_high)
+                or int(attention.combat.primary_enemy_count) >= int(self.aggression_enemy_count_high)
+            )
+        )
         return bool(
             int(attention.combat.primary_urgency) >= int(self.pressure_urgency_high)
             or int(attention.combat.primary_enemy_count) >= int(self.pressure_enemy_count_high)
-            or (rush_is_early and rush_state in {"SUSPECTED", "CONFIRMED"})
+            or rush_hard
+            or rush_suspected_with_contact
             or (
                 aggression_state in {"AGGRESSION", "RUSH"}
                 and int(attention.combat.primary_urgency) >= int(self.aggression_urgency_high)
@@ -961,9 +978,17 @@ class MacroOrchestratorPlanner(BasePlanner):
         scout_no_natural_confirmed = bool(
             awareness.mem.get(K("enemy", "rush", "scout_no_natural_confirmed"), now=now, default=False)
         )
+        # enemy_one_base_rush: require hard evidence — "0 bases visible" just means no vision yet.
+        # Cancel the one-base-rush signal if the enemy clearly has 2+ bases visible.
+        _enemy_expanded = bool(int(enemy_bases_visible) >= 2 or bool(enemy_natural_on_ground))
         enemy_one_base_rush = bool(
-            rush_state_early in {"SUSPECTED", "CONFIRMED", "HOLDING"}
-            and (bool(scout_no_natural_confirmed) or int(enemy_bases_visible) <= 1 or not bool(enemy_natural_on_ground))
+            not _enemy_expanded
+            and rush_state_early in {"SUSPECTED", "CONFIRMED", "HOLDING"}
+            and (
+                bool(scout_no_natural_confirmed)
+                or (int(enemy_bases_visible) == 1 and not bool(enemy_natural_on_ground))
+                or rush_state_early in {"CONFIRMED", "HOLDING"}
+            )
         )
 
         if phase == "OPENING":
@@ -1007,6 +1032,34 @@ class MacroOrchestratorPlanner(BasePlanner):
             base_expand = max(int(base_expand), int(total_bases) + 1)
         if bool(enemy_one_base_rush) or str(opening_selected) == "RushDefenseOpen":
             base_expand = min(int(base_expand), 2)
+
+        # CC boom: quando mineral flood, supply alto e sem rush/pressão, descer CCs extras.
+        # Resolve o problema de acumular 1k+ de mineral sem gastar, especialmente mid-game.
+        # O morph (OC vs PF) é decidido no executor pela posição do CC.
+        _rush_hard_now = bool(rush_state_early in {"CONFIRMED", "HOLDING"})
+        cc_boom_eligible = bool(
+            phase != "OPENING"
+            and not bool(pressure_high)
+            and not bool(enemy_one_base_rush)
+            and not _rush_hard_now
+            and int(getattr(bot, "supply_used", 0) or 0) >= int(self.cc_boom_min_supply)
+            and int(attention.economy.minerals) >= int(self.cc_boom_minerals_on)
+            and int(bases_now) >= 2  # nat já estabelecida
+        )
+        cc_boom_state = bool(
+            awareness.mem.get(K("macro", "exec", "cc_boom_state"), now=now, default=False)
+        )
+        if cc_boom_eligible:
+            cc_boom_state = True
+        elif int(attention.economy.minerals) < int(self.cc_boom_minerals_off):
+            cc_boom_state = False
+        awareness.mem.set(K("macro", "exec", "cc_boom_state"), value=bool(cc_boom_state), now=now, ttl=20.0)
+        if cc_boom_state and not bool(pressure_high):
+            extra_needed = min(
+                int(self.cc_boom_max_extra_ccs),
+                max(1, (int(attention.economy.minerals) - int(self.cc_boom_minerals_off)) // 400),
+            )
+            base_expand = max(int(base_expand), int(total_bases) + int(extra_needed))
 
         lag_prod, lag_spend, lag_tech = self._publish_priority_lags(
             bot=bot,
@@ -1199,6 +1252,11 @@ class MacroOrchestratorPlanner(BasePlanner):
             or (bool(_parity_offsite_ok) and parity_state in {"BEHIND_BOTH", "BEHIND_ARMY_AHEAD_ECON"})
             or (bool(_parity_offsite_ok) and parity_army_behind >= 0.32)
             or (bool(hard_second_cc_alarm) and bool(nat_region_compromised))
+            # Sob ataque pesado (rush_hard_active), enemy_at_door bloqueia expansão a menos que
+            # hard_second_cc_alarm AND should_expand_offsite sejam ambos True.
+            # Sem este caminho, hard_second_cc_alarm não consegue liberar a expansão offsite
+            # quando nat_region_compromised=False (nat safe mas rush ainda ativo).
+            or (bool(hard_second_cc_alarm) and bool(rush_hard_active) and int(bases_now) < 2)
         )
         enemy_macro_catchup_expand = bool(
             int(bases_now) < 2
@@ -1318,6 +1376,7 @@ class MacroOrchestratorPlanner(BasePlanner):
             bool(enemy_one_base_rush)
             or (
                 str(opening_selected) == "RushDefenseOpen"
+                and not bool(_enemy_expanded)
                 and (
                     rush_state in {"SUSPECTED", "CONFIRMED", "HOLDING"}
                     or float(rush_clear_for) < float(self.rush_natural_release_clear_s)
@@ -1549,6 +1608,7 @@ class MacroOrchestratorPlanner(BasePlanner):
                 "expand_build_mode": str(expand_build_mode),
                 "expand_safe_to_land": bool(nat_safe_to_land),
                 "ahead_expand_push": bool(ahead_expand_push),
+                "cc_boom_state": bool(cc_boom_state),
                 "lane_order": list(lane_order),
                 "lane_scores": dict(lane_scores),
                 "lane_selected": str(lane_top),
@@ -1583,9 +1643,15 @@ class MacroOrchestratorPlanner(BasePlanner):
         if not isinstance(desired_signals, dict):
             desired_signals = {}
         opening_selected = str(desired_signals.get("opening_selected", "") or "")
+        enemy_build_snap_tech = awareness.mem.get(K("enemy", "build", "snapshot"), now=now, default={}) or {}
+        if not isinstance(enemy_build_snap_tech, dict):
+            enemy_build_snap_tech = {}
+        enemy_bases_visible_tech = int(enemy_build_snap_tech.get("bases_visible", 0) or 0)
+        enemy_macro_evident_tech = bool(enemy_bases_visible_tech >= 2)
         rush_tech_locked = bool(
             opening_selected == "RushDefenseOpen"
             and rush_state in {"SUSPECTED", "CONFIRMED", "HOLDING"}
+            and not enemy_macro_evident_tech
         )
         tech_pause_for_army = bool(
             int(prod_idle) >= int(self.tech_pause_idle_structures_min)

@@ -825,7 +825,6 @@ class DefensePlanner:
         outer_base = self._is_outer_base(bot, base_pos=th.th_pos)
 
         desired_tanks = 1 if urgency < 35 else (2 if urgency < 70 else 3)
-        desired_mines = 1 if urgency < 40 else 2
         desired_general = 3 if urgency < 35 else (6 if urgency < 70 else 10)
 
         if outer_base:
@@ -835,18 +834,15 @@ class DefensePlanner:
 
         if bool(rush_ctx.get("heavy", False)):
             desired_tanks = max(int(desired_tanks), 2 if urgency < 70 else 3)
-            desired_mines = max(int(desired_mines), 2)
             desired_general += int(self.rush_heavy_bonus_general)
 
         if bool(rush_ctx.get("extreme", False)):
             desired_tanks = max(int(desired_tanks), 3)
-            desired_mines = max(int(desired_mines), 2)
             desired_general += int(self.rush_extreme_bonus_general)
 
         # Guardrail: não arrancar tank da defesa principal para third/fourth durante rush.
         if outer_base and bool(rush_ctx.get("active", False)):
             desired_tanks = 0
-            desired_mines = min(int(desired_mines), 1)
             desired_general = min(int(desired_general), 4)
 
         reqs: list[UnitRequirement] = []
@@ -887,21 +883,6 @@ class DefensePlanner:
                         required=len(reqs) == 0,
                     )
                 )
-
-        mine_avail = self._available(bot, U.WIDOWMINE)
-        mine_cost = int(self._SUPPLY_COST.get(U.WIDOWMINE, 2))
-        if mine_avail > 0 and int(desired_mines) > 0 and int(budget) >= int(mine_cost):
-            take_mines = min(int(desired_mines), int(mine_avail), max(0, int(budget) // int(mine_cost)))
-            if take_mines > 0:
-                reqs.append(
-                    UnitRequirement(
-                        unit_type=U.WIDOWMINE,
-                        count=int(take_mines),
-                        pick_policy=_DefendPickPolicy(objective=objective, unit_type=U.WIDOWMINE, bulk_anchor_pos=bulk_anchor_pos, defense_overflow=defense_overflow),
-                        required=len(reqs) == 0,
-                    )
-                )
-                budget = max(0, int(budget) - int(take_mines) * int(mine_cost))
 
         general_types = [U.CYCLONE, U.MARAUDER, U.MARINE, U.HELLION, U.THOR, U.THORAP]
         if outer_base:
@@ -1448,8 +1429,23 @@ class DefensePlanner:
                 choke_enemy_now = int(bot.enemy_units.closer_than(20.0, th.th_pos).amount)
             except Exception:
                 choke_enemy_now = int(close_enemy_now)
+        # Durante one-base rush: não bloquear repair na nat se há bunker danificado perto.
+        # Sem este check, o retorno antecipado impediria reparar o bunker da nat enquanto ele
+        # estava sendo atacado — que é exatamente quando o repair é mais necessário.
         if bool(rush_ctx.get("enemy_one_base_rush", False)) and not bool(is_main):
-            return 0
+            nat_bunker_damaged = False
+            try:
+                for b in bot.structures(U.BUNKER):
+                    if float(b.distance_to(th.th_pos)) <= 18.0:
+                        hp = float(getattr(b, "health", 0) or 0)
+                        hp_max = float(getattr(b, "health_max", 1) or 1)
+                        if hp < hp_max:
+                            nat_bunker_damaged = True
+                            break
+            except Exception:
+                pass
+            if not nat_bunker_damaged:
+                return 0
         main_wall_contact = bool(is_main and self._enemy_contacting_main_wall(bot))
         damaged_ready = int(self._damaged_owned_targets_near_base(bot, base_pos=th.th_pos))
         if bool(rush_ctx.get("enemy_one_base_rush", False)) and bool(is_main) and not bool(main_wall_contact) and int(damaged_ready) <= 0:
@@ -1570,8 +1566,13 @@ class DefensePlanner:
             elif unit_type == U.MEDIVAC:
                 target_count = min(1, int(avail))
                 pick_policy = _HoldRampCombatPickPolicy(objective=objective, unit_type=unit_type)
+            elif unit_type in (U.REAPER, U.HELLION):
+                # Reapers e hellions são valiosos para harass/scout — só pega 1 no máximo.
+                # Deixa o resto disponível para outras missões.
+                target_count = min(1, int(avail))
+                pick_policy = _HoldRampCombatPickPolicy(objective=objective, unit_type=unit_type)
             else:
-                target_count = int(avail)
+                target_count = min(int(avail), 3)
                 pick_policy = _HoldRampCombatPickPolicy(objective=objective, unit_type=unit_type)
             if target_count <= 0:
                 continue
@@ -1836,6 +1837,35 @@ class DefensePlanner:
         _nat_enemy_power = float(_nat_ctrl_snap.get("enemy_nat_power", 0.0) or 0.0)
         _nat_presence_power = float(_nat_ctrl_snap.get("enemy_presence_nat_side_power", 0.0) or 0.0)
         _reaper_should_patrol = False
+        try:
+            own_nat = bot.mediator.get_own_nat
+            nat_enemy_close = int(bot.enemy_units.closer_than(18.0, own_nat).amount)
+            nat_regular_defenders = sum(
+                1
+                for u in bot.units
+                if getattr(u, "type_id", None) in {
+                    U.MARINE,
+                    U.MARAUDER,
+                    U.HELLION,
+                    U.CYCLONE,
+                    U.WIDOWMINE,
+                    U.WIDOWMINEBURROWED,
+                    U.SIEGETANK,
+                    U.SIEGETANKSIEGED,
+                    U.THOR,
+                    U.THORAP,
+                }
+                and bool(getattr(u, "is_ready", False))
+                and float(u.distance_to(own_nat)) <= 20.0
+            )
+            nat_under_threat = bool(
+                nat_enemy_close >= 2
+                or _nat_enemy_power >= 2.0
+                or _nat_presence_power >= 2.0
+            )
+            _reaper_should_patrol = bool(nat_under_threat and nat_regular_defenders <= 2)
+        except Exception:
+            _reaper_should_patrol = False
         reaper_nat_pid = self._pid_reaper_nat_patrol()
         if (
             bool(_reaper_should_patrol)
@@ -1875,7 +1905,7 @@ class DefensePlanner:
                     nat_anchor=nat_anchor,
                     nat_has_cc=bool(nat_has_cc),
                 )
-                reaper_count = int(self._available(bot, U.REAPER))
+                reaper_count = min(1, int(self._available(bot, U.REAPER)))
                 reaper_patrol_factory = self._make_reaper_patrol_factory(
                     roam_center=roam_center,
                     safe_point=safe_point,

@@ -67,6 +67,9 @@ class WallPlanner:
     main_score: int = 84
     nat_score: int = 82
     cadence_s: float = 4.0
+    propose_every_iters: int = 8
+    skip_log_every_s: float = 10.0
+    _next_skip_log_at: float = 0.0
 
     def _pid(self, zone: str) -> str:
         return f"{self.planner_id}:{str(zone)}"
@@ -193,9 +196,11 @@ class WallPlanner:
         opening_build_active = bool(self._opening_build_active(bot))
         rush_active = bool(self._rush_active(awareness=awareness, now=now))
         main_wall_contact = bool(self._main_wall_contact(bot, attention=attention))
+        skip_main_due_to_opening = bool(opening_build_active and not rush_active and not main_wall_contact)
 
-        if opening_build_active and not rush_active and not main_wall_contact:
-            if self.log is not None:
+        if skip_main_due_to_opening:
+            should_log_skip = float(now) >= float(self._next_skip_log_at)
+            if self.log is not None and should_log_skip:
                 self.log.emit(
                     "planner_skipped",
                     {
@@ -207,10 +212,11 @@ class WallPlanner:
                     },
                     meta={"module": "planner", "component": f"planner.{self.planner_id}"},
                 )
-            return out
-
+                self._next_skip_log_at = float(now) + float(self.skip_log_every_s)
         main_pid = self._pid("main")
         if (
+            (not skip_main_due_to_opening)
+            and
             not self._wall_complete_recent(awareness=awareness, now=now, zone="main")
             and not awareness.ops_proposal_running(proposal_id=main_pid, now=now)
             and self._due(awareness=awareness, now=now, zone="main")

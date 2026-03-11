@@ -120,6 +120,15 @@ def _match_timing_rule(
 
 
 def _rush_math_signals(*, now: float, eb, cfg: OpeningIntelConfig, workers_peak_seen: int = 0, enemy_race: str = "UNKNOWN") -> dict:
+    """Compute rush evidence signals.
+
+    Philosophy:
+    - Structural rules fire only on *concrete observed evidence* (pool seen, 2rax seen, proxy seen).
+    - Economic imbalance (spending more on production than expected) is a secondary signal,
+      gated on having vision of the enemy.
+    - Absence of natural only scores if we *have* seen the enemy main — blindness ≠ one-base.
+    - The score drives SUSPECTED/CONFIRMED thresholds; hard_rush = any rule with confirm=True.
+    """
     rules = tuple(cfg.timing_rules or ())
     if not rules:
         raise RuntimeError("missing_contract:opening_intel.timing_rules")
@@ -154,10 +163,18 @@ def _rush_math_signals(*, now: float, eb, cfg: OpeningIntelConfig, workers_peak_
         )
     )
 
+    # --- We have vision of the enemy if we've seen structures or workers ---
+    have_main_vision = bool(
+        int(production_structures_visible) >= 1
+        or int(workers_seen_now) >= 1
+        or int(enemy_bases) >= 1
+    )
+
     score = 0.0
     matched_rules: list[str] = []
     hard_rush = False
 
+    # 1. Timing rules: concrete structural evidence (pool, rax, gate timings).
     for rule in rules:
         if not _match_timing_rule(
             now=float(now),
@@ -173,26 +190,46 @@ def _rush_math_signals(*, now: float, eb, cfg: OpeningIntelConfig, workers_peak_
         if bool(rule.confirm):
             hard_rush = True
 
+    # 2. Worker deficit: only counts when we've actually seen workers (have vision).
+    #    If we've never seen a worker, the deficit is just fog-of-war noise.
     worker_deficit_score = 0.0
     if (
-        worker_deficit >= int(cfg.worker_under_count_tolerance)
+        have_main_vision
+        and int(workers_seen_now) >= 1  # must have actually observed workers
+        and worker_deficit >= int(cfg.worker_under_count_tolerance)
         and float(now) <= float(cfg.worker_deficit_check_until_s)
         and int(enemy_bases) <= 1
         and not bool(nat_on_ground)
     ):
         worker_deficit_score = min(float(cfg.worker_deficit_score_cap), float(worker_deficit) * 1.0)
         score += float(worker_deficit_score)
-    if int(enemy_bases) <= 1 and not nat_on_ground and float(now) >= float(cfg.one_base_alert_at_s):
+
+    # 3. One-base alert: only if we saw exactly 1 base (enemy_bases == 1 means we
+    #    saw a townhall but no expansion). Zero = no vision.
+    if int(enemy_bases) == 1 and not nat_on_ground and float(now) >= float(cfg.one_base_alert_at_s):
         score += float(cfg.one_base_alert_score)
-    if float(now) <= float(cfg.no_natural_alert_until_s) and not nat_on_ground and nat_prog <= 0.0:
+
+    # 4. No-natural alert: only if we have main vision and natural is genuinely absent.
+    #    Absence of vision != absence of expansion.
+    if (
+        have_main_vision
+        and float(now) <= float(cfg.no_natural_alert_until_s)
+        and not nat_on_ground
+        and nat_prog <= 0.0
+    ):
         score += float(cfg.no_natural_alert_score)
-    if not nat_on_ground and int(production_structures_visible) >= 3 and float(now) <= 300.0:
+
+    # 5. Production stack: more production buildings than economically expected for the time.
+    #    This catches "spending on army infrastructure instead of expansion/workers".
+    #    Only meaningful when we have vision.
+    if have_main_vision and not nat_on_ground and int(production_structures_visible) >= 3 and float(now) <= 300.0:
         score += float(10.0 + (6.0 * max(0, int(production_structures_visible) - 3)))
         matched_rules.append(f"production_stack_no_nat:{production_structures_visible}")
         if int(production_structures_visible) >= 4:
             hard_rush = True
 
-    if not nat_on_ground and float(now) <= 260.0:
+    # 6. Race-specific stack patterns (with vision, no natural).
+    if have_main_vision and not nat_on_ground and float(now) <= 260.0:
         if race_u == "PROTOSS":
             stargates = int(enemy_structs.get(U.STARGATE, 0) or 0)
             robos = int(enemy_structs.get(U.ROBOTICSFACILITY, 0) or 0)
@@ -223,11 +260,22 @@ def _rush_math_signals(*, now: float, eb, cfg: OpeningIntelConfig, workers_peak_
                 score += 16.0
                 matched_rules.append(f"zerg_roach_count_no_nat:{roaches}")
 
-    if not nat_on_ground and float(now) <= 260.0 and int(visible_non_worker_total) >= 8:
+    # 7. Large visible army without natural (direct army spending signal).
+    if have_main_vision and not nat_on_ground and float(now) <= 260.0 and int(visible_non_worker_total) >= 8:
         score += float(min(20.0, 4.0 + (2.0 * max(0, int(visible_non_worker_total) - 8))))
         matched_rules.append(f"visible_army_no_nat:{visible_non_worker_total}")
         if int(visible_non_worker_total) >= 12:
             hard_rush = True
+
+    # --- Macro aggressor detection ---
+    # Enemy expanded (has natural) but scouting showed heavy early aggression that faded.
+    # This signals "fake rush → macro" — the right response is harass, not prolonged defense.
+    is_macro_aggressor = bool(
+        nat_on_ground
+        and float(nat_prog) >= 0.50
+        and int(enemy_bases) >= 2
+        and worker_deficit <= int(cfg.worker_under_count_tolerance)
+    )
 
     likely_end = bool((nat_on_ground and float(nat_prog) >= 0.90) and worker_deficit <= 2 and enemy_bases >= 2)
 
@@ -243,10 +291,12 @@ def _rush_math_signals(*, now: float, eb, cfg: OpeningIntelConfig, workers_peak_
         "natural_progress": float(nat_prog),
         "production_structures_visible": int(production_structures_visible),
         "visible_non_worker_total": int(visible_non_worker_total),
+        "have_main_vision": bool(have_main_vision),
         "matched_timing_rules": list(matched_rules),
         "rush_score": float(round(score, 2)),
         "hard_rush": bool(hard_rush),
         "likely_end": bool(likely_end),
+        "is_macro_aggressor": bool(is_macro_aggressor),
     }
 
 
@@ -299,6 +349,8 @@ def _evaluate_opening(
     )
     rush_score = float(rush_math["rush_score"])
     hard_rush = bool(rush_math["hard_rush"])
+    have_main_vision = bool(rush_math.get("have_main_vision", False))
+    is_macro_aggressor = bool(rush_math.get("is_macro_aggressor", False))
 
     if early and (near_bases >= int(cfg.rush_units_near_bases) or (threatened and near_bases >= 3)):
         kind = "AGGRESSIVE"
@@ -308,6 +360,10 @@ def _evaluate_opening(
     elif hard_rush or rush_score >= float(cfg.rush_score_confirmed):
         kind = "AGGRESSIVE"
         conf = min(0.98, 0.62 + (rush_score / 200.0))
+    elif is_macro_aggressor and near_bases <= 1 and not threatened:
+        # Enemy faked aggression early, now expanding — signal harass opportunity.
+        kind = "MACRO_AGGRESSOR"
+        conf = 0.72
     elif greedy_window and (nat_on_ground or enemy_bases >= 2) and near_bases <= 1 and not threatened:
         kind = "GREEDY"
         conf = 0.75
@@ -322,9 +378,17 @@ def _evaluate_opening(
     clear_for = max(0.0, float(now) - float(last_pressure_t))
     recent_pressure = clear_for <= float(cfg.rush_end_clear_s)
 
+    # SUSPECTED: structural evidence confirmed by scout OR real combat contact.
+    # Score alone during early game is NOT enough — avoids reacting to fog-of-war.
     is_suspected = bool(
         rush_score >= float(cfg.rush_score_suspected)
-        and (early or recent_pressure or int(near_bases) >= 2 or bool(threatened))
+        and (
+            recent_pressure
+            or int(near_bases) >= 2
+            or bool(threatened)
+            or (early and hard_rush)
+            or (early and have_main_vision and rush_score >= float(cfg.rush_score_suspected))
+        )
     )
     confirmed_with_pressure = bool(
         rush_score >= float(cfg.rush_score_confirmed) and (bool(threatened) or int(near_bases) >= 2)
@@ -335,9 +399,12 @@ def _evaluate_opening(
         and int(near_bases) >= 2
     )
     is_confirmed = bool(hard_rush or confirmed_with_pressure or (threatened and near_bases >= 3) or ling_flood_contact)
+
     rush_likely_end = bool(rush_math["likely_end"]) and clear_for >= float(cfg.rush_end_clear_s)
     rush_forced_end = bool(clear_for >= float(cfg.rush_hold_max_s) and int(near_bases) <= 1 and not bool(threatened))
     rush_suspected_decay = bool(clear_for >= float(cfg.rush_suspect_decay_s) and int(near_bases) <= 1 and not bool(threatened))
+    # Macro aggressor: enemy expanded after early pressure — end the rush state.
+    rush_macro_end = bool(is_macro_aggressor and clear_for >= float(cfg.rush_end_clear_s))
 
     rush_state = str(prev_rush_state or "NONE")
     if is_confirmed:
@@ -345,7 +412,7 @@ def _evaluate_opening(
     elif is_suspected:
         rush_state = "SUSPECTED" if rush_state in {"NONE", "ENDED"} else "HOLDING"
     elif rush_state in {"CONFIRMED", "SUSPECTED", "HOLDING"}:
-        if rush_likely_end or rush_forced_end or (rush_state == "SUSPECTED" and rush_suspected_decay):
+        if rush_likely_end or rush_forced_end or rush_macro_end or (rush_state == "SUSPECTED" and rush_suspected_decay):
             rush_state = "ENDED"
         else:
             rush_state = "HOLDING"
@@ -448,6 +515,9 @@ def _evaluate_opening(
         "recent_pressure": bool(recent_pressure),
         "rush_forced_end": bool(rush_forced_end),
         "rush_suspected_decay": bool(rush_suspected_decay),
+        "rush_macro_end": bool(rush_macro_end),
+        "have_main_vision": bool(have_main_vision),
+        "is_macro_aggressor": bool(is_macro_aggressor),
     }
 
     return OpeningDecision(
@@ -541,6 +611,7 @@ def derive_enemy_opening_intel(
     visible_non_worker_total = int(rush_math.get("visible_non_worker_total", 0) or 0)
     production_structures_visible = int(rush_math.get("production_structures_visible", 0) or 0)
     enemy_bases_visible = int(signals.get("enemy_bases_visible", 0) or 0)
+    is_macro_aggressor = bool(rush_math.get("is_macro_aggressor", False))
     lings_seen = int((signals.get("seen_units", {}) or {}).get("lings", 0) or 0)
     structural_evidence = bool(rush_math.get("hard_rush", False)) or bool(rush_math.get("matched_timing_rules", []))
     no_natural_structural_confirmed = bool(
@@ -556,11 +627,23 @@ def derive_enemy_opening_intel(
             )
         )
     )
+    # Require that we actually scouted the main (reaper done or recently seen main),
+    # or have hard structural evidence — pure "dispatched SCV + 4 units" was too eager.
     scout_no_natural_suspected = bool(
         float(now) <= float(cfg.rush_phase_max_s)
         and scv_dispatched
         and not bool(signals.get("natural_on_ground", False))
-        and (reaper_done or main_seen_recent or structural_evidence or int(visible_non_worker_total) >= 4)
+        and int(enemy_bases_visible) <= 1
+        and (
+            bool(structural_evidence)
+            or (
+                bool(reaper_done or main_seen_recent)
+                and (
+                    int(production_structures_visible) >= 2
+                    or int(visible_non_worker_total) >= 6
+                )
+            )
+        )
     )
     scout_no_natural_confirmed = bool(
         scout_no_natural_suspected
@@ -577,22 +660,26 @@ def derive_enemy_opening_intel(
     rush_state_out = str(decision.rush_state or "NONE").upper()
     rush_tier_out = str(getattr(decision, "rush_tier", "NONE") or "NONE").upper()
     rush_severity_out = float(getattr(decision, "rush_severity", 0.0) or 0.0)
-    if scout_no_natural_confirmed or no_natural_structural_confirmed:
+    # Do not override rush state based on "no natural" evidence when the enemy is
+    # clearly in macro mode (expanded) — seeing 2+ bases cancels the no-natural signal.
+    _enemy_macro_evident = bool(is_macro_aggressor or int(enemy_bases_visible) >= 2)
+    _no_nat_override_ok = bool(not _enemy_macro_evident)
+    if _no_nat_override_ok and (scout_no_natural_confirmed or no_natural_structural_confirmed):
         rush_state_out = "CONFIRMED"
         rush_tier_out = "HEAVY" if rush_tier_out not in {"HEAVY", "EXTREME"} else rush_tier_out
         rush_severity_out = max(float(rush_severity_out), 0.84)
-    elif scout_no_natural_suspected and rush_state_out in {"NONE", "ENDED"}:
+    elif _no_nat_override_ok and scout_no_natural_suspected and rush_state_out in {"NONE", "ENDED"}:
         rush_state_out = "SUSPECTED"
         rush_tier_out = "MEDIUM" if rush_tier_out == "NONE" else rush_tier_out
         rush_severity_out = max(float(rush_severity_out), 0.56)
-    if no_natural_structural_confirmed and (
+    if _no_nat_override_ok and no_natural_structural_confirmed and (
         int(production_structures_visible) >= 4 or int(visible_non_worker_total) >= 12 or bool(rush_math.get("hard_rush", False))
     ):
         rush_tier_out = "EXTREME"
         rush_severity_out = max(float(rush_severity_out), 0.93)
     if structural_evidence and rush_state_out in {"NONE", "ENDED"}:
         rush_state_out = "HOLDING" if str(prev_state).upper() in {"CONFIRMED", "HOLDING"} else "SUSPECTED"
-    if since_confirmed <= float(cfg.rush_confirmed_min_hold_s) and rush_state_out in {"NONE", "ENDED", "SUSPECTED"}:
+    if since_confirmed <= float(cfg.rush_confirmed_min_hold_s) and rush_state_out in {"NONE", "ENDED", "SUSPECTED"} and not bool(_enemy_macro_evident):
         rush_state_out = "HOLDING"
     if (
         no_natural
@@ -626,11 +713,11 @@ def derive_enemy_opening_intel(
     scout_loss_army_suspected = bool(
         scv_lost_early
         and float(now) <= float(cfg.rush_phase_max_s)
+        and int(enemy_bases_visible) <= 1
         and (
             bool(structural_evidence)
             or int(lings_seen) >= 4
             or int(visible_non_worker_total) >= 5
-            or int(enemy_bases_visible) <= 1
         )
     )
     if early_visible_ling_flood or scout_loss_army_confirmed:
@@ -656,7 +743,7 @@ def derive_enemy_opening_intel(
         main_army_refresh and no_natural
     ):
         last_seen_pressure_out = float(now)
-    if bool(scout_no_natural_confirmed) or bool(no_natural_structural_confirmed):
+    if (bool(scout_no_natural_confirmed) or bool(no_natural_structural_confirmed)) and bool(_no_nat_override_ok):
         last_seen_pressure_out = float(now)
     if bool(early_visible_ling_flood) or bool(scout_loss_army_confirmed):
         last_seen_pressure_out = float(now)
@@ -734,6 +821,15 @@ def derive_enemy_opening_intel(
         value=bool(scv_lost_early),
         now=now,
         ttl=float(rush_ttl_s),
+    )
+    # Macro aggressor: enemy did early aggression but is now macro-ing.
+    # Published so harass planner can exploit the opening instead of staying defensive.
+    is_macro_aggressor_out = bool(signals.get("is_macro_aggressor", False))
+    awareness.mem.set(
+        K("enemy", "opening", "macro_aggressor"),
+        value=bool(is_macro_aggressor_out),
+        now=now,
+        ttl=float(cfg.ttl_s),
     )
     # Periodic explicit intel log for rush/greedy classification observability.
     last_emit = float(

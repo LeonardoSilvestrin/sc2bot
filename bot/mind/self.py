@@ -113,6 +113,7 @@ class RuntimeApp:
     full_snapshots_flag_path: str = "_prompt/full_snapshots.flag"
     bo_diag_every_iters: int = 25
     bo_stall_warn_s: float = 25.0
+    perf_snapshot_every_iters: int = 24
     runtime_clock_every_iters: int = 24
     runtime_clock_print: bool = False
     scv_churn_window_s: float = 2.5
@@ -385,7 +386,10 @@ class RuntimeApp:
             self.log.emit("runtime_start", {})
 
     async def on_step(self, bot, *, iteration: int) -> None:
+        import time
+
         now = float(getattr(bot, "time", 0.0))
+        t0 = time.perf_counter()
         self._sync_leased_scv_roles(bot, now=now)
         # Keep Ares resource-manager bookkeeping actively applied each frame.
         bot.register_behavior(Mining())
@@ -397,8 +401,10 @@ class RuntimeApp:
             now=now,
             cfg=self.pathing_sensor_cfg,
         )
+        t_after_pre = time.perf_counter()
 
         attention = derive_attention(bot, awareness=self.awareness, threat=self.threat, log=self.log)
+        t_after_attention = time.perf_counter()
 
         derive_enemy_opening_intel(
             bot,
@@ -537,10 +543,24 @@ class RuntimeApp:
                     },
                     meta={"module": "awareness", "component": "awareness.full"},
                 )
+        t_after_intel = time.perf_counter()
 
         tick = TaskTick(iteration=int(iteration), time=now)
         await self.ego.tick(bot, tick=tick, attention=attention, awareness=self.awareness)
+        t_after_ego = time.perf_counter()
         self._emit_runtime_clock(iteration=int(iteration), now=now)
+        t_after_clock = time.perf_counter()
+        self._emit_perf_snapshot(
+            bot,
+            iteration=int(iteration),
+            now=now,
+            pre_ms=(t_after_pre - t0) * 1000.0,
+            attention_ms=(t_after_attention - t_after_pre) * 1000.0,
+            intel_ms=(t_after_intel - t_after_attention) * 1000.0,
+            ego_ms=(t_after_ego - t_after_intel) * 1000.0,
+            runtime_clock_ms=(t_after_clock - t_after_ego) * 1000.0,
+            total_ms=(t_after_clock - t0) * 1000.0,
+        )
 
     @staticmethod
     def _scv_roles_by_tag(bot) -> dict[int, UnitRole]:
@@ -937,6 +957,79 @@ class RuntimeApp:
                 f"lag(p/s/t)=({payload['lag_production']:.3f}/{payload['lag_spending']:.3f}/{payload['lag_tech']:.3f}) "
                 f"bank_pi={payload['bank_pi_output']:.3f}"
             )
+
+    def _emit_perf_snapshot(
+        self,
+        bot,
+        *,
+        iteration: int,
+        now: float,
+        pre_ms: float,
+        attention_ms: float,
+        intel_ms: float,
+        ego_ms: float,
+        runtime_clock_ms: float,
+        total_ms: float,
+    ) -> None:
+        if self.log is None:
+            return
+        if int(iteration) % max(1, int(self.perf_snapshot_every_iters)) != 0:
+            return
+
+        facts = getattr(getattr(self.awareness, "mem", None), "_facts", {}) or {}
+        ops_mission_facts = 0
+        ops_cooldown_facts = 0
+        ops_proposal_facts = 0
+        for key in facts.keys():
+            if not isinstance(key, tuple) or len(key) < 2:
+                continue
+            if key[0] != "ops":
+                continue
+            if key[1] == "mission":
+                ops_mission_facts += 1
+            elif key[1] == "cooldown":
+                ops_cooldown_facts += 1
+            elif key[1] in {"defense", "harass", "map_control", "wall", "widowmine"}:
+                ops_proposal_facts += 1
+
+        unit_memory_live = 0
+        unit_memory_archive = 0
+        terrain_blocked_positions = 0
+        try:
+            manager_hub = getattr(bot, "manager_hub", None)
+            unit_memory = getattr(manager_hub, "unit_memory_manager", None)
+            terrain = getattr(manager_hub, "terrain_manager", None)
+            unit_memory_live = int(len(getattr(unit_memory, "_memory_units_by_tag", {}) or {}))
+            unit_memory_archive = int(len(getattr(unit_memory, "_archive_units_by_tag", {}) or {}))
+            terrain_blocked_positions = int(len(getattr(terrain, "positions_blocked_by_enemy_burrowed_units", []) or []))
+        except Exception:
+            pass
+
+        self.log.emit(
+            "perf_snapshot",
+            {
+                "iter": int(iteration),
+                "t": round(float(now), 2),
+                "on_step_total_ms": round(float(total_ms), 3),
+                "pre_ms": round(float(pre_ms), 3),
+                "attention_ms": round(float(attention_ms), 3),
+                "intel_ms": round(float(intel_ms), 3),
+                "ego_ms": round(float(ego_ms), 3),
+                "runtime_clock_ms": round(float(runtime_clock_ms), 3),
+                "awareness_facts": int(len(facts)),
+                "awareness_events": int(len(getattr(self.awareness, "_events", []) or [])),
+                "ops_mission_facts": int(ops_mission_facts),
+                "ops_cooldown_facts": int(ops_cooldown_facts),
+                "ops_proposal_facts": int(ops_proposal_facts),
+                "active_missions": int(len(getattr(self.ego, "_active", {}) or {})),
+                "units_own": int(len(getattr(bot, "units", []) or [])),
+                "units_enemy_visible": int(len(getattr(bot, "enemy_units", []) or [])),
+                "unit_memory_live": int(unit_memory_live),
+                "unit_memory_archive": int(unit_memory_archive),
+                "terrain_blocked_positions": int(terrain_blocked_positions),
+            },
+            meta={"module": "runtime", "component": "runtime.perf"},
+        )
 
     async def _safe_chat_send(self, bot, *, now: float, message: str) -> bool:
         if not bool(self.chat_enabled):

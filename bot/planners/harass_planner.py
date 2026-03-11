@@ -10,6 +10,7 @@ from bot.mind.attention import Attention
 from bot.mind.awareness import Awareness, K
 from bot.planners.utils.proposals import Proposal, TaskSpec, UnitRequirement
 from bot.tasks.harass.banshee_harass_task import BansheeHarass
+from bot.tasks.harass.medivac_drop_harass_task import MedivacDropHarassTask
 from bot.tasks.harass.reaper_hellion_harass_task import ReaperHellionHarass
 
 
@@ -55,13 +56,61 @@ class HellionHarassPickPolicy:
         return (hp * 15.0) - dist
 
 
+@dataclass(frozen=True)
+class MedivacDropPickPolicy:
+    objective: Point2
+    name: str = "harass.medivac_drop.transport.v1"
+
+    def allow(self, unit, *, bot, attention, now: float) -> bool:
+        if unit is None or unit.type_id != U.MEDIVAC:
+            return False
+        if not bool(getattr(unit, "is_ready", False)):
+            return False
+        # Não exige is_idle: medivac em patrol ou holding numa missão de bulk também é elegível.
+        return float(getattr(unit, "health_percentage", 1.0) or 1.0) >= 0.60
+
+    def score(self, unit, *, bot, attention, now: float) -> float:
+        try:
+            dist = float(unit.distance_to(self.objective))
+        except Exception:
+            dist = 9999.0
+        hp = float(getattr(unit, "health_percentage", 1.0) or 1.0)
+        return (hp * 22.0) - dist
+
+
+@dataclass(frozen=True)
+class BioDropPickPolicy:
+    objective: Point2
+    unit_type: U
+    name: str = "harass.medivac_drop.bio.v1"
+
+    def allow(self, unit, *, bot, attention, now: float) -> bool:
+        if unit is None or unit.type_id != self.unit_type:
+            return False
+        if not bool(getattr(unit, "is_ready", False)):
+            return False
+        # Não exige is_idle: units em mineração, patrol ou idle são todas elegíveis.
+        # Exige is_idle só eliminaria troops legítimos que estão minerando ou se movendo.
+        if bool(getattr(unit, "is_loaded", False)):
+            return False
+        return float(getattr(unit, "health_percentage", 1.0) or 1.0) >= 0.55
+
+    def score(self, unit, *, bot, attention, now: float) -> float:
+        try:
+            dist = float(unit.distance_to(self.objective))
+        except Exception:
+            dist = 9999.0
+        hp = float(getattr(unit, "health_percentage", 1.0) or 1.0)
+        return (hp * 12.0) - dist
+
+
 @dataclass
 class HarassPlanner:
     planner_id: str = "harass_planner"
     log: DevLogger | None = None
     lease_ttl_s: float = 120.0
     score: int = 66
-    cadence_s: float = 15.0
+    cadence_s: float = 8.0
     propose_hellions_until_s: float = 480.0
     propose_banshee_from_s: float = 300.0
     seed_banshee_signal_once: bool = True
@@ -72,6 +121,9 @@ class HarassPlanner:
     max_target_path_danger: float = 2.6
     path_hotspot_radius: float = 12.0
     existence_trigger_enabled: bool = True
+    max_drop_targets: int = 3
+    max_drop_medivacs: int = 2
+    min_drop_total_slots: int = 2
     _next_idle_log_at: float = 0.0
 
     def _pid_reaper_hellion(self) -> str:
@@ -79,6 +131,9 @@ class HarassPlanner:
 
     def _pid_banshee(self) -> str:
         return f"{self.planner_id}:banshee"
+
+    def _pid_medivac_drop(self) -> str:
+        return f"{self.planner_id}:medivac_drop"
 
     def _due(self, *, awareness: Awareness, now: float, pid: str) -> bool:
         last = awareness.mem.get(K("ops", "harass", "proposal", pid, "last_t"), now=now, default=None)
@@ -165,10 +220,35 @@ class HarassPlanner:
                 pass
         return bot.enemy_start_locations[0], candidates
 
+    def _pick_drop_targets(self, *, objective: Point2, target_candidates: list[dict]) -> list[Point2]:
+        out: list[Point2] = []
+        for candidate in list(target_candidates or []):
+            try:
+                pos = Point2((float(candidate.get("x")), float(candidate.get("y"))))
+            except Exception:
+                continue
+            if any(float(pos.distance_to(existing)) <= 3.0 for existing in out):
+                continue
+            out.append(pos)
+            if len(out) >= int(self.max_drop_targets):
+                break
+        if not out:
+            out.append(objective)
+        return out
+
+    @staticmethod
+    def _drop_slot_plan(*, marine_count: int, marauder_count: int, medivac_count: int) -> tuple[int, int]:
+        capacity = max(0, int(medivac_count) * 8)
+        marines = min(max(0, int(marine_count)), capacity)
+        remaining = max(0, capacity - marines)
+        marauders = min(max(0, int(marauder_count)), remaining // 2)
+        return int(marines), int(marauders)
+
     def propose(self, bot, *, awareness: Awareness, attention: Attention) -> list[Proposal]:
         now = float(attention.time)
         pid_rh = self._pid_reaper_hellion()
         pid_b = self._pid_banshee()
+        pid_md = self._pid_medivac_drop()
         out: list[Proposal] = []
 
         # Do not start/extend harass under meaningful home pressure.
@@ -198,10 +278,17 @@ class HarassPlanner:
                 self._next_idle_log_at = float(now) + float(self.idle_log_every_s)
             return []
         objective, target_candidates = self._pick_harass_target(bot, awareness=awareness, now=now)
+        drop_targets = self._pick_drop_targets(objective=objective, target_candidates=target_candidates)
         awareness.mem.set(K("ops", "harass", "targets", "candidates"), value=list(target_candidates), now=now, ttl=10.0)
         awareness.mem.set(
             K("ops", "harass", "targets", "selected"),
             value={"x": float(objective.x), "y": float(objective.y)},
+            now=now,
+            ttl=10.0,
+        )
+        awareness.mem.set(
+            K("ops", "harass", "targets", "drop_selected"),
+            value=[{"x": float(p.x), "y": float(p.y)} for p in drop_targets],
             now=now,
             ttl=10.0,
         )
@@ -325,6 +412,88 @@ class HarassPlanner:
             )
             self._mark_proposed(awareness=awareness, now=now, pid=pid_rh)
 
+        if not awareness.ops_proposal_running(proposal_id=pid_md, now=now) and self._due(awareness=awareness, now=now, pid=pid_md):
+            # Usar .ready em vez de .ready.idle: units no bulk ou em patrol ainda são elegíveis
+            # desde que não estejam loaded. O Ego vai filtrar via can_claim se estiverem presas.
+            medivacs_idle = int(bot.units.of_type(U.MEDIVAC).ready.amount)
+            marines_idle = int(bot.units.of_type(U.MARINE).ready.filter(
+                lambda u: not bool(getattr(u, "is_loaded", False))
+            ).amount)
+            marauders_idle = int(bot.units.of_type(U.MARAUDER).ready.filter(
+                lambda u: not bool(getattr(u, "is_loaded", False))
+            ).amount)
+            total_slots = int(marines_idle + (2 * marauders_idle))
+            desired_medivacs = min(
+                int(self.max_drop_medivacs),
+                int(medivacs_idle),
+                max(1, (int(total_slots) + 7) // 8) if int(total_slots) > 0 else 0,
+            )
+            planned_marines, planned_marauders = self._drop_slot_plan(
+                marine_count=marines_idle,
+                marauder_count=marauders_idle,
+                medivac_count=desired_medivacs,
+            )
+            planned_slots = int(planned_marines + (2 * planned_marauders))
+            should_propose_drop = bool(
+                desired_medivacs >= 1
+                and marines_idle >= 1
+                and planned_slots >= int(self.min_drop_total_slots)
+            )
+            if should_propose_drop:
+                medivac_policy = MedivacDropPickPolicy(objective=drop_targets[0])
+                marine_policy = BioDropPickPolicy(objective=drop_targets[0], unit_type=U.MARINE)
+                marauder_policy = BioDropPickPolicy(objective=drop_targets[0], unit_type=U.MARAUDER)
+                reqs_md: list[UnitRequirement] = [
+                    UnitRequirement(
+                        unit_type=U.MEDIVAC,
+                        count=int(desired_medivacs),
+                        pick_policy=medivac_policy,
+                        required=True,
+                    ),
+                    UnitRequirement(
+                        unit_type=U.MARINE,
+                        count=int(planned_marines),
+                        pick_policy=marine_policy,
+                        required=True,
+                    ),
+                ]
+                if planned_marauders > 0:
+                    reqs_md.append(
+                        UnitRequirement(
+                            unit_type=U.MARAUDER,
+                            count=int(planned_marauders),
+                            pick_policy=marauder_policy,
+                            required=True,
+                        )
+                    )
+
+                def _factory_md(mission_id: str) -> MedivacDropHarassTask:
+                    return MedivacDropHarassTask(
+                        awareness=awareness,
+                        log=self.log,
+                        target_locations=drop_targets,
+                    )
+
+                out.append(
+                    Proposal(
+                        proposal_id=pid_md,
+                        domain="HARASS",
+                        score=78,  # Acima do SecureBase (74-88 variável) e do score base, abaixo do HoldAnchor (93)
+                        tasks=[
+                            TaskSpec(
+                                task_id="medivac_drop_harass",
+                                task_factory=_factory_md,
+                                unit_requirements=reqs_md,
+                            )
+                        ],
+                        lease_ttl=float(self.lease_ttl_s),
+                        cooldown_s=0.0,
+                        risk_level=2,
+                        allow_preempt=True,
+                    )
+                )
+                self._mark_proposed(awareness=awareness, now=now, pid=pid_md)
+
         reaper_hellion_done = bool(awareness.mem.get(K("ops", "harass", "reaper_hellion", "done"), now=now, default=False))
         banshee_ready_window = bool(float(now) >= float(self.propose_banshee_from_s))
         banshee_exists = int(bot.units.of_type(U.BANSHEE).ready.amount) > 0
@@ -432,6 +601,8 @@ class HarassPlanner:
                     "banshee_seeded": bool(banshee_seeded),
                     "banshee_seed_proposed": bool(should_seed_banshee),
                     "banshee_proposed": bool(should_propose_banshee),
+                    "drop_targets": [{"x": float(p.x), "y": float(p.y)} for p in drop_targets],
+                    "medivac_drop_proposed": bool(any(str(p.proposal_id) == pid_md for p in out)),
                     "blocked_by_threat": bool(blocked_by_threat),
                     "primary_urgency": int(primary_urgency),
                     "primary_enemy_count": int(primary_enemy_count),
@@ -441,4 +612,3 @@ class HarassPlanner:
             if len(out) == 0:
                 self._next_idle_log_at = float(now) + float(self.idle_log_every_s)
         return out
-

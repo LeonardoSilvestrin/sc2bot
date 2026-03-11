@@ -105,6 +105,7 @@ _BULK_UNIT_TYPES = [
     # REAPER excluído: reapers são unidades de harass/scout independentes.
     # Quando não estão em missão de harass, ficam livres para se mover pelo mapa.
     # Inclui-los no bulk faz o reaper ficar parado no anchor esperando.
+    U.WIDOWMINE, U.WIDOWMINEBURROWED,
     U.HELLION, U.CYCLONE,
     U.SIEGETANK, U.SIEGETANKSIEGED,
     U.THOR, U.THORAP,
@@ -137,6 +138,12 @@ class MapControlPlanner:
     log: DevLogger | None = None
     cadence_s: float = 2.0
     lease_ttl_s: Optional[float] = None
+
+    @staticmethod
+    def _point_payload(pos: Point2 | None) -> dict | None:
+        if pos is None:
+            return None
+        return {"x": float(pos.x), "y": float(pos.y)}
 
     def _pid(self, label: str) -> str:
         return f"{self.planner_id}:{str(label)}"
@@ -179,6 +186,92 @@ class MapControlPlanner:
     @staticmethod
     def _available(bot, unit_type: U) -> int:
         return int(bot.units.of_type(unit_type).ready.amount)
+
+    @staticmethod
+    def _base_is_established(entry: dict) -> bool:
+        state = str(entry.get("state", "") or "").upper()
+        return state in {"ESTABLISHED", "LANDED_UNSAFE", "SECURING"}
+
+    @staticmethod
+    def _base_point(entry: dict) -> Point2 | None:
+        payload = entry.get("current_pos") or entry.get("intended_pos")
+        if not isinstance(payload, dict):
+            return None
+        try:
+            return Point2((float(payload.get("x", 0.0) or 0.0), float(payload.get("y", 0.0) or 0.0)))
+        except Exception:
+            return None
+
+    def _standard_bulk_anchor(
+        self,
+        *,
+        bot,
+        awareness: Awareness,
+        attention: Attention,
+        now: float,
+        fallback_anchor: Point2 | None,
+    ) -> tuple[Point2 | None, dict]:
+        registry = awareness.mem.get(K("intel", "our_bases", "registry"), now=now, default={}) or {}
+        if not isinstance(registry, dict):
+            registry = {}
+
+        nat_entry = dict(registry.get("NATURAL", {})) if isinstance(registry.get("NATURAL", {}), dict) else {}
+        nat_pos = self._base_point(nat_entry)
+        rush_state = str(awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
+        primary_urgency = int(getattr(attention.combat, "primary_urgency", 0) or 0)
+        primary_enemy_count = int(getattr(attention.combat, "primary_enemy_count", 0) or 0)
+
+        result = {
+            "mode": "geometry_bulk",
+            "reason": "fallback",
+            "reinforce_base_label": "",
+            "reinforce_base_pos": None,
+            "controlled_unit_types": [str(t.name) for t in _BULK_UNIT_TYPES],
+            "split_ready": False,
+        }
+        if nat_pos is None:
+            return fallback_anchor, result
+        if rush_state in {"CONFIRMED", "HOLDING"} or primary_urgency >= 16 or primary_enemy_count >= 2:
+            result["reason"] = "home_pressure_or_rush"
+            return fallback_anchor or nat_pos, result
+
+        enemy_main = bot.enemy_start_locations[0] if getattr(bot, "enemy_start_locations", None) else bot.start_location
+        owned_outer: list[tuple[int, float, str, Point2]] = []
+        for label, raw_entry in registry.items():
+            if str(label) in {"MAIN", "NATURAL"}:
+                continue
+            if not isinstance(raw_entry, dict):
+                continue
+            entry = dict(raw_entry)
+            if not bool(entry.get("owned", False)):
+                continue
+            if not self._base_is_established(entry):
+                continue
+            base_pos = self._base_point(entry)
+            if base_pos is None:
+                continue
+            order = int(entry.get("order", 99) or 99)
+            try:
+                enemy_dist = float(base_pos.distance_to(enemy_main))
+            except Exception:
+                enemy_dist = 9999.0
+            owned_outer.append((order, enemy_dist, str(label), base_pos))
+
+        if not owned_outer:
+            result["reason"] = "no_established_outer_base"
+            return fallback_anchor or nat_pos, result
+
+        owned_outer.sort(key=lambda item: (-int(item[0]), float(item[1])))
+        _order, _enemy_dist, reinforce_label, reinforce_pos = owned_outer[0]
+        try:
+            anchor = nat_pos.towards(reinforce_pos, nat_pos.distance_to(reinforce_pos) * 0.58)
+        except Exception:
+            anchor = fallback_anchor or nat_pos
+        result["mode"] = "standard_bulk"
+        result["reason"] = "stabilized_outer_base_reinforce"
+        result["reinforce_base_label"] = str(reinforce_label)
+        result["reinforce_base_pos"] = self._point_payload(reinforce_pos)
+        return anchor, result
 
     @staticmethod
     def _nat_bunker_started_or_pending(bot, *, base_pos: Point2, hold_pos: Point2) -> bool:
@@ -442,6 +535,30 @@ class MapControlPlanner:
         if anchor_point is None:
             anchor_payload = posture_snap.get("anchor")
             anchor_point = self._point(anchor_payload) if anchor_payload else None
+
+        anchor_point, army_control_meta = self._standard_bulk_anchor(
+            bot=bot,
+            awareness=awareness,
+            attention=attention,
+            now=now,
+            fallback_anchor=anchor_point,
+        )
+        awareness.mem.set(
+            K("ops", "army_control", "snapshot"),
+            value={
+                "updated_at": float(now),
+                "owner": self.planner_id,
+                "primary_anchor": self._point_payload(anchor_point),
+                "secondary_anchor": army_control_meta.get("reinforce_base_pos"),
+                "mode": str(army_control_meta.get("mode", "geometry_bulk") or "geometry_bulk"),
+                "reason": str(army_control_meta.get("reason", "fallback") or "fallback"),
+                "reinforce_base_label": str(army_control_meta.get("reinforce_base_label", "") or ""),
+                "controlled_unit_types": list(army_control_meta.get("controlled_unit_types", [])),
+                "split_ready": bool(army_control_meta.get("split_ready", False)),
+            },
+            now=now,
+            ttl=5.0,
+        )
 
         # --- HoldAnchorTask: bulk do exército posiciona no setor MASS_HOLD ---
         # Sempre proposto quando há anchor válido, independente de postura.

@@ -80,7 +80,8 @@ class ReinforceMissionPlanner(BasePlanner):
     map_control_bulk_types: tuple[U, ...] = (
         U.MARINE,
         U.MARAUDER,
-        U.REAPER,
+        U.WIDOWMINE,
+        U.WIDOWMINEBURROWED,
         U.HELLION,
         U.CYCLONE,
         U.SIEGETANK,

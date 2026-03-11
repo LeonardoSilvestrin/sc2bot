@@ -281,6 +281,20 @@ class MacroAresExecutorTick(BaseTask):
         return bool(status.get("complete", False))
 
     @staticmethod
+    def _nat_wall_complete(*, awareness: Awareness, now: float) -> bool:
+        status = awareness.mem.get(K("ops", "wall", "nat", "status"), now=now, default=None)
+        if not isinstance(status, dict):
+            return False
+        return bool(status.get("complete", False))
+
+    @staticmethod
+    def _nat_wall_supported(*, awareness: Awareness, now: float) -> bool:
+        payload = awareness.mem.get(K("intel", "placements", "nat_wall"), now=now, default=None)
+        if not isinstance(payload, dict):
+            return False
+        return bool(payload.get("supported", False))
+
+    @staticmethod
     def _sig_from_plan(
         *,
         army_comp: dict[U, dict[str, float | int]],
@@ -647,7 +661,14 @@ class MacroAresExecutorTick(BaseTask):
 
         enable_workers = bool(plan_active.get("enable_workers"))
         scv_cap = int(plan_active.get("scv_cap") or 66)
+        nat_wall_blocks_supply = bool(
+            int(attention.macro.bases_total) >= 2
+            and self._nat_wall_supported(awareness=self.awareness, now=now)
+            and not self._nat_wall_complete(awareness=self.awareness, now=now)
+        )
         enable_supply = bool(plan_active.get("enable_supply")) and self._main_wall_complete(awareness=self.awareness, now=now)
+        if nat_wall_blocks_supply:
+            enable_supply = False
         enable_gas = bool(plan_active.get("enable_gas"))
         gas_target = int(plan_active.get("gas_target") or 0)
         gas_workers_per_refinery = int(plan_active.get("gas_workers_per_refinery") or 3)

@@ -1,0 +1,283 @@
+# bot/tasks/utils/air_perimeter_path.py
+
+"""
+air_perimeter_path.py
+---------------------
+Utilitário de rota pelo perímetro do mapa para unidades aéreas de harass
+(Banshee, Medivac, etc.).
+
+Problema: unidades aéreas viajam em linha reta e passam pelo meio do mapa,
+onde está o exército inimigo, levando dano desnecessário antes de chegar ao alvo.
+
+Solução: calcular um waypoint de "swing" que desvia pelo canto/borda do mapa,
+fazendo o voo pelo perímetro ao invés de pelo centro.
+
+Uso típico (banshee_harass_task.py):
+
+    from bot.tasks.utils.air_perimeter_path import air_perimeter_waypoint
+
+    waypoint = air_perimeter_waypoint(
+        origin=banshee.position,
+        destination=enemy_nat,
+        map_center=bot.game_info.map_center,
+        map_bounds=bot.game_info.playable_area,
+        enemy_army_center=enemy_army_center,  # opcional
+    )
+    banshee.move(waypoint)
+
+Se o waypoint já foi atingido, mova para o próximo da sequência:
+
+    route = air_perimeter_route(
+        origin=banshee.position,
+        destination=enemy_nat,
+        map_center=bot.game_info.map_center,
+        map_bounds=bot.game_info.playable_area,
+    )
+    # route = [waypoint_swing, destination]  (lista de Point2)
+"""
+
+from __future__ import annotations
+
+import math
+from typing import Sequence
+
+from sc2.position import Point2
+
+
+def _map_corners(map_bounds) -> list[Point2]:
+    """Extrai os 4 cantos da área jogável."""
+    x0 = float(map_bounds.x)
+    y0 = float(map_bounds.y)
+    x1 = float(map_bounds.x + map_bounds.width)
+    y1 = float(map_bounds.y + map_bounds.height)
+    return [
+        Point2((x0, y0)),
+        Point2((x1, y0)),
+        Point2((x0, y1)),
+        Point2((x1, y1)),
+    ]
+
+
+def _closest_corner(pos: Point2, corners: list[Point2]) -> Point2:
+    return min(corners, key=lambda c: float(pos.distance_to(c)))
+
+
+def _vec_normalize(dx: float, dy: float) -> tuple[float, float]:
+    n = math.hypot(dx, dy)
+    if n <= 1e-6:
+        return 0.0, 0.0
+    return dx / n, dy / n
+
+
+def _dot(ax: float, ay: float, bx: float, by: float) -> float:
+    return ax * bx + ay * by
+
+
+def air_perimeter_waypoint(
+    *,
+    origin: Point2,
+    destination: Point2,
+    map_center: Point2,
+    map_bounds,
+    enemy_army_center: Point2 | None = None,
+    swing_margin: float = 8.0,
+    min_detour_benefit: float = 6.0,
+) -> Point2:
+    """
+    Retorna um waypoint de desvio pelo perímetro do mapa.
+
+    O waypoint é escolhido como o canto do mapa mais próximo de `origin` que
+    também se afasta do centro do exército inimigo (ou do centro do mapa se
+    `enemy_army_center` for None). Só devolve o desvio se ele trouxer benefício
+    real (reduz exposição ao centro); caso contrário, devolve `destination`
+    diretamente.
+
+    Parâmetros
+    ----------
+    origin : Point2
+        Posição atual da unidade.
+    destination : Point2
+        Posição de destino (base inimiga, etc.).
+    map_center : Point2
+        Centro do mapa (bot.game_info.map_center).
+    map_bounds :
+        Área jogável (bot.game_info.playable_area), com atributos x, y, width, height.
+    enemy_army_center : Point2 | None
+        Centro estimado do exército inimigo; usa map_center como proxy se None.
+    swing_margin : float
+        Distância de recuo a partir do canto em direção ao interior do mapa,
+        para o waypoint não cair literalmente na borda.
+    min_detour_benefit : float
+        Ganho mínimo (em unidades de distância ao threat) para preferir o desvio
+        à rota direta. Evita desvios inúteis em mapas pequenos.
+
+    Retorna
+    -------
+    Point2
+        Waypoint de desvio, ou `destination` se o desvio não trouxer benefício.
+    """
+    threat_center = enemy_army_center or map_center
+
+    # Direção origin→destination
+    dx_od = float(destination.x) - float(origin.x)
+    dy_od = float(destination.y) - float(origin.y)
+    dist_od = math.hypot(dx_od, dy_od)
+
+    # Se origem e destino são quase o mesmo ponto, não há desvio útil.
+    if dist_od < 3.0:
+        return destination
+
+    corners = _map_corners(map_bounds)
+
+    # Para cada canto avalia: distância do canto ao threat_center (queremos maximizar)
+    # e se o canto é "razoável" como passagem (não aumenta demais a rota total).
+    best_corner: Point2 | None = None
+    best_score: float = -1e9
+
+    direct_threat_dist = float(
+        Point2(
+            (
+                (float(origin.x) + float(destination.x)) / 2.0,
+                (float(origin.y) + float(destination.y)) / 2.0,
+            )
+        ).distance_to(threat_center)
+    )
+
+    for corner in corners:
+        # Ponto de swing: ligeiramente afastado do canto para dentro do mapa
+        cx = float(map_bounds.x) + float(map_bounds.width) / 2.0
+        cy = float(map_bounds.y) + float(map_bounds.height) / 2.0
+        inner_dir_x = cx - float(corner.x)
+        inner_dir_y = cy - float(corner.y)
+        nix, niy = _vec_normalize(inner_dir_x, inner_dir_y)
+        swing = Point2(
+            (
+                float(corner.x) + nix * float(swing_margin),
+                float(corner.y) + niy * float(swing_margin),
+            )
+        )
+
+        # Distância do ponto de swing ao threat
+        swing_threat_dist = float(swing.distance_to(threat_center))
+
+        # Custo extra de dar a volta: rota direta vs origin→swing→destination
+        detour_dist = float(origin.distance_to(swing)) + float(swing.distance_to(destination))
+        extra_dist = detour_dist - dist_od
+
+        # Penaliza desvios muito longos (>60% a mais)
+        if extra_dist > dist_od * 0.6:
+            continue
+
+        # Score = ganho de distância ao threat − 0.25× custo extra
+        score = (swing_threat_dist - direct_threat_dist) - 0.25 * extra_dist
+        if score > best_score:
+            best_score = score
+            best_corner = swing
+
+    if best_corner is None or best_score < float(min_detour_benefit):
+        return destination
+
+    return best_corner
+
+
+def air_perimeter_route(
+    *,
+    origin: Point2,
+    destination: Point2,
+    map_center: Point2,
+    map_bounds,
+    enemy_army_center: Point2 | None = None,
+    swing_margin: float = 8.0,
+    min_detour_benefit: float = 6.0,
+) -> list[Point2]:
+    """
+    Retorna a rota completa como lista de waypoints: [swing?, destination].
+
+    Se não há desvio útil, retorna apenas [destination].
+    Uso conveniente para tasks que iteram pelos waypoints:
+
+        route = air_perimeter_route(origin=..., destination=..., ...)
+        # Avança pelo índice quando distance_to(route[idx]) < arrival_radius
+    """
+    swing = air_perimeter_waypoint(
+        origin=origin,
+        destination=destination,
+        map_center=map_center,
+        map_bounds=map_bounds,
+        enemy_army_center=enemy_army_center,
+        swing_margin=swing_margin,
+        min_detour_benefit=min_detour_benefit,
+    )
+    if swing == destination:
+        return [destination]
+    return [swing, destination]
+
+
+def pick_safest_corner_approach(
+    *,
+    origin: Point2,
+    destination: Point2,
+    map_center: Point2,
+    map_bounds,
+    threat_points: Sequence[Point2],
+    swing_margin: float = 8.0,
+    threat_radius: float = 12.0,
+) -> Point2:
+    """
+    Variante mais agressiva: escolhe o canto cuja rota origin→corner→destination
+    minimize o número de `threat_points` que ficam dentro de `threat_radius`
+    de qualquer segmento da rota.
+
+    Útil quando você tem as posições reais das unidades inimigas anti-ar em vez
+    de apenas o centro do exército.
+
+    Retorna `destination` se nenhum canto trouxer melhora.
+    """
+    corners = _map_corners(map_bounds)
+
+    def _threats_on_segment(a: Point2, b: Point2) -> int:
+        ax, ay = float(a.x), float(a.y)
+        bx, by = float(b.x), float(b.y)
+        seg_len = math.hypot(bx - ax, by - ay)
+        count = 0
+        for t in threat_points:
+            tx, ty = float(t.x), float(t.y)
+            if seg_len < 1e-6:
+                d = math.hypot(tx - ax, ty - ay)
+            else:
+                # Projeção do ponto no segmento
+                s = _dot(tx - ax, ty - ay, bx - ax, by - ay) / (seg_len * seg_len)
+                s = max(0.0, min(1.0, s))
+                px = ax + s * (bx - ax)
+                py = ay + s * (by - ay)
+                d = math.hypot(tx - px, ty - py)
+            if d <= float(threat_radius):
+                count += 1
+        return count
+
+    # Custo da rota direta
+    direct_threats = _threats_on_segment(origin, destination)
+
+    best_corner: Point2 | None = None
+    best_threats = direct_threats
+
+    for corner in corners:
+        cx = float(map_bounds.x) + float(map_bounds.width) / 2.0
+        cy = float(map_bounds.y) + float(map_bounds.height) / 2.0
+        inner_dir_x = cx - float(corner.x)
+        inner_dir_y = cy - float(corner.y)
+        nix, niy = _vec_normalize(inner_dir_x, inner_dir_y)
+        swing = Point2(
+            (
+                float(corner.x) + nix * float(swing_margin),
+                float(corner.y) + niy * float(swing_margin),
+            )
+        )
+        threats = _threats_on_segment(origin, swing) + _threats_on_segment(swing, destination)
+        if threats < best_threats:
+            best_threats = threats
+            best_corner = swing
+
+    if best_corner is None:
+        return destination
+    return best_corner

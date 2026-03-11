@@ -11,6 +11,7 @@ from sc2.ids.unit_typeid import UnitTypeId as U
 from sc2.position import Point2
 
 from bot.devlog import DevLogger
+from bot.intel.utils.defensive_placements import point_from_payload
 from bot.mind.attention import Attention
 from bot.mind.awareness import Awareness, K
 from bot.tasks.base_task import BaseTask, TaskResult, TaskTick
@@ -621,12 +622,44 @@ class DefenseBunkerTask(BaseTask):
         if self.awareness is None:
             return None
         payload = self.awareness.mem.get(K("intel", "placements", "main_ramp_bunker"), now=now, default=None)
-        if not isinstance(payload, dict):
+        return point_from_payload(payload)
+
+    def _intel_nat_bunker_pos(self, *, now: float, base_pos: Point2) -> Point2 | None:
+        if self.awareness is None:
+            return None
+        pos = point_from_payload(self.awareness.mem.get(K("intel", "placements", "nat_bunker"), now=now, default=None))
+        if pos is None:
             return None
         try:
-            return Point2((float(payload.get("x", 0.0) or 0.0), float(payload.get("y", 0.0) or 0.0)))
+            if float(pos.distance_to(base_pos)) > 12.0:
+                return None
         except Exception:
             return None
+        return pos
+
+    def _intel_perimeter_bunker_pos(self, *, now: float, base_pos: Point2) -> Point2 | None:
+        if self.awareness is None:
+            return None
+        payload = self.awareness.mem.get(K("intel", "placements", "outer_bunkers"), now=now, default=[])
+        if not isinstance(payload, list):
+            return None
+        best: tuple[float, Point2] | None = None
+        for entry in payload:
+            if not isinstance(entry, dict):
+                continue
+            ref_base = point_from_payload(entry.get("base"))
+            pos = point_from_payload(entry.get("pos"))
+            if ref_base is None or pos is None:
+                continue
+            try:
+                dist = float(ref_base.distance_to(base_pos))
+            except Exception:
+                continue
+            if dist > 6.5:
+                continue
+            if best is None or float(dist) < float(best[0]):
+                best = (float(dist), pos)
+        return best[1] if best is not None else None
 
     def _bunker_started_or_ready(self, bot, *, base_pos: Point2) -> bool:
         anchor = self._bunker_anchor(bot, base_pos=base_pos)
@@ -809,12 +842,27 @@ class DefenseBunkerTask(BaseTask):
                 pass
             return None
         if mode == "NAT_CHOKE":
+            intel_nat_pos = self._intel_nat_bunker_pos(now=now, base_pos=base_pos)
+            if intel_nat_pos is not None and not self._is_blocked_position(intel_nat_pos):
+                try:
+                    if bool(bot.mediator.can_place_structure(position=intel_nat_pos, structure_type=U.BUNKER)):
+                        return intel_nat_pos
+                except Exception:
+                    pass
             try:
                 pos = await bot.find_placement(U.BUNKER, near=anchor, max_distance=6)
                 if pos is not None and not self._is_blocked_position(pos):
                     return pos
             except Exception:
                 pass
+        if mode == "PERIMETER":
+            intel_outer_pos = self._intel_perimeter_bunker_pos(now=now, base_pos=base_pos)
+            if intel_outer_pos is not None and not self._is_blocked_position(intel_outer_pos):
+                try:
+                    if bool(bot.mediator.can_place_structure(position=intel_outer_pos, structure_type=U.BUNKER)):
+                        return intel_outer_pos
+                except Exception:
+                    pass
         try:
             pos = bot.mediator.request_building_placement(
                 base_location=(bot.start_location if mode == "MAIN_RAMP" else base_pos),

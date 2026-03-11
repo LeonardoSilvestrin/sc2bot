@@ -263,8 +263,11 @@ class HoldAnchorTask(BaseTask):
         posture_snap = self.awareness.mem.get(K("strategy", "army", "snapshot"), now=now, default={}) or {}
         if not isinstance(posture_snap, dict):
             posture_snap = {}
+        army_control_snap = self.awareness.mem.get(K("ops", "army_control", "snapshot"), now=now, default={}) or {}
+        if not isinstance(army_control_snap, dict):
+            army_control_snap = {}
 
-        anchor = _point_from_payload(posture_snap.get("anchor"))
+        anchor = _point_from_payload(army_control_snap.get("primary_anchor")) or _point_from_payload(posture_snap.get("anchor"))
         posture_str = str(posture_snap.get("posture", "HOLD_MAIN_RAMP") or "HOLD_MAIN_RAMP")
         nat_landing_target, nat_landing_fallback = _nat_landing_reservation(self.awareness, now=now)
         nat_reserved_sites, nat_reserved_fallback = _nat_reserved_sites(self.awareness, bot, now=now)
@@ -533,6 +536,7 @@ class HoldAnchorTask(BaseTask):
                 "hold_anchor_tick",
                 {
                     "posture": posture_str,
+                    "army_control_mode": str(army_control_snap.get("mode", "") or ""),
                     "anchor": {"x": float(anchor.x), "y": float(anchor.y)},
                     "bulk_count": int(bulk.amount),
                     "issued_commands": int(issued),

@@ -1250,6 +1250,11 @@ class MacroOrchestratorPlanner(BasePlanner):
             or (bool(_parity_offsite_ok) and parity_state in {"BEHIND_BOTH", "BEHIND_ARMY_AHEAD_ECON"})
             or (bool(_parity_offsite_ok) and parity_army_behind >= 0.32)
             or (bool(hard_second_cc_alarm) and bool(nat_region_compromised))
+            # Sob ataque pesado (rush_hard_active), enemy_at_door bloqueia expansão a menos que
+            # hard_second_cc_alarm AND should_expand_offsite sejam ambos True.
+            # Sem este caminho, hard_second_cc_alarm não consegue liberar a expansão offsite
+            # quando nat_region_compromised=False (nat safe mas rush ainda ativo).
+            or (bool(hard_second_cc_alarm) and bool(rush_hard_active) and int(bases_now) < 2)
         )
         enemy_macro_catchup_expand = bool(
             int(bases_now) < 2

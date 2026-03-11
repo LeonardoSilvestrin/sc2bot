@@ -12,6 +12,7 @@ from bot.devlog import DevLogger
 from bot.mind.attention import Attention
 from bot.mind.awareness import Awareness, K
 from bot.tasks.base_task import BaseTask, TaskResult, TaskTick
+from bot.tasks.utils.air_perimeter_path import air_perimeter_waypoint
 
 
 @dataclass
@@ -36,6 +37,7 @@ class BansheeHarass(BaseTask):
     _last_log_t: float = field(default=0.0, init=False)
     _last_hp: dict[int, float] = field(default_factory=dict, init=False)
     _last_cloak_cmd_t: dict[int, float] = field(default_factory=dict, init=False)
+    _swing_waypoint: Point2 | None = field(default=None, init=False)
 
     def __init__(self, *, awareness: Awareness, log: DevLogger | None = None, preferred_target: Point2 | None = None):
         super().__init__(task_id="banshee_harass", domain="HARASS", commitment=8)
@@ -249,6 +251,33 @@ class BansheeHarass(BaseTask):
             cx = sum(float(b.position.x) for b in banshees) / float(len(banshees))
             cy = sum(float(b.position.y) for b in banshees) / float(len(banshees))
             center = Point2((cx, cy))
+
+            # Calcula o swing waypoint uma vez (ou quando ainda estamos longe do staging).
+            # O waypoint desvia pelo canto do mapa para evitar cruzar o exército inimigo.
+            if self._swing_waypoint is None:
+                enemy_army_pts = list(bot.enemy_units.not_flying) if bot.enemy_units else []
+                enemy_army_center: Point2 | None = None
+                if enemy_army_pts:
+                    eax = sum(float(u.position.x) for u in enemy_army_pts) / len(enemy_army_pts)
+                    eay = sum(float(u.position.y) for u in enemy_army_pts) / len(enemy_army_pts)
+                    enemy_army_center = Point2((eax, eay))
+                self._swing_waypoint = air_perimeter_waypoint(
+                    origin=center,
+                    destination=staging,
+                    map_center=bot.game_info.map_center,
+                    map_bounds=bot.game_info.playable_area,
+                    enemy_army_center=enemy_army_center,
+                )
+
+            # Waypoint atual de movimento: swing se ainda não chegou, senão staging.
+            move_target = staging
+            if self._swing_waypoint is not None and self._swing_waypoint != staging:
+                if float(center.distance_to(self._swing_waypoint)) > float(self.regroup_radius):
+                    move_target = self._swing_waypoint
+                else:
+                    # Chegou ao swing, segue para staging e descarta o waypoint.
+                    self._swing_waypoint = None
+
             local_enemies = bot.enemy_units.closer_than(float(self.route_engage_radius), center)
             if self._route_should_engage(bot=bot, banshees=banshees, local_enemies=local_enemies):
                 for b in banshees:
@@ -261,8 +290,9 @@ class BansheeHarass(BaseTask):
             for b in banshees:
                 local_b = bot.enemy_units.closer_than(11.0, b.position)
                 self._update_cloak_state(banshee=b, local_enemies=local_b, now=now)
-                b.move(staging)
+                b.move(move_target)
             if all(float(b.distance_to(staging)) <= float(self.regroup_radius) for b in banshees):
+                self._swing_waypoint = None
                 self._phase = 1
             self._active("banshee_regroup")
             self._log_tick(now=now, reason="regroup", banshees=len(banshees))

@@ -329,7 +329,13 @@ def derive_macro_mode_intel(
         )
         or (
             rush_state == "SUSPECTED"
-            and (bool(enemy_at_door) or rush_tier in {"HEAVY", "EXTREME"} or float(rush_severity) >= 0.72)
+            and (
+                bool(enemy_at_door)
+                or (
+                    rush_tier in {"HEAVY", "EXTREME"}
+                    and float(rush_severity) >= 0.80
+                )
+            )
         )
     )
     if str(opening_selected) == "MechaOpen" and bool(mecha_should_abort_to_rush_defense):

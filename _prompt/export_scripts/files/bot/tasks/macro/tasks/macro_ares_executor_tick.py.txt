@@ -14,7 +14,6 @@ from ares.behaviors.macro.macro_behavior import MacroBehavior
 from ares.behaviors.macro.macro_plan import MacroPlan
 from ares.behaviors.macro.production_controller import ProductionController
 from ares.behaviors.macro.spawn_controller import SpawnController
-from ares.behaviors.macro.upgrade_ccs import UpgradeCCs
 from ares.dicts.structure_to_building_size import STRUCTURE_TO_BUILDING_SIZE
 from sc2.ids.ability_id import AbilityId
 from sc2.ids.unit_typeid import UnitTypeId as U
@@ -284,6 +283,20 @@ class MacroAresExecutorTick(BaseTask):
         return bool(status.get("complete", False))
 
     @staticmethod
+    def _nat_wall_complete(*, awareness: Awareness, now: float) -> bool:
+        status = awareness.mem.get(K("ops", "wall", "nat", "status"), now=now, default=None)
+        if not isinstance(status, dict):
+            return False
+        return bool(status.get("complete", False))
+
+    @staticmethod
+    def _nat_wall_supported(*, awareness: Awareness, now: float) -> bool:
+        payload = awareness.mem.get(K("intel", "placements", "nat_wall"), now=now, default=None)
+        if not isinstance(payload, dict):
+            return False
+        return bool(payload.get("supported", False))
+
+    @staticmethod
     def _sig_from_plan(
         *,
         army_comp: dict[U, dict[str, float | int]],
@@ -359,6 +372,100 @@ class MacroAresExecutorTick(BaseTask):
         except Exception:
             pass
         return False
+
+    def _morph_ccs_selective(self, *, bot, now: float) -> None:
+        """Morfa CCs idle para Orbital (bases seguras: main/nat/third) ou Planetary Fortress (resto).
+
+        Regras:
+        - Main, Natural e Third → Orbital Command (padrão Terran econômico)
+        - Qualquer base além da third → Planetary Fortress
+        - Base contestada (presença inimiga recente) → Planetary Fortress
+        - CCs extras do cc_boom pousados perto de bases safe (nat/third/main) → Orbital
+        Natural nunca vira PF (sempre Orbital).
+        """
+        # Posições de referência das bases seguras
+        safe_orbital_positions: list[Point2] = []
+        try:
+            safe_orbital_positions.append(bot.start_location)
+        except Exception:
+            pass
+        registry = self.awareness.mem.get(K("intel", "our_bases", "registry"), now=now, default={}) or {}
+        if not isinstance(registry, dict):
+            registry = {}
+        for label in ("NATURAL", "THIRD"):
+            entry = registry.get(label, {})
+            if not isinstance(entry, dict):
+                continue
+            pos = self._point_from_payload(
+                entry.get("current_pos") or entry.get("intended_pos")
+            )
+            if pos is not None:
+                safe_orbital_positions.append(pos)
+
+        # Raio de proximidade para considerar "perto de base segura"
+        safe_radius = 12.0
+
+        def _is_safe_orbital_pos(pos: Point2) -> bool:
+            for ref in safe_orbital_positions:
+                try:
+                    if float(pos.distance_to(ref)) <= float(safe_radius):
+                        return True
+                except Exception:
+                    pass
+            return False
+
+        def _base_is_contested(pos: Point2) -> bool:
+            # Verifica presença inimiga recente perto da base
+            try:
+                for unit in list(getattr(bot, "enemy_units", []) or []):
+                    if float(unit.distance_to(pos)) <= 15.0:
+                        return True
+            except Exception:
+                pass
+            return False
+
+        try:
+            ccs = [
+                th
+                for th in bot.mediator.get_own_structures_dict.get(U.COMMANDCENTER, [])
+                if bool(getattr(th, "is_ready", False)) and bool(getattr(th, "is_idle", False))
+            ]
+        except Exception:
+            ccs = []
+
+        for cc in ccs:
+            try:
+                pos = cc.position
+                contested = _base_is_contested(pos)
+                # Natural nunca vira PF
+                nat_entry = registry.get("NATURAL", {})
+                nat_pos = self._point_from_payload(
+                    nat_entry.get("current_pos") or nat_entry.get("intended_pos")
+                ) if isinstance(nat_entry, dict) else None
+                is_natural = (
+                    nat_pos is not None
+                    and float(pos.distance_to(nat_pos)) <= 6.0
+                )
+                if is_natural:
+                    # Natural → sempre Orbital
+                    if bot.can_afford(U.ORBITALCOMMAND):
+                        cc(AbilityId.UPGRADETOORBITAL_ORBITALCOMMAND)
+                    continue
+                if contested or not _is_safe_orbital_pos(pos):
+                    # Base além das seguras, ou contestada → PF (requer Engineering Bay)
+                    pf_tech_ok = bool(bot.tech_requirement_progress(U.PLANETARYFORTRESS) == 1.0)
+                    if pf_tech_ok and bot.can_afford(U.PLANETARYFORTRESS):
+                        cc(AbilityId.UPGRADETOPLANETARYFORTRESS_PLANETARYFORTRESS)
+                    elif not pf_tech_ok and bot.can_afford(U.ORBITALCOMMAND):
+                        # Tech ainda não pronto: morfa para Orbital temporariamente
+                        # (não faz sentido deixar CC idle esperando EBay numa base avançada)
+                        cc(AbilityId.UPGRADETOORBITAL_ORBITALCOMMAND)
+                else:
+                    # Perto de main/nat/third → Orbital
+                    if bot.can_afford(U.ORBITALCOMMAND):
+                        cc(AbilityId.UPGRADETOORBITAL_ORBITALCOMMAND)
+            except Exception:
+                continue
 
     def _active_macro_build_sites(self, *, now: float) -> list[tuple[U, Point2]]:
         signals = self.awareness.mem.get(K("macro", "placement", "signals"), now=now, default={}) or {}
@@ -556,7 +663,14 @@ class MacroAresExecutorTick(BaseTask):
 
         enable_workers = bool(plan_active.get("enable_workers"))
         scv_cap = int(plan_active.get("scv_cap") or 66)
+        nat_wall_blocks_supply = bool(
+            int(attention.macro.bases_total) >= 2
+            and self._nat_wall_supported(awareness=self.awareness, now=now)
+            and not self._nat_wall_complete(awareness=self.awareness, now=now)
+        )
         enable_supply = bool(plan_active.get("enable_supply")) and self._main_wall_complete(awareness=self.awareness, now=now)
+        if nat_wall_blocks_supply:
+            enable_supply = False
         enable_gas = bool(plan_active.get("enable_gas"))
         gas_target = int(plan_active.get("gas_target") or 0)
         gas_workers_per_refinery = int(plan_active.get("gas_workers_per_refinery") or 3)
@@ -712,7 +826,7 @@ class MacroAresExecutorTick(BaseTask):
 
         plan = MacroPlan()
         if bool(enable_orbital_morph):
-            plan.add(UpgradeCCs(to=U.ORBITALCOMMAND, prioritize=True))
+            self._morph_ccs_selective(bot=bot, now=now)
 
         def _add_lane(lane: str) -> None:
             if lane == "workers" and enable_workers:

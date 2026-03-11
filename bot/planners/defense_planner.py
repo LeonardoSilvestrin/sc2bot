@@ -1427,8 +1427,23 @@ class DefensePlanner:
                 choke_enemy_now = int(bot.enemy_units.closer_than(20.0, th.th_pos).amount)
             except Exception:
                 choke_enemy_now = int(close_enemy_now)
+        # Durante one-base rush: não bloquear repair na nat se há bunker danificado perto.
+        # Sem este check, o retorno antecipado impediria reparar o bunker da nat enquanto ele
+        # estava sendo atacado — que é exatamente quando o repair é mais necessário.
         if bool(rush_ctx.get("enemy_one_base_rush", False)) and not bool(is_main):
-            return 0
+            nat_bunker_damaged = False
+            try:
+                for b in bot.structures(U.BUNKER):
+                    if float(b.distance_to(th.th_pos)) <= 18.0:
+                        hp = float(getattr(b, "health", 0) or 0)
+                        hp_max = float(getattr(b, "health_max", 1) or 1)
+                        if hp < hp_max:
+                            nat_bunker_damaged = True
+                            break
+            except Exception:
+                pass
+            if not nat_bunker_damaged:
+                return 0
         main_wall_contact = bool(is_main and self._enemy_contacting_main_wall(bot))
         damaged_ready = int(self._damaged_owned_targets_near_base(bot, base_pos=th.th_pos))
         if bool(rush_ctx.get("enemy_one_base_rush", False)) and bool(is_main) and not bool(main_wall_contact) and int(damaged_ready) <= 0:

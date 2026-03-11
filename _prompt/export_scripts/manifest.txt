@@ -1,7 +1,7 @@
 EXPORT META
-generated_at_utc: 2026-03-10T22:17:13.821221+00:00
+generated_at_utc: 2026-03-11T10:57:31.910574+00:00
 repo_root: C:\Users\Asus\Documents\projetos\sc2bot\ares\ares-sc2-bot-template
-files_total: 125
+files_total: 130
 
 FILES
 - bot/__init__.py -> files/bot/__init__.py.txt
@@ -45,6 +45,7 @@ FILES
 - bot/intel/strategy/i2_CTRL_advantage_game_status_intel.py -> files/bot/intel/strategy/i2_CTRL_advantage_game_status_intel.py.txt
 - bot/intel/strategy/i3_army_posture_intel.py -> files/bot/intel/strategy/i3_army_posture_intel.py.txt
 - bot/intel/utils/__init__.py -> files/bot/intel/utils/__init__.py.txt
+- bot/intel/utils/defensive_placements.py -> files/bot/intel/utils/defensive_placements.py.txt
 - bot/intel/utils/enemy_econ_estimates.py -> files/bot/intel/utils/enemy_econ_estimates.py.txt
 - bot/intel/utils/natural_geometry.py -> files/bot/intel/utils/natural_geometry.py.txt
 - bot/intel/utils/opening_types.py -> files/bot/intel/utils/opening_types.py.txt
@@ -76,6 +77,7 @@ FILES
 - bot/planners/utils/proposals.py -> files/bot/planners/utils/proposals.py.txt
 - bot/planners/utils/spending_policy.py -> files/bot/planners/utils/spending_policy.py.txt
 - bot/planners/wall_planner.py -> files/bot/planners/wall_planner.py.txt
+- bot/planners/widowmine_planner.py -> files/bot/planners/widowmine_planner.py.txt
 - bot/sensors/__init__.py -> files/bot/sensors/__init__.py.txt
 - bot/sensors/combat_sensor.py -> files/bot/sensors/combat_sensor.py.txt
 - bot/sensors/enemy_build_sensor.py -> files/bot/sensors/enemy_build_sensor.py.txt
@@ -98,6 +100,7 @@ FILES
 - bot/tasks/defense/scv_repair_task.py -> files/bot/tasks/defense/scv_repair_task.py.txt
 - bot/tasks/harass/__init__.py -> files/bot/tasks/harass/__init__.py.txt
 - bot/tasks/harass/banshee_harass_task.py -> files/bot/tasks/harass/banshee_harass_task.py.txt
+- bot/tasks/harass/medivac_drop_harass_task.py -> files/bot/tasks/harass/medivac_drop_harass_task.py.txt
 - bot/tasks/harass/reaper_hellion_harass_task.py -> files/bot/tasks/harass/reaper_hellion_harass_task.py.txt
 - bot/tasks/macro/__init__.py -> files/bot/tasks/macro/__init__.py.txt
 - bot/tasks/macro/policies/__init__.py -> files/bot/tasks/macro/policies/__init__.py.txt
@@ -113,6 +116,7 @@ FILES
 - bot/tasks/map_control/hold_anchor_task.py -> files/bot/tasks/map_control/hold_anchor_task.py.txt
 - bot/tasks/map_control/land_base_task.py -> files/bot/tasks/map_control/land_base_task.py.txt
 - bot/tasks/map_control/secure_base_task.py -> files/bot/tasks/map_control/secure_base_task.py.txt
+- bot/tasks/map_control/widowmine_lurk.py -> files/bot/tasks/map_control/widowmine_lurk.py.txt
 - bot/tasks/scout/reaper_scout_task.py -> files/bot/tasks/scout/reaper_scout_task.py.txt
 - bot/tasks/scout/scan_task.py -> files/bot/tasks/scout/scan_task.py.txt
 - bot/tasks/scout/worker_expansion_scout_task.py -> files/bot/tasks/scout/worker_expansion_scout_task.py.txt
@@ -122,6 +126,7 @@ FILES
 - bot/tasks/tech/tasks/__init__.py -> files/bot/tasks/tech/tasks/__init__.py.txt
 - bot/tasks/tech/tasks/tech_ares_executor_tick.py -> files/bot/tasks/tech/tasks/tech_ares_executor_tick.py.txt
 - bot/tasks/utils/__init__.py -> files/bot/tasks/utils/__init__.py.txt
+- bot/tasks/utils/air_perimeter_path.py -> files/bot/tasks/utils/air_perimeter_path.py.txt
 - bot/tasks/utils/marine_kite.py -> files/bot/tasks/utils/marine_kite.py.txt
 - bot/tasks/wall/__init__.py -> files/bot/tasks/wall/__init__.py.txt
 - bot/tasks/wall/maintain_wall_task.py -> files/bot/tasks/wall/maintain_wall_task.py.txt

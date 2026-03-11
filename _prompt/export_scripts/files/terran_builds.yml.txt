@@ -1,7 +1,7 @@
 # terran_builds.yml
 
 UseData: False
-BuildSelection: Cycle
+BuildSelection: MechaOpen
 MinGamesWinrateBased: 3
 
 BuildChoices:
@@ -20,7 +20,7 @@ BuildChoices:
 
 Builds:
   BioOpen:
-    AutoSupplyAtSupply: 25
+    AutoSupplyAtSupply: 200
     ConstantWorkerProductionTill: 60
     OpeningBuildOrder:
       - 14 supply @ ramp
@@ -39,7 +39,7 @@ Builds:
       - 30 siegetank
 
   MechaOpen:
-    AutoSupplyAtSupply: 25
+    AutoSupplyAtSupply: 200
     ConstantWorkerProductionTill: 60
     OpeningBuildOrder:
       - 14 supply @ ramp
@@ -59,7 +59,7 @@ Builds:
       - 24 factorytechlab
 
   RushDefenseOpen:
-    AutoSupplyAtSupply: 23
+    AutoSupplyAtSupply: 200
     ConstantWorkerProductionTill: 60
     OpeningBuildOrder:
       - 14 supply @ ramp

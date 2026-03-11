@@ -15,6 +15,7 @@ from sc2.ids.unit_typeid import UnitTypeId as U
 from sc2.position import Point2
 
 from bot.devlog import DevLogger
+from bot.intel.geometry.sector_types import FrontTemplate, SectorMode
 from bot.intel.strategy.i3_army_posture_intel import ArmyPosture
 from bot.mind.attention import Attention
 from bot.mind.awareness import Awareness, K
@@ -23,7 +24,8 @@ from bot.tasks.base_task import BaseTask, TaskResult, TaskTick
 _BULK_TYPES = {
     U.MARINE,
     U.MARAUDER,
-    U.REAPER,
+    # REAPER excluído do bulk: é unidade de harass/scout, não faz sentido
+    # segurar no anchor. Sem missão, deve ficar livre no mapa.
     U.HELLION,
     U.CYCLONE,
     U.SIEGETANK,
@@ -31,8 +33,6 @@ _BULK_TYPES = {
     U.THOR,
     U.THORAP,
     U.MEDIVAC,
-    U.WIDOWMINE,
-    U.WIDOWMINEBURROWED,
 }
 
 # Units that need extra care instead of blindly rushing the anchor.
@@ -186,6 +186,40 @@ def _anchor_bunkers(bot, *, anchor: Point2, radius: float = 14.0) -> list:
     return out
 
 
+def _bulk_sector_mode(awareness: Awareness, *, now: float) -> str:
+    """Retorna o SectorMode do setor onde o bulk está (bulk_sector da geometria)."""
+    geo_snap = awareness.mem.get(K("intel", "geometry", "operational", "snapshot"), now=now, default=None)
+    if not isinstance(geo_snap, dict):
+        return SectorMode.NONE.value
+    bulk_sector = geo_snap.get("bulk_sector")
+    if not bulk_sector:
+        return SectorMode.NONE.value
+    sector_states = geo_snap.get("sector_states") or {}
+    if not isinstance(sector_states, dict):
+        return SectorMode.NONE.value
+    sector = sector_states.get(str(bulk_sector), {})
+    if not isinstance(sector, dict):
+        return SectorMode.NONE.value
+    return str(sector.get("mode", SectorMode.NONE.value) or SectorMode.NONE.value)
+
+
+def _template_allows_siege(template_str: str) -> bool:
+    """Templates em que o bulk deve sentar tanks e burrar mines quando no anchor."""
+    return template_str in {
+        FrontTemplate.HOLD_MAIN.value,
+        FrontTemplate.TURTLE_NAT.value,
+        FrontTemplate.STABILIZE_AND_EXPAND.value,
+        FrontTemplate.CONTAIN.value,
+    }
+
+
+def _geo_template(awareness: Awareness, *, now: float) -> str:
+    geo_snap = awareness.mem.get(K("intel", "geometry", "operational", "snapshot"), now=now, default=None)
+    if not isinstance(geo_snap, dict):
+        return ""
+    return str(geo_snap.get("template", "") or "")
+
+
 def _main_ramp_enemy_pressure(bot) -> bool:
     top = _main_ramp_top(bot)
     if top is None:
@@ -231,23 +265,36 @@ class HoldAnchorTask(BaseTask):
         posture_snap = self.awareness.mem.get(K("strategy", "army", "snapshot"), now=now, default={}) or {}
         if not isinstance(posture_snap, dict):
             posture_snap = {}
+        army_control_snap = self.awareness.mem.get(K("ops", "army_control", "snapshot"), now=now, default={}) or {}
+        if not isinstance(army_control_snap, dict):
+            army_control_snap = {}
 
-        anchor = _point_from_payload(posture_snap.get("anchor"))
+        anchor = _point_from_payload(army_control_snap.get("primary_anchor")) or _point_from_payload(posture_snap.get("anchor"))
         posture_str = str(posture_snap.get("posture", "HOLD_MAIN_RAMP") or "HOLD_MAIN_RAMP")
         nat_landing_target, nat_landing_fallback = _nat_landing_reservation(self.awareness, now=now)
         nat_reserved_sites, nat_reserved_fallback = _nat_reserved_sites(self.awareness, bot, now=now)
         main_ramp_bunkers = _main_ramp_bunkers(bot)
         main_ramp_pressure = _main_ramp_enemy_pressure(bot)
         anchor_bunkers = _anchor_bunkers(bot, anchor=anchor) if anchor is not None else []
-        # Highground anchor: up to 3 tanks hold the main ramp top when defending the nat.
-        # This gives siege range coverage over the nat choke without descending.
+        # Keep at most one tank on the main-ramp highground while holding the nat.
+        # More than that can clog the main and soft-lock pathing for the army.
         ramp_top = _main_ramp_top(bot)
         nat_defense_postures = {
             ArmyPosture.HOLD_NAT_CHOKE.value,
             ArmyPosture.SECURE_NAT.value,
             ArmyPosture.CONTROLLED_RETAKE.value,
         }
-        _NAT_TANK_HIGHGROUND_MAX = 3
+        _NAT_TANK_HIGHGROUND_MAX = 1
+        # Lê modo do setor bulk e template para decidir siege/burrow
+        bulk_sector_mode_str = _bulk_sector_mode(self.awareness, now=now)
+        geo_template_str = _geo_template(self.awareness, now=now)
+        # Bulk deve sentar/burrar quando no modo de hold (não em push)
+        bulk_hold_modes = {SectorMode.MASS_HOLD.value, SectorMode.HEAVY_ANCHOR.value, SectorMode.ANCHOR.value}
+        bulk_in_hold = bulk_sector_mode_str in bulk_hold_modes
+        # Template permite siege? (não quando prep_push — nesse caso o bulk está mobile)
+        template_siege_ok = _template_allows_siege(geo_template_str) if geo_template_str else True
+        # Siege ativo: bulk parado num setor de hold com template defensivo
+        bulk_siege_active = bulk_in_hold and template_siege_ok
 
         if anchor is None:
             return TaskResult.noop("no_anchor_defined")
@@ -383,6 +430,16 @@ class HoldAnchorTask(BaseTask):
                         issued += 1
                     continue
 
+                # Widowmines burrowed: desenterrar se bulk em modo de push ou longe do anchor
+                if unit.type_id == U.WIDOWMINEBURROWED:
+                    dist_burrowed = float(unit.distance_to(anchor))
+                    if not bulk_siege_active or dist_burrowed > float(_TANK_UNSIEGE_TO_MOVE_RADIUS):
+                        enemy_near_burrowed = bot.enemy_units.closer_than(_TANK_LOCAL_HOLD_RADIUS, unit)
+                        if int(enemy_near_burrowed.amount) <= 0:
+                            unit(AbilityId.BURROWUP_WIDOWMINE)
+                            issued += 1
+                    continue
+
                 # Highground tanks: primeiros N tanks ficam no topo da rampa cobrindo a nat.
                 if (
                     int(unit.tag) in highground_tank_tags
@@ -432,23 +489,31 @@ class HoldAnchorTask(BaseTask):
                         issued += 1
                     continue
 
+                # Widowmines: burrar quando no anchor em modo de hold
+                if unit.type_id == U.WIDOWMINE:
+                    if bulk_siege_active and dist <= float(_SLOW_AT_ANCHOR_RADIUS):
+                        enemy_too_close = bot.enemy_units.closer_than(4.0, unit)
+                        if int(enemy_too_close.amount) <= 0:
+                            unit(AbilityId.BURROWDOWN_WIDOWMINE)
+                            issued += 1
+                    elif dist > float(_SLOW_AT_ANCHOR_RADIUS):
+                        unit.move(effective_anchor)
+                        issued += 1
+                    continue
+
                 if dist > float(_SLOW_AT_ANCHOR_RADIUS):
                     unit.move(effective_anchor)
                     issued += 1
                     continue
 
                 should_siege = unit.type_id == U.SIEGETANK and (
-                    posture_str in {
-                        ArmyPosture.HOLD_NAT_CHOKE.value,
-                        ArmyPosture.SECURE_NAT.value,
-                        ArmyPosture.CONTROLLED_RETAKE.value,
-                    }
-                    or (
+                    (
                         posture_str == ArmyPosture.HOLD_MAIN_RAMP.value
-                        # Siega assim que há pressão na rampa (main_ramp_pressure),
-                        # sem esperar o inimigo entrar no range — evita chegar tarde.
-                        # Usa main_ramp_pressure como gatilho estável para não oscilar.
                         and main_ramp_pressure
+                    )
+                    or (
+                        bulk_siege_active
+                        and posture_str == ArmyPosture.HOLD_MAIN_RAMP.value
                     )
                 )
                 if should_siege:
@@ -473,6 +538,7 @@ class HoldAnchorTask(BaseTask):
                 "hold_anchor_tick",
                 {
                     "posture": posture_str,
+                    "army_control_mode": str(army_control_snap.get("mode", "") or ""),
                     "anchor": {"x": float(anchor.x), "y": float(anchor.y)},
                     "bulk_count": int(bulk.amount),
                     "issued_commands": int(issued),

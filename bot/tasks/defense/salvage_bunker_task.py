@@ -14,6 +14,10 @@ from bot.tasks.base_task import BaseTask, TaskResult, TaskTick
 class SalvageBunkerTask(BaseTask):
     bunker_tag: int
     bunker_pos: Point2
+    wait_after_issue_s: float = 8.0
+    min_step_interval_s: float = 0.35
+    _salvage_issued: bool = False
+    _issued_at: float = -1.0
 
     def __init__(self, *, bunker_tag: int, bunker_pos: Point2) -> None:
         super().__init__(task_id="salvage_bunker", domain="DEFENSE", commitment=20)
@@ -21,6 +25,7 @@ class SalvageBunkerTask(BaseTask):
         self.bunker_pos = bunker_pos
 
     async def on_step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult:
+        now = float(tick.time)
         bound_err = self.require_mission_bound()
         if bound_err is not None:
             return bound_err
@@ -32,23 +37,32 @@ class SalvageBunkerTask(BaseTask):
 
         if bunker is None:
             # Bunker gone (destroyed or already salvaged).
-            self._done("bunker_gone")
-            return TaskResult.done("bunker_gone")
+            reason = "bunker_gone_after_salvage" if bool(self._salvage_issued) else "bunker_gone"
+            self._done(reason)
+            return TaskResult.done(reason)
 
         # Abort if enemies get close before salvage completes.
         try:
             enemies_near = int(bot.enemy_units.closer_than(16.0, bunker.position).amount)
         except Exception:
             enemies_near = 0
-        if enemies_near > 0:
+        if enemies_near > 0 and not bool(self._salvage_issued):
             self._done("enemies_near_abort")
             return TaskResult.done("enemies_near_abort")
 
         # Abort if garrison loaded (bot decided to use bunker after all).
         garrison = int(getattr(bunker, "cargo_used", 0) or 0)
-        if garrison > 0:
+        if garrison > 0 and not bool(self._salvage_issued):
             self._done("bunker_occupied_abort")
             return TaskResult.done("bunker_occupied_abort")
+
+        if bool(self._salvage_issued):
+            elapsed = max(0.0, float(now) - float(self._issued_at))
+            if elapsed >= float(self.wait_after_issue_s):
+                self._done("salvage_timeout")
+                return TaskResult.done("salvage_timeout")
+            self._active("waiting_salvage_complete")
+            return TaskResult.running("waiting_salvage_complete")
 
         try:
             bunker(AbilityId.EFFECT_SALVAGE)
@@ -56,6 +70,9 @@ class SalvageBunkerTask(BaseTask):
             self._done("salvage_command_failed")
             return TaskResult.done("salvage_command_failed")
 
-        # Salvage is near-instant; done after issuing the command.
-        self._done("salvage_issued")
-        return TaskResult.done("salvage_issued")
+        # Keep the mission alive until the bunker actually disappears so Ego does not
+        # spawn a fresh salvage mission every frame for the same structure.
+        self._salvage_issued = True
+        self._issued_at = float(now)
+        self._active("salvage_issued_wait")
+        return TaskResult.running("salvage_issued_wait")
