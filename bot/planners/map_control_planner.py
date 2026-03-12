@@ -7,8 +7,14 @@ Responsabilidade:
         * HoldAnchorTask → setor MASS_HOLD (bulk principal)
         * SecureBaseTask → setores ANCHOR/HEAVY_ANCHOR/SCREEN secundários
         * DefenseBunkerTask → quando postura pede defesa no choke
+        * MoveOutTask → quando template=PREP_PUSH e condições late-game (supply+banco)
     - NÃO disputar posse do bulk com DefensePlanner
     - NÃO reagir à base atacada diretamente — isso é responsabilidade da geometria
+
+    Late-game push (multi-frente):
+        MoveOutTask (bulk central, leapfrog de tanks) no domínio MAP_CONTROL score=97.
+        BansheeHarass ou MedivacDropHarassTask em bases laterais, propostos em paralelo
+        no domínio HARASS — não competem com o bulk.
 
 Fonte primária: K("intel", "geometry", "operational", "snapshot")
 Fallback: postura legada (K("strategy", "army", "snapshot"))
@@ -30,7 +36,10 @@ from bot.planners.utils.proposals import Proposal, TaskSpec, UnitRequirement
 from bot.tasks.defense.defense_bunker_task import DefenseBunkerTask
 from bot.tasks.map_control.hold_anchor_task import HoldAnchorTask
 from bot.tasks.map_control.land_base_task import LandBaseTask
+from bot.tasks.map_control.move_out_task import MoveOutTask
 from bot.tasks.map_control.secure_base_task import SecureBaseTask
+from bot.tasks.harass.banshee_harass_task import BansheeHarass
+from bot.tasks.harass.medivac_drop_harass_task import MedivacDropHarassTask
 
 
 @dataclass(frozen=True)
@@ -111,7 +120,6 @@ _BULK_UNIT_TYPES = [
     U.THOR, U.THORAP,
     U.MEDIVAC,
 ]
-
 
 @dataclass(frozen=True)
 class _BulkPickPolicy:
@@ -425,6 +433,34 @@ class MapControlPlanner:
                 )
             )
 
+        desired_mines = 0
+        if own_nat_bunker_count > 0 or enemy_nat_power >= 0.45:
+            desired_mines = 1
+        if delayed_natural_alarm or rush_state in {"CONFIRMED", "HOLDING"} or enemy_nat_power >= 1.1:
+            desired_mines = 2
+        remaining_mines = int(desired_mines)
+        for mine_type in (U.WIDOWMINE, U.WIDOWMINEBURROWED):
+            if remaining_mines <= 0 or budget_remaining < int(self._SUPPLY_COST.get(mine_type, 2)):
+                break
+            avail = self._available(bot, mine_type)
+            if avail <= 0:
+                continue
+            unit_cost = int(self._SUPPLY_COST.get(mine_type, 2))
+            can_afford = max(0, int(budget_remaining) // int(unit_cost))
+            take = min(int(avail), int(remaining_mines), int(can_afford))
+            if take <= 0:
+                continue
+            reqs.append(
+                UnitRequirement(
+                    unit_type=mine_type,
+                    count=int(take),
+                    pick_policy=_SecureBasePickPolicy(objective=hold_pos, unit_type=mine_type),
+                    required=len(reqs) == 0,
+                )
+            )
+            remaining_mines -= int(take)
+            budget_remaining = max(0, int(budget_remaining) - int(take) * int(unit_cost))
+
         remaining = min(int(desired_general), int(budget_remaining))
         general_types = [U.MARINE, U.MARAUDER, U.CYCLONE, U.HELLION, U.THOR, U.THORAP]
         for unit_type in general_types:
@@ -475,14 +511,31 @@ class MapControlPlanner:
             )
         return reqs
 
-    def _bulk_requirements(self, *, bot, anchor: Point2) -> list[UnitRequirement]:
-        """Constrói requerimentos para o bulk do exército (sem cap de detach budget — é o bulk total)."""
+    @staticmethod
+    def _requirement_counts(reqs: list[UnitRequirement]) -> dict[U, int]:
+        counts: dict[U, int] = {}
+        for req in list(reqs or []):
+            try:
+                unit_type = req.unit_type
+                counts[unit_type] = int(counts.get(unit_type, 0)) + int(req.count)
+            except Exception:
+                continue
+        return counts
+
+    def _bulk_requirements(self, *, bot, anchor: Point2, reserve_counts: Optional[dict[U, int]] = None, tank_cap: Optional[int] = None) -> list[UnitRequirement]:
+        """Constrói requerimentos para o bulk preservando reservas locais de defesa."""
         reqs: list[UnitRequirement] = []
+        reserve_counts = dict(reserve_counts or {})
+        tank_types = {U.SIEGETANK, U.SIEGETANKSIEGED}
+        remaining_tank_cap = None if tank_cap is None else max(0, int(tank_cap))
         for unit_type in _BULK_UNIT_TYPES:
             try:
                 avail = int(bot.units.of_type(unit_type).ready.amount)
             except Exception:
                 avail = 0
+            avail = max(0, int(avail) - int(reserve_counts.get(unit_type, 0) or 0))
+            if unit_type in tank_types and remaining_tank_cap is not None:
+                avail = min(int(avail), int(remaining_tank_cap))
             if avail <= 0:
                 continue
             reqs.append(
@@ -493,6 +546,8 @@ class MapControlPlanner:
                     required=False,
                 )
             )
+            if unit_type in tank_types and remaining_tank_cap is not None:
+                remaining_tank_cap = max(0, int(remaining_tank_cap) - int(avail))
         return reqs
 
     def propose(self, bot, *, awareness: Awareness, attention: Attention) -> list[Proposal]:
@@ -521,6 +576,92 @@ class MapControlPlanner:
         nat_zone = territory_zones.get("natural_front", {}) if isinstance(territory_zones, dict) else {}
 
         out: list[Proposal] = []
+        secure_plan: dict[str, object] | None = None
+
+        posture_wants_garrison = False
+        if use_geometry:
+            nat_choke_sector = (geo_snap.get("sector_states") or {}).get(SectorId.NAT_CHOKE.value, {})
+            nat_choke_mode = str(nat_choke_sector.get("mode", SectorMode.NONE.value) or SectorMode.NONE.value)
+            nat_choke_target = float(nat_choke_sector.get("target_power", 0.0) or 0.0)
+            posture_wants_garrison = nat_choke_mode in {
+                SectorMode.ANCHOR.value,
+                SectorMode.HEAVY_ANCHOR.value,
+            } and nat_choke_target > 0.0
+        else:
+            posture_wants_garrison = posture in {
+                ArmyPosture.HOLD_NAT_CHOKE,
+                ArmyPosture.SECURE_NAT,
+                ArmyPosture.CONTROLLED_RETAKE,
+            }
+
+        if posture_wants_garrison:
+            secure_pid = self._pid("secure_our_nat")
+            if not awareness.ops_proposal_running(proposal_id=secure_pid, now=now) and self._due(awareness=awareness, now=now, pid=secure_pid):
+                base_pos2 = self._point(snapshot.get("target"))
+                staging_pos = self._point(snapshot.get("staging"), fallback=base_pos2)
+                hold_pos = self._point(snapshot.get("hold"), fallback=base_pos2)
+                rush_state = str(snapshot.get("rush_state", "NONE")).upper()
+                delayed_natural_alarm = bool(snapshot.get("delayed_natural_alarm", False))
+                enemy_nat_power = float(snapshot.get("enemy_nat_power", 0.0) or 0.0)
+                own_nat_bunker_count = int(snapshot.get("own_nat_bunker_count", 0) or 0)
+                nat_take_in_progress = bool(snapshot.get("nat_offsite", False) or snapshot.get("safe_to_land", False))
+                secure_needed = bool(
+                    delayed_natural_alarm
+                    or rush_state in {"CONFIRMED", "HOLDING"}
+                    or enemy_nat_power >= 0.6
+                    or own_nat_bunker_count > 0
+                    or nat_take_in_progress
+                    or posture in {ArmyPosture.SECURE_NAT, ArmyPosture.CONTROLLED_RETAKE}
+                )
+                if secure_needed:
+                    if isinstance(nat_zone.get("fallback_anchor"), dict):
+                        staging_pos = self._point(nat_zone.get("fallback_anchor"), fallback=staging_pos)
+                    if isinstance(nat_zone.get("front_anchor"), dict):
+                        hold_pos = self._point(nat_zone.get("front_anchor"), fallback=hold_pos)
+                    if base_pos2 is not None and staging_pos is not None and hold_pos is not None:
+                        reqs = self._requirements(
+                            bot=bot,
+                            attention=attention,
+                            hold_pos=hold_pos,
+                            snapshot=snapshot,
+                            posture_snap=posture_snap,
+                        )
+                        if reqs:
+                            if use_geometry:
+                                template_str = str(geo_snap.get("template", "") or "")
+                                if delayed_natural_alarm or rush_state in {"CONFIRMED", "HOLDING"}:
+                                    score = 88
+                                elif template_str == FrontTemplate.TURTLE_NAT.value:
+                                    score = 88
+                                elif template_str in {FrontTemplate.STABILIZE_AND_EXPAND.value, FrontTemplate.CONTAIN.value} and enemy_nat_power >= 0.6:
+                                    score = 85
+                                else:
+                                    score = 74
+                            elif posture == ArmyPosture.HOLD_NAT_CHOKE and rush_state in {"CONFIRMED", "HOLDING"}:
+                                score = 88
+                            elif posture in {ArmyPosture.HOLD_NAT_CHOKE, ArmyPosture.SECURE_NAT} and (enemy_nat_power >= 0.6 or nat_take_in_progress):
+                                score = 85
+                            else:
+                                score = 74
+
+                            if (
+                                delayed_natural_alarm
+                                or rush_state in {"CONFIRMED", "HOLDING"}
+                                or enemy_nat_power >= 0.6
+                                or own_nat_bunker_count > 0
+                                or nat_take_in_progress
+                            ):
+                                score = max(int(score), 95)
+
+                            secure_plan = {
+                                "proposal_id": secure_pid,
+                                "base_pos": base_pos2,
+                                "staging_pos": staging_pos,
+                                "hold_pos": hold_pos,
+                                "reqs": reqs,
+                                "score": int(score),
+                                "rush_state": str(rush_state),
+                            }
 
         # --- Determina anchor do bulk ---
         # Fonte primária: setor MASS_HOLD da geometria
@@ -563,6 +704,8 @@ class MapControlPlanner:
         # --- HoldAnchorTask: bulk do exército posiciona no setor MASS_HOLD ---
         # Sempre proposto quando há anchor válido, independente de postura.
         # A geometria decide ONDE — o planner só propõe a missão.
+        bulk_reserve_counts = self._requirement_counts(list(secure_plan.get("reqs", []))) if secure_plan is not None else {}
+        bulk_tank_cap = 1 if posture == ArmyPosture.HOLD_MAIN_RAMP else None
         should_hold = anchor_point is not None
         if use_geometry:
             # Com geometria: propõe sempre que há bulk_sector definido
@@ -581,7 +724,12 @@ class MapControlPlanner:
         if should_hold and anchor_point is not None:
             hold_pid = self._pid("hold_anchor_bulk")
             if not awareness.ops_proposal_running(proposal_id=hold_pid, now=now) and self._due(awareness=awareness, now=now, pid=hold_pid):
-                bulk_reqs = self._bulk_requirements(bot=bot, anchor=anchor_point)
+                bulk_reqs = self._bulk_requirements(
+                    bot=bot,
+                    anchor=anchor_point,
+                    reserve_counts=bulk_reserve_counts,
+                    tank_cap=bulk_tank_cap,
+                )
 
                 if bulk_reqs:
                     def _hold_factory(mission_id: str) -> HoldAnchorTask:
@@ -718,7 +866,7 @@ class MapControlPlanner:
                 ArmyPosture.CONTROLLED_RETAKE,
             }
 
-        if posture_wants_garrison:
+        if False:  # Legacy path disabled; secure_plan above owns nat garrison admission.
             pid = self._pid("secure_our_nat")
             if not awareness.ops_proposal_running(proposal_id=pid, now=now) and self._due(awareness=awareness, now=now, pid=pid):
                 base_pos2 = self._point(snapshot.get("target"))
@@ -813,5 +961,406 @@ class MapControlPlanner:
                                 },
                                 meta={"module": "planner", "component": f"planner.{self.planner_id}"},
                             )
+
+        if secure_plan is not None:
+            base_pos2 = secure_plan["base_pos"]
+            staging_pos = secure_plan["staging_pos"]
+            hold_pos = secure_plan["hold_pos"]
+            reqs = list(secure_plan["reqs"])
+            score = int(secure_plan["score"])
+            pid = str(secure_plan["proposal_id"])
+
+            def _factory(mission_id: str) -> SecureBaseTask:
+                return SecureBaseTask(
+                    awareness=awareness,
+                    base_pos=base_pos2,
+                    staging_pos=staging_pos,
+                    hold_pos=hold_pos,
+                    label="our_nat",
+                    log=self.log,
+                )
+
+            out.append(
+                Proposal(
+                    proposal_id=pid,
+                    domain="MAP_CONTROL",
+                    score=int(score),
+                    tasks=[
+                        TaskSpec(
+                            task_id="secure_base",
+                            task_factory=_factory,
+                            unit_requirements=reqs,
+                            lease_ttl=(None if self.lease_ttl_s is None else float(self.lease_ttl_s)),
+                        )
+                    ],
+                    lease_ttl=(None if self.lease_ttl_s is None else float(self.lease_ttl_s)),
+                    cooldown_s=0.0,
+                    risk_level=0,
+                    allow_preempt=True,
+                )
+            )
+            self._mark(awareness=awareness, now=now, pid=pid)
+            if self.log is not None:
+                self.log.emit(
+                    "planner_proposed",
+                    {
+                        "planner": self.planner_id,
+                        "count": int(len(out)),
+                        "label": "secure_our_nat",
+                        "posture": str(posture.value),
+                        "rush_state": str(secure_plan.get("rush_state", "NONE")),
+                        "max_detach_supply": int(posture_snap.get("max_detach_supply", 0) or 0),
+                    },
+                    meta={"module": "planner", "component": f"planner.{self.planner_id}"},
+                )
+
+        # -----------------------------------------------------------------------
+        # LATE-GAME PUSH: MoveOutTask + harass lateral
+        #
+        # Condições de ativação:
+        #   - template == PREP_PUSH (geometria decidiu que é hora de atacar)
+        #   - supply_used >= 160 (exército grande o suficiente)
+        #   - bank_minerals >= 400 (banco construindo — não gastos ainda)
+        #   - sem MoveOutTask já rodando
+        #
+        # Propõe em paralelo:
+        #   1. MoveOutTask — bulk central com leapfrog de tanks (MAP_CONTROL, score=97)
+        #   2. BansheeHarass — base lateral do inimigo (HARASS, score=82) se tiver banshee
+        #   3. MedivacDropHarassTask — segunda frente (HARASS, score=80) se tiver medivac+bio
+        #
+        # O harass lateral não compete com o bulk: domínios diferentes.
+        # -----------------------------------------------------------------------
+
+        if use_geometry:
+            geo_template_str = str(geo_snap.get("template", "") or "")
+            is_prep_push = geo_template_str == FrontTemplate.PREP_PUSH.value
+
+            supply_used = float(getattr(bot, "supply_used", 0) or 0)
+            minerals = float(getattr(bot, "minerals", 0) or 0)
+            vespene = float(getattr(bot, "vespene", 0) or 0)
+
+            push_conditions_met = bool(
+                is_prep_push
+                and supply_used >= 160
+                and (minerals >= 400 or vespene >= 200)
+            )
+
+            move_out_pid = self._pid("late_game_move_out")
+            move_out_running = awareness.ops_proposal_running(proposal_id=move_out_pid, now=now)
+
+            if push_conditions_met and not move_out_running and self._due(awareness=awareness, now=now, pid=move_out_pid):
+
+                # --- Determina alvo: base mais externa do inimigo com estruturas ---
+                push_target: Optional[Point2] = None
+
+                # 1. Estrutura inimiga mais distante da main inimiga (= base mais externa conhecida)
+                try:
+                    enemy_main = bot.enemy_start_locations[0] if getattr(bot, "enemy_start_locations", None) else None
+                    if enemy_main is not None and bot.enemy_structures.amount > 0:
+                        structs_sorted = sorted(
+                            bot.enemy_structures,
+                            key=lambda s: float(s.distance_to(enemy_main)),
+                            reverse=True,
+                        )
+                        push_target = structs_sorted[0].position
+                except Exception:
+                    pass
+
+                # 2. Fallback: expansion mais próxima do inimigo não nossa
+                if push_target is None:
+                    try:
+                        enemy_main = bot.enemy_start_locations[0] if getattr(bot, "enemy_start_locations", None) else None
+                        if enemy_main is not None:
+                            candidates = [
+                                loc for loc in bot.expansion_locations_list
+                                if float(loc.distance_to(enemy_main)) < float(loc.distance_to(bot.start_location))
+                            ]
+                            if candidates:
+                                push_target = min(candidates, key=lambda p: float(p.distance_to(enemy_main)))
+                    except Exception:
+                        pass
+
+                # 3. Fallback final: enemy_start_location
+                if push_target is None:
+                    try:
+                        push_target = bot.enemy_start_locations[0]
+                    except Exception:
+                        pass
+
+                # --- Determina ponto de staging (PUSH_STAGING anchor da geometria) ---
+                push_staging: Optional[Point2] = None
+                push_staging_sector = (geo_snap.get("sector_states") or {}).get("PUSH_STAGING", {})
+                push_staging_payload = push_staging_sector.get("anchor_pos") if isinstance(push_staging_sector, dict) else None
+                if isinstance(push_staging_payload, dict):
+                    push_staging = self._point(push_staging_payload)
+                if push_staging is None:
+                    push_staging = anchor_point
+
+                if push_target is not None and push_staging is not None and anchor_point is not None:
+
+                    # ---- 1. MoveOutTask: bulk central ----
+                    banshee_count = int(bot.units.of_type(U.BANSHEE).ready.amount)
+                    medivac_idle_count = int(bot.units.of_type(U.MEDIVAC).ready.idle.amount)
+
+                    move_out_reqs = self._bulk_requirements(
+                        bot=bot,
+                        anchor=push_staging,
+                        reserve_counts={},
+                        tank_cap=None,
+                    )
+
+                    if move_out_reqs:
+                        _pt = push_target
+                        _ps = push_staging
+
+                        def _move_out_factory(mission_id: str) -> MoveOutTask:
+                            return MoveOutTask(
+                                awareness=awareness,
+                                target_pos=_pt,
+                                start_pos=_ps,
+                                n_leapfrog_steps=3,
+                                log=self.log,
+                            )
+
+                        out.append(
+                            Proposal(
+                                proposal_id=move_out_pid,
+                                domain="MAP_CONTROL",
+                                score=97,
+                                tasks=[
+                                    TaskSpec(
+                                        task_id="move_out",
+                                        task_factory=_move_out_factory,
+                                        unit_requirements=move_out_reqs,
+                                        lease_ttl=(None if self.lease_ttl_s is None else float(self.lease_ttl_s)),
+                                    )
+                                ],
+                                lease_ttl=(None if self.lease_ttl_s is None else float(self.lease_ttl_s)),
+                                cooldown_s=0.0,
+                                risk_level=3,
+                                allow_preempt=True,
+                            )
+                        )
+                        self._mark(awareness=awareness, now=now, pid=move_out_pid)
+
+                    # ---- 2. BansheeHarass: base lateral ----
+                    banshee_pid = self._pid("late_game_banshee_harass")
+                    banshee_running = awareness.ops_proposal_running(proposal_id=banshee_pid, now=now)
+
+                    if banshee_count >= 1 and not banshee_running:
+                        banshee_target: Optional[Point2] = None
+                        try:
+                            enemy_main_b = bot.enemy_start_locations[0] if getattr(bot, "enemy_start_locations", None) else None
+                            if enemy_main_b is not None:
+                                expansions_sorted = sorted(
+                                    bot.expansion_locations_list,
+                                    key=lambda p: float(p.distance_to(enemy_main_b)),
+                                )
+                                for exp in expansions_sorted:
+                                    if float(exp.distance_to(enemy_main_b)) > 5.0:
+                                        if push_target is None or float(exp.distance_to(push_target)) > 10.0:
+                                            banshee_target = exp
+                                            break
+                                if banshee_target is None:
+                                    banshee_target = enemy_main_b
+                        except Exception:
+                            pass
+
+                        if banshee_target is not None:
+                            @dataclass(frozen=True)
+                            class _BansheeAttackPickPolicy:
+                                objective: Point2
+                                name: str = "map_control.push.banshee.v1"
+
+                                def allow(self, unit, *, bot, attention, now: float) -> bool:
+                                    if unit is None or unit.type_id != U.BANSHEE:
+                                        return False
+                                    return bool(getattr(unit, "is_ready", False)) and float(getattr(unit, "health_percentage", 1.0) or 1.0) >= 0.50
+
+                                def score(self, unit, *, bot, attention, now: float) -> float:
+                                    try:
+                                        dist = float(unit.distance_to(self.objective))
+                                    except Exception:
+                                        dist = 9999.0
+                                    return (float(getattr(unit, "health_percentage", 1.0) or 1.0) * 20.0) - dist
+
+                            _bt = banshee_target
+
+                            def _banshee_factory(mission_id: str) -> BansheeHarass:
+                                return BansheeHarass(awareness=awareness, log=self.log, preferred_target=_bt)
+
+                            out.append(
+                                Proposal(
+                                    proposal_id=banshee_pid,
+                                    domain="HARASS",
+                                    score=82,
+                                    tasks=[
+                                        TaskSpec(
+                                            task_id="banshee_harass",
+                                            task_factory=_banshee_factory,
+                                            unit_requirements=[
+                                                UnitRequirement(
+                                                    unit_type=U.BANSHEE,
+                                                    count=min(int(banshee_count), 2),
+                                                    pick_policy=_BansheeAttackPickPolicy(objective=_bt),
+                                                    required=True,
+                                                )
+                                            ],
+                                            lease_ttl=(None if self.lease_ttl_s is None else float(self.lease_ttl_s)),
+                                        )
+                                    ],
+                                    lease_ttl=(None if self.lease_ttl_s is None else float(self.lease_ttl_s)),
+                                    cooldown_s=0.0,
+                                    risk_level=2,
+                                    allow_preempt=True,
+                                )
+                            )
+                            self._mark(awareness=awareness, now=now, pid=banshee_pid)
+
+                    # ---- 3. MedivacDrop: segunda frente se não tiver banshee ----
+                    drop_pid = self._pid("late_game_medivac_drop")
+                    drop_running = awareness.ops_proposal_running(proposal_id=drop_pid, now=now)
+
+                    marine_idle = int(bot.units.of_type(U.MARINE).ready.idle.amount)
+                    marauder_idle = int(bot.units.of_type(U.MARAUDER).ready.idle.amount)
+                    drop_troopers = marine_idle + marauder_idle * 2
+
+                    can_drop = bool(
+                        medivac_idle_count >= 1
+                        and drop_troopers >= 4
+                        and banshee_count == 0
+                        and not drop_running
+                    )
+
+                    if can_drop:
+                        drop_target: Optional[Point2] = None
+                        try:
+                            enemy_main_d = bot.enemy_start_locations[0] if getattr(bot, "enemy_start_locations", None) else None
+                            if enemy_main_d is not None:
+                                expansions_by_dist = sorted(
+                                    bot.expansion_locations_list,
+                                    key=lambda p: float(p.distance_to(enemy_main_d)),
+                                )
+                                for exp in expansions_by_dist:
+                                    if float(exp.distance_to(enemy_main_d)) > 5.0:
+                                        drop_target = exp
+                                        break
+                                if drop_target is None:
+                                    drop_target = enemy_main_d
+                        except Exception:
+                            pass
+
+                        if drop_target is not None:
+                            @dataclass(frozen=True)
+                            class _MedivacPickPolicy:
+                                objective: Point2
+                                name: str = "map_control.push.medivac.v1"
+
+                                def allow(self, unit, *, bot, attention, now: float) -> bool:
+                                    if unit is None or unit.type_id != U.MEDIVAC:
+                                        return False
+                                    return bool(getattr(unit, "is_ready", False)) and bool(getattr(unit, "is_idle", True))
+
+                                def score(self, unit, *, bot, attention, now: float) -> float:
+                                    try:
+                                        return -float(unit.distance_to(self.objective))
+                                    except Exception:
+                                        return 0.0
+
+                            @dataclass(frozen=True)
+                            class _TrooperPickPolicy:
+                                objective: Point2
+                                unit_type: U
+                                name: str = "map_control.push.trooper.v1"
+
+                                def allow(self, unit, *, bot, attention, now: float) -> bool:
+                                    if unit is None or unit.type_id != self.unit_type:
+                                        return False
+                                    return bool(getattr(unit, "is_ready", False)) and bool(getattr(unit, "is_idle", True))
+
+                                def score(self, unit, *, bot, attention, now: float) -> float:
+                                    try:
+                                        return -float(unit.distance_to(self.objective))
+                                    except Exception:
+                                        return 0.0
+
+                            _dt = drop_target
+                            n_medivac_drop = min(int(medivac_idle_count), 2)
+                            slots_available = n_medivac_drop * 8
+
+                            def _drop_factory(mission_id: str) -> MedivacDropHarassTask:
+                                return MedivacDropHarassTask(
+                                    awareness=awareness,
+                                    log=self.log,
+                                    target_locations=[_dt],
+                                )
+
+                            marines_for_drop = min(int(marine_idle), slots_available)
+                            remaining_slots = slots_available - marines_for_drop
+                            marauders_for_drop = min(int(marauder_idle), remaining_slots // 2)
+
+                            drop_reqs = [
+                                UnitRequirement(
+                                    unit_type=U.MEDIVAC,
+                                    count=n_medivac_drop,
+                                    pick_policy=_MedivacPickPolicy(objective=_dt),
+                                    required=True,
+                                ),
+                            ]
+                            if marines_for_drop > 0:
+                                drop_reqs.append(
+                                    UnitRequirement(
+                                        unit_type=U.MARINE,
+                                        count=marines_for_drop,
+                                        pick_policy=_TrooperPickPolicy(objective=_dt, unit_type=U.MARINE),
+                                        required=False,
+                                    )
+                                )
+                            if marauders_for_drop > 0:
+                                drop_reqs.append(
+                                    UnitRequirement(
+                                        unit_type=U.MARAUDER,
+                                        count=marauders_for_drop,
+                                        pick_policy=_TrooperPickPolicy(objective=_dt, unit_type=U.MARAUDER),
+                                        required=False,
+                                    )
+                                )
+
+                            out.append(
+                                Proposal(
+                                    proposal_id=drop_pid,
+                                    domain="HARASS",
+                                    score=80,
+                                    tasks=[
+                                        TaskSpec(
+                                            task_id="medivac_drop_harass",
+                                            task_factory=_drop_factory,
+                                            unit_requirements=drop_reqs,
+                                            lease_ttl=(None if self.lease_ttl_s is None else float(self.lease_ttl_s)),
+                                        )
+                                    ],
+                                    lease_ttl=(None if self.lease_ttl_s is None else float(self.lease_ttl_s)),
+                                    cooldown_s=0.0,
+                                    risk_level=2,
+                                    allow_preempt=True,
+                                )
+                            )
+                            self._mark(awareness=awareness, now=now, pid=drop_pid)
+
+                    if self.log is not None:
+                        self.log.emit(
+                            "late_game_push_proposed",
+                            {
+                                "planner": self.planner_id,
+                                "supply_used": round(float(supply_used), 1),
+                                "minerals": round(float(minerals), 0),
+                                "template": geo_template_str,
+                                "push_target": {"x": float(push_target.x), "y": float(push_target.y)} if push_target else None,
+                                "banshee_count": int(banshee_count),
+                                "medivac_idle": int(medivac_idle_count),
+                                "proposals_total": int(len(out)),
+                            },
+                            meta={"module": "planner", "component": "map_control_planner.late_game_push"},
+                        )
 
         return out

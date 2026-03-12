@@ -55,6 +55,56 @@ class LandBaseTask(BaseTask):
         except Exception:
             return fallback
 
+    @staticmethod
+    def _cc_footprint_sites(center: Point2) -> list[Point2]:
+        offsets = (
+            (0.0, 0.0),
+            (2.0, 0.0),
+            (-2.0, 0.0),
+            (0.0, 2.0),
+            (0.0, -2.0),
+            (2.0, 2.0),
+            (2.0, -2.0),
+            (-2.0, 2.0),
+            (-2.0, -2.0),
+        )
+        return [Point2((float(center.x) + dx, float(center.y) + dy)) for dx, dy in offsets]
+
+    @classmethod
+    def _unit_blocks_landing(cls, unit, *, target_pos: Point2) -> bool:
+        footprint_sites = cls._cc_footprint_sites(target_pos)
+        for site in footprint_sites:
+            try:
+                if float(unit.distance_to(site)) <= 2.6:
+                    return True
+            except Exception:
+                continue
+        return False
+
+    @staticmethod
+    def _worker_retreat_target(bot, *, target_pos: Point2, fallback: Point2 | None):
+        try:
+            mineral_fields = list(getattr(bot, "mineral_field", []) or [])
+        except Exception:
+            mineral_fields = []
+        if not mineral_fields:
+            return None
+
+        origin = fallback or getattr(bot, "start_location", None) or target_pos
+        best = None
+        best_score = 9999.0
+        for field in mineral_fields:
+            try:
+                if float(field.distance_to(target_pos)) <= 6.5:
+                    continue
+                score = float(field.distance_to(origin)) + (0.2 * float(field.distance_to(target_pos)))
+            except Exception:
+                continue
+            if score < best_score:
+                best_score = score
+                best = field
+        return best
+
     def _target_unit(self, bot, *, now: float):
         entry = self._registry_entry(self.awareness, now=now, label=self.base_label)
         tag = int(entry.get("townhall_tag", 0) or 0)
@@ -130,6 +180,7 @@ class LandBaseTask(BaseTask):
                 fallback = target_pos.towards(fallback, 9.5)
         except Exception:
             pass
+        worker_retreat_target = self._worker_retreat_target(bot, target_pos=target_pos, fallback=fallback)
         try:
             own_units = list(getattr(bot, "units", []) or [])
         except Exception:
@@ -140,17 +191,31 @@ class LandBaseTask(BaseTask):
                     continue
                 if bool(getattr(ally, "is_flying", False)):
                     continue
-                dist = float(ally.distance_to(target_pos))
-                if dist > 6.0:
+                if not self._unit_blocks_landing(ally, target_pos=target_pos):
                     continue
-                if getattr(ally, "type_id", None) == U.WIDOWMINEBURROWED:
+                unit_type = getattr(ally, "type_id", None)
+                if unit_type == U.WIDOWMINEBURROWED:
                     ally(AbilityId.BURROWUP_WIDOWMINE)
                     issued = True
                     continue
+                if unit_type == U.SIEGETANKSIEGED:
+                    ally(AbilityId.UNSIEGE_UNSIEGE)
+                    issued = True
+                    continue
+                if unit_type in {U.SCV, U.MULE}:
+                    if worker_retreat_target is not None:
+                        ally.gather(worker_retreat_target)
+                        issued = True
+                        continue
                 retreat = fallback
                 if retreat is None:
                     continue
-                ally.move(retreat)
+                if float(ally.distance_to(retreat)) > 1.5:
+                    ally.move(retreat)
+                elif unit_type not in {U.SCV, U.MULE}:
+                    ally.attack(retreat)
+                else:
+                    ally.move(retreat)
                 issued = True
             except Exception:
                 continue

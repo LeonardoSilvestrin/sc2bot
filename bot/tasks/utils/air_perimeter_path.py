@@ -141,6 +141,9 @@ def air_perimeter_waypoint(
         ).distance_to(threat_center)
     )
 
+    # Direção normalizada origin→destination (para filtrar cantos "para trás")
+    ux_od, uy_od = _vec_normalize(dx_od, dy_od)
+
     for corner in corners:
         # Ponto de swing: ligeiramente afastado do canto para dentro do mapa
         cx = float(map_bounds.x) + float(map_bounds.width) / 2.0
@@ -154,6 +157,14 @@ def air_perimeter_waypoint(
                 float(corner.y) + niy * float(swing_margin),
             )
         )
+
+        # Descarta cantos que estão "atrás" da origin em relação ao destino.
+        # Produto escalar negativo significa que o canto está na direção oposta.
+        swing_dx = float(swing.x) - float(origin.x)
+        swing_dy = float(swing.y) - float(origin.y)
+        forward_dot = _dot(swing_dx, swing_dy, ux_od, uy_od)
+        if forward_dot < 0.0:
+            continue
 
         # Distância do ponto de swing ao threat
         swing_threat_dist = float(swing.distance_to(threat_center))

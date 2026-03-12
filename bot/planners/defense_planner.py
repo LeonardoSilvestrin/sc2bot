@@ -20,6 +20,7 @@ from bot.tasks.defense.scv_repair_task import ScvRepairTask
 from bot.tasks.defense.defend_task import Defend
 from bot.tasks.defense.lift_natural_task import LiftNaturalTask
 from bot.tasks.defense.reaper_nat_patrol_task import ReaperPatrolTask
+from bot.tasks.defense.scv_hunt_infiltrators_task import ScvHuntInfiltratorsTask
 
 
 @dataclass(frozen=True)
@@ -203,6 +204,9 @@ class DefensePlanner:
 
     def _pid_reaper_nat_patrol(self) -> str:
         return f"{self.planner_id}:reaper_nat_patrol"
+
+    def _pid_hunt_infiltrators(self, base_tag: int) -> str:
+        return f"{self.planner_id}:hunt_infiltrators:base:{int(base_tag)}"
 
     def _make_defend_factory(self, *, awareness: Awareness, base_tag: int, base_pos: Point2, objective: Point2):
         def _factory(mission_id: str) -> DefendBaseTask:
@@ -881,6 +885,44 @@ class DefensePlanner:
                         required=len(reqs) == 0,
                     )
                 )
+
+        desired_mines = 0
+        if urgency >= 18 or enemy_count >= 2:
+            desired_mines = 1
+        if urgency >= 55 or enemy_count >= 5:
+            desired_mines = 2
+        if bool(rush_ctx.get("heavy", False)):
+            desired_mines = max(int(desired_mines), 1 if outer_base else 2)
+        if outer_base and bool(rush_ctx.get("active", False)):
+            desired_mines = min(int(desired_mines), 1)
+
+        remaining_mines = int(desired_mines)
+        for mine_type in (U.WIDOWMINE, U.WIDOWMINEBURROWED):
+            if remaining_mines <= 0 or int(budget) <= 0:
+                break
+            avail = self._available(bot, mine_type)
+            if avail <= 0:
+                continue
+            unit_cost = int(self._SUPPLY_COST.get(mine_type, 2))
+            can_afford = max(0, int(budget) // int(unit_cost))
+            take = min(int(avail), int(remaining_mines), int(can_afford))
+            if take <= 0:
+                continue
+            reqs.append(
+                UnitRequirement(
+                    unit_type=mine_type,
+                    count=int(take),
+                    pick_policy=_DefendPickPolicy(
+                        objective=objective,
+                        unit_type=mine_type,
+                        bulk_anchor_pos=bulk_anchor_pos,
+                        defense_overflow=defense_overflow,
+                    ),
+                    required=len(reqs) == 0,
+                )
+            )
+            remaining_mines -= int(take)
+            budget = max(0, int(budget) - int(take) * int(unit_cost))
 
         general_types = [U.CYCLONE, U.MARAUDER, U.MARINE, U.HELLION, U.THOR, U.THORAP]
         if outer_base:
@@ -1942,6 +1984,71 @@ class DefensePlanner:
             except Exception:
                 pass
 
+        # --- Hunt de workers/reapers infiltrados na base ---
+        # Um único SCV fica em caça constante se houver Drone/Probe/SCV/Reaper inimigo
+        # dentro de qualquer base ativa. Persiste mesmo quando o alvo entra na fog.
+        _WORKER_TYPES = {U.PROBE, U.DRONE, U.SCV, U.REAPER}
+        _HUNT_SCAN_RADIUS = 30.0
+        try:
+            for _th in list(getattr(bot, "townhalls", []) or []):
+                _base_pos = _th.position
+                _th_tag = int(getattr(_th, "tag", -1) or -1)
+                _infiltrators = [
+                    u for u in bot.enemy_units
+                    if u.type_id in _WORKER_TYPES
+                    and float(u.distance_to(_base_pos)) <= _HUNT_SCAN_RADIUS
+                ]
+                if not _infiltrators:
+                    continue
+                _hunt_pid = self._pid_hunt_infiltrators(_th_tag)
+                if awareness.ops_proposal_running(proposal_id=_hunt_pid, now=now):
+                    continue
+                if not self._due(awareness=awareness, now=now, pid=_hunt_pid):
+                    continue
+                # SCV disponível próximo à base (não tira de tarefas críticas)
+                _scv_avail = [
+                    u for u in bot.units
+                    if u.type_id == U.SCV
+                    and bool(getattr(u, "is_ready", False))
+                    and float(u.distance_to(_base_pos)) <= 20.0
+                    and not bool(getattr(u, "is_constructing", False))
+                ]
+                if not _scv_avail:
+                    continue
+
+                def _hunt_factory(_mission_id: str, _bp=_base_pos) -> ScvHuntInfiltratorsTask:
+                    return ScvHuntInfiltratorsTask(base_pos=_bp, log=self.log)
+
+                out.append(
+                    Proposal(
+                        proposal_id=_hunt_pid,
+                        domain="DEFENSE",
+                        score=78,
+                        tasks=[
+                            TaskSpec(
+                                task_id="scv_hunt_infiltrators",
+                                task_factory=_hunt_factory,
+                                unit_requirements=[
+                                    UnitRequirement(
+                                        unit_type=U.SCV,
+                                        count=1,
+                                        pick_policy=_ScvDefensePickPolicy(objective=_base_pos, max_distance=22.0),
+                                        required=True,
+                                    )
+                                ],
+                                lease_ttl=15.0,
+                            )
+                        ],
+                        lease_ttl=15.0,
+                        cooldown_s=0.0,
+                        risk_level=0,
+                        allow_preempt=False,
+                    )
+                )
+                self._mark_proposed(awareness=awareness, now=now, pid=_hunt_pid)
+        except Exception:
+            pass
+
         # Guardrail: se a geometria / MapControlPlanner já está segurando a nat,
         # DefensePlanner não aciona o fallback de existência para a nat.
         map_control_owns_nat = geometry_owns_nat
@@ -2243,6 +2350,29 @@ class DefensePlanner:
                 self._mark_proposed(awareness=awareness, now=now, pid=scv_pull_pid)
 
             repair_count = self._repair_count(bot=bot, th=th, rush_ctx=rush_ctx)
+
+            # Quando o rush está ativo na main, garante pelo menos 1 SCV de repair
+            # mesmo que não haja dano imediato — posicionamento proativo na rampa.
+            # Escala com pressão: enemy perto da rampa/objective → mais SCVs.
+            if is_main_base and bool(rush_ctx.get("active", False)) and repair_count == 0:
+                try:
+                    ramp_enemy = int(bot.enemy_units.closer_than(14.0, objective).amount)
+                    repair_pressure = float(self._repair_pressure_near_base(bot, base_pos=th.th_pos))
+                    if ramp_enemy >= 1 or repair_pressure >= 1.0:
+                        repair_count = 1
+                    if ramp_enemy >= 3 or repair_pressure >= 3.0:
+                        repair_count = 2
+                    if ramp_enemy >= 6 or repair_pressure >= 6.0:
+                        repair_count = min(int(self.scv_repair_max), 3)
+                except Exception:
+                    pass
+
+            # lease_ttl: durante rush ativo mantém a missão viva por muito mais tempo
+            # para evitar o ciclo de encerrar/re-propor a cada 12s
+            repair_lease = 45.0 if bool(rush_ctx.get("active", False)) else 12.0
+            if bool(rush_ctx.get("heavy", False)):
+                repair_lease = 60.0
+
             repair_pid = self._pid_repair(int(th.th_tag))
             if (
                 repair_count > 0
@@ -2274,10 +2404,10 @@ class DefensePlanner:
                                         required=True,
                                     )
                                 ],
-                                lease_ttl=12.0,
+                                lease_ttl=float(repair_lease),
                             )
                         ],
-                        lease_ttl=12.0,
+                        lease_ttl=float(repair_lease),
                         cooldown_s=0.0,
                         risk_level=0,
                         allow_preempt=True,

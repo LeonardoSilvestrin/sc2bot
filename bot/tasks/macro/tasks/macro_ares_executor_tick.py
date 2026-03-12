@@ -85,6 +85,48 @@ class TargetedTownhallBuild(MacroBehavior):
                 continue
         return issued
 
+    @staticmethod
+    def _is_leased_worker(ai, unit) -> bool:
+        try:
+            if getattr(unit, "type_id", None) != U.SCV:
+                return False
+            tag = int(getattr(unit, "tag", -1) or -1)
+        except Exception:
+            return False
+        if tag <= 0:
+            return False
+        try:
+            body = getattr(getattr(ai, "rt", None), "body", None)
+            now = float(getattr(ai, "time", 0.0) or 0.0)
+            return bool(body is not None and body.owner_of(tag, now=now))
+        except Exception:
+            return False
+
+    def _select_expand_worker(self, ai, mediator):
+        try:
+            worker = mediator.select_worker(target_position=self.target_pos)
+        except Exception:
+            worker = None
+        if worker is not None and not self._is_leased_worker(ai, worker):
+            return worker
+
+        candidates = []
+        for unit in list(getattr(ai, "workers", []) or []):
+            try:
+                if getattr(unit, "type_id", None) != U.SCV:
+                    continue
+                if bool(getattr(unit, "is_constructing", False)):
+                    continue
+                if self._is_leased_worker(ai, unit):
+                    continue
+                dist = float(unit.distance_to(self.target_pos))
+                carrying_penalty = 1.5 if bool(getattr(unit, "is_carrying_resource", False)) else 0.0
+                candidates.append((dist + carrying_penalty, int(getattr(unit, "tag", -1) or -1), unit))
+            except Exception:
+                continue
+        candidates.sort(key=lambda item: (item[0], item[1]))
+        return candidates[0][2] if candidates else None
+
     def execute(self, ai, config: dict, mediator) -> bool:
         try:
             ready_townhalls = len([th for th in ai.townhalls if bool(getattr(th, "is_ready", False))])
@@ -103,19 +145,19 @@ class TargetedTownhallBuild(MacroBehavior):
                 return False
         except Exception:
             return False
+        if self._clear_own_blockers(ai):
+            return True
         try:
             if ExpansionController._location_is_blocked(mediator, self.target_pos):
                 return False
         except Exception:
             pass
-        if self._clear_own_blockers(ai):
-            return True
         try:
             if not bool(mediator.can_place_structure(position=self.target_pos, structure_type=ai.base_townhall_type)):
                 return False
         except Exception:
             return False
-        worker = mediator.select_worker(target_position=self.target_pos)
+        worker = self._select_expand_worker(ai, mediator)
         if worker is None:
             return False
         if self._clear_own_blockers(ai, selected_worker_tag=int(getattr(worker, "tag", -1) or -1)):

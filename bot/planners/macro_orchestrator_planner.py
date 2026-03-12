@@ -396,7 +396,7 @@ class MacroOrchestratorPlanner(BasePlanner):
         workers_stable = bool(int(workers_total) >= max(1, int(scv_cap) - 1))
         rush_state = str(awareness.mem.get(K("enemy", "rush", "state"), now=now, default="NONE") or "NONE").upper()
         rush_tier = str(awareness.mem.get(K("enemy", "rush", "tier"), now=now, default="NONE") or "NONE").upper()
-        rush_hard_active = bool(rush_state in {"CONFIRMED", "HOLDING"})
+        rush_hard_active = bool(float(now) <= float(self.rush_phase_max_s) and rush_state in {"CONFIRMED", "HOLDING"})
         rush_heavy_active = bool(rush_hard_active and rush_tier in {"HEAVY", "EXTREME"})
         rush_workers_stable = bool(int(workers_total) >= max(22, int(scv_cap) - 12))
         util_min = float(self.rush_production_boost_utilization_min) if rush_hard_active else float(self.production_boost_utilization_min)
@@ -410,6 +410,9 @@ class MacroOrchestratorPlanner(BasePlanner):
             and (int(expand_gap) <= 0 or (rush_hard_active and not bool(hold_boost_for_expand)))
             and float(util) >= float(util_min)
         )
+        # Com bank alto, minerais não estão sendo gastos — forçar boost independente de utilização.
+        if int(minerals) >= int(self.emergency_dump_on_minerals):
+            can_boost = True
         over_m_on = int(self.rush_production_overflow_minerals) if rush_hard_active else int(self.production_overflow_minerals)
         over_g_on = int(self.rush_production_overflow_gas) if rush_hard_active else int(self.production_overflow_gas)
         over_m_off = int(self.rush_production_overflow_off_minerals) if rush_hard_active else int(self.production_overflow_off_minerals)
@@ -446,7 +449,8 @@ class MacroOrchestratorPlanner(BasePlanner):
         )
         boost_level = int(boost_prev)
         if int(boost_target) != int(boost_prev):
-            if (float(now) - float(boost_changed_at)) >= float(self.production_boost_change_cooldown_s):
+            emergency_boost = int(minerals) >= int(self.emergency_dump_on_minerals) and int(boost_target) > int(boost_prev)
+            if emergency_boost or (float(now) - float(boost_changed_at)) >= float(self.production_boost_change_cooldown_s):
                 boost_level = int(boost_target)
                 awareness.mem.set(K("macro", "exec", "production_boost_changed_at"), value=float(now), now=now, ttl=30.0)
         awareness.mem.set(K("macro", "exec", "production_boost_level"), value=int(boost_level), now=now, ttl=30.0)
@@ -1028,7 +1032,12 @@ class MacroOrchestratorPlanner(BasePlanner):
         )
         if ahead_expand_push:
             base_expand = max(int(base_expand), int(total_bases) + 1)
-        if bool(enemy_one_base_rush) or str(opening_selected) == "RushDefenseOpen":
+        rush_defense_open_active = bool(
+            str(opening_selected) == "RushDefenseOpen"
+            and not bool(_enemy_expanded)
+            and rush_state_early in {"SUSPECTED", "CONFIRMED", "HOLDING"}
+        )
+        if bool(enemy_one_base_rush) or rush_defense_open_active:
             base_expand = min(int(base_expand), 2)
 
         # CC boom: quando mineral flood, supply alto e sem rush/pressão, descer CCs extras.
@@ -1136,7 +1145,7 @@ class MacroOrchestratorPlanner(BasePlanner):
         ).upper()
         rush_is_early = bool(float(now) <= float(self.rush_phase_max_s))
         rush_active = bool(rush_is_early and rush_state in {"SUSPECTED", "CONFIRMED", "HOLDING"})
-        rush_hard_active = bool(rush_state in {"CONFIRMED", "HOLDING"})
+        rush_hard_active = bool(rush_is_early and rush_state in {"CONFIRMED", "HOLDING"})
         rush_heavy_active = bool(rush_active and rush_tier in {"HEAVY", "EXTREME"})
         aggression_active = bool(aggression_state == "AGGRESSION")
         enemy_at_door = bool(self._enemy_at_door(bot, attention=attention))
@@ -1680,6 +1689,9 @@ class MacroOrchestratorPlanner(BasePlanner):
             except Exception:
                 continue
         if priority_upgrade_pending and int(attention.economy.minerals) >= 220:
+            tech_pause_for_army = False
+        # Se o bank está alto, a produção não está conseguindo gastar — libera tech.
+        if int(attention.economy.minerals) >= 600:
             tech_pause_for_army = False
         enable = bool(
             (not opening_active)

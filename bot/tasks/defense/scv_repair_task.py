@@ -321,14 +321,37 @@ class ScvRepairTask(BaseTask):
         return assignments
 
     @staticmethod
-    def _threat_still_active(bot, threat_pos: Point2 | None) -> bool:
-        """Retorna True se ainda há inimigos perto da base que justifiquem manter os SCVs."""
-        if threat_pos is None:
-            return False
+    def _threat_still_active(bot, threat_pos: Point2 | None, base_pos: Point2 | None = None) -> bool:
+        """Retorna True se ainda há inimigos perto da base ou da posição de ameaça."""
         try:
-            return int(bot.enemy_units.closer_than(18.0, threat_pos).amount) > 0
+            if threat_pos is not None and int(bot.enemy_units.closer_than(18.0, threat_pos).amount) > 0:
+                return True
         except Exception:
-            return False
+            pass
+        try:
+            if base_pos is not None and int(bot.enemy_units.closer_than(22.0, base_pos).amount) > 0:
+                return True
+        except Exception:
+            pass
+        return False
+
+    @staticmethod
+    def _standby_pos(bot, *, base_pos: Point2, threat_pos: Point2 | None) -> Point2:
+        """Posição de espera perto das estruturas mais vulneráveis (perto da rampa)."""
+        try:
+            ramp = getattr(bot, "main_base_ramp", None)
+            if ramp is not None:
+                top = getattr(ramp, "top_center", None)
+                if top is not None:
+                    return top.towards(base_pos, 3.0)
+        except Exception:
+            pass
+        if threat_pos is not None:
+            try:
+                return threat_pos.towards(base_pos, 4.0)
+            except Exception:
+                pass
+        return base_pos
 
     async def on_step(self, bot, tick: TaskTick, attention: Attention) -> TaskResult:
         bound_err = self.require_mission_bound(min_tags=1)
@@ -344,10 +367,17 @@ class ScvRepairTask(BaseTask):
 
         targets = self._repair_targets(bot, base_pos=base_pos)
         if not targets:
-            # Só encerra se a ameaça também dissipou — evita SCVs saindo e voltando
-            if self._threat_still_active(bot, self.threat_pos):
-                self._active("scv_repair_holding_threat")
-                return TaskResult.noop("scv_repair_holding_threat")
+            # Ameaça ainda ativa: SCVs ficam em standby perto da rampa prontos para reparar
+            if self._threat_still_active(bot, self.threat_pos, base_pos):
+                standby = self._standby_pos(bot, base_pos=base_pos, threat_pos=self.threat_pos)
+                for scv in units:
+                    try:
+                        if bool(getattr(scv, "is_idle", True)) and float(scv.distance_to(standby)) > 3.0:
+                            scv.move(standby)
+                    except Exception:
+                        pass
+                self._active("scv_repair_standby")
+                return TaskResult.running("scv_repair_standby")
             self._done("repair_targets_cleared")
             return TaskResult.done("repair_targets_cleared")
 

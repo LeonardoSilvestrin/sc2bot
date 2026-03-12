@@ -15,6 +15,7 @@ _DEFAULT_ENGAGE_RADIUS = 12.0
 _DEFAULT_ROAM_RADIUS = 7.0
 _DEFAULT_KITE_HP = 0.30
 _DEFAULT_REENGAGE_HP = 0.65
+_DEFAULT_CHASE_MEMORY_S = 3.5
 _SAFE_POINT_ARRIVAL_DIST = 4.0
 _WAYPOINT_ARRIVAL_DIST = 3.0
 
@@ -27,6 +28,7 @@ class ReaperPatrolTask(BaseTask):
     engage_radius: float = _DEFAULT_ENGAGE_RADIUS
     kite_hp_threshold: float = _DEFAULT_KITE_HP
     reengage_hp_threshold: float = _DEFAULT_REENGAGE_HP
+    chase_memory_s: float = _DEFAULT_CHASE_MEMORY_S
     patrol_points: tuple[Point2, ...] = ()
     kite_step: float = 3.0
     stutter_fire_cooldown_s: float = 0.25
@@ -39,6 +41,7 @@ class ReaperPatrolTask(BaseTask):
     _waypoint_index: dict = field(default_factory=dict, init=False, repr=False)
     _last_seen_target_pos: dict = field(default_factory=dict, init=False, repr=False)
     _last_seen_target_t: dict = field(default_factory=dict, init=False, repr=False)
+    _last_seen_target_pickoff: dict = field(default_factory=dict, init=False, repr=False)
 
     def __init__(
         self,
@@ -49,6 +52,7 @@ class ReaperPatrolTask(BaseTask):
         engage_radius: float = _DEFAULT_ENGAGE_RADIUS,
         kite_hp_threshold: float = _DEFAULT_KITE_HP,
         reengage_hp_threshold: float = _DEFAULT_REENGAGE_HP,
+        chase_memory_s: float = _DEFAULT_CHASE_MEMORY_S,
         patrol_points: tuple[Point2, ...] | list[Point2] | None = None,
         kite_step: float = 3.0,
         stutter_fire_cooldown_s: float = 0.25,
@@ -65,6 +69,7 @@ class ReaperPatrolTask(BaseTask):
         self.engage_radius = float(engage_radius)
         self.kite_hp_threshold = float(kite_hp_threshold)
         self.reengage_hp_threshold = float(reengage_hp_threshold)
+        self.chase_memory_s = float(chase_memory_s)
         route = [p for p in list(patrol_points or ()) if isinstance(p, Point2)]
         self.patrol_points = tuple(route) if route else (roam_center,)
         self.kite_step = float(kite_step)
@@ -77,6 +82,7 @@ class ReaperPatrolTask(BaseTask):
         self._waypoint_index = {}
         self._last_seen_target_pos = {}
         self._last_seen_target_t = {}
+        self._last_seen_target_pickoff = {}
 
     @staticmethod
     def _can_attack_ground(enemy) -> bool:
@@ -132,6 +138,26 @@ class ReaperPatrolTask(BaseTask):
         except Exception:
             return self.roam_center
 
+    def _recent_chase_pos(self, reaper, *, now: float) -> Point2 | None:
+        tag = int(getattr(reaper, "tag", 0) or 0)
+        last_pos = self._last_seen_target_pos.get(tag)
+        last_t = self._last_seen_target_t.get(tag)
+        if last_pos is None or last_t is None:
+            return None
+        try:
+            if (float(now) - float(last_t)) > float(self.chase_memory_s):
+                return None
+        except Exception:
+            return None
+        if not bool(self._last_seen_target_pickoff.get(tag, False)):
+            return None
+        try:
+            if not any(float(last_pos.distance_to(point)) <= (float(self.engage_radius) + 6.0) for point in self.patrol_points):
+                return None
+        except Exception:
+            return None
+        return last_pos
+
     def _enemies_near_patrol(self, bot) -> list:
         out: list = []
         try:
@@ -183,6 +209,7 @@ class ReaperPatrolTask(BaseTask):
         try:
             self._last_seen_target_pos[tag] = Point2((float(target.position.x), float(target.position.y)))
             self._last_seen_target_t[tag] = float(now)
+            self._last_seen_target_pickoff[tag] = bool(self._is_light_pickoff(target))
         except Exception:
             pass
 
@@ -220,6 +247,7 @@ class ReaperPatrolTask(BaseTask):
         self._waypoint_index = {k: v for k, v in self._waypoint_index.items() if k in live_tags}
         self._last_seen_target_pos = {k: v for k, v in self._last_seen_target_pos.items() if k in live_tags}
         self._last_seen_target_t = {k: v for k, v in self._last_seen_target_t.items() if k in live_tags}
+        self._last_seen_target_pickoff = {k: v for k, v in self._last_seen_target_pickoff.items() if k in live_tags}
 
         enemies_near: list = self._enemies_near_patrol(bot)
         issued = 0
@@ -248,6 +276,12 @@ class ReaperPatrolTask(BaseTask):
 
                 if target is not None:
                     self._micro_target(reaper, target, enemies_near, now)
+                    issued += 1
+                    continue
+
+                chase_pos = self._recent_chase_pos(reaper, now=now)
+                if chase_pos is not None:
+                    reaper.attack(chase_pos)
                     issued += 1
                     continue
 

@@ -39,6 +39,38 @@ def _safe(pos: Optional[Point2], fallback: Point2) -> Point2:
     return pos
 
 
+def _main_wall_guard_points(bot) -> list[tuple[Point2, float]]:
+    ramp = getattr(bot, "main_base_ramp", None)
+    if ramp is None:
+        return []
+    out: list[tuple[Point2, float]] = []
+    top = getattr(ramp, "top_center", None)
+    bottom = getattr(ramp, "bottom_center", None)
+    if top is not None:
+        out.append((top, 7.5))
+    if bottom is not None:
+        out.append((bottom, 6.75))
+    for depot in list(getattr(ramp, "corner_depots", []) or []):
+        if depot is not None:
+            out.append((depot, 4.25))
+    barracks_pos = getattr(ramp, "barracks_correct_placement", None)
+    if barracks_pos is not None:
+        out.append((barracks_pos, 4.0))
+    return out
+
+
+def _respects_guard_points(pos: Point2 | None, guards: list[tuple[Point2, float]], *, slack: float = 0.15) -> bool:
+    if pos is None:
+        return False
+    for guarded_point, min_dist in list(guards or []):
+        try:
+            if float(pos.distance_to(guarded_point)) + float(slack) < float(min_dist):
+                return False
+        except Exception:
+            continue
+    return True
+
+
 class SectorGraph:
     """
     Calcula e cacheia as posições concretas dos setores operacionais.
@@ -105,13 +137,23 @@ class SectorGraph:
         if ramp is not None:
             ramp_top = getattr(ramp, "top_center", None)
             ramp_bottom = getattr(ramp, "bottom_center", None)
-        # Posição do setor MAIN_RAMP: recuada 4.5 tiles para dentro da main,
-        # atrás da wall — tanks siegam aqui sem bloquear a rampa, marines atacam pela wall
+        guards = _main_wall_guard_points(bot)
+        # Posição do setor MAIN_RAMP: recuada 7.5 tiles para dentro da main,
+        # atrás da wall — tanks siegam aqui sem bloquear o corredor de saída para a nat.
         if ramp_top is not None:
             try:
-                ramp_sector_pos = ramp_top.towards(main, 4.5)
+                ramp_sector_pos = _safe(ramp_top.towards(main, 10.5), main)
             except Exception:
-                ramp_sector_pos = ramp_top
+                ramp_sector_pos = main
+            for backoff in (8.25, 9.0, 9.75, 10.5):
+                try:
+                    candidate = ramp_top.towards(main, backoff)
+                except Exception:
+                    candidate = ramp_top
+                candidate = _safe(candidate, main)
+                if _respects_guard_points(candidate, guards):
+                    ramp_sector_pos = candidate
+                    break
         else:
             ramp_sector_pos = main
         self._positions[SectorId.MAIN_RAMP] = ramp_sector_pos

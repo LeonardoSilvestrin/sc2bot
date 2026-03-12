@@ -38,9 +38,9 @@ CONFIG_FILE: str = "config.yml"
 MAP_FILE_EXT: str = "SC2Map"
 MY_BOT_NAME: str = "MyBotName"
 MY_BOT_RACE: str = "MyBotRace"
-ENEMY_RACE: Race = Race.Protoss
+ENEMY_RACE: Race = Race.Zerg
 ENEMY_DIFFICULTY: Difficulty = Difficulty.VeryHard
-ENEMY_BUILD: AIBuild = AIBuild.Macro
+ENEMY_BUILD: AIBuild = AIBuild.Rush
 
 
 def main():

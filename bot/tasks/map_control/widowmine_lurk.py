@@ -12,6 +12,8 @@ from bot.mind.attention import Attention
 from bot.mind.awareness import Awareness, K
 from bot.tasks.base_task import BaseTask, TaskResult, TaskTick
 
+_MINE_SLOT_ROLES = {"mine_choke", "mine_flank_left", "mine_flank_right"}
+
 
 @dataclass
 class WidowmineLurkTask(BaseTask):
@@ -77,6 +79,72 @@ class WidowmineLurkTask(BaseTask):
         except Exception:
             pass
         return ths
+
+    @staticmethod
+    def _point_from_payload(payload) -> Point2 | None:
+        if not isinstance(payload, dict):
+            return None
+        try:
+            return Point2((float(payload.get("x", 0.0) or 0.0), float(payload.get("y", 0.0) or 0.0)))
+        except Exception:
+            return None
+
+    def _territory_zone_slots(self, *, now: float, zone_key: str) -> list[Point2]:
+        snap = self.awareness.mem.get(K("intel", "territory", "defense", "snapshot"), now=now, default={}) or {}
+        if not isinstance(snap, dict):
+            return []
+        zones = snap.get("zones", {})
+        if not isinstance(zones, dict):
+            return []
+        zone = zones.get(str(zone_key), {})
+        if not isinstance(zone, dict):
+            return []
+        out: list[Point2] = []
+        for slot in list(zone.get("active_slots", []) or []):
+            if not isinstance(slot, dict):
+                continue
+            if str(slot.get("role", "") or "") not in _MINE_SLOT_ROLES:
+                continue
+            pos = self._point_from_payload(slot.get("position"))
+            if pos is not None:
+                out.append(pos)
+        return out
+
+    def _territorial_home_slots(self, bot, *, now: float) -> list[Point2]:
+        snap = self.awareness.mem.get(K("intel", "territory", "defense", "snapshot"), now=now, default={}) or {}
+        if not isinstance(snap, dict):
+            return []
+        zones = snap.get("zones", {})
+        if not isinstance(zones, dict):
+            return []
+        enemy_main = self._enemy_main(bot)
+        zone_entries: list[tuple[float, str, list[Point2]]] = []
+        for zone_key in ("main_ramp", "natural_front", "third_front"):
+            slots = self._territory_zone_slots(now=now, zone_key=zone_key)
+            if not slots:
+                continue
+            zone = zones.get(zone_key, {})
+            center = self._point_from_payload(zone.get("center")) if isinstance(zone, dict) else None
+            ref = center or slots[0]
+            try:
+                enemy_dist = float(ref.distance_to(enemy_main))
+            except Exception:
+                enemy_dist = 9999.0
+            zone_entries.append((enemy_dist, str(zone_key), slots))
+        if not zone_entries:
+            return []
+        zone_entries.sort(key=lambda item: item[0])
+        out: list[Point2] = []
+        for idx, (_enemy_dist, zone_key, slots) in enumerate(zone_entries):
+            copies = 2 if idx == 0 else 1
+            if zone_key == "natural_front":
+                copies = max(copies, 1)
+            for slot in slots:
+                out.append(slot)
+                if copies <= 1:
+                    continue
+                out.extend(self._slots(slot, radius=1.1, count=max(1, copies - 1)))
+        return out
 
     def _home_groups(self, bot) -> list[dict]:
         enemy_main = self._enemy_main(bot)
@@ -199,10 +267,11 @@ class WidowmineLurkTask(BaseTask):
             issued = self._handle_drop_group(bot=bot, medivac=medivac, mines=drop_mines, target=drop_target, retreat=drop_retreat) or issued
 
         slot_idx = 0
-        home_slots: list[Point2] = []
-        for group in home_groups:
-            count = max(1, int(group.get("count", self.group_size)))
-            home_slots.extend(self._slots(group["center"], radius=2.1, count=count))
+        home_slots: list[Point2] = self._territorial_home_slots(bot, now=float(tick.time))
+        if not home_slots:
+            for group in home_groups:
+                count = max(1, int(group.get("count", self.group_size)))
+                home_slots.extend(self._slots(group["center"], radius=2.1, count=count))
         if not home_slots:
             home_slots = [bot.start_location]
         alive_tags = {int(getattr(mine, "tag", 0) or 0) for mine in static_mines}

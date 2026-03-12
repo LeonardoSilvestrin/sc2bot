@@ -503,21 +503,26 @@ class IntelPlanner:
             nat_snapshot = {}
         nat_enemy_power = float(nat_snapshot.get("enemy_nat_power", 0.0) or 0.0)
         nat_presence_power = float(nat_snapshot.get("enemy_presence_nat_side_power", 0.0) or 0.0)
-        # Always propose a patrol so the reaper has something to do (low score = easily preempted).
-        # Raise priority when there is real nat threat or recent rush pressure.
         rush_hard = rush_state in {"CONFIRMED", "HOLDING"}
         nat_threat = bool(nat_enemy_power >= 0.5 or nat_presence_power >= 0.5)
         rush_active_pressure = bool(rush_hard and float(rush_clear_for) < 20.0)
+        own_nat = self._own_natural(bot)
+        nat_intruders = 0
+        try:
+            nat_intruders = int(bot.enemy_units.closer_than(14.0, own_nat).amount)
+        except Exception:
+            nat_intruders = 0
+        should_home_patrol = bool(rush_active_pressure or nat_threat or nat_intruders > 0)
         patrol_pid = self._pid_reaper_patrol()
         reaper_scout_running = awareness.ops_proposal_running(proposal_id=self._pid_reaper_scout(), now=now)
         reaper_exp_running = awareness.ops_proposal_running(proposal_id=self._pid_reaper_expansion_scout(), now=now)
         if (
             reapers_ready >= 1
+            and should_home_patrol
             and not reaper_scout_running
             and not reaper_exp_running
             and not awareness.ops_proposal_running(proposal_id=patrol_pid, now=now)
         ):
-            own_nat = self._own_natural(bot)
             nat_anchor = self._nat_choke_anchor(bot, base_pos=own_nat)
             patrol_points = self._reaper_patrol_points(bot, own_nat=own_nat, nat_anchor=nat_anchor)
             roam_center = nat_anchor
@@ -541,7 +546,7 @@ class IntelPlanner:
                 Proposal(
                     proposal_id=patrol_pid,
                     domain="INTEL",
-                    score=78 if rush_active_pressure else (70 if nat_threat else 38),
+                    score=78 if rush_active_pressure else (70 if nat_threat else 60),
                     tasks=[
                         TaskSpec(
                             task_id="reaper_home_patrol",
@@ -625,7 +630,8 @@ class IntelPlanner:
         # 1) Scan controller (threat + timed verification)
         # -------------------------
         orbital_ready = bool(attention.intel.orbital_ready_to_scan)
-        if orbital_ready and (int(attention.combat.primary_urgency) > 0):
+        # Urgency mínima de 6 para não desperdiçar scan em qualquer ruído de combate
+        if orbital_ready and (int(attention.combat.primary_urgency) >= 6):
             target = self._enemy_main(bot)
             label = "enemy_main"
             scan_cooldown = 20.0
@@ -635,7 +641,15 @@ class IntelPlanner:
                     px = float(pathing_target.get("x", 0.0) or 0.0)
                     py = float(pathing_target.get("y", 0.0) or 0.0)
                     score = float(pathing_target.get("score", 0.0) or 0.0)
-                    if score >= 0.2:
+                    # Só usa pathing_target se tiver confiança alta E o ponto estiver
+                    # razoavelmente perto da nossa base (pressão de ataque real, não
+                    # workers inimigos se movendo no próprio lado do mapa)
+                    _pathing_dist_ok = False
+                    try:
+                        _pathing_dist_ok = float(Point2((px, py)).distance_to(bot.start_location)) <= 50.0
+                    except Exception:
+                        pass
+                    if score >= 0.45 and _pathing_dist_ok and float(now) >= 120.0:
                         target = Point2((px, py))
                         label = "pathing_flow"
                 except Exception:
@@ -791,4 +805,3 @@ class IntelPlanner:
             )
 
         return proposals
-

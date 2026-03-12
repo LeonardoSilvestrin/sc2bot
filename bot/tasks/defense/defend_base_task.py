@@ -13,6 +13,8 @@ from bot.mind.awareness import Awareness, K
 from bot.tasks.base_task import BaseTask, TaskResult, TaskTick
 from bot.tasks.utils.marine_kite import marine_kite_step
 
+_MINE_SLOT_ROLES = {"mine_choke", "mine_flank_left", "mine_flank_right"}
+
 
 @dataclass
 class DefendBaseTask(BaseTask):
@@ -477,8 +479,18 @@ class DefendBaseTask(BaseTask):
             tank_anchor = tank_slots[0]
         if screen_slots:
             defense_anchor = screen_slots[0]
-        mine_slots = self._mine_slots(mineral_center)
         threat = self.threat_pos or attention.combat.primary_threat_pos or defense_anchor
+        mine_slots = [
+            pos for pos in self._slot_positions(zone, roles=_MINE_SLOT_ROLES)
+            if self._pathable(bot, pos)
+        ]
+        if not mine_slots:
+            fallback_mine_center = defense_anchor
+            try:
+                fallback_mine_center = defense_anchor.towards(base_pos, 1.2)
+            except Exception:
+                fallback_mine_center = defense_anchor
+            mine_slots = self._mine_slots(fallback_mine_center)
         enemy_near_base = bot.enemy_units.closer_than(22.0, base_pos)
         bunkers = self._bunkers_near_base(bot, base_pos=base_pos)
         bunker_sites = self._bunker_sites_near_base(bot, base_pos=base_pos)

@@ -199,6 +199,12 @@ class HousekeepingPlanner(BasePlanner):
             if actionable:
                 score = int(self.depot_score) + min(30, max(0, urgency // 2))
 
+                _nat_pos = None
+                try:
+                    _nat_pos = bot.mediator.get_own_nat
+                except Exception:
+                    pass
+
                 def _depot_factory(mission_id: str) -> ControlDepots:
                     return ControlDepots(
                         awareness=awareness,
@@ -206,6 +212,7 @@ class HousekeepingPlanner(BasePlanner):
                         raise_radius=float(self.depot_raise_radius),
                         raise_urgency_min=int(self.depot_raise_urgency_min),
                         raise_enemy_count_min=int(self.depot_raise_enemy_count_min),
+                        no_raise_near=[_nat_pos] if _nat_pos is not None else [],
                     )
 
                 out.extend(

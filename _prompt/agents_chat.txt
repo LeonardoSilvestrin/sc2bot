@@ -110,3 +110,112 @@ MacroAresExecutorTick.tick()
 - O `cc_boom_state` poderia futuramente ser lido pelo `AdvantageGameStatusIntel` para modular peso de expansão
 - Se o bot tiver 4 bases e flood ainda ativo, o cc_boom vai pedir 5a base — considerar cap por fase
 
+---
+
+## Sessão 2026-03-11 — Late Game Push: MoveOutTask + Ataque Multi-Frente
+
+### Contexto
+Bot ficava parado com 200/200 e banco cheio. Precisava de um move-out late-game
+com leapfrog de tanks, bio/mech segurando a frente, e harass paralelo nas bases laterais.
+
+---
+
+### Arquitetura implementada
+
+#### Frente central: `MoveOutTask` (`bot/tasks/map_control/move_out_task.py`)
+
+Task nova que substitui `HoldAnchorTask` (score=97 vs 93) quando o push é ativado.
+
+**3 fases:**
+```
+CONCENTRATE → ADVANCE (leapfrog) → SIEGE_BASE
+```
+
+**Leapfrog de tanks:**
+1. Screen (bio/mech) faz `attack_move` para o waypoint atual
+2. Tanks (unsieged) correm para `leapfrog_pos` = waypoint + 6 tiles à frente
+3. Tanks chegam → siegam
+4. Quando todos os tanks siegados (ou timeout de 12s) → screen avança para próximo waypoint
+5. Repete com 3 saltos intermediários até a base inimiga
+
+**Commit total:**
+- NÃO recua por dano ou urgency moderada
+- Só dá `done()` se bulk perdeu >= 60% do supply inicial (colapso de força)
+- Na fase SIEGE_BASE: tanks siegam, screen ataca estruturas prioritárias
+- Se base limpa → procura próxima estrutura inimiga e atualiza `target_pos`
+
+**Tipos de unidade:**
+- `_SCREEN_TYPES`: Marine, Marauder, Hellion, Cyclone, Thor, Widowmine
+- `_TANK_TYPES`: SiegeTank, SiegeTankSieged
+- Medivacs seguem o centro do screen em todas as fases
+
+---
+
+#### Orquestração: `MapControlPlanner` (modificado)
+
+Novos imports: `MoveOutTask`, `BansheeHarass`, `MedivacDropHarassTask`
+
+**Condições de ativação do push:**
+```python
+template == PREP_PUSH
+AND supply_used >= 160
+AND (minerals >= 400 OR vespene >= 200)
+AND não há MoveOutTask já rodando
+```
+
+**3 proposals paralelas (domínios diferentes — não competem entre si):**
+
+| Proposta | Domínio | Score | Condição |
+|----------|---------|-------|----------|
+| MoveOutTask | MAP_CONTROL | 97 | sempre que push ativo |
+| BansheeHarass (base lateral) | HARASS | 82 | banshee_count >= 1 |
+| MedivacDropHarassTask (2a frente) | HARASS | 80 | medivac idle >= 1 + bio idle >= 4 + sem banshee |
+
+**Lógica de alvo:**
+- Push target: estrutura inimiga mais distante da main inimiga (= base mais externa conhecida)
+- Fallback: expansion mais próxima do inimigo → enemy_start_location
+- Banshee target: nat inimiga (diferente do push_target) → enemy_main
+- Drop target: 1a expansion inimiga mais próxima da main
+- Staging: sector PUSH_STAGING anchor da geometria → fallback ao anchor atual do bulk
+
+---
+
+### Fluxo completo
+
+```
+i2_operational_geometry_intel
+  → template = PREP_PUSH (quando supply >= 14, push_commit >= 0.4, nat tomada)
+
+MapControlPlanner.propose()
+  → push_conditions_met = True
+  → propõe MoveOutTask (MAP_CONTROL 97) — bate HoldAnchorTask (93)
+  → propõe BansheeHarass (HARASS 82) se tiver banshees
+  → propõe MedivacDrop (HARASS 80) se tiver medivac+bio e sem banshee
+
+Ego aceita as 3 proposals (domínios distintos)
+
+MoveOutTask.on_step():
+  CONCENTRATE: concentra no PUSH_STAGING (~20s timeout)
+  ADVANCE: leapfrog 3x até a base
+  SIEGE_BASE: tanks siegam, screen ataca estruturas
+
+BansheeHarass / MedivacDrop: independentes, atacam bases laterais em paralelo
+```
+
+---
+
+### Calibração futura (dívida técnica)
+- `_COLLAPSE_THRESHOLD = 0.40` — threshold de recuo por colapso (40% supply restante)
+- `_LEAPFROG_DELTA = 6.0` — tiles que tanks avançam à frente do screen
+- `_LEAPFROG_MAX_WAIT_S = 12.0` — tempo máximo esperando tanks siegarem antes de avançar
+- `n_leapfrog_steps = 3` — quantidade de saltos intermediários (configurável)
+- Condição de push no planner: `supply >= 160` e `minerals >= 400` — ajustar após testar
+- Drop só proposto quando sem banshee — pode mudar para sempre propor se tiver unidades suficientes
+- `push_commit` ainda não é escrito por nenhum planner (só lido pelo i2) — o i2 ativa PREP_PUSH por outros sinais
+
+---
+
+### Arquivos modificados/criados
+- `bot/tasks/map_control/move_out_task.py` — **novo**
+- `bot/planners/map_control_planner.py` — adicionados imports + lógica late_game_push no final do `propose()`
+

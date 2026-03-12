@@ -135,6 +135,21 @@ class ScvHousekeeping(BaseTask):
             out.update(int(tag) for tag in tracker.keys())
         except Exception:
             pass
+        try:
+            body = getattr(getattr(bot, "rt", None), "body", None)
+            workers = list(getattr(bot, "workers", []) or [])
+            if body is not None:
+                for worker in workers:
+                    try:
+                        if getattr(worker, "type_id", None) != U.SCV:
+                            continue
+                        tag = int(getattr(worker, "tag", -1) or -1)
+                    except Exception:
+                        continue
+                    if tag > 0 and body.owner_of(tag, now=now):
+                        out.add(tag)
+        except Exception:
+            pass
         return out
 
     def _collect_candidate_scvs(self, bot, *, reserved_tags: set[int]):

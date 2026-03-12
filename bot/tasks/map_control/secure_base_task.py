@@ -15,6 +15,7 @@ from bot.mind.awareness import Awareness, K
 from bot.tasks.base_task import BaseTask, TaskResult, TaskTick
 
 _NON_COMBAT = {U.SCV, U.PROBE, U.DRONE, U.MULE, U.LARVA, U.EGG}
+_MINE_SLOT_ROLES = {"mine_choke", "mine_flank_left", "mine_flank_right"}
 
 
 @dataclass
@@ -266,6 +267,33 @@ class SecureBaseTask(BaseTask):
             return int(cargo_used) < int(cargo_max)
         except Exception:
             return True
+
+    @staticmethod
+    def _marine_already_loading(unit) -> bool:
+        try:
+            for order in list(getattr(unit, "orders", []) or []):
+                ab = getattr(getattr(order, "ability", None), "id", None)
+                if ab is not None and "LOAD" in str(ab).upper():
+                    return True
+        except Exception:
+            pass
+        return False
+
+    @classmethod
+    def _handle_marine_bunker(cls, *, unit, bunkers: list, load_range: float = 8.0) -> bool:
+        if getattr(unit, "type_id", None) != U.MARINE:
+            return False
+        ready_bunkers = [b for b in list(bunkers or []) if cls._bunker_has_space(b)]
+        if not ready_bunkers:
+            return False
+        bunker = min(ready_bunkers, key=lambda b: float(unit.distance_to(b)))
+        if cls._marine_already_loading(unit):
+            return True
+        if float(unit.distance_to(bunker)) <= float(load_range):
+            unit(AbilityId.SMART, bunker)
+        else:
+            unit.move(bunker.position)
+        return True
 
     @staticmethod
     def _height(bot, pos: Point2) -> float:
@@ -562,19 +590,12 @@ class SecureBaseTask(BaseTask):
         if unit.type_id == U.MEDIVAC:
             unit.move(self.staging_pos)
             return True
+        if self._handle_marine_bunker(unit=unit, bunkers=bunkers):
+            return True
         reserved_site = self._nearest_reserved_site(unit, reserved_sites, radius=2.6)
         if reserved_site is not None and unit.type_id != U.MEDIVAC:
             unit.move(slot)
             return True
-        if unit.type_id == U.MARINE and bunkers:
-            ready_bunkers = [b for b in bunkers if self._bunker_has_space(b)]
-            if ready_bunkers:
-                bunker = min(ready_bunkers, key=lambda b: float(unit.distance_to(b)))
-                if float(unit.distance_to(bunker)) <= 6.0:
-                    unit(AbilityId.SMART, bunker)
-                else:
-                    unit.move(bunker.position)
-                return True
         if enemy_near:
             unit.attack(min(enemy_near, key=lambda e: float(unit.distance_to(e))))
             return True
@@ -708,17 +729,27 @@ class SecureBaseTask(BaseTask):
             reserved_sites = list(reserved_sites) + self._cc_footprint_sites(self.base_pos)
         perimeter = self._slots(self.hold_pos, radius=4.5, count=max(4, len(units)))
         staging_perimeter = self._slots(self.staging_pos, radius=3.0, count=max(4, len(units)))
-        mine_center = self.staging_pos
-        mine_slots = self._slots(mine_center, radius=2.5, count=4)
+        mine_center = self.hold_pos.towards(self.staging_pos, 0.8)
+        mine_slots = self._slots(mine_center, radius=2.6, count=4)
         support_slots = self._slots(self.hold_pos.towards(self.base_pos, 1.7), radius=1.8, count=3)
         territorial_tank_slots = self._slot_positions(zone, roles={"siege_anchor", "fallback_anchor"})
         territorial_screen_slots = self._slot_positions(zone, roles={"screen_front", "screen_left", "screen_right"})
+        territorial_mine_slots = self._slot_positions(zone, roles=_MINE_SLOT_ROLES)
         territorial_support_slots = self._slot_positions(zone, roles={"rear_support", "vision_spot"})
         perimeter = self._sanitize_slots(bot, perimeter, reserved_sites=reserved_sites, retreat=self.staging_pos, fallback=self.staging_pos)
         staging_perimeter = self._sanitize_slots(bot, staging_perimeter, reserved_sites=reserved_sites, retreat=self.staging_pos, fallback=self.staging_pos)
+        mine_slots = self._sanitize_slots(bot, mine_slots, reserved_sites=reserved_sites, retreat=self.staging_pos, fallback=self.staging_pos)
         support_slots = self._sanitize_slots(bot, support_slots, reserved_sites=reserved_sites, retreat=self.staging_pos, fallback=self.staging_pos)
         if territorial_screen_slots:
             perimeter = territorial_screen_slots
+        if territorial_mine_slots:
+            mine_slots = self._sanitize_slots(
+                bot,
+                territorial_mine_slots,
+                reserved_sites=reserved_sites,
+                retreat=self.staging_pos,
+                fallback=self.staging_pos,
+            )
         if territorial_support_slots:
             support_slots = territorial_support_slots
         tank_units = [u for u in units if u.type_id in {U.SIEGETANK, U.SIEGETANKSIEGED}]
@@ -801,6 +832,9 @@ class SecureBaseTask(BaseTask):
                 ) or issued
                 continue
             if not lowground_cleared:
+                if self._handle_marine_bunker(unit=unit, bunkers=bunkers):
+                    issued = True
+                    continue
                 slot = staging_perimeter[general_idx % len(staging_perimeter)] if staging_perimeter else self.staging_pos
                 general_idx += 1
                 if float(unit.distance_to(slot)) > 2.0:

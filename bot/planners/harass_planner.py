@@ -295,15 +295,18 @@ class HarassPlanner:
         prefer_hellion_only = float(now) <= float(self.propose_hellions_until_s)
 
         if not awareness.ops_proposal_running(proposal_id=pid_rh, now=now) and self._due(awareness=awareness, now=now, pid=pid_rh):
-            reapers_idle = int(bot.units.of_type(U.REAPER).ready.idle.amount)
-            hellions_idle = int(bot.units.of_type(U.HELLION).ready.idle.amount)
-            hellion_count = 4 if hellions_idle >= 4 else max(1, hellions_idle)
+            # Use ready counts instead of idle counts: the lease system decides if a unit
+            # is actually free, and this keeps the reaper from getting stuck at home just
+            # because it still has a stale move/patrol order.
+            reapers_ready = int(bot.units.of_type(U.REAPER).ready.amount)
+            hellions_ready = int(bot.units.of_type(U.HELLION).ready.amount)
+            hellion_count = 4 if hellions_ready >= 4 else max(1, hellions_ready)
             reaper_policy = ReaperHarassPickPolicy(objective=objective)
             hellion_policy = HellionHarassPickPolicy(objective=objective)
 
             reqs: list[UnitRequirement] = []
-            if prefer_hellion_only and hellions_idle >= 1:
-                primary_hellions = 2 if hellions_idle >= 2 else 1
+            if prefer_hellion_only and hellions_ready >= 1:
+                primary_hellions = 2 if hellions_ready >= 2 else 1
                 reqs.append(
                     UnitRequirement(
                         unit_type=U.HELLION,
@@ -312,7 +315,7 @@ class HarassPlanner:
                         required=True,
                     )
                 )
-                if reapers_idle >= 1:
+                if reapers_ready >= 1:
                     reqs.append(
                         UnitRequirement(
                             unit_type=U.REAPER,
@@ -331,7 +334,7 @@ class HarassPlanner:
                             required=False,
                         )
                     )
-            elif reapers_idle >= 1:
+            elif reapers_ready >= 1:
                 reqs.append(
                     UnitRequirement(
                         unit_type=U.REAPER,
@@ -349,7 +352,7 @@ class HarassPlanner:
                             required=False,
                         )
                     )
-            elif hellions_idle >= 1:
+            elif hellions_ready >= 1:
                 reqs.append(
                     UnitRequirement(
                         unit_type=U.HELLION,

@@ -170,7 +170,15 @@ class ScvDefensivePullTask(BaseTask):
 
         base_pos = self._resolve_base_pos(bot)
         threat = self.threat_pos or attention.combat.primary_threat_pos or base_pos
-        enemy_near = bot.enemy_units.closer_than(16.0, base_pos)
+
+        # Usa threat_pos também como centro — rush na rampa fica a 12-18u da base,
+        # mas dentro de poucos tiles da threat_pos
+        enemy_near = bot.enemy_units.closer_than(18.0, base_pos)
+        if enemy_near.amount <= 0 and threat != base_pos:
+            try:
+                enemy_near = bot.enemy_units.closer_than(12.0, threat)
+            except Exception:
+                pass
         if enemy_near.amount <= 0:
             self._done("pull_no_enemy_near_base")
             return TaskResult.done("pull_no_enemy_near_base")
@@ -206,17 +214,22 @@ class ScvDefensivePullTask(BaseTask):
             if repair_targets:
                 top_repair = repair_targets[0]
                 try:
-                    if float(scv.distance_to(top_repair)) <= 3.0 or float(scv.distance_to(hold)) <= 4.0:
+                    if float(scv.distance_to(top_repair)) <= 5.0 or float(scv.distance_to(hold)) <= 4.0:
                         issued = self._issue_repair(scv, top_repair) or issued
                         if issued:
                             continue
                 except Exception:
                     pass
-            if float(scv.distance_to(hold)) > 1.5:
-                scv.move(hold)
-                issued = True
-            elif repair_targets:
-                issued = self._issue_repair(scv, repair_targets[0]) or issued
+            # Sem target de combate e sem repair acessível — devolve ao mining
+            # para não travar SCVs ociosos no hold_ring_point
+            try:
+                if bool(getattr(scv, "is_idle", True)):
+                    bot.mediator.assign_role(tag=int(scv.tag), role=UnitRole.GATHERING)
+                    issued = True
+            except Exception:
+                if float(scv.distance_to(hold)) > 1.5:
+                    scv.move(hold)
+                    issued = True
 
         if issued:
             self._active("scv_pull_active")

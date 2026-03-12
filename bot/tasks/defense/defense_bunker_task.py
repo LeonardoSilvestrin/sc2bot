@@ -659,19 +659,66 @@ class DefenseBunkerTask(BaseTask):
                 best = (float(dist), pos)
         return best[1] if best is not None else None
 
-    def _bunker_started_or_ready(self, bot, *, base_pos: Point2) -> bool:
+    def _bunker_ref(self, bot, *, base_pos: Point2) -> tuple[Point2, float]:
         anchor = self._bunker_anchor(bot, base_pos=base_pos)
         use_anchor = str(self.anchor_mode or "BASE").upper() in {"MAIN_RAMP", "NAT_CHOKE"}
         ref_pos = anchor if use_anchor else base_pos
         ref_radius = 14.0 if use_anchor else 16.0
+        return ref_pos, ref_radius
+
+    @staticmethod
+    def _order_target_point(order_target) -> Point2 | None:
+        if order_target is None:
+            return None
+        try:
+            if hasattr(order_target, "x") and hasattr(order_target, "y"):
+                return Point2((float(order_target.x), float(order_target.y)))
+        except Exception:
+            return None
+        return None
+
+    def _worker_has_bunker_order(self, worker, *, ref_pos: Point2, ref_radius: float) -> bool:
+        try:
+            for order in list(getattr(worker, "orders", []) or []):
+                ability_name = str(getattr(getattr(order, "ability", None), "name", "") or "").upper()
+                if "BUNKER" not in ability_name:
+                    continue
+                target_pos = self._order_target_point(getattr(order, "target", None))
+                if target_pos is None:
+                    return True
+                if float(target_pos.distance_to(ref_pos)) <= float(ref_radius):
+                    return True
+        except Exception:
+            return False
+        return False
+
+    def _worker_tracking_bunker(self, bot, *, worker, base_pos: Point2) -> bool:
+        ref_pos, ref_radius = self._bunker_ref(bot, base_pos=base_pos)
+        try:
+            tracker_entry = self._building_tracker(bot).get(int(getattr(worker, "tag", -1) or -1))
+        except Exception:
+            tracker_entry = None
+        if isinstance(tracker_entry, dict) and tracker_entry.get("structure_type", None) == U.BUNKER:
+            pos = tracker_entry.get("target", None) or tracker_entry.get("pos", None)
+            try:
+                if pos is None or float(pos.distance_to(ref_pos)) <= float(ref_radius):
+                    return True
+            except Exception:
+                return True
+        return self._worker_has_bunker_order(worker, ref_pos=ref_pos, ref_radius=ref_radius)
+
+    def _bunker_started_or_ready(self, bot, *, base_pos: Point2, ignore_worker_tag: int | None = None) -> bool:
+        ref_pos, ref_radius = self._bunker_ref(bot, base_pos=base_pos)
         try:
             for b in bot.structures(U.BUNKER):
                 if float(b.distance_to(ref_pos)) <= float(ref_radius):
                     return True
         except Exception:
             pass
-        for entry in self._building_tracker(bot).values():
+        for tracker_tag, entry in self._building_tracker(bot).items():
             if not isinstance(entry, dict):
+                continue
+            if int(tracker_tag or -1) == int(ignore_worker_tag or -1):
                 continue
             if entry.get("structure_type", None) != U.BUNKER:
                 continue
@@ -686,6 +733,8 @@ class DefenseBunkerTask(BaseTask):
         # Verifica SCVs com ordem de construir bunker (build order pode não usar building_tracker)
         try:
             for scv in bot.units(U.SCV):
+                if int(getattr(scv, "tag", -1) or -1) == int(ignore_worker_tag or -1):
+                    continue
                 for order in list(getattr(scv, "orders", []) or []):
                     ability_name = str(getattr(getattr(order, "ability", None), "name", "") or "").upper()
                     if "BUNKER" not in ability_name and "TERRANBUILD" not in ability_name:
@@ -902,6 +951,33 @@ class DefenseBunkerTask(BaseTask):
             return TaskResult.failed("bunker_worker_missing")
         if getattr(worker, "type_id", None) != U.SCV:
             return TaskResult.failed("bunker_worker_not_scv")
+
+        base_pos = self._resolve_base_pos(bot)
+        if self._worker_tracking_bunker(bot, worker=worker, base_pos=base_pos):
+            self._active("bunker_tracker_pending")
+            return TaskResult.running("bunker_tracker_pending")
+        if self._bunker_started_or_ready(bot, base_pos=base_pos, ignore_worker_tag=int(getattr(worker, "tag", -1) or -1)):
+            self._release_worker(bot, worker)
+            self._done("bunker_ready_or_started")
+            return TaskResult.done("bunker_ready_or_started")
+
+        now = float(tick.time)
+        try:
+            can_afford_bunker = bool(bot.can_afford(U.BUNKER))
+        except Exception:
+            can_afford_bunker = False
+        if not can_afford_bunker:
+            self._issue_attempts = 0
+            self._next_issue_at = float(now) + 0.25
+            self._release_worker(bot, worker)
+            try:
+                if bool(getattr(worker, "is_idle", False)) and bot.mineral_field:
+                    worker.gather(bot.mineral_field.closest_to(worker))
+            except Exception:
+                pass
+            self._active("waiting_bunker_budget")
+            return TaskResult.running("waiting_bunker_budget")
+
         self._reserve_worker(bot, worker)
         try:
             if bool(getattr(worker, "is_carrying_resource", False)):
@@ -911,13 +987,6 @@ class DefenseBunkerTask(BaseTask):
         except Exception:
             pass
 
-        base_pos = self._resolve_base_pos(bot)
-        if self._bunker_started_or_ready(bot, base_pos=base_pos):
-            self._release_worker(bot, worker)
-            self._done("bunker_ready_or_started")
-            return TaskResult.done("bunker_ready_or_started")
-
-        now = float(tick.time)
         anchor = self._bunker_anchor(bot, base_pos=base_pos)
         pos = self._target_pos
         if pos is None:
@@ -960,6 +1029,16 @@ class DefenseBunkerTask(BaseTask):
             self._release_worker(bot, worker)
             self._done("bunker_build_command_failed")
             return TaskResult.done("bunker_build_command_failed")
+        try:
+            placement_still_valid = bool(
+                bot.mediator.can_place_structure(position=pos, structure_type=U.BUNKER)
+            )
+        except Exception:
+            placement_still_valid = True
+        if placement_still_valid:
+            self._next_issue_at = float(now) + 0.35
+            self._active("waiting_bunker_budget_window")
+            return TaskResult.running("waiting_bunker_budget_window")
         self._issue_attempts += 1
         self._next_issue_at = float(now) + 0.55
         self._remember_blocked_position(pos)

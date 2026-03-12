@@ -39,6 +39,9 @@ _ROLE_UNITS = {
     "screen_front": {U.MARINE, U.MARAUDER, U.HELLION, U.CYCLONE, U.THOR, U.THORAP},
     "screen_left": {U.MARINE, U.MARAUDER, U.HELLION, U.CYCLONE},
     "screen_right": {U.MARINE, U.MARAUDER, U.HELLION, U.CYCLONE},
+    "mine_choke": {U.WIDOWMINE, U.WIDOWMINEBURROWED},
+    "mine_flank_left": {U.WIDOWMINE, U.WIDOWMINEBURROWED},
+    "mine_flank_right": {U.WIDOWMINE, U.WIDOWMINEBURROWED},
     "rear_support": {U.MEDIVAC, U.MARINE, U.MARAUDER, U.SCV},
     "vision_spot": {U.MARINE, U.REAPER, U.HELLION},
 }
@@ -85,8 +88,237 @@ def _safe_point(bot, preferred: Point2 | None, fallback: Point2) -> Point2:
     return fallback
 
 
+def _height(bot, pos: Point2 | None) -> float:
+    if pos is None or not _pathable(bot, pos):
+        return -9999.0
+    try:
+        return float(bot.get_terrain_z_height(pos))
+    except Exception:
+        return 0.0
+
+
 def _clamp01(value: float) -> float:
     return max(0.0, min(1.0, float(value)))
+
+
+def _pull_back_towards(target: Point2, home: Point2, *, backoff: float) -> Point2:
+    try:
+        dist = float(target.distance_to(home))
+    except Exception:
+        return home
+    step = max(0.5, min(float(backoff), max(0.5, dist - 0.5)))
+    try:
+        return target.towards(home, step)
+    except Exception:
+        return home
+
+
+def _main_wall_guard_points(bot) -> list[tuple[Point2, float]]:
+    ramp = getattr(bot, "main_base_ramp", None)
+    if ramp is None:
+        return []
+    out: list[tuple[Point2, float]] = []
+    top = getattr(ramp, "top_center", None)
+    bottom = getattr(ramp, "bottom_center", None)
+    if top is not None:
+        out.append((top, 8.5))
+    if bottom is not None:
+        out.append((bottom, 7.5))
+    for depot in list(getattr(ramp, "corner_depots", []) or []):
+        if depot is not None:
+            out.append((depot, 5.75))
+    barracks_pos = getattr(ramp, "barracks_correct_placement", None)
+    if barracks_pos is not None:
+        out.append((barracks_pos, 4.75))
+    return out
+
+
+def _respects_guard_points(
+    pos: Point2 | None,
+    guards: list[tuple[Point2, float]],
+    *,
+    slack: float = 0.15,
+) -> bool:
+    if pos is None:
+        return False
+    for guarded_point, min_dist in list(guards or []):
+        try:
+            if float(pos.distance_to(guarded_point)) + float(slack) < float(min_dist):
+                return False
+        except Exception:
+            continue
+    return True
+
+
+def _mineral_line_center(bot, *, base_pos: Point2, radius: float = 10.5) -> Point2:
+    try:
+        mfs = bot.mineral_field.closer_than(float(radius), base_pos)
+    except Exception:
+        mfs = None
+    if mfs is None or int(getattr(mfs, "amount", 0) or 0) <= 0:
+        return base_pos
+    try:
+        x = sum(float(m.position.x) for m in mfs) / float(mfs.amount)
+        y = sum(float(m.position.y) for m in mfs) / float(mfs.amount)
+        return Point2((x, y))
+    except Exception:
+        return base_pos
+
+
+def _extra_expansion(bot, *, known: list[Point2], reference: Point2) -> Point2 | None:
+    try:
+        exps = list(getattr(bot, "expansion_locations_list", []) or [])
+    except Exception:
+        exps = []
+    candidates: list[Point2] = []
+    for pos in exps:
+        if not isinstance(pos, Point2):
+            continue
+        try:
+            if any(float(pos.distance_to(existing)) <= 5.0 for existing in known):
+                continue
+        except Exception:
+            continue
+        candidates.append(pos)
+    try:
+        candidates.sort(key=lambda p: (float(p.distance_to(reference)), float(p.distance_to(bot.start_location))))
+    except Exception:
+        pass
+    return candidates[0] if candidates else None
+
+
+def _best_main_highground_anchor(
+    bot,
+    *,
+    plateau_ref: Point2,
+    preferred: Point2,
+    fallback: Point2,
+    targets: list[tuple[Point2, float]],
+    used: list[Point2] | None = None,
+    min_distance_from: list[tuple[Point2, float]] | None = None,
+) -> Point2:
+    used = list(used or [])
+    min_distance_from = list(min_distance_from or [])
+    plateau_h = _height(bot, plateau_ref)
+    fallback_h = _height(bot, fallback)
+    min_height = max(plateau_h, fallback_h) - 0.45
+    candidates: list[Point2] = [preferred, fallback, plateau_ref]
+    for target, _weight in targets:
+        candidates.append(_pull_back_towards(target, plateau_ref, backoff=11.5))
+    for radius in (0.0, 1.5, 3.0, 4.5, 6.0):
+        steps = 1 if radius <= 0.01 else 16
+        for idx in range(steps):
+            ang = 0.0 if steps == 1 else (2.0 * math.pi * float(idx)) / float(steps)
+            candidates.append(
+                Point2(
+                    (
+                        float(preferred.x) + (float(radius) * math.cos(ang)),
+                        float(preferred.y) + (float(radius) * math.sin(ang)),
+                    )
+                )
+            )
+
+    best = fallback
+    best_score = -999999.0
+    best_guarded: Point2 | None = None
+    best_guarded_score = -999999.0
+    for candidate in candidates:
+        if not _pathable(bot, candidate):
+            continue
+        cand_h = _height(bot, candidate)
+        if cand_h < min_height:
+            continue
+        score = (cand_h * 0.35) - (0.22 * float(candidate.distance_to(preferred)))
+        respects_guards = _respects_guard_points(candidate, min_distance_from) if min_distance_from else True
+        for guarded_point, min_dist in min_distance_from:
+            dist_guard = float(candidate.distance_to(guarded_point))
+            if dist_guard < float(min_dist):
+                score -= 28.0 + ((float(min_dist) - dist_guard) * 9.0)
+        for target, weight in targets:
+            dist = float(candidate.distance_to(target))
+            if dist <= 13.25:
+                score += 6.0 * float(weight)
+            elif dist <= 16.5:
+                score += max(0.0, (16.5 - dist)) * 0.9 * float(weight)
+            else:
+                score -= (dist - 16.5) * 0.08 * float(weight)
+        for other in used:
+            other_dist = float(candidate.distance_to(other))
+            if other_dist < 2.75:
+                score -= 6.0
+            elif other_dist < 4.5:
+                score -= (4.5 - other_dist) * 1.25
+        if score > best_score:
+            best = candidate
+            best_score = score
+        if respects_guards and score > best_guarded_score:
+            best_guarded = candidate
+            best_guarded_score = score
+    return best_guarded or best
+
+
+def _main_wall_preferred_anchors(
+    bot,
+    *,
+    main_center: Point2,
+    fallback: Point2,
+    nat_center: Point2 | None,
+) -> tuple[list[Point2], Point2 | None]:
+    ramp = getattr(bot, "main_base_ramp", None)
+    top = getattr(ramp, "top_center", None) if ramp is not None else None
+    bottom = getattr(ramp, "bottom_center", None) if ramp is not None else None
+    guards = _main_wall_guard_points(bot)
+    if top is None:
+        base = _safe_point(bot, fallback, main_center)
+        return [
+            base,
+            _safe_point(bot, _offset_perp(base, main_center, side=2.35), base),
+            _safe_point(bot, _offset_perp(base, main_center, side=-2.35), base),
+        ], None
+
+    # O core precisa ficar atras da wall, alguns tiles longe dos depots/barracks.
+    # no highground atrás da wall, longe do corredor de saída para a nat.
+    try:
+        core = _safe_point(bot, top.towards(main_center, 11.5), fallback)
+    except Exception:
+        core = _safe_point(bot, fallback, main_center)
+    for backoff in (9.75, 10.5, 11.25, 12.0):
+        try:
+            candidate = top.towards(main_center, backoff)
+        except Exception:
+            candidate = fallback
+        candidate = _safe_point(bot, candidate, fallback)
+        if _respects_guard_points(candidate, guards):
+            core = candidate
+            break
+
+    if bottom is None:
+        return [
+            core,
+            _safe_point(bot, _offset_perp(core, main_center, side=2.35), core),
+            _safe_point(bot, _offset_perp(core, main_center, side=-2.35), core),
+        ], top
+
+    nat_side = 1.0
+    if nat_center is not None:
+        try:
+            left = _offset_perp(core, bottom, side=2.0)
+            right = _offset_perp(core, bottom, side=-2.0)
+            nat_side = 1.0 if float(left.distance_to(nat_center)) <= float(right.distance_to(nat_center)) else -1.0
+        except Exception:
+            nat_side = 1.0
+
+    nat_cover = _safe_point(
+        bot,
+        _offset_perp(core, bottom, forward=0.15, side=2.5 * nat_side),
+        core,
+    )
+    third_cover = _safe_point(
+        bot,
+        _offset_perp(core, bottom, forward=-0.25, side=-2.5 * nat_side),
+        core,
+    )
+    return [core, nat_cover, third_cover], top
 
 
 def _power_near(units: list, *, center: Point2, radius: float) -> float:
@@ -126,36 +358,52 @@ def _slot(name: str, role: str, pos: Point2, priority: float, *, radius: float =
     }
 
 
-def _build_main_slots(*, fallback: Point2, front: Point2) -> list[dict]:
+def _build_main_slots(*, fallback: Point2, front: Point2, tank_anchors: list[Point2] | None = None) -> list[dict]:
+    anchors = list(tank_anchors or [])
+    primary = anchors[0] if len(anchors) >= 1 else fallback
+    cover_nat = anchors[1] if len(anchors) >= 2 else _offset_perp(primary, front, side=2.0)
+    cover_third = anchors[2] if len(anchors) >= 3 else _offset_perp(primary, front, side=-2.4)
     return [
-        _slot("main_tank_core", "siege_anchor", fallback, 0.98, radius=2.8, critical=True),
-        _slot("main_tank_cover", "fallback_anchor", _offset_perp(fallback, front, side=2.0), 0.84, radius=2.8),
-        _slot("main_screen_front", "screen_front", _offset_perp(fallback, front, forward=2.2), 0.82, critical=True),
-        _slot("main_screen_left", "screen_left", _offset_perp(fallback, front, forward=1.6, side=-2.0), 0.72),
-        _slot("main_screen_right", "screen_right", _offset_perp(fallback, front, forward=1.6, side=2.0), 0.72),
-        _slot("main_support", "rear_support", _offset_perp(fallback, front, forward=-1.6), 0.52, radius=3.0),
+        _slot("main_tank_core", "siege_anchor", primary, 0.98, radius=2.8, critical=True),
+        _slot("main_tank_nat_cover", "fallback_anchor", cover_nat, 0.90, radius=2.8, critical=True),
+        _slot("main_tank_third_cover", "fallback_anchor", cover_third, 0.82, radius=2.8),
+        _slot("main_screen_front", "screen_front", _offset_perp(primary, front, forward=2.2), 0.82, critical=True),
+        _slot("main_screen_left", "screen_left", _offset_perp(primary, front, forward=1.6, side=-2.0), 0.72),
+        _slot("main_screen_right", "screen_right", _offset_perp(primary, front, forward=1.6, side=2.0), 0.72),
+        _slot("main_mine_ramp", "mine_choke", _offset_perp(primary, front, forward=1.1), 0.62, radius=2.2, critical=True),
+        _slot("main_mine_nat_lane", "mine_flank_left", _offset_perp(cover_nat, front, forward=0.6, side=1.2), 0.54, radius=2.1),
+        _slot("main_mine_third_lane", "mine_flank_right", _offset_perp(cover_third, front, forward=0.6, side=-1.2), 0.50, radius=2.1),
+        _slot("main_support", "rear_support", _offset_perp(primary, front, forward=-1.6), 0.52, radius=3.0),
     ]
 
 
 def _build_natural_slots(*, fallback: Point2, front: Point2) -> list[dict]:
+    mine_choke = _offset_perp(front, fallback, forward=0.45)
     return [
         _slot("nat_tank_front", "siege_anchor", fallback, 0.97, radius=2.8, critical=True),
         _slot("nat_tank_rear", "fallback_anchor", _offset_perp(fallback, front, forward=-1.2), 0.86, radius=2.8, critical=True),
         _slot("nat_screen_front", "screen_front", front, 0.90, critical=True),
         _slot("nat_screen_left", "screen_left", _offset_perp(front, fallback, side=-3.0), 0.78),
         _slot("nat_screen_right", "screen_right", _offset_perp(front, fallback, side=3.0), 0.78),
+        _slot("nat_mine_choke", "mine_choke", mine_choke, 0.66, radius=2.1, critical=True),
+        _slot("nat_mine_left", "mine_flank_left", _offset_perp(mine_choke, fallback, side=-2.4), 0.58, radius=2.0),
+        _slot("nat_mine_right", "mine_flank_right", _offset_perp(mine_choke, fallback, side=2.4), 0.54, radius=2.0),
         _slot("nat_support", "rear_support", _offset_perp(fallback, front, forward=-2.0), 0.55, radius=3.0),
         _slot("nat_vision", "vision_spot", _offset_perp(front, fallback, forward=2.0), 0.48, radius=2.2),
     ]
 
 
 def _build_third_slots(*, fallback: Point2, front: Point2) -> list[dict]:
+    mine_choke = _offset_perp(front, fallback, forward=0.55)
     return [
         _slot("third_tank_front", "siege_anchor", fallback, 0.94, radius=2.8, critical=True),
         _slot("third_tank_rear", "fallback_anchor", _offset_perp(fallback, front, forward=-1.4), 0.80, radius=2.8),
         _slot("third_screen_front", "screen_front", front, 0.84, critical=True),
         _slot("third_screen_left", "screen_left", _offset_perp(front, fallback, side=-2.8), 0.70),
         _slot("third_screen_right", "screen_right", _offset_perp(front, fallback, side=2.8), 0.70),
+        _slot("third_mine_choke", "mine_choke", mine_choke, 0.58, radius=2.1, critical=True),
+        _slot("third_mine_left", "mine_flank_left", _offset_perp(mine_choke, fallback, side=-2.2), 0.50, radius=2.0),
+        _slot("third_mine_right", "mine_flank_right", _offset_perp(mine_choke, fallback, side=2.2), 0.46, radius=2.0),
         _slot("third_support", "rear_support", _offset_perp(fallback, front, forward=-2.2), 0.48, radius=3.0),
     ]
 
@@ -299,6 +547,46 @@ def derive_territorial_control_intel(
     third_center = third_anchor
     third_fallback = _safe_point(bot, _offset_perp(third_center, nat_center, forward=2.0), nat_center)
     third_front = _safe_point(bot, third_center, third_fallback)
+    nat_mineral = _mineral_line_center(bot, base_pos=nat_center)
+    third_mineral = _mineral_line_center(bot, base_pos=third_center)
+    fourth_center = _extra_expansion(bot, known=[main_center, nat_center, third_center], reference=third_center)
+    fourth_mineral = _mineral_line_center(bot, base_pos=fourth_center) if fourth_center is not None else None
+
+    wall_tank_pref, ramp_top = _main_wall_preferred_anchors(
+        bot,
+        main_center=main_center,
+        fallback=main_fallback,
+        nat_center=nat_center,
+    )
+    main_tank_anchors: list[Point2] = []
+    # Mantém tanks afastados do topo da rampa (7.0) e do fundo da rampa (6.5).
+    # Isso evita que tanks bloqueiem o corredor de saída principal → nat.
+    main_ramp_guard = _main_wall_guard_points(bot)
+    main_tank_specs = [
+        (
+            wall_tank_pref[0],
+            [(main_front, 1.0), (nat_mineral, 1.0), (nat_center, 0.4)],
+        ),
+        (
+            wall_tank_pref[1],
+            [(main_front, 0.9), (nat_mineral, 1.0), (third_mineral, 0.55), (nat_center, 0.7)],
+        ),
+        (
+            wall_tank_pref[2],
+            [(main_front, 0.8), (third_mineral, 1.0), (third_center, 0.8)] + ([(fourth_mineral, 0.55)] if fourth_mineral is not None else []),
+        ),
+    ]
+    for preferred, targets in main_tank_specs:
+        anchor = _best_main_highground_anchor(
+            bot,
+            plateau_ref=main_center,
+            preferred=preferred,
+            fallback=main_fallback,
+            targets=targets,
+            used=main_tank_anchors,
+            min_distance_from=main_ramp_guard,
+        )
+        main_tank_anchors.append(anchor)
 
     zones = {
         "main_ramp": _zone_status(
@@ -307,7 +595,7 @@ def derive_territorial_control_intel(
             center=main_fallback,
             front=main_front,
             fallback=main_fallback,
-            slots=_build_main_slots(fallback=main_fallback, front=main_front),
+            slots=_build_main_slots(fallback=main_fallback, front=main_front, tank_anchors=main_tank_anchors),
             cfg=cfg,
         ),
         "natural_front": _zone_status(

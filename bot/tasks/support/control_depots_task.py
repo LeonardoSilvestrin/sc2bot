@@ -24,6 +24,7 @@ class ControlDepots(BaseTask):
     raise_radius: float
     raise_urgency_min: int
     raise_enemy_count_min: int
+    no_raise_near: list  # list[Point2] — depots perto dessas posições nunca sobem
 
     def __init__(
         self,
@@ -33,6 +34,7 @@ class ControlDepots(BaseTask):
         raise_radius: float = 12.0,
         raise_urgency_min: int = 18,
         raise_enemy_count_min: int = 2,
+        no_raise_near: list | None = None,
     ):
         super().__init__(task_id="control_depots", domain="MACRO_DEPOT_CONTROL", commitment=0)
         self.awareness = awareness
@@ -40,6 +42,7 @@ class ControlDepots(BaseTask):
         self.raise_radius = float(raise_radius)
         self.raise_urgency_min = int(raise_urgency_min)
         self.raise_enemy_count_min = int(raise_enemy_count_min)
+        self.no_raise_near = list(no_raise_near or [])
 
     @staticmethod
     def _main_wall_depots(bot) -> list:
@@ -119,11 +122,19 @@ class ControlDepots(BaseTask):
         main_wall_threatened: bool,
         target: Point2 | None,
         raise_radius: float,
+        no_raise_near: list,
     ) -> bool:
         try:
             tag = int(depot.tag)
         except Exception:
             return False
+        # Depots em zonas proibidas (ex.: entrada da nat) nunca sobem — bloqueariam reforços
+        for blocked_pos in no_raise_near:
+            try:
+                if float(depot.distance_to(blocked_pos)) <= float(raise_radius):
+                    return False
+            except Exception:
+                continue
         if tag in main_wall_tags:
             return bool(main_wall_threatened)
         if target is None:
@@ -162,6 +173,7 @@ class ControlDepots(BaseTask):
                     main_wall_threatened=main_wall_threatened,
                     target=target,
                     raise_radius=float(self.raise_radius),
+                    no_raise_near=list(self.no_raise_near or []),
                 )
             )
             try:
