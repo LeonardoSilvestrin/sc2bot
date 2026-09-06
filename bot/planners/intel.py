@@ -20,7 +20,10 @@ class IntelPlannerConfig:
     priority: int = 55
     mission_timeout: float = 70.0
     failure_cooldown: float = 18.0
-    minimum_worker_health: float = 0.70
+    unit_types: frozenset[UnitTypeId] = field(
+        default_factory=lambda: frozenset({UnitTypeId.REAPER})
+    )
+    minimum_unit_health: float = 0.70
 
     def __post_init__(self) -> None:
         if not self.target_key.strip():
@@ -33,8 +36,10 @@ class IntelPlannerConfig:
             raise ValueError("invalid priority or mission timeout")
         if self.failure_cooldown < 0.0:
             raise ValueError("failure_cooldown must not be negative")
-        if not 0.0 <= self.minimum_worker_health <= 1.0:
-            raise ValueError("minimum_worker_health must be between 0 and 1")
+        if not self.unit_types:
+            raise ValueError("unit_types must not be empty")
+        if not 0.0 <= self.minimum_unit_health <= 1.0:
+            raise ValueError("minimum_unit_health must be between 0 and 1")
 
 
 @dataclass(slots=True)
@@ -84,10 +89,10 @@ class IntelPlanner:
                 target=location.position,
                 reason=reason,
                 requirement=UnitRequirement(
-                    unit_types=frozenset({UnitTypeId.SCV}),
+                    unit_types=self.config.unit_types,
                     desired=1,
                     minimum=1,
-                    minimum_health=self.config.minimum_worker_health,
+                    minimum_health=self.config.minimum_unit_health,
                     exclude_resource_carriers=True,
                     exclude_constructors=True,
                 ),

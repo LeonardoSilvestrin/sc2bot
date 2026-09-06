@@ -34,7 +34,22 @@ def worker(tag: int) -> UnitSnapshot:
     )
 
 
-def attention(time: float, *, visible: bool, workers: int = 16) -> AttentionSnapshot:
+def reaper(tag: int) -> UnitSnapshot:
+    return UnitSnapshot(
+        tag=tag,
+        unit_type=UnitTypeId.REAPER,
+        position=Point2((10, 10)),
+        health_percentage=1.0,
+        is_flying=False,
+        is_worker=False,
+        can_attack_air=False,
+        can_attack_ground=True,
+    )
+
+
+def attention(
+    time: float, *, visible: bool, workers: int = 16, reapers: int = 1
+) -> AttentionSnapshot:
     world = WorldFacts(
         iteration=int(time),
         time=time,
@@ -42,7 +57,10 @@ def attention(time: float, *, visible: bool, workers: int = 16) -> AttentionSnap
         vespene=0,
         supply_used=float(workers),
         supply_cap=30,
-        own_units=tuple(worker(tag) for tag in range(1, workers + 1)),
+        own_units=(
+            *(worker(tag) for tag in range(1, workers + 1)),
+            *(reaper(9000 + tag) for tag in range(reapers)),
+        ),
         enemy_units=(),
         map=MapFacts(
             center=Point2((50, 50)),
@@ -133,7 +151,7 @@ class ScoutVerticalSliceTests(unittest.IsolatedAsyncioTestCase):
             if event["name"].startswith(("proposal_", "mission_")):
                 self.assertTrue(event["data"]["reason"])
 
-    async def test_admitted_mission_is_blocked_without_an_eligible_worker(self):
+    async def test_admitted_mission_is_blocked_without_an_eligible_unit(self):
         logger = FakeLogger()
         commands = FakeCommands()
         awareness_service = AwarenessService()
@@ -144,7 +162,7 @@ class ScoutVerticalSliceTests(unittest.IsolatedAsyncioTestCase):
         rich_attention = attention(10.0, visible=False)
         awareness = awareness_service.update(rich_attention)
         proposal = planner.propose(rich_attention, awareness)
-        empty_attention = attention(10.0, visible=False, workers=0)
+        empty_attention = attention(10.0, visible=False, workers=0, reapers=0)
         controller = MissionController(logger=logger)
         await controller.tick(
             attention=empty_attention,

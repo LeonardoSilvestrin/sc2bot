@@ -28,6 +28,22 @@ def worker(tag: int):
     )
 
 
+def reaper(tag: int):
+    return SimpleNamespace(
+        tag=tag,
+        type_id=UnitTypeId.REAPER,
+        position=Point2((10, 10)),
+        health_percentage=1.0,
+        is_flying=False,
+        can_attack_air=False,
+        can_attack_ground=True,
+        is_ready=True,
+        is_carrying_resource=False,
+        is_constructing_scv=False,
+        is_structure=False,
+    )
+
+
 class RuntimePilotTests(unittest.IsolatedAsyncioTestCase):
     async def test_runtime_stays_idle_when_map_has_no_configured_scout_target(self):
         fake_bot = SimpleNamespace(
@@ -63,7 +79,7 @@ class RuntimePilotTests(unittest.IsolatedAsyncioTestCase):
             vespene=0,
             supply_used=16,
             supply_cap=23,
-            units=tuple(worker(tag) for tag in range(1, 17)),
+            units=(*(worker(tag) for tag in range(1, 17)), reaper(17)),
             structures=(),
             enemy_units=(),
             enemy_structures=(),
@@ -73,7 +89,7 @@ class RuntimePilotTests(unittest.IsolatedAsyncioTestCase):
             game_info=SimpleNamespace(map_center=Point2((50, 50)), map_name="PilotMap"),
             mediator=SimpleNamespace(
                 get_enemy_nat=target,
-                get_unit_role_dict={"GATHERING": set(range(1, 17))},
+                get_unit_role_dict={"GATHERING": set(range(1, 17)), "IDLE": {17}},
             ),
             target_visible=False,
         )

@@ -13,8 +13,11 @@ The YAML is deliberately limited to the opening. Once
 must own production, expansions, upgrades, and composition.
 
 Scouting is deliberately absent from this build order. The `IntelPlanner` pilot
-owns the worker scout through a proposal, mission, lease, and traced completion;
-the Ares build runner must not dispatch a second scout independently.
+owns the scout mission through a proposal, mission, lease, and traced
+completion; the Ares build runner must not dispatch a second scout
+independently. The scouting unit itself is a planner decision
+(`IntelPlannerConfig.unit_types`, currently the Reaper this build already
+produces), not a build-order concern.
 
 References:
 
