@@ -129,3 +129,9 @@ dmypy.json
 .pyre/
 
 .idea
+
+# Local bot development artifacts (architecture docs remain versioned)
+_botdev/logs/
+_botdev/reports/
+_botdev/tmp/
+.ruff_cache/

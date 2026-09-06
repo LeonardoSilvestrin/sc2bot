@@ -1,5 +1,6 @@
 import random
 import sys
+import argparse
 from os import path
 from pathlib import Path
 import platform
@@ -18,6 +19,7 @@ sys.path.append("ares-sc2")
 import yaml
 
 from bot.main import MyBot
+from bot.infrastructure.logging import JsonlBotLogger, NullBotLogger
 from ladder import run_ladder_game
 
 plt = platform.system()
@@ -44,6 +46,15 @@ MY_BOT_RACE: str = "MyBotRace"
 
 
 def main():
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument(
+        "--bot-log",
+        choices=("off", "events"),
+        default="off",
+        help="Write structured local bot logs to _botdev/logs.",
+    )
+    local_args, _ = parser.parse_known_args()
+
     bot_name: str = "MyBot"
     race: Race = Race.Random
 
@@ -58,9 +69,15 @@ def main():
             if MY_BOT_RACE in config:
                 race = Race[config[MY_BOT_RACE].title()]
 
-    bot1 = Bot(race, MyBot(), bot_name)
+    is_ladder = "--LadderServer" in sys.argv
+    if local_args.bot_log == "events" and not is_ladder:
+        bot_logger = JsonlBotLogger(Path("_botdev/logs"))
+        print(f"Bot structured log: {bot_logger.path}")
+    else:
+        bot_logger = NullBotLogger()
+    bot1 = Bot(race, MyBot(logger=bot_logger), bot_name)
 
-    if "--LadderServer" in sys.argv:
+    if is_ladder:
         # Ladder game started by LadderManager
         print("Starting ladder game...")
         result, opponentid = run_ladder_game(bot1)

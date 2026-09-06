@@ -1,0 +1,62 @@
+# Ares BuildOrderRunner configuration.
+# Format reference: https://aressc2.github.io/ares-sc2/tutorials/build_runner.html
+#
+# This file owns only the deterministic opening. Dynamic Bio macro will take
+# over after `build_order_runner.build_completed` becomes true.
+
+# Never persist opponent/build history to disk. This is ladder-safe.
+UseData: false
+BuildSelection: Cycle
+MinGamesWinrateBased: 3
+
+BuildChoices:
+    Protoss:
+        BotName: Protoss
+        Cycle:
+            - BioThreeOneOne
+    Terran:
+        BotName: Terran
+        Cycle:
+            - BioThreeOneOne
+    Zerg:
+        BotName: Zerg
+        Cycle:
+            - BioThreeOneOne
+    Random:
+        BotName: Random
+        Cycle:
+            - BioThreeOneOne
+
+Builds:
+    # Safe TvX pilot: Reaper expand into the standard Bio 3-1-1 convergence.
+    # The goal is two bases, 3 Barracks, Factory, Starport, Stim, Combat
+    # Shield, +1 Infantry Weapons and the first pair of Medivacs.
+    BioThreeOneOne:
+        AutoSupplyAtSupply: 30
+        ConstantWorkerProductionTill: 55
+        PersistentWorker: false
+        ShouldHandleGasSteal: true
+        OpeningBuildOrder:
+            - 14 supply @ ramp
+            - 15 worker_scout
+            - 16 barracks @ ramp
+            - 16 gas
+            - 0 orbital
+            - 0 reaper
+            - 19 expand
+            - 20 supply @ ramp
+            - 20 barracksreactor
+            - 21 factory @ ramp
+            - 21 gas
+            - 22 marine *2
+            - 23 barracks *2
+            - 24 starport
+            - 25 barrackstechlab *2
+            - 26 stimpack
+            - 26 shieldwall
+            - 27 starportreactor
+            - 28 engineeringbay
+            - 28 terraninfantryweaponslevel1
+            - 30 orbital
+            - 32 marine *4
+            - 36 medivac *2

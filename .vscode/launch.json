@@ -1,0 +1,27 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "SC2 Bot — com logs",
+      "type": "debugpy",
+      "request": "launch",
+      "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "program": "${workspaceFolder}\\run.py",
+      "cwd": "${workspaceFolder}",
+      "args": ["--bot-log", "events"],
+      "console": "integratedTerminal",
+      "justMyCode": false
+    },
+    {
+      "name": "SC2 Bot — sem logs",
+      "type": "debugpy",
+      "request": "launch",
+      "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "program": "${workspaceFolder}\\run.py",
+      "cwd": "${workspaceFolder}",
+      "args": ["--bot-log", "off"],
+      "console": "integratedTerminal",
+      "justMyCode": false
+    }
+  ]
+}

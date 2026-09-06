@@ -1,10 +1,20 @@
 from typing import Optional
 
 from ares import AresBot
+from sc2.data import Result
+
+from bot.application import BotRuntime
+from bot.contracts import BotLogger
+from bot.infrastructure.logging import NullBotLogger
 
 
 class MyBot(AresBot):
-    def __init__(self, game_step_override: Optional[int] = None):
+    def __init__(
+        self,
+        game_step_override: Optional[int] = None,
+        *,
+        logger: BotLogger | None = None,
+    ):
         """Initiate custom bot
 
         Parameters
@@ -14,10 +24,20 @@ class MyBot(AresBot):
             specified elsewhere
         """
         super().__init__(game_step_override)
+        self.bot_logger = logger or NullBotLogger()
+        self.runtime = BotRuntime(logger=self.bot_logger)
+
+    async def on_start(self) -> None:
+        await super().on_start()
+        await self.runtime.on_start(self)
 
     async def on_step(self, iteration: int) -> None:
-        await super(MyBot, self).on_step(iteration)
-        # bot logic here ...
+        await super().on_step(iteration)
+        await self.runtime.on_step(self, iteration=iteration)
+
+    async def on_end(self, game_result: Result) -> None:
+        await super().on_end(game_result)
+        await self.runtime.on_end(self, result=game_result)
 
     """
     Can use `python-sc2` hooks as usual, but make a call the inherited method in the superclass
