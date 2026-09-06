@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-from typing import Any, Iterable
+from collections.abc import Iterable, Mapping
+from typing import Any
 
 from bot.attention.models import AttentionSnapshot
 from bot.awareness.models import AwarenessSnapshot
 from bot.contracts.commands import MissionCommands
 from bot.contracts.logging import BotLogger
 from bot.ego.allocator import UnitAllocator
+from bot.ego.executor_registry import DEFAULT_EXECUTOR_FACTORIES, MissionExecutorFactory
 from bot.ego.mission_board import MissionBoard
 from bot.ego.models import (
     Mission,
@@ -15,7 +17,7 @@ from bot.ego.models import (
     MissionSnapshot,
     MissionStatus,
 )
-from bot.executors import MissionContext, MissionExecutor, MissionOutcome, ScoutExecutor
+from bot.executors import MissionContext, MissionExecutor, MissionOutcome
 
 
 class MissionController:
@@ -27,10 +29,16 @@ class MissionController:
         logger: BotLogger,
         allocator: UnitAllocator | None = None,
         board: MissionBoard | None = None,
+        executor_factories: Mapping[MissionKind, MissionExecutorFactory] | None = None,
     ) -> None:
         self.logger = logger
         self.allocator = allocator or UnitAllocator()
         self.board = board or MissionBoard()
+        self._executor_factories = (
+            DEFAULT_EXECUTOR_FACTORIES
+            if executor_factories is None
+            else executor_factories
+        )
         self._executors: dict[str, MissionExecutor] = {}
         self._processed_proposals: set[str] = set()
         self._cooldown_until: dict[str, float] = {}
@@ -123,12 +131,9 @@ class MissionController:
 
             if mission.started_at is None:
                 mission.started_at = now
-                self._executors[mission.mission_id] = ScoutExecutor(
-                    mission_id=mission.mission_id,
-                    target_key=mission.proposal.target_key,
-                    target=mission.proposal.target,
-                    started_at=now,
-                )
+                self._executors[mission.mission_id] = self._executor_factories[
+                    mission.proposal.kind
+                ](mission, now)
                 mission.status = MissionStatus.ACTIVE
                 mission.last_reason = "unit_requirements_satisfied"
                 self._emit("mission_started", now, mission.last_reason, mission=mission)
@@ -190,7 +195,7 @@ class MissionController:
                 proposal=proposal,
             )
             return
-        if proposal.kind is not MissionKind.SCOUT:
+        if proposal.kind not in self._executor_factories:
             self._emit(
                 "proposal_rejected",
                 now,

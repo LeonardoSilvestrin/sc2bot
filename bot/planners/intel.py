@@ -120,4 +120,6 @@ class IntelPlanner:
         preferred_alive = any(
             unit.unit_type in self.config.unit_types for unit in world.own_units
         )
-        return self.config.unit_types if preferred_alive else self.config.fallback_unit_types
+        if preferred_alive:
+            return self.config.unit_types
+        return self.config.fallback_unit_types

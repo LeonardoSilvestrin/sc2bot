@@ -43,7 +43,9 @@ class IntelPlannerTests(unittest.TestCase):
         proposals = IntelPlanner().propose(observed, awareness)
 
         self.assertEqual(len(proposals), 1)
-        self.assertEqual(proposals[0].requirement.unit_types, frozenset({UnitTypeId.SCV}))
+        self.assertEqual(
+            proposals[0].requirement.unit_types, frozenset({UnitTypeId.SCV})
+        )
 
     def test_prefers_reaper_when_one_is_alive(self):
         observed = attention(10.0, visible=False, reapers=1)
@@ -52,4 +54,6 @@ class IntelPlannerTests(unittest.TestCase):
         proposals = IntelPlanner().propose(observed, awareness)
 
         self.assertEqual(len(proposals), 1)
-        self.assertEqual(proposals[0].requirement.unit_types, frozenset({UnitTypeId.REAPER}))
+        self.assertEqual(
+            proposals[0].requirement.unit_types, frozenset({UnitTypeId.REAPER})
+        )

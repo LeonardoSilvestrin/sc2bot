@@ -1,4 +1,3 @@
-from typing import Optional
 
 from ares import AresBot
 from sc2.data import Result
@@ -11,7 +10,7 @@ from bot.infrastructure.logging import NullBotLogger
 class MyBot(AresBot):
     def __init__(
         self,
-        game_step_override: Optional[int] = None,
+        game_step_override: int | None = None,
         *,
         logger: BotLogger | None = None,
     ):
@@ -40,7 +39,8 @@ class MyBot(AresBot):
         await self.runtime.on_end(self, result=game_result)
 
     """
-    Can use `python-sc2` hooks as usual, but make a call the inherited method in the superclass
+    Can use `python-sc2` hooks as usual, but make a call the inherited method in
+    the superclass
     Examples:
     """
     # async def on_start(self) -> None:
@@ -68,7 +68,9 @@ class MyBot(AresBot):
     #
     #     # custom on_unit_destroyed logic here ...
     #
-    # async def on_unit_took_damage(self, unit: Unit, amount_damage_taken: float) -> None:
+    # async def on_unit_took_damage(
+    #     self, unit: Unit, amount_damage_taken: float
+    # ) -> None:
     #     await super(MyBot, self).on_unit_took_damage(unit, amount_damage_taken)
     #
     #     # custom on_unit_took_damage logic here ...
