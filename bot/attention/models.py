@@ -1,14 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
-
-if TYPE_CHECKING:
-    from bot.awareness.models import AwarenessSnapshot
-    from bot.knowledge.models import EnemyKnowledgeView
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,6 +17,20 @@ class UnitSnapshot:
     can_attack_air: bool
     can_attack_ground: bool
     visible_now: bool = True
+    is_ready: bool = True
+    is_carrying_resource: bool = False
+    is_structure: bool = False
+    is_constructing: bool = False
+    available_for_mission: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class MapObservation:
+    """A selected map point and whether the game currently exposes it."""
+
+    key: str
+    position: Point2
+    visible_now: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,6 +38,10 @@ class MapFacts:
     center: Point2
     own_start: Point2
     enemy_starts: tuple[Point2, ...]
+    observations: tuple[MapObservation, ...] = ()
+
+    def observation(self, key: str) -> MapObservation | None:
+        return next((item for item in self.observations if item.key == key), None)
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,23 +55,12 @@ class WorldFacts:
     own_units: tuple[UnitSnapshot, ...]
     enemy_units: tuple[UnitSnapshot, ...]
     map: MapFacts
-
-
-@dataclass(frozen=True, slots=True)
-class MissionSummary:
-    action_id: str
-    action_type: str
-    status: str
-    priority: int
-    started_at: float | None
-    assigned_unit_tags: tuple[int, ...]
+    own_structures: tuple[UnitSnapshot, ...] = ()
+    enemy_structures: tuple[UnitSnapshot, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
 class AttentionSnapshot:
-    """Immutable, authorized view consumed by actions."""
+    """Selected, immutable observations from the current game frame."""
 
     world: WorldFacts
-    enemy_knowledge: EnemyKnowledgeView
-    awareness: AwarenessSnapshot
-    missions: tuple[MissionSummary, ...]

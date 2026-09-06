@@ -6,7 +6,7 @@ from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
 from bot.attention.models import MapFacts, UnitSnapshot, WorldFacts
-from bot.knowledge import EnemyKnowledge
+from bot.awareness.enemy import EnemyKnowledge
 
 
 def world(time: float, enemies: tuple[UnitSnapshot, ...]) -> WorldFacts:
@@ -45,7 +45,7 @@ class EnemyKnowledgeTests(unittest.TestCase):
         )
 
         view = knowledge.update(world(15.0, ()))
-        sighting = view.by_tag(77)
+        sighting = next(item for item in view if item.tag == 77)
 
         self.assertIsNotNone(sighting)
         self.assertEqual(sighting.first_seen_at, 10.0)

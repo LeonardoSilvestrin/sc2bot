@@ -2,36 +2,68 @@ from __future__ import annotations
 
 from sc2.position import Point2
 
-from bot.units.registry import UnitRegistry
+from bot.ego.allocator import UnitAllocator
 
 
 class UnauthorizedUnitCommand(RuntimeError):
     pass
 
 
-class AresActionCommands:
-    """Validates unit ownership before forwarding commands to python-sc2."""
+class AresMissionCommands:
+    """Validates leases and translates mission intent into Ares behaviors."""
 
-    def __init__(self, bot, registry: UnitRegistry) -> None:
+    def __init__(self, bot, allocator: UnitAllocator) -> None:
         self._bot = bot
-        self._registry = registry
+        self._allocator = allocator
 
-    def _unit(self, *, action_id: str, unit_tag: int):
-        if self._registry.owner_of(unit_tag) != action_id:
-            raise UnauthorizedUnitCommand(
-                f"action {action_id!r} does not own unit {unit_tag}"
-            )
+    def _unit(self, *, mission_id: str, unit_tag: int):
+        self._authorize(mission_id=mission_id, unit_tag=unit_tag)
         unit = self._bot.unit_tag_dict.get(unit_tag)
         if unit is None:
             raise LookupError(f"unit {unit_tag} is no longer available")
         return unit
 
-    def move(
-        self, *, action_id: str, unit_tag: int, target: Point2, queue: bool = False
-    ) -> None:
-        self._unit(action_id=action_id, unit_tag=unit_tag).move(target, queue=queue)
+    def _authorize(self, *, mission_id: str, unit_tag: int) -> None:
+        if self._allocator.owner_of(unit_tag) != mission_id:
+            raise UnauthorizedUnitCommand(
+                f"mission {mission_id!r} does not own unit {unit_tag}"
+            )
 
-    def attack(
-        self, *, action_id: str, unit_tag: int, target: Point2, queue: bool = False
+    def path_to(
+        self,
+        *,
+        mission_id: str,
+        unit_tag: int,
+        target: Point2,
+        success_at_distance: float,
     ) -> None:
-        self._unit(action_id=action_id, unit_tag=unit_tag).attack(target, queue=queue)
+        unit = self._unit(mission_id=mission_id, unit_tag=unit_tag)
+        # Local imports keep Ares behind the infrastructure boundary.
+        from ares.behaviors.combat.individual import PathUnitToTarget
+        from ares.consts import UnitRole
+
+        if unit.type_id == self._bot.worker_type:
+            self._bot.mediator.remove_worker_from_mineral(worker_tag=unit_tag)
+        self._bot.mediator.assign_role(tag=unit_tag, role=UnitRole.SCOUTING)
+        self._bot.register_behavior(
+            PathUnitToTarget(
+                unit=unit,
+                grid=self._bot.mediator.get_ground_grid,
+                target=target,
+                success_at_distance=success_at_distance,
+            )
+        )
+
+    def release(self, *, mission_id: str, unit_tag: int) -> None:
+        self._authorize(mission_id=mission_id, unit_tag=unit_tag)
+        unit = self._bot.unit_tag_dict.get(unit_tag)
+        if unit is None:
+            return
+        from ares.consts import UnitRole
+
+        role = (
+            UnitRole.GATHERING
+            if unit.type_id == self._bot.worker_type
+            else UnitRole.IDLE
+        )
+        self._bot.mediator.assign_role(tag=unit_tag, role=role)

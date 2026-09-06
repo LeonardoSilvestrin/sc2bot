@@ -20,9 +20,11 @@ class JsonlBotLoggerTests(unittest.TestCase):
             )
             logger.close()
 
-            lines = (Path(directory) / "pilot.jsonl").read_text(
-                encoding="utf-8"
-            ).splitlines()
+            lines = (
+                (Path(directory) / "pilot.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
+            )
             record = json.loads(lines[0])
 
             self.assertEqual(len(lines), 1)

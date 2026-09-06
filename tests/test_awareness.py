@@ -5,9 +5,14 @@ import unittest
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
-from bot.attention.models import MapFacts, UnitSnapshot, WorldFacts
+from bot.attention.models import (
+    AttentionSnapshot,
+    MapFacts,
+    MapObservation,
+    UnitSnapshot,
+    WorldFacts,
+)
 from bot.awareness import AwarenessService
-from bot.knowledge import EnemyKnowledge
 
 
 def unit(tag: int, unit_type: UnitTypeId, *, enemy_air_attack: bool = False):
@@ -41,8 +46,40 @@ class AwarenessServiceTests(unittest.TestCase):
             ),
         )
 
-        knowledge = EnemyKnowledge().update(world)
-        snapshot = AwarenessService().update(world, knowledge)
+        snapshot = AwarenessService().update(AttentionSnapshot(world))
 
         self.assertGreater(snapshot.relative_strength.score, 0)
         self.assertEqual(snapshot.threat.known_anti_air_units, 1)
+
+    def test_location_freshness_is_typed_and_persistent(self):
+        target = Point2((80, 80))
+        service = AwarenessService(location_stale_after=90.0)
+
+        def snapshot(time: float, visible: bool):
+            facts = WorldFacts(
+                iteration=int(time),
+                time=time,
+                minerals=0,
+                vespene=0,
+                supply_used=0,
+                supply_cap=0,
+                own_units=(),
+                enemy_units=(),
+                map=MapFacts(
+                    center=Point2((50, 50)),
+                    own_start=Point2((10, 10)),
+                    enemy_starts=(Point2((90, 90)),),
+                    observations=(MapObservation("enemy_natural", target, visible),),
+                ),
+            )
+            return service.update(AttentionSnapshot(facts))
+
+        fresh = snapshot(10.0, True).enemy.location("enemy_natural")
+        under_fog = snapshot(50.0, False).enemy.location("enemy_natural")
+        stale = snapshot(100.0, False).enemy.location("enemy_natural")
+
+        self.assertEqual(fresh.last_observed_at, 10.0)
+        self.assertFalse(under_fog.is_stale)
+        self.assertEqual(under_fog.age, 40.0)
+        self.assertTrue(stale.is_stale)
+        self.assertEqual(stale.confidence, 0.0)

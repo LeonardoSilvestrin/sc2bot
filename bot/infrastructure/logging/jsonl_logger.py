@@ -32,7 +32,9 @@ class JsonlBotLogger:
             "game_time": round(float(game_time), 3),
             "data": data or {},
         }
-        line = json.dumps(record, ensure_ascii=False, default=str, separators=(",", ":"))
+        line = json.dumps(
+            record, ensure_ascii=False, default=str, separators=(",", ":")
+        )
         with self._lock:
             self._file.write(line + "\n")
             self._file.flush()

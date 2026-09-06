@@ -38,7 +38,6 @@ Builds:
         ShouldHandleGasSteal: true
         OpeningBuildOrder:
             - 14 supply @ ramp
-            - 15 worker_scout
             - 16 barracks @ ramp
             - 16 gas
             - 0 orbital

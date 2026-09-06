@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from bot.awareness.enemy.models import EnemyAwareness
+
 
 @dataclass(frozen=True, slots=True)
 class RelativeStrength:
@@ -22,6 +24,7 @@ class ThreatAssessment:
 class AwarenessSnapshot:
     """What the bot currently believes, derived from known facts."""
 
+    enemy: EnemyAwareness
     relative_strength: RelativeStrength
     threat: ThreatAssessment
     updated_at: float

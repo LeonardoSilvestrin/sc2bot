@@ -1,10 +1,17 @@
 from .builder import AttentionBuilder
-from .models import AttentionSnapshot, MissionSummary, UnitSnapshot, WorldFacts
+from .models import (
+    AttentionSnapshot,
+    MapFacts,
+    MapObservation,
+    UnitSnapshot,
+    WorldFacts,
+)
 
 __all__ = [
     "AttentionBuilder",
     "AttentionSnapshot",
-    "MissionSummary",
+    "MapFacts",
+    "MapObservation",
     "UnitSnapshot",
     "WorldFacts",
 ]

@@ -25,8 +25,17 @@ class FakeCommands:
     def __init__(self) -> None:
         self.commands: list[tuple] = []
 
-    def move(self, *, action_id, unit_tag, target, queue=False) -> None:
-        self.commands.append(("move", action_id, unit_tag, target, queue))
+    def path_to(
+        self,
+        *,
+        mission_id,
+        unit_tag,
+        target,
+        success_at_distance,
+    ) -> None:
+        self.commands.append(
+            ("path_to", mission_id, unit_tag, target, success_at_distance)
+        )
 
-    def attack(self, *, action_id, unit_tag, target, queue=False) -> None:
-        self.commands.append(("attack", action_id, unit_tag, target, queue))
+    def release(self, *, mission_id, unit_tag) -> None:
+        self.commands.append(("release", mission_id, unit_tag))

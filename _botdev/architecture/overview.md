@@ -1,23 +1,33 @@
 # Pilot architecture
 
-The pilot implements one directional flow:
+The official architecture is a one-way causal flow:
 
 ```text
-Ares -> AttentionBuilder (current facts) -> Knowledge (persistent facts)
-     -> Awareness (beliefs) -> AttentionSnapshot
-     -> ActionScheduler -> command adapter -> Ares
+Game / Ares
+    -> Attention (selected current observations)
+    -> Awareness (memory and derived beliefs)
+    -> Planners (independent arguments)
+    -> MissionProposal
+    -> Ego / MissionController (admission and arbitration)
+    -> MissionBoard + UnitAllocator (commitments and leases)
+    -> MissionExecutor
+    -> infrastructure command port
+    -> Ares Behaviors
 ```
 
 ## Ownership
 
-- `attention` publishes immutable facts, beliefs, and mission summaries.
-- `knowledge` owns persistent observations such as first/last seen times.
-- `awareness` derives beliefs from facts and never issues commands.
-- `actions` retain operational state and return explicit results.
-- `units` is the sole authority for action-to-unit ownership.
-- `application` orchestrates the frame without containing strategy.
-- `infrastructure` is the only layer that touches files or adapts Ares commands.
+- `attention` publishes immutable current facts. It contains no beliefs or mission
+  bookkeeping.
+- `awareness` owns persistent enemy sightings and typed freshness beliefs.
+- `planners` propose useful work. They never allocate or command units.
+- `ego` is the only domain allowed to admit proposals, change mission lifecycle,
+  transfer leases, or release units.
+- `executors` implement one admitted mission and use only explicit command ports.
+- `infrastructure/ares` translates those ports into Ares roles and behaviors.
+- `application` wires the frame together without containing strategic rules.
 
-The initial runtime submits no actions. This deliberately makes the pilot neutral
-while its contracts are validated. Bio strategy and the build runner are the next
-vertical slice.
+The first vertical slice scouts the enemy natural. Unknown information creates an
+initial scout after the economy reaches 16 workers. A location observed previously
+can be scouted again after 240 game-seconds when its observation is at least 90
+seconds old. These values live in `IntelPlannerConfig`.

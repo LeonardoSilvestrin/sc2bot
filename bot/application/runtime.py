@@ -1,24 +1,31 @@
 from __future__ import annotations
 
-from bot.actions.scheduler import ActionScheduler
 from bot.attention.builder import AttentionBuilder
+from bot.awareness.models import AwarenessSnapshot
 from bot.awareness.service import AwarenessService
 from bot.contracts.logging import BotLogger
-from bot.infrastructure.ares.commands import AresActionCommands
-from bot.knowledge import EnemyKnowledge
-from bot.units.registry import UnitRegistry
+from bot.ego import MissionController
+from bot.infrastructure.ares import AresMissionCommands, register_baseline_behaviors
+from bot.planners import IntelPlanner, IntelPlannerConfig
 
 
 class BotRuntime:
-    """Composition root for the pilot architecture."""
+    """Composition root for the traceable scout vertical slice."""
 
-    def __init__(self, *, logger: BotLogger) -> None:
+    def __init__(
+        self,
+        *,
+        logger: BotLogger,
+        intel_config: IntelPlannerConfig | None = None,
+    ) -> None:
         self.logger = logger
+        self.intel_config = intel_config or IntelPlannerConfig()
         self.attention_builder = AttentionBuilder()
-        self.awareness = AwarenessService()
-        self.enemy_knowledge = EnemyKnowledge()
-        self.units = UnitRegistry()
-        self.actions = ActionScheduler(registry=self.units, logger=logger)
+        self.awareness = AwarenessService(
+            location_stale_after=self.intel_config.location_stale_after
+        )
+        self.intel_planner = IntelPlanner(config=self.intel_config)
+        self.missions = MissionController(logger=logger)
         self._last_build_signature: tuple | None = None
         self._last_awareness_signature: tuple | None = None
         self._last_snapshot_at: float = -999.0
@@ -33,18 +40,20 @@ class BotRuntime:
 
     async def on_step(self, bot, *, iteration: int) -> None:
         world = self.attention_builder.world_facts(bot, iteration=iteration)
-        enemy_knowledge = self.enemy_knowledge.update(world)
-        awareness = self.awareness.update(world, enemy_knowledge)
-        attention = self.attention_builder.build(
-            world=world,
-            enemy_knowledge=enemy_knowledge,
+        attention = self.attention_builder.build(world=world)
+        awareness = self.awareness.update(attention)
+        proposals = self.intel_planner.propose(attention, awareness)
+
+        register_baseline_behaviors(bot)
+        commands = AresMissionCommands(bot, self.missions.allocator)
+        await self.missions.tick(
+            attention=attention,
             awareness=awareness,
-            missions=self.actions.mission_summaries(),
+            proposals=proposals,
+            commands=commands,
         )
         self._log_build_order(bot, game_time=world.time)
-        self._log_awareness(attention)
-        commands = AresActionCommands(bot, self.units)
-        await self.actions.tick(attention, commands=commands)
+        self._log_awareness(attention, awareness)
 
     def _log_build_order(self, bot, *, game_time: float) -> None:
         runner = getattr(bot, "build_order_runner", None)
@@ -74,15 +83,23 @@ class BotRuntime:
             },
         )
 
-    def _log_awareness(self, attention) -> None:
-        strength = attention.awareness.relative_strength
-        threat = attention.awareness.threat
+    def _log_awareness(self, attention, awareness: AwarenessSnapshot) -> None:
+        strength = awareness.relative_strength
+        threat = awareness.threat
+        live_missions = tuple(
+            mission
+            for mission in self.missions.snapshots()
+            if not mission.status.terminal
+        )
         signature = (
             strength.own_combat_units,
             strength.known_enemy_combat_units,
             threat.visible_enemy_units,
             threat.known_anti_air_units,
-            len(attention.enemy_knowledge.sightings),
+            len(awareness.enemy.sightings),
+            tuple(
+                (mission.mission_id, mission.status.name) for mission in live_missions
+            ),
         )
         changed = signature != self._last_awareness_signature
         periodic = attention.world.time - self._last_snapshot_at >= 10.0
@@ -104,7 +121,7 @@ class BotRuntime:
                 "strength_confidence": round(strength.confidence, 3),
                 "visible_enemies": threat.visible_enemy_units,
                 "known_anti_air": threat.known_anti_air_units,
-                "active_missions": len(attention.missions),
+                "active_missions": len(live_missions),
             },
         )
 

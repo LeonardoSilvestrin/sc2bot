@@ -37,8 +37,9 @@ if platform.system() == "Windows":
         "ares-sc2\\tests",
         "ares-src\\docs",
         "map_analyzer\\pickle_gameinfo",
+        "__pycache__",
     ]
-    FILETYPES_TO_IGNORE: Tuple = (".c", ".so", "pyx", "pyi")
+    FILETYPES_TO_IGNORE: Tuple = (".c", ".so", ".pyc", ".pyo", "pyx", "pyi")
     ROOT_DIRECTORY = "./"
 else:
     EXCLUDE: list[str] = [
@@ -47,8 +48,9 @@ else:
         "ares-sc2/tests",
         "ares-sc2/docs",
         "map_analyzer/pickle_gameinfo",
+        "__pycache__",
     ]
-    FILETYPES_TO_IGNORE: Tuple = (".c", ".pyd", ".pyx", ".pyi")
+    FILETYPES_TO_IGNORE: Tuple = (".c", ".pyd", ".pyc", ".pyo", ".pyx", ".pyi")
     ROOT_DIRECTORY = "./"
 
 ZIP_DIRECTORIES: Dict[str, Dict] = {

@@ -22,6 +22,17 @@
       "args": ["--bot-log", "off"],
       "console": "integratedTerminal",
       "justMyCode": false
+    },
+    {
+      "name": "Read Log",
+      "type": "debugpy",
+      "request": "launch",
+      "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "program": "${workspaceFolder}\\scripts\\read_log.py",
+      "cwd": "${workspaceFolder}",
+      "args": [],
+      "console": "integratedTerminal",
+      "justMyCode": false
     }
   ]
 }

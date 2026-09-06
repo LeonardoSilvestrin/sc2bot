@@ -31,6 +31,13 @@ class TerranBuildConfigTests(unittest.TestCase):
             command = step.split()[1].lower()
             if command in special:
                 continue
-            if command.upper() not in UnitTypeId.__members__ and command.upper() not in UpgradeId.__members__:
+            if (
+                command.upper() not in UnitTypeId.__members__
+                and command.upper() not in UpgradeId.__members__
+            ):
                 invalid.append(command)
         self.assertEqual(invalid, [])
+
+    def test_opening_does_not_bypass_the_mission_scout(self):
+        commands = self.config["Builds"]["BioThreeOneOne"]["OpeningBuildOrder"]
+        self.assertFalse(any("worker_scout" in step.lower() for step in commands))

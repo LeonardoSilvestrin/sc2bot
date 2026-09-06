@@ -12,6 +12,10 @@ The YAML is deliberately limited to the opening. Once
 `build_order_runner.build_completed` is true, a future dynamic Bio macro module
 must own production, expansions, upgrades, and composition.
 
+Scouting is deliberately absent from this build order. The `IntelPlanner` pilot
+owns the worker scout through a proposal, mission, lease, and traced completion;
+the Ares build runner must not dispatch a second scout independently.
+
 References:
 
 - https://aressc2.github.io/ares-sc2/tutorials/build_runner.html
