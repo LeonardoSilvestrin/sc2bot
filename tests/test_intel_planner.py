@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import unittest
 
+from sc2.ids.unit_typeid import UnitTypeId
+
 from bot.awareness import AwarenessService
 from bot.planners import IntelPlanner
 from tests.test_scout_slice import attention
@@ -33,3 +35,21 @@ class IntelPlannerTests(unittest.TestCase):
         proposals = planner.propose(periodic, periodic_awareness)
         self.assertEqual(len(proposals), 1)
         self.assertEqual(proposals[0].reason, "enemy_natural_information_stale")
+
+    def test_falls_back_to_worker_when_no_reaper_is_alive(self):
+        observed = attention(10.0, visible=False, reapers=0)
+        awareness = AwarenessService().update(observed)
+
+        proposals = IntelPlanner().propose(observed, awareness)
+
+        self.assertEqual(len(proposals), 1)
+        self.assertEqual(proposals[0].requirement.unit_types, frozenset({UnitTypeId.SCV}))
+
+    def test_prefers_reaper_when_one_is_alive(self):
+        observed = attention(10.0, visible=False, reapers=1)
+        awareness = AwarenessService().update(observed)
+
+        proposals = IntelPlanner().propose(observed, awareness)
+
+        self.assertEqual(len(proposals), 1)
+        self.assertEqual(proposals[0].requirement.unit_types, frozenset({UnitTypeId.REAPER}))

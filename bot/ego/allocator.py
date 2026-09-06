@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
 from bot.attention.models import UnitSnapshot
@@ -48,6 +49,10 @@ class UnitAllocator:
     def owner_of(self, unit_tag: int) -> str | None:
         lease = self._leases.get(unit_tag)
         return None if lease is None else lease.mission_id
+
+    def unit_type(self, unit_tag: int) -> UnitTypeId | None:
+        unit = self._units.get(unit_tag)
+        return None if unit is None else unit.unit_type
 
     def assigned_tags(self, mission_id: str) -> tuple[int, ...]:
         return tuple(

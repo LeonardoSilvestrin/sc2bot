@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Iterable
 
 from bot.attention.models import AttentionSnapshot
 from bot.awareness.models import AwarenessSnapshot
@@ -95,6 +95,7 @@ class MissionController:
                     "higher_priority_after_commitment_window",
                     mission=mission,
                     unit_tags=[transfer.unit_tag],
+                    unit_types=self._unit_type_names([transfer.unit_tag]),
                     from_mission_id=transfer.from_mission_id,
                     from_proposal_id=(
                         previous.proposal.proposal_id if previous is not None else None
@@ -114,6 +115,7 @@ class MissionController:
                     mission=mission,
                     previous_unit_tags=list(previous_tags),
                     unit_tags=list(allocation.assigned_tags),
+                    unit_types=self._unit_type_names(allocation.assigned_tags),
                 )
             if not allocation.requirements_satisfied:
                 self._block(mission, "unit_requirements_not_satisfied", now)
@@ -214,6 +216,12 @@ class MissionController:
         mission.last_reason = "waiting_for_unit_allocation"
         self._emit("mission_queued", now, mission.last_reason, mission=mission)
 
+    def _unit_type_names(self, tags: Iterable[int]) -> list[str | None]:
+        return [
+            unit_type.name if (unit_type := self.allocator.unit_type(tag)) else None
+            for tag in tags
+        ]
+
     def _block(self, mission: Mission, reason: str, now: float) -> None:
         if mission.status is MissionStatus.BLOCKED and mission.last_reason == reason:
             return
@@ -230,6 +238,7 @@ class MissionController:
         commands: MissionCommands,
     ) -> None:
         tags = self.allocator.assigned_tags(mission.mission_id)
+        unit_types = self._unit_type_names(tags)
         for tag in tags:
             commands.release(mission_id=mission.mission_id, unit_tag=tag)
         released = self.allocator.release_mission(mission.mission_id)
@@ -240,6 +249,7 @@ class MissionController:
                 reason,
                 mission=mission,
                 unit_tags=list(released),
+                unit_types=unit_types,
             )
 
         mission.assigned_unit_tags = ()

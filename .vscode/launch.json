@@ -24,13 +24,12 @@
       "justMyCode": false
     },
     {
-      "name": "Read Log",
+      "name": "Open Log Viewer",
       "type": "debugpy",
       "request": "launch",
       "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
-      "program": "${workspaceFolder}\\scripts\\read_log.py",
+      "program": "${workspaceFolder}\\scripts\\open_log_viewer.py",
       "cwd": "${workspaceFolder}",
-      "args": [],
       "console": "integratedTerminal",
       "justMyCode": false
     }

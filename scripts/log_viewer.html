@@ -1,0 +1,395 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>SC2 Bot Log Viewer</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f7f7f8;
+    --panel: #ffffff;
+    --border: #dcdde1;
+    --text: #1c1e21;
+    --muted: #6b7280;
+    --accent: #2563eb;
+    --telemetry: #9ca3af;
+    --ok: #16a34a;
+    --warn: #d97706;
+    --bad: #dc2626;
+    --mono: "Cascadia Code", "Consolas", "SFMono-Regular", Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #17181c;
+      --panel: #202127;
+      --border: #34363d;
+      --text: #e7e8ea;
+      --muted: #9aa0aa;
+      --accent: #60a5fa;
+      --telemetry: #6b7280;
+      --ok: #4ade80;
+      --warn: #fbbf24;
+      --bad: #f87171;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 13px/1.4 -apple-system, Segoe UI, Roboto, sans-serif;
+  }
+  #drop {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 12px;
+    z-index: 5;
+  }
+  #drop.hidden { display: none; }
+  #drop.dragover { outline: 3px dashed var(--accent); outline-offset: -12px; }
+  #drop p { color: var(--muted); margin: 0; }
+  #drop button {
+    font: inherit;
+    padding: 10px 18px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--text);
+    cursor: pointer;
+  }
+  #app { display: none; height: 100vh; flex-direction: column; }
+  #app.active { display: flex; }
+  header {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 10px 16px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+  }
+  header .path { font-family: var(--mono); color: var(--muted); font-size: 12px; }
+  header input[type="text"] {
+    font: inherit;
+    padding: 6px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+    min-width: 220px;
+  }
+  header label { display: flex; align-items: center; gap: 5px; color: var(--muted); }
+  header select {
+    font: inherit;
+    padding: 5px 8px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+  }
+  header button.link {
+    margin-left: auto;
+    background: none;
+    border: none;
+    color: var(--accent);
+    cursor: pointer;
+    font: inherit;
+  }
+  main { flex: 1; overflow: hidden; display: flex; }
+  #timeline { flex: 1; overflow-y: auto; padding: 8px 0; }
+  #missions {
+    width: 320px;
+    border-left: 1px solid var(--border);
+    overflow-y: auto;
+    background: var(--panel);
+  }
+  #missions h2, #timeline h2 { display: none; }
+  .mission-card {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+  }
+  .mission-card:hover { background: var(--bg); }
+  .mission-card.active-filter { background: color-mix(in srgb, var(--accent) 15%, transparent); }
+  .mission-card .id { font-family: var(--mono); font-weight: 600; }
+  .mission-card .meta { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .status-pill {
+    display: inline-block;
+    padding: 1px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    margin-left: 6px;
+  }
+  .status-COMPLETED { background: color-mix(in srgb, var(--ok) 20%, transparent); color: var(--ok); }
+  .status-ACTIVE, .status-QUEUED, .status-PROPOSED { background: color-mix(in srgb, var(--accent) 20%, transparent); color: var(--accent); }
+  .status-BLOCKED { background: color-mix(in srgb, var(--warn) 20%, transparent); color: var(--warn); }
+  .status-FAILED, .status-CANCELLED { background: color-mix(in srgb, var(--bad) 20%, transparent); color: var(--bad); }
+
+  .row {
+    display: grid;
+    grid-template-columns: 78px 90px 190px 1fr;
+    gap: 10px;
+    padding: 3px 16px;
+    font-family: var(--mono);
+    align-items: baseline;
+    cursor: pointer;
+  }
+  .row:hover { background: var(--panel); }
+  .row.telemetry { color: var(--telemetry); }
+  .row .time { color: var(--muted); }
+  .row .event { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row .mission-id { color: var(--accent); white-space: nowrap; }
+  .row .fields { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row.expanded .fields { white-space: normal; }
+  .row pre {
+    grid-column: 1 / -1;
+    margin: 4px 0 8px;
+    padding: 8px 10px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .ev-proposal_created, .ev-proposal_admitted { color: var(--accent); }
+  .ev-proposal_rejected, .ev-mission_cancelled, .ev-mission_failed { color: var(--bad); }
+  .ev-mission_completed { color: var(--ok); }
+  .ev-mission_blocked { color: var(--warn); }
+
+  #empty-state { color: var(--muted); padding: 30px; text-align: center; }
+</style>
+</head>
+<body>
+
+<div id="drop">
+  <p>Drop a <code>.jsonl</code> bot log here, or</p>
+  <button id="pick">Choose file…</button>
+  <input id="file-input" type="file" accept=".jsonl,.json,.log" hidden />
+</div>
+
+<div id="app">
+  <header>
+    <span class="path" id="path-label"></span>
+    <label><input type="checkbox" id="all-events" /> show telemetry</label>
+    <input type="text" id="search" placeholder="filter (event, reason, unit tag…)" />
+    <label>mission
+      <select id="mission-filter"><option value="">all</option></select>
+    </label>
+    <button class="link" id="load-another">load another file</button>
+  </header>
+  <main>
+    <section id="timeline"></section>
+    <aside id="missions"></aside>
+  </main>
+</div>
+
+<script>
+const NARRATIVE_EVENTS = new Set([
+  "game.started", "game.ended",
+  "proposal_created", "proposal_admitted", "proposal_rejected",
+  "mission_queued", "mission_started", "mission_blocked",
+  "units_assigned", "units_reassigned", "units_released",
+  "mission_completed", "mission_failed", "mission_cancelled",
+]);
+
+let records = [];
+let missions = new Map(); // mission_id -> {kind, target, events:[{time,event,status}]}
+
+function formatTime(seconds) {
+  seconds = Math.max(0, seconds);
+  const m = Math.floor(seconds / 60);
+  const s = (seconds - m * 60).toFixed(2).padStart(5, "0");
+  return `${String(m).padStart(2, "0")}:${s}`;
+}
+
+function unitsWithTypes(data) {
+  const tags = data.unit_tags || [];
+  const types = data.unit_types || [];
+  const pairs = tags.map((tag, i) => (types[i] ? `${tag}:${types[i]}` : `${tag}`));
+  return "[" + pairs.join(", ") + "]";
+}
+
+function fieldsFor(record) {
+  const { event, data = {} } = record;
+  const out = [];
+  if (["proposal_created", "proposal_admitted", "proposal_rejected"].includes(event)) {
+    out.push(`target=${data.target_key}`, `priority=${data.priority}`);
+    if (event === "proposal_rejected") out.push(`conflict=${data.conflicting_mission_id}`);
+  } else if (["mission_queued", "mission_started", "mission_blocked", "mission_completed", "mission_failed", "mission_cancelled"].includes(event)) {
+    out.push(`status=${data.status}`);
+  } else if (event === "units_assigned") {
+    out.push(`units=${unitsWithTypes(data)}`);
+    if (data.previous_unit_tags && data.previous_unit_tags.length) out.push(`from=${JSON.stringify(data.previous_unit_tags)}`);
+  } else if (event === "units_reassigned") {
+    out.push(`units=${unitsWithTypes(data)}`, `from=${JSON.stringify(data.previous_unit_tags)}`);
+  } else if (event === "units_released") {
+    out.push(`units=${unitsWithTypes(data)}`);
+  } else if (event === "game.started") {
+    out.push(`map=${data.map}`);
+  } else if (event === "game.ended") {
+    out.push(`result=${data.result}`);
+  } else if (event === "macro.build_order_progress") {
+    out.push(`step=${data.step}/${data.total_steps}`, `command=${data.command}`, `completed=${data.completed}`);
+  } else if (event === "attention.snapshot") {
+    out.push(`minerals=${data.minerals}`, `vespene=${data.vespene}`, `supply=${JSON.stringify(data.supply)}`,
+      `own=${data.own_combat_units}`, `enemy_known=${data.known_enemy_combat_units}`, `strength=${data.strength_score}`);
+  } else {
+    for (const [k, v] of Object.entries(data)) if (k !== "reason") out.push(`${k}=${JSON.stringify(v)}`);
+  }
+  return out.join("  ");
+}
+
+function reasonOf(record) {
+  if (["game.started", "game.ended"].includes(record.event)) return "";
+  return record.data?.reason ?? "";
+}
+
+function buildMissions() {
+  missions = new Map();
+  for (const r of records) {
+    const missionId = r.data?.mission_id;
+    if (!missionId) continue;
+    if (!missions.has(missionId)) {
+      missions.set(missionId, { kind: r.data.mission_kind, target: r.data.target_key, events: [], unitTypes: new Set() });
+    }
+    const mission = missions.get(missionId);
+    mission.events.push({ time: r.game_time, event: r.event, status: r.data.status });
+    for (const t of r.data.unit_types || []) if (t) mission.unitTypes.add(t);
+  }
+}
+
+function renderMissions() {
+  const el = document.getElementById("missions");
+  el.innerHTML = "";
+  const activeFilter = document.getElementById("mission-filter").value;
+  for (const [id, info] of missions) {
+    const start = info.events[0].time;
+    const end = info.events[info.events.length - 1].time;
+    const final = [...info.events].reverse().find((e) => e.status)?.status ?? "?";
+    const card = document.createElement("div");
+    card.className = "mission-card" + (activeFilter === id ? " active-filter" : "");
+    card.innerHTML = `
+      <div class="id">${id}<span class="status-pill status-${final}">${final}</span></div>
+      <div class="meta">${info.kind || "?"} · target=${info.target}${info.unitTypes.size ? " · " + [...info.unitTypes].join(", ") : ""}</div>
+      <div class="meta">${formatTime(start)} .. ${formatTime(end)}</div>
+    `;
+    card.addEventListener("click", () => {
+      const select = document.getElementById("mission-filter");
+      select.value = select.value === id ? "" : id;
+      render();
+    });
+    el.appendChild(card);
+  }
+}
+
+function populateMissionSelect() {
+  const select = document.getElementById("mission-filter");
+  const current = select.value;
+  select.innerHTML = '<option value="">all</option>';
+  for (const id of missions.keys()) {
+    const opt = document.createElement("option");
+    opt.value = id;
+    opt.textContent = id;
+    select.appendChild(opt);
+  }
+  select.value = current;
+}
+
+function render() {
+  const showAll = document.getElementById("all-events").checked;
+  const search = document.getElementById("search").value.trim().toLowerCase();
+  const missionFilter = document.getElementById("mission-filter").value;
+
+  const timeline = document.getElementById("timeline");
+  timeline.innerHTML = "";
+  let shown = 0;
+
+  for (const r of records) {
+    const isNarrative = NARRATIVE_EVENTS.has(r.event);
+    if (!showAll && !isNarrative) continue;
+    const missionId = r.data?.mission_id ?? "";
+    if (missionFilter && missionId !== missionFilter) continue;
+
+    const fields = fieldsFor(r);
+    const reason = reasonOf(r);
+    const haystack = `${r.event} ${reason} ${missionId} ${fields}`.toLowerCase();
+    if (search && !haystack.includes(search)) continue;
+
+    const row = document.createElement("div");
+    row.className = "row" + (isNarrative ? "" : " telemetry");
+    row.innerHTML = `
+      <span class="time">${formatTime(r.game_time)}</span>
+      <span class="mission-id">${missionId}</span>
+      <span class="event ev-${r.event}">${r.event}${reason ? " · " + reason : ""}</span>
+      <span class="fields">${fields}</span>
+    `;
+    row.addEventListener("click", () => {
+      const already = row.querySelector("pre");
+      if (already) { already.remove(); row.classList.remove("expanded"); return; }
+      const pre = document.createElement("pre");
+      pre.textContent = JSON.stringify(r, null, 2);
+      row.appendChild(pre);
+      row.classList.add("expanded");
+    });
+    timeline.appendChild(row);
+    shown++;
+  }
+
+  if (shown === 0) {
+    timeline.innerHTML = '<div id="empty-state">No events match this filter.</div>';
+  }
+
+  renderMissions();
+}
+
+function loadText(text, name) {
+  records = text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
+  buildMissions();
+  populateMissionSelect();
+  document.getElementById("path-label").textContent = name;
+  document.getElementById("drop").classList.add("hidden");
+  document.getElementById("app").classList.add("active");
+  render();
+}
+
+function loadFile(file) {
+  const reader = new FileReader();
+  reader.onload = () => loadText(reader.result, file.name);
+  reader.readAsText(file);
+}
+
+const drop = document.getElementById("drop");
+drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("dragover"); });
+drop.addEventListener("dragleave", () => drop.classList.remove("dragover"));
+drop.addEventListener("drop", (e) => {
+  e.preventDefault();
+  drop.classList.remove("dragover");
+  const file = e.dataTransfer.files[0];
+  if (file) loadFile(file);
+});
+
+document.getElementById("pick").addEventListener("click", () => document.getElementById("file-input").click());
+document.getElementById("file-input").addEventListener("change", (e) => {
+  const file = e.target.files[0];
+  if (file) loadFile(file);
+});
+document.getElementById("load-another").addEventListener("click", () => {
+  document.getElementById("app").classList.remove("active");
+  document.getElementById("drop").classList.remove("hidden");
+});
+
+document.getElementById("all-events").addEventListener("change", render);
+document.getElementById("search").addEventListener("input", render);
+document.getElementById("mission-filter").addEventListener("change", render);
+</script>
+</body>
+</html>

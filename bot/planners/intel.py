@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 
 from sc2.ids.unit_typeid import UnitTypeId
 
-from bot.attention.models import AttentionSnapshot
+from bot.attention.models import AttentionSnapshot, WorldFacts
 from bot.awareness.models import AwarenessSnapshot
 from bot.contracts.allocation import UnitRequirement
 from bot.ego.models import MissionKind, MissionProposal
@@ -22,6 +22,9 @@ class IntelPlannerConfig:
     failure_cooldown: float = 18.0
     unit_types: frozenset[UnitTypeId] = field(
         default_factory=lambda: frozenset({UnitTypeId.REAPER})
+    )
+    fallback_unit_types: frozenset[UnitTypeId] = field(
+        default_factory=lambda: frozenset({UnitTypeId.SCV})
     )
     minimum_unit_health: float = 0.70
 
@@ -71,6 +74,10 @@ class IntelPlanner:
         if world.time - self._last_proposed_at < self.config.proposal_cadence:
             return ()
 
+        unit_types = self._select_unit_types(world)
+        if not unit_types:
+            return ()
+
         self._last_proposed_at = world.time
         self._sequence += 1
         reason = (
@@ -89,7 +96,7 @@ class IntelPlanner:
                 target=location.position,
                 reason=reason,
                 requirement=UnitRequirement(
-                    unit_types=self.config.unit_types,
+                    unit_types=unit_types,
                     desired=1,
                     minimum=1,
                     minimum_health=self.config.minimum_unit_health,
@@ -106,3 +113,11 @@ class IntelPlanner:
                 commitment_seconds=5.0,
             ),
         )
+
+    def _select_unit_types(self, world: WorldFacts) -> frozenset[UnitTypeId]:
+        """Prefer the configured scout unit; fall back only once none is alive."""
+
+        preferred_alive = any(
+            unit.unit_type in self.config.unit_types for unit in world.own_units
+        )
+        return self.config.unit_types if preferred_alive else self.config.fallback_unit_types
