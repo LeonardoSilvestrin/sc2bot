@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from bot.contracts.economy import EconomicAction, EconomicFeedback, EconomicFeedbackKind
+
 
 class FakeLogger:
     def __init__(self) -> None:
@@ -57,11 +59,11 @@ class FakeEconomyCommands:
     def __init__(self) -> None:
         self.commands: list[tuple] = []
 
-    def produce_worker(self, *, to_count) -> None:
-        self.commands.append(("produce_worker", to_count))
-
-    def produce_supply(self, *, base_location) -> None:
-        self.commands.append(("produce_supply", base_location))
-
-    def expand(self, *, to_count) -> None:
-        self.commands.append(("expand", to_count))
+    def dispatch(self, action: EconomicAction) -> EconomicFeedback:
+        proposal = action.proposal
+        self.commands.append((proposal.kind.name.lower(), proposal.target_count))
+        return EconomicFeedback(
+            action_id=action.action_id,
+            kind=EconomicFeedbackKind.DISPATCHED,
+            reason="fake_command_accepted",
+        )

@@ -85,25 +85,3 @@ class AresMissionCommands:
             else UnitRole.IDLE
         )
         self._bot.mediator.assign_role(tag=unit_tag, role=role)
-
-
-class AresEconomyCommands:
-    """Translates admitted economic actions into Ares macro behaviors."""
-
-    def __init__(self, bot) -> None:
-        self._bot = bot
-
-    def produce_worker(self, *, to_count: int) -> None:
-        from ares.behaviors.macro import BuildWorkers
-
-        self._bot.register_behavior(BuildWorkers(to_count=to_count))
-
-    def produce_supply(self, *, base_location: Point2) -> None:
-        from ares.behaviors.macro import AutoSupply
-
-        self._bot.register_behavior(AutoSupply(base_location=base_location))
-
-    def expand(self, *, to_count: int) -> None:
-        from ares.behaviors.macro import ExpansionController
-
-        self._bot.register_behavior(ExpansionController(to_count=to_count))

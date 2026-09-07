@@ -11,20 +11,6 @@ from bot.contracts.economy import EconomicActionKind, EconomicProposal, Resource
 from bot.strategy.macro import MacroGoalSet, ProductionGoal, bio_three_one_one
 
 
-def ready_townhall_count(world: WorldFacts) -> int:
-    """Ready townhall count, floored at 1 so ideal-worker math never divides
-    by zero for a snapshot without a tracked townhall."""
-
-    return max(
-        1,
-        sum(
-            1
-            for structure in world.own_structures
-            if structure.unit_type in _TOWNHALL_TYPES and structure.is_ready
-        ),
-    )
-
-
 @dataclass(frozen=True, slots=True)
 class MacroPlannerConfig:
     """Costs and thresholds used to turn a strategy into spend proposals."""
@@ -142,18 +128,9 @@ class MacroPlanner:
         awareness: AwarenessSnapshot,
     ) -> tuple[EconomicProposal, ...]:
         world = attention.world
-<<<<<<< HEAD
-        townhalls = ready_townhall_count(world)
-        ideal_workers = min(
-            townhalls * self.config.workers_per_townhall,
-            self.config.max_workers,
-        )
-        workers = sum(unit.is_worker for unit in world.own_units)
-=======
         economy = world.economy
         if self.config.require_opening_completed and not economy.opening_completed:
             return ()
->>>>>>> agents/codex
 
         posture = awareness.macro_posture
         proposals: list[EconomicProposal] = []
@@ -275,8 +252,6 @@ class MacroPlanner:
             cost=self.config.expansion_cost,
             now=now,
         )
-<<<<<<< HEAD
-=======
 
     def _propose_gas(
         self,
@@ -472,4 +447,3 @@ class MacroPlanner:
             target=target,
             target_count=target_count,
         )
->>>>>>> agents/codex

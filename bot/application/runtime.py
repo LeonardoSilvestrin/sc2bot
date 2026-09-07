@@ -3,8 +3,10 @@ from __future__ import annotations
 from bot.attention.builder import AttentionBuilder
 from bot.awareness.models import AwarenessSnapshot
 from bot.awareness.service import AwarenessService
+from bot.contracts.economy import EconomicFeedback, ResourceBank
 from bot.contracts.logging import BotLogger
-from bot.ego import EconomyController, MissionController
+from bot.economy import EconomyController, merge_economic_feedback, observe_economic_confirmations
+from bot.ego import MissionController
 from bot.infrastructure.ares import (
     AresEconomyCommands,
     AresMissionCommands,
@@ -53,7 +55,8 @@ class BotRuntime:
             self.defense_planner,
         )
         self.missions = MissionController(logger=logger)
-        self.economy = EconomyController(logger=logger, config=self.macro_config)
+        self.economy = EconomyController(logger=logger)
+        self._pending_economic_feedback: tuple[EconomicFeedback, ...] = ()
         self._last_build_signature: tuple | None = None
         self._last_awareness_signature: tuple | None = None
         self._last_snapshot_at: float = -999.0
@@ -88,11 +91,30 @@ class BotRuntime:
         runner = getattr(bot, "build_order_runner", None)
         if bool(getattr(runner, "build_completed", False)):
             economic_proposals = self.macro_planner.propose(attention, awareness)
-            self.economy.tick(
-                attention=attention,
-                proposals=economic_proposals,
-                commands=AresEconomyCommands(bot),
+            observed_feedback = observe_economic_confirmations(
+                self.economy.snapshots(), world.economy
             )
+            feedback = merge_economic_feedback(
+                observed_feedback, self._pending_economic_feedback
+            )
+            bank = ResourceBank(
+                minerals=world.minerals,
+                vespene=world.vespene,
+                supply_available=max(0.0, world.supply_cap - world.supply_used),
+            )
+            result = self.economy.tick(
+                now=world.time,
+                bank=bank,
+                proposals=economic_proposals,
+                feedback=feedback,
+            )
+            economy_commands = AresEconomyCommands(bot)
+            self._pending_economic_feedback = tuple(
+                economy_commands.dispatch(action)
+                for action in result.admitted_actions
+            )
+        else:
+            self._pending_economic_feedback = ()
 
         self._log_build_order(bot, game_time=world.time)
         self._log_awareness(attention, awareness)
