@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import random
+
+from ares.consts import BUILD_CHOICES, CYCLE, DEBUG, TEST_OPPONENT_ID
+
 from bot.adapters.ares import (
     AresEconomyCommands,
     AresMissionCommands,
@@ -33,6 +37,17 @@ from bot.world.knowledge.models import AwarenessSnapshot
 from bot.world.knowledge.service import AwarenessService
 from bot.world.observation.builder import AttentionBuilder
 
+# `terran_builds.yml` sets `UseData: false` (ladder-safe: never persist
+# opponent history to disk), which makes Ares' own build-selection cycle
+# always resolve to `Cycle[0]` -- see `DataManager.initialise`. That pinned
+# every game to `BioThreeOneOne` and the `BansheeCloak` opener never ran.
+# `_choose_and_announce_opening` re-picks from that same cycle ourselves so
+# every configured opening actually gets played.
+_OPENING_ANNOUNCEMENTS: dict[str, str] = {
+    "BioThreeOneOne": "Plan: Reaper expand into Bio 3-1-1.",
+    "BansheeCloak": "Plan: Reaper expand into cloaked Banshee harass.",
+}
+
 
 class BotRuntime:
     """Composition root wiring Attention/Awareness into the mission planners."""
@@ -47,8 +62,10 @@ class BotRuntime:
         defense_config: DefensePlannerConfig | None = None,
         macro_config: MacroPlannerConfig | None = None,
         map_control_config: MapControlPlannerConfig | None = None,
+        rng: random.Random | None = None,
     ) -> None:
         self.logger = logger
+        self._rng = rng or random.Random()
         self.intel_config = intel_config or IntelPlannerConfig()
         self.harass_config = harass_config or HarassPlannerConfig()
         self.banshee_harass_config = (
@@ -92,12 +109,60 @@ class BotRuntime:
         self._last_enemy_intel_signature: tuple | None = None
 
     async def on_start(self, bot) -> None:
+        await self._choose_and_announce_opening(bot)
         self.logger.event(
             "game.started",
             component="app.runtime",
             game_time=float(bot.time),
             data={"map": str(bot.game_info.map_name)},
         )
+
+    async def _choose_and_announce_opening(self, bot) -> None:
+        """Pick this game's opening ourselves and declare it in chat.
+
+        Ares' `chosen_opening` is already set by the time `on_start` runs,
+        but with `UseData: false` it is always `Cycle[0]` (see the module
+        docstring above `_OPENING_ANNOUNCEMENTS`). We re-roll from the same
+        configured cycle here, before the build runner has taken a single
+        step, so switching is free.
+        """
+
+        runner = getattr(bot, "build_order_runner", None)
+        if runner is None:
+            return
+        choices = self._opening_choices(bot, runner)
+        if choices:
+            switch_opening = getattr(runner, "switch_opening", None)
+            if callable(switch_opening):
+                switch_opening(self._rng.choice(choices))
+        opening = str(getattr(runner, "chosen_opening", "") or "")
+        if not opening:
+            return
+        chat_send = getattr(bot, "chat_send", None)
+        if callable(chat_send):
+            message = _OPENING_ANNOUNCEMENTS.get(opening, f"Plan: {opening}.")
+            await chat_send(message)
+
+    @staticmethod
+    def _opening_choices(bot, runner) -> tuple[str, ...]:
+        config = getattr(runner, "config", None)
+        if not isinstance(config, dict):
+            return ()
+        build_choices = config.get(BUILD_CHOICES)
+        if not build_choices:
+            return ()
+        opponent_id = (
+            TEST_OPPONENT_ID
+            if config.get(DEBUG)
+            else getattr(bot, "opponent_id", None)
+        )
+        key = opponent_id if opponent_id in build_choices else None
+        if key is None:
+            race_name = getattr(getattr(bot, "enemy_race", None), "name", None)
+            key = race_name if race_name in build_choices else None
+        if key is None:
+            return ()
+        return tuple(build_choices[key].get(CYCLE, ()) or ())
 
     async def on_step(self, bot, *, iteration: int) -> None:
         world = self.attention_builder.world_facts(bot, iteration=iteration)
