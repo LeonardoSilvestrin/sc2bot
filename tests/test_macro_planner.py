@@ -1,17 +1,20 @@
 from __future__ import annotations
 
-import unittest
+from dataclasses import replace
 
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
 from bot.attention.models import (
     AttentionSnapshot,
+    CountFacts,
+    EconomyFacts,
     MapFacts,
-    UnitSnapshot,
+    ProducerFacts,
+    UnitTypeCount,
     WorldFacts,
 )
-from bot.awareness import AwarenessService
+from bot.awareness import AwarenessService, MacroPosture
 from bot.contracts.economy import EconomicActionKind
 from bot.planners import MacroPlanner
 
@@ -21,205 +24,342 @@ MAP = MapFacts(
     enemy_starts=(Point2((90, 90)),),
 )
 
-
-def townhall(tag: int = 1, *, is_ready: bool = True) -> UnitSnapshot:
-    return UnitSnapshot(
-        tag=tag,
-        unit_type=UnitTypeId.COMMANDCENTER,
-        position=Point2((10, 10)),
-        health_percentage=1.0,
-        is_flying=False,
-        is_worker=False,
-        can_attack_air=False,
-        can_attack_ground=False,
-        is_structure=True,
-        is_ready=is_ready,
-    )
-
-
-def worker(tag: int) -> UnitSnapshot:
-    return UnitSnapshot(
-        tag=tag,
-        unit_type=UnitTypeId.SCV,
-        position=Point2((11, 10)),
-        health_percentage=1.0,
-        is_flying=False,
-        is_worker=True,
-        can_attack_air=False,
-        can_attack_ground=True,
-    )
+CONVERGED_UNITS = {
+    UnitTypeId.MARINE: (70, 0),
+    UnitTypeId.MARAUDER: (15, 0),
+    UnitTypeId.MEDIVAC: (4, 0),
+    UnitTypeId.SIEGETANK: (3, 0),
+}
+CONVERGED_STRUCTURES = {
+    UnitTypeId.REFINERY: (8, 0),
+    UnitTypeId.BARRACKS: (3, 0),
+    UnitTypeId.FACTORY: (1, 0),
+    UnitTypeId.STARPORT: (1, 0),
+    UnitTypeId.BARRACKSTECHLAB: (2, 0),
+    UnitTypeId.FACTORYTECHLAB: (1, 0),
+    UnitTypeId.STARPORTREACTOR: (1, 0),
+}
 
 
-def enemy_unit(tag: int) -> UnitSnapshot:
-    return UnitSnapshot(
-        tag=tag,
-        unit_type=UnitTypeId.MARINE,
-        position=Point2((90, 90)),
-        health_percentage=1.0,
-        is_flying=False,
-        is_worker=False,
-        can_attack_air=False,
-        can_attack_ground=True,
-        visible_now=True,
+def typed_counts(
+    values: dict[UnitTypeId, tuple[int, int]],
+) -> tuple[UnitTypeCount, ...]:
+    return tuple(
+        UnitTypeCount(
+            unit_type=unit_type,
+            existing=ready + pending,
+            ready=ready,
+            pending=pending,
+        )
+        for unit_type, (ready, pending) in values.items()
     )
 
 
 def economy_attention(
     *,
     time: float = 100.0,
-    workers: int = 16,
-    townhalls: int = 1,
-    minerals: int = 500,
+    workers: tuple[int, int] = (70, 0),
+    townhalls: tuple[int, int] = (4, 0),
+    ideal_harvesters: int = 88,
+    units: dict[UnitTypeId, tuple[int, int]] | None = None,
+    structures: dict[UnitTypeId, tuple[int, int]] | None = None,
+    producers: tuple[ProducerFacts, ...] = (),
+    mineral_rate: float = 0.0,
+    vespene_rate: float = 0.0,
+    supply_used: float = 150.0,
+    supply_cap: float = 200.0,
+    supply_pending: int = 0,
+    opening_completed: bool = True,
+    minerals: int = 0,
     vespene: int = 0,
-    supply_used: float = 16.0,
-    supply_cap: float = 30.0,
-    visible_enemies: int = 0,
 ) -> AttentionSnapshot:
-    world = WorldFacts(
-        iteration=int(time),
-        time=time,
-        minerals=minerals,
-        vespene=vespene,
-        supply_used=supply_used,
-        supply_cap=supply_cap,
-        own_units=tuple(worker(tag) for tag in range(1, workers + 1)),
-        enemy_units=tuple(enemy_unit(9000 + tag) for tag in range(visible_enemies)),
-        map=MAP,
-        own_structures=tuple(townhall(tag) for tag in range(1, townhalls + 1)),
+    ready_workers, pending_workers = workers
+    ready_townhalls, pending_townhalls = townhalls
+    economy = EconomyFacts(
+        opening_name="BioThreeOneOne",
+        opening_completed=opening_completed,
+        mineral_collection_rate=mineral_rate,
+        vespene_collection_rate=vespene_rate,
+        workers=CountFacts(
+            existing=ready_workers + pending_workers,
+            ready=ready_workers,
+            pending=pending_workers,
+        ),
+        ideal_harvesters=ideal_harvesters,
+        assigned_harvesters=ready_workers,
+        townhalls=CountFacts(
+            existing=ready_townhalls + pending_townhalls,
+            ready=ready_townhalls,
+            pending=pending_townhalls,
+        ),
+        supply_pending=supply_pending,
+        unit_counts=typed_counts(
+            units if units is not None else CONVERGED_UNITS
+        ),
+        structure_counts=typed_counts(
+            structures if structures is not None else CONVERGED_STRUCTURES
+        ),
+        producers=producers,
     )
-    return AttentionSnapshot(world)
-
-
-class MacroPlannerTests(unittest.TestCase):
-    def test_no_proposal_when_economy_is_balanced(self):
-        attention = economy_attention(
-            workers=16,
-            townhalls=1,
-            minerals=100,
-            supply_used=16.0,
-            supply_cap=30.0,
+    return AttentionSnapshot(
+        WorldFacts(
+            iteration=int(time),
+            time=time,
+            minerals=minerals,
+            vespene=vespene,
+            supply_used=supply_used,
+            supply_cap=supply_cap,
+            own_units=(),
+            enemy_units=(),
+            map=MAP,
+            economy=economy,
         )
-        awareness = AwarenessService().update(attention)
+    )
 
-        self.assertEqual(MacroPlanner().propose(attention, awareness), ())
 
-    def test_no_worker_proposal_when_resources_are_insufficient(self):
+def proposals_for(
+    attention: AttentionSnapshot,
+    *,
+    posture: MacroPosture = MacroPosture.BALANCED,
+):
+    awareness = replace(
+        AwarenessService().update(attention),
+        macro_posture=posture,
+    )
+    return MacroPlanner().propose(attention, awareness)
+
+
+def proposal_of_kind(proposals, kind: EconomicActionKind):
+    return next((proposal for proposal in proposals if proposal.kind is kind), None)
+
+
+class TestMacroPlanner:
+    def test_waits_for_opening_handoff(self):
+        attention = economy_attention(opening_completed=False)
+
+        assert proposals_for(attention) == ()
+
+    def test_converged_profile_has_no_proposals(self):
+        attention = economy_attention()
+
+        assert proposals_for(attention) == ()
+
+    def test_worker_goal_is_emitted_without_waiting_for_affordability(self):
         attention = economy_attention(
-            workers=10,
-            townhalls=1,
-            minerals=10,
-            supply_used=10.0,
-            supply_cap=30.0,
+            workers=(10, 0),
+            townhalls=(1, 0),
+            ideal_harvesters=22,
+            minerals=0,
         )
-        awareness = AwarenessService().update(attention)
 
-        self.assertEqual(MacroPlanner().propose(attention, awareness), ())
-
-    def test_proposes_worker_when_below_ideal_and_affordable(self):
-        attention = economy_attention(
-            workers=10,
-            townhalls=1,
-            minerals=200,
-            supply_used=10.0,
-            supply_cap=30.0,
+        proposal = proposal_of_kind(
+            proposals_for(attention),
+            EconomicActionKind.PRODUCE_WORKER,
         )
-        awareness = AwarenessService().update(attention)
 
-        proposals = MacroPlanner().propose(attention, awareness)
+        assert proposal is not None
+        assert proposal.target == UnitTypeId.SCV.name
+        assert proposal.target_count == 22
+        assert proposal.cost.minerals == 50
 
-        self.assertEqual(len(proposals), 1)
-        proposal = proposals[0]
-        self.assertEqual(proposal.kind, EconomicActionKind.PRODUCE_WORKER)
-        self.assertEqual(proposal.reason, "worker_count_below_ideal_for_current_bases")
-        self.assertEqual(proposal.cost.minerals, 50)
-        self.assertTrue(proposal.reason.strip())
-        self.assertTrue(0 <= proposal.priority <= 100)
-
-    def test_proposes_supply_when_near_supply_cap(self):
+    def test_pending_worker_is_part_of_the_saturation_count(self):
         attention = economy_attention(
-            workers=16,
-            townhalls=1,
-            minerals=200,
-            supply_used=26.0,
-            supply_cap=30.0,
+            workers=(21, 1),
+            townhalls=(1, 0),
+            ideal_harvesters=22,
         )
-        awareness = AwarenessService().update(attention)
 
-        proposals = MacroPlanner().propose(attention, awareness)
+        assert proposal_of_kind(
+            proposals_for(attention),
+            EconomicActionKind.PRODUCE_WORKER,
+        ) is None
 
-        self.assertEqual(len(proposals), 1)
-        proposal = proposals[0]
-        self.assertEqual(proposal.kind, EconomicActionKind.PRODUCE_SUPPLY)
-        self.assertEqual(proposal.reason, "supply_capacity_near_limit")
-
-    def test_no_supply_proposal_at_the_absolute_supply_cap(self):
+    def test_pending_supply_prevents_redundant_depot(self):
         attention = economy_attention(
-            workers=16,
-            townhalls=1,
-            minerals=200,
-            supply_used=198.0,
+            supply_used=196.0,
             supply_cap=200.0,
-        )
-        awareness = AwarenessService().update(attention)
-
-        proposals = MacroPlanner().propose(attention, awareness)
-
-        self.assertEqual(
-            [p.kind for p in proposals],
-            [],
+            supply_pending=8,
         )
 
-    def test_proposes_expansion_when_saturated_and_safe(self):
+        assert proposal_of_kind(
+            proposals_for(attention),
+            EconomicActionKind.PRODUCE_SUPPLY,
+        ) is None
+
+    def test_supply_goal_does_not_require_100_minerals_in_bank(self):
         attention = economy_attention(
-            workers=16,
-            townhalls=1,
-            minerals=500,
-            supply_used=16.0,
-            supply_cap=30.0,
+            supply_used=194.0,
+            supply_cap=199.0,
+            minerals=0,
         )
-        awareness = AwarenessService().update(attention)
 
-        proposals = MacroPlanner().propose(attention, awareness)
+        proposal = proposal_of_kind(
+            proposals_for(attention),
+            EconomicActionKind.PRODUCE_SUPPLY,
+        )
 
-        self.assertEqual(len(proposals), 1)
-        proposal = proposals[0]
-        self.assertEqual(proposal.kind, EconomicActionKind.EXPAND)
-        self.assertEqual(proposal.reason, "worker_count_saturated_for_current_bases")
-        self.assertEqual(proposal.cost.minerals, 400)
+        assert proposal is not None
+        assert proposal.reason == "effective_supply_capacity_near_limit"
 
-    def test_withholds_expansion_while_enemies_are_visible(self):
+    def test_expansion_is_bounded_and_pending_aware(self):
+        saturated = economy_attention(
+            workers=(40, 0),
+            townhalls=(2, 0),
+            ideal_harvesters=44,
+            minerals=0,
+        )
+        pending = economy_attention(
+            workers=(40, 0),
+            townhalls=(2, 1),
+            ideal_harvesters=44,
+        )
+        at_limit = economy_attention(
+            workers=(70, 0),
+            townhalls=(4, 0),
+            ideal_harvesters=88,
+        )
+
+        proposal = proposal_of_kind(
+            proposals_for(saturated),
+            EconomicActionKind.EXPAND,
+        )
+        assert proposal is not None
+        assert proposal.target_count == 3
+        assert proposal.cost.minerals == 400
+        assert proposal_of_kind(
+            proposals_for(pending), EconomicActionKind.EXPAND
+        ) is None
+        assert proposal_of_kind(
+            proposals_for(at_limit), EconomicActionKind.EXPAND
+        ) is None
+
+    def test_defense_withholds_expansion_but_a_remote_sighting_does_not(self):
         attention = economy_attention(
-            workers=16,
-            townhalls=1,
-            minerals=500,
-            supply_used=16.0,
-            supply_cap=30.0,
-            visible_enemies=1,
+            workers=(40, 0),
+            townhalls=(2, 0),
+            ideal_harvesters=44,
         )
-        awareness = AwarenessService().update(attention)
 
-        self.assertEqual(MacroPlanner().propose(attention, awareness), ())
+        assert proposal_of_kind(
+            proposals_for(attention, posture=MacroPosture.BALANCED),
+            EconomicActionKind.EXPAND,
+        ) is not None
+        assert proposal_of_kind(
+            proposals_for(attention, posture=MacroPosture.DEFENSE),
+            EconomicActionKind.EXPAND,
+        ) is None
 
-    def test_propose_is_deterministic_for_the_same_snapshot(self):
+    def test_gas_target_uses_current_and_pending_refineries(self):
+        structures = dict(CONVERGED_STRUCTURES)
+        structures[UnitTypeId.REFINERY] = (3, 1)
         attention = economy_attention(
-            workers=10,
-            townhalls=1,
-            minerals=200,
-            supply_used=26.0,
-            supply_cap=30.0,
-        )
-        awareness = AwarenessService().update(attention)
-        planner = MacroPlanner()
-
-        first = planner.propose(attention, awareness)
-        second = planner.propose(attention, awareness)
-
-        self.assertEqual(first, second)
-        self.assertEqual(
-            [p.kind for p in first],
-            [EconomicActionKind.PRODUCE_SUPPLY, EconomicActionKind.PRODUCE_WORKER],
+            townhalls=(2, 0),
+            ideal_harvesters=44,
+            workers=(30, 0),
+            structures=structures,
         )
 
+        assert proposal_of_kind(
+            proposals_for(attention), EconomicActionKind.BUILD_GAS
+        ) is None
 
-if __name__ == "__main__":
-    unittest.main()
+    def test_high_income_adds_only_busy_production_capacity(self):
+        busy = economy_attention(
+            mineral_rate=1_200.0,
+            producers=(
+                ProducerFacts(
+                    UnitTypeId.BARRACKS,
+                    ready=3,
+                    busy=3,
+                    idle=0,
+                ),
+            ),
+        )
+        idle = economy_attention(
+            mineral_rate=1_200.0,
+            producers=(
+                ProducerFacts(
+                    UnitTypeId.BARRACKS,
+                    ready=3,
+                    busy=1,
+                    idle=2,
+                ),
+            ),
+        )
+
+        proposal = next(
+            (
+                item
+                for item in proposals_for(busy)
+                if item.kind is EconomicActionKind.BUILD_PRODUCTION
+                and item.target == UnitTypeId.BARRACKS.name
+            ),
+            None,
+        )
+        assert proposal is not None
+        assert proposal.target_count == 4
+        assert not any(
+            item.kind is EconomicActionKind.BUILD_PRODUCTION
+            and item.target == UnitTypeId.BARRACKS.name
+            for item in proposals_for(idle)
+        )
+
+    def test_army_composition_includes_current_and_pending_units(self):
+        units = dict(CONVERGED_UNITS)
+        units[UnitTypeId.MEDIVAC] = (1, 1)
+        attention = economy_attention(units=units)
+
+        assert not any(
+            item.kind is EconomicActionKind.PRODUCE_UNIT
+            and item.target == UnitTypeId.MEDIVAC.name
+            for item in proposals_for(attention)
+        )
+
+    def test_profile_proposes_all_four_composition_members_from_empty_army(self):
+        attention = economy_attention(units={})
+
+        targets = {
+            item.target
+            for item in proposals_for(attention)
+            if item.kind is EconomicActionKind.PRODUCE_UNIT
+        }
+
+        assert targets == {
+            UnitTypeId.MARINE.name,
+            UnitTypeId.MARAUDER.name,
+            UnitTypeId.MEDIVAC.name,
+            UnitTypeId.SIEGETANK.name,
+        }
+
+    def test_posture_changes_worker_versus_army_priority(self):
+        attention = economy_attention(
+            workers=(10, 0),
+            townhalls=(1, 0),
+            ideal_harvesters=22,
+            units={},
+        )
+
+        defense = proposals_for(attention, posture=MacroPosture.DEFENSE)
+        greed = proposals_for(attention, posture=MacroPosture.GREED)
+        defense_worker = proposal_of_kind(defense, EconomicActionKind.PRODUCE_WORKER)
+        defense_army = proposal_of_kind(defense, EconomicActionKind.PRODUCE_UNIT)
+        greed_worker = proposal_of_kind(greed, EconomicActionKind.PRODUCE_WORKER)
+        greed_army = proposal_of_kind(greed, EconomicActionKind.PRODUCE_UNIT)
+
+        assert defense_worker.priority < defense_army.priority
+        assert greed_worker.priority > greed_army.priority
+
+    def test_goal_identity_is_stable_across_frames(self):
+        first = proposals_for(
+            economy_attention(time=100.0, workers=(10, 0), ideal_harvesters=22)
+        )
+        second = proposals_for(
+            economy_attention(time=101.0, workers=(10, 0), ideal_harvesters=22)
+        )
+
+        assert [item.proposal_id for item in first] == [
+            item.proposal_id for item in second
+        ]
+        assert [item.deduplication_key for item in first] == [
+            item.deduplication_key for item in second
+        ]
