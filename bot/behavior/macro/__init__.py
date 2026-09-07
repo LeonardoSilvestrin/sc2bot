@@ -1,12 +1,6 @@
 from .config import MacroPlannerConfig, ResourceOverflowConfig
-from .goals import (
-    ArmyUnitGoal,
-    MacroGoalSet,
-    ProductionGoal,
-    UpgradeGoal,
-    banshee_cloak,
-    bio_three_one_one,
-)
+from .goal_profiles import banshee_cloak, bio_three_one_one
+from .goals import ArmyUnitGoal, MacroGoalSet, ProductionGoal, UpgradeGoal
 from .planner import MacroPlanner
 from .profiles import MACRO_PROFILES, macro_config_for_opening
 from .reference_build import (

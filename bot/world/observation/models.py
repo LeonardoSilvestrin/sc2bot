@@ -24,6 +24,19 @@ class UnitSnapshot:
     is_constructing: bool = False
     available_for_mission: bool = True
 
+    def is_visible_combat_threat(
+        self, *, against_ground: bool = True, against_air: bool = True
+    ) -> bool:
+        """A currently visible, non-worker unit capable of attacking the
+        requested domain(s). Distance/target filtering is left to the
+        caller since it varies per use (near a point, near a squad, ...)."""
+
+        if not self.visible_now or self.is_worker:
+            return False
+        return (against_ground and self.can_attack_ground) or (
+            against_air and self.can_attack_air
+        )
+
 
 # Sourced from Ares rather than hand-listed: the previous local set predated
 # COMMANDCENTERFLYING/ORBITALCOMMANDFLYING and missed a relocating base.

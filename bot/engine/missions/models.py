@@ -52,6 +52,32 @@ class UnitRequirement:
             self.flying is None or unit.is_flying == self.flying
         )
 
+    @classmethod
+    def combat(
+        cls,
+        *,
+        unit_types: frozenset[UnitTypeId],
+        desired: int,
+        minimum: int,
+        minimum_health: float = 0.0,
+    ) -> UnitRequirement:
+        """A requirement for a mobile combat/utility mission.
+
+        Every such mission planner needs the same two exclusions: never pull
+        a worker that is mid-return-cargo, and never pull one that is
+        mid-construction. Both would otherwise abandon useful work already
+        in flight.
+        """
+
+        return cls(
+            unit_types=unit_types,
+            desired=desired,
+            minimum=minimum,
+            minimum_health=minimum_health,
+            exclude_resource_carriers=True,
+            exclude_constructors=True,
+        )
+
 
 class MissionKind(Enum):
     SCOUT = auto()

@@ -95,11 +95,8 @@ def attention(
     reapers: int = 1,
     banshees: int = 0,
     visible_enemies: int = 0,
-<<<<<<< HEAD
     reaper_available: bool = True,
-=======
     visible_anti_air_enemies: int = 0,
->>>>>>> agents/claude
 ) -> AttentionSnapshot:
     world = WorldFacts(
         iteration=int(time),
@@ -110,10 +107,10 @@ def attention(
         supply_cap=30,
         own_units=(
             *(worker(tag) for tag in range(1, workers + 1)),
-<<<<<<< HEAD
-            *(reaper(9000 + tag, available=reaper_available) for tag in range(reapers)),
-=======
-            *(reaper(9000 + tag) for tag in range(reapers)),
+            *(
+                reaper(9000 + tag, available=reaper_available)
+                for tag in range(reapers)
+            ),
             *(banshee(9500 + tag) for tag in range(banshees)),
         ),
         enemy_units=(
@@ -122,7 +119,6 @@ def attention(
                 enemy_anti_air(8500 + tag)
                 for tag in range(visible_anti_air_enemies)
             ),
->>>>>>> agents/claude
         ),
         map=MapFacts(
             center=Point2((50, 50)),

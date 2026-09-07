@@ -57,15 +57,6 @@ def enemy_marine(tag: int, position: Point2) -> UnitSnapshot:
     )
 
 
-<<<<<<< HEAD
-def enemy_worker(
-    tag: int,
-    unit_type: UnitTypeId,
-    position: Point2,
-    *,
-    health: float = 1.0,
-) -> UnitSnapshot:
-=======
 def banshee(tag: int, position: Point2) -> UnitSnapshot:
     return UnitSnapshot(
         tag=tag,
@@ -93,8 +84,13 @@ def enemy_anti_air(tag: int, position: Point2) -> UnitSnapshot:
     )
 
 
-def enemy_worker(tag: int, unit_type: UnitTypeId, position: Point2) -> UnitSnapshot:
->>>>>>> agents/claude
+def enemy_worker(
+    tag: int,
+    unit_type: UnitTypeId,
+    position: Point2,
+    *,
+    health: float = 1.0,
+) -> UnitSnapshot:
     return UnitSnapshot(
         tag=tag,
         unit_type=unit_type,

@@ -28,9 +28,7 @@ class DefendBaseExecutor(MissionExecutor):
         threats = tuple(
             unit
             for unit in context.attention.world.enemy_units
-            if unit.visible_now
-            and not unit.is_worker
-            and (unit.can_attack_ground or unit.can_attack_air)
+            if unit.is_visible_combat_threat()
             and unit.position.distance_to(self.target) <= self.engagement_radius
         )
         if not threats:

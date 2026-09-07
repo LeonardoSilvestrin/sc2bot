@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 
 from bot.behavior.defense.config import DefensePlannerConfig
 from bot.engine.missions.models import MissionKind, MissionProposal, UnitRequirement
+from bot.engine.missions.planning import ProposalCadence
 from bot.world.knowledge.bases.models import BaseAssessment, BaseSecurityLevel
 from bot.world.knowledge.models import AwarenessSnapshot
 from bot.world.observation.models import AttentionSnapshot
@@ -27,8 +28,9 @@ class DefensePlanner:
 
     config: DefensePlannerConfig = field(default_factory=DefensePlannerConfig)
     planner_id: str = "defense_planner"
-    _last_proposed_at: float = field(default=-9999.0, init=False, repr=False)
-    _sequence: int = field(default=0, init=False, repr=False)
+    _cadence: ProposalCadence = field(
+        default_factory=ProposalCadence, init=False, repr=False
+    )
 
     def propose(
         self,
@@ -36,22 +38,22 @@ class DefensePlanner:
         awareness: AwarenessSnapshot,
     ) -> tuple[MissionProposal, ...]:
         world = attention.world
-        if world.time - self._last_proposed_at < self.config.proposal_cadence:
+        if not self._cadence.ready(world.time, self.config.proposal_cadence):
             return ()
 
         threatened = awareness.bases.threatened
         if not threatened:
             return ()
 
-        self._last_proposed_at = world.time
+        self._cadence.mark(world.time)
         return tuple(self._proposal_for(base, world.time) for base in threatened)
 
     def _proposal_for(self, base: BaseAssessment, now: float) -> MissionProposal:
-        self._sequence += 1
+        sequence = self._cadence.next_sequence()
         is_critical = base.security is BaseSecurityLevel.CRITICAL
         target = base.nearest_threat_position or base.position
         return MissionProposal(
-            proposal_id=f"{self.planner_id}:defense:{base.base_id}:{self._sequence}",
+            proposal_id=f"{self.planner_id}:defense:{base.base_id}:{sequence}",
             deduplication_key=f"defense:{base.base_id}",
             planner=self.planner_id,
             kind=MissionKind.DEFENSE,
@@ -67,13 +69,11 @@ class DefensePlanner:
                 if is_critical
                 else "base_outnumbered_by_observed_threat"
             ),
-            requirement=UnitRequirement(
+            requirement=UnitRequirement.combat(
                 unit_types=self.config.unit_types,
                 desired=self._desired_units(base),
                 minimum=self.config.minimum_units,
                 minimum_health=self.config.minimum_unit_health,
-                exclude_resource_carriers=True,
-                exclude_constructors=True,
             ),
             created_at=now,
             timeout_seconds=self.config.mission_timeout,

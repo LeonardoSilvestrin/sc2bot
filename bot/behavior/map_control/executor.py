@@ -78,9 +78,7 @@ class MapControlExecutor(MissionExecutor):
         if any(unit.health_percentage <= self.retreat_health for unit in units):
             return "squad_health_low"
         if any(
-            enemy.visible_now
-            and not enemy.is_worker
-            and enemy.can_attack_ground
+            enemy.is_visible_combat_threat(against_air=False)
             and any(
                 enemy.position.distance_to(unit.position) <= self.danger_radius
                 for unit in units

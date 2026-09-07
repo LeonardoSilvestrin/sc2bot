@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from bot.behavior.macro.config import MacroPlannerConfig
-from bot.behavior.macro.goals import banshee_cloak
+from bot.behavior.macro.goal_profiles import banshee_cloak
 
 MACRO_PROFILES: Mapping[str, MacroPlannerConfig] = {
     "BioThreeOneOne": MacroPlannerConfig(),

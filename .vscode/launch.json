@@ -2,7 +2,7 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "SC2 Bot — com logs",
+      "name": "logs play",
       "type": "debugpy",
       "request": "launch",
       "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
@@ -13,7 +13,7 @@
       "justMyCode": false
     },
     {
-      "name": "SC2 Bot — sem logs",
+      "name": "play",
       "type": "debugpy",
       "request": "launch",
       "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",

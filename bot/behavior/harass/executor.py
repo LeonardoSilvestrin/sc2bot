@@ -119,9 +119,7 @@ class CloakedBansheeHarassExecutor(MissionExecutor):
         defenders = tuple(
             unit
             for unit in context.attention.world.enemy_units
-            if unit.visible_now
-            and not unit.is_worker
-            and unit.can_attack_air
+            if unit.is_visible_combat_threat(against_ground=False)
             and unit.position.distance_to(self.target) <= self.disengage_radius
         )
         if defenders:

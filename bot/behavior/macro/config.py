@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 
-from bot.behavior.macro.goals import MacroGoalSet, bio_three_one_one
+from bot.behavior.macro.goal_profiles import bio_three_one_one
+from bot.behavior.macro.goals import MacroGoalSet
 from bot.behavior.macro.reference_build import (
     ReferenceBuild,
     bio_three_one_one_reference,

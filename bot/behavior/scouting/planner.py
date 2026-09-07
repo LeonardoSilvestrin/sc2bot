@@ -6,6 +6,7 @@ from sc2.ids.unit_typeid import UnitTypeId
 
 from bot.behavior.scouting.config import IntelPlannerConfig
 from bot.engine.missions.models import MissionKind, MissionProposal, UnitRequirement
+from bot.engine.missions.planning import ProposalCadence
 from bot.world.knowledge.models import AwarenessSnapshot
 from bot.world.observation.models import AttentionSnapshot, WorldFacts
 
@@ -16,8 +17,9 @@ class IntelPlanner:
 
     config: IntelPlannerConfig = field(default_factory=IntelPlannerConfig)
     planner_id: str = "intel_planner"
-    _last_proposed_at: float = field(default=-9999.0, init=False, repr=False)
-    _sequence: int = field(default=0, init=False, repr=False)
+    _cadence: ProposalCadence = field(
+        default_factory=ProposalCadence, init=False, repr=False
+    )
 
     def propose(
         self,
@@ -44,15 +46,15 @@ class IntelPlanner:
             and world.time < self.config.repeat_scouts_after
         ):
             return ()
-        if world.time - self._last_proposed_at < self.config.proposal_cadence:
+        if not self._cadence.ready(world.time, self.config.proposal_cadence):
             return ()
 
         unit_types = self._select_unit_types(world)
         if not unit_types:
             return ()
 
-        self._last_proposed_at = world.time
-        self._sequence += 1
+        self._cadence.mark(world.time)
+        sequence = self._cadence.next_sequence()
         reason = (
             f"{target_key}_information_unknown"
             if location.last_observed_at is None
@@ -60,7 +62,7 @@ class IntelPlanner:
         )
         return (
             MissionProposal(
-                proposal_id=(f"{self.planner_id}:scout:{target_key}:{self._sequence}"),
+                proposal_id=(f"{self.planner_id}:scout:{target_key}:{sequence}"),
                 deduplication_key=f"scout:{target_key}",
                 planner=self.planner_id,
                 kind=MissionKind.SCOUT,
@@ -68,13 +70,11 @@ class IntelPlanner:
                 target_key=target_key,
                 target=location.position,
                 reason=reason,
-                requirement=UnitRequirement(
+                requirement=UnitRequirement.combat(
                     unit_types=unit_types,
                     desired=1,
                     minimum=1,
                     minimum_health=self.config.minimum_unit_health,
-                    exclude_resource_carriers=True,
-                    exclude_constructors=True,
                 ),
                 created_at=world.time,
                 evidence_last_observed_at=location.last_observed_at,
