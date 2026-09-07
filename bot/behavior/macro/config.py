@@ -1,8 +1,60 @@
 from dataclasses import dataclass, field
 
 from bot.behavior.macro.goals import MacroGoalSet, bio_three_one_one
+from bot.behavior.macro.reference_build import (
+    ReferenceBuild,
+    bio_three_one_one_reference,
+)
 from bot.behavior.posture import MacroPosture
 from bot.engine.economy.models import ResourceCost
+
+
+@dataclass(frozen=True, slots=True)
+class ResourceOverflowConfig:
+    """Bank-size pressure that overrides normal production/army targets.
+
+    A standard build's timings or income-rate scaling can both under-shoot
+    when the bot is simply banking resources faster than it converts them
+    into buildings and units. Sitting on a pile above ``*_threshold`` is
+    itself the evidence that more producers are needed, so this bypasses the
+    usual "producers must already be busy" gate -- see
+    ``MacroPlanner._propose_production`` and ``_propose_army``.
+    """
+
+    mineral_threshold: float = 800.0
+    mineral_step: float = 400.0
+    vespene_threshold: float = 400.0
+    vespene_step: float = 200.0
+    army_supply_per_step: float = 8.0
+
+    def __post_init__(self) -> None:
+        if self.mineral_threshold < 0.0 or self.vespene_threshold < 0.0:
+            raise ValueError("overflow thresholds must not be negative")
+        if self.mineral_step <= 0.0 or self.vespene_step <= 0.0:
+            raise ValueError("overflow steps must be positive")
+        if self.army_supply_per_step < 0.0:
+            raise ValueError("army_supply_per_step must not be negative")
+
+    def production_bonus(self, *, minerals: float, vespene: float) -> int:
+        """Extra production structures justified by the current bank size."""
+
+        return max(
+            self._steps_over(minerals, self.mineral_threshold, self.mineral_step),
+            self._steps_over(vespene, self.vespene_threshold, self.vespene_step),
+        )
+
+    def army_supply_bonus(self, *, minerals: float, vespene: float) -> float:
+        """Extra army-supply headroom justified by the current bank size."""
+
+        return self.production_bonus(
+            minerals=minerals, vespene=vespene
+        ) * self.army_supply_per_step
+
+    @staticmethod
+    def _steps_over(amount: float, threshold: float, step: float) -> int:
+        if amount <= threshold:
+            return 0
+        return 1 + int((amount - threshold) // step)
 
 
 @dataclass(frozen=True, slots=True)
@@ -10,6 +62,10 @@ class MacroPlannerConfig:
     """Costs and thresholds used to turn a strategy into spend proposals."""
 
     goals: MacroGoalSet = field(default_factory=bio_three_one_one)
+    reference_build: ReferenceBuild | None = field(
+        default_factory=bio_three_one_one_reference
+    )
+    overflow: ResourceOverflowConfig = field(default_factory=ResourceOverflowConfig)
     worker_cost: ResourceCost = field(
         default_factory=lambda: ResourceCost(minerals=50, supply=1.0)
     )

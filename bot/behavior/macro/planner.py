@@ -21,9 +21,14 @@ from bot.world.observation.models import AttentionSnapshot, EconomyFacts, Produc
 class MacroPlanner:
     """Compare current + pending macro state with a strategic goal set.
 
-    The planner deliberately ignores the current mineral and gas bank. It
-    declares useful goals and their costs; the economy controller owns
-    admission, saving and reservation. Every goal has a stable identity so
+    The planner never uses the bank to decide whether a goal is
+    *affordable* -- it declares useful goals and their costs; the economy
+    controller owns admission, saving and reservation. It does read the bank
+    for one narrow purpose: as a pressure signal in ``_propose_production``
+    and ``_propose_army``, a pile sitting above
+    ``MacroPlannerConfig.overflow``'s thresholds is itself evidence that
+    current production/composition targets are too low, and raises them
+    regardless of producer utilization. Every goal has a stable identity so
     repeating the same deficit across frames cannot create duplicate work.
     """
 
@@ -65,9 +70,25 @@ class MacroPlanner:
         if gas is not None:
             proposals.append(gas)
 
-        proposals.extend(self._propose_production(economy, posture, world.time))
+        proposals.extend(
+            self._propose_production(
+                economy,
+                posture,
+                world.time,
+                minerals=world.minerals,
+                vespene=world.vespene,
+            )
+        )
         proposals.extend(self._propose_addons(economy, posture, world.time))
-        proposals.extend(self._propose_army(economy, posture, world.time))
+        proposals.extend(
+            self._propose_army(
+                economy,
+                posture,
+                world.time,
+                minerals=world.minerals,
+                vespene=world.vespene,
+            )
+        )
 
         # Admission order belongs to EconomyController, but returning the same
         # priority order makes traces and unit tests much easier to read.
@@ -195,21 +216,42 @@ class MacroPlanner:
         economy: EconomyFacts,
         posture: MacroPosture,
         now: float,
+        *,
+        minerals: float,
+        vespene: float,
     ) -> tuple[EconomicProposal, ...]:
         proposals: list[EconomicProposal] = []
+        overflow_bonus = self.config.overflow.production_bonus(
+            minerals=minerals, vespene=vespene
+        )
         for goal in self.config.goals.production:
             count = economy.structure_count(goal.structure_type)
-            desired = goal.target_for_income(
+            income_target = goal.target_for_income(
                 minerals=economy.mineral_collection_rate,
                 vespene=economy.vespene_collection_rate,
             )
-            if desired > goal.minimum and not self._production_is_saturated(
+            if income_target > goal.minimum and not self._production_is_saturated(
                 goal,
                 economy.producer(goal.structure_type),
             ):
-                desired = goal.minimum
+                income_target = goal.minimum
+            reference_floor = (
+                self.config.reference_build.target_for(goal.structure_type, now)
+                if self.config.reference_build is not None
+                else 0
+            )
+            base_desired = max(goal.minimum, income_target, reference_floor)
+            desired = min(goal.maximum, base_desired + overflow_bonus)
             if count.total >= desired:
                 continue
+            if count.total < goal.minimum:
+                reason = "production_below_opening_floor"
+            elif count.total < reference_floor:
+                reason = "production_below_reference_build_benchmark"
+            elif desired > base_desired:
+                reason = "resource_bank_overflowing"
+            else:
+                reason = "sustained_income_exceeds_busy_production_capacity"
             proposals.append(
                 self._proposal(
                     kind=EconomicActionKind.BUILD_PRODUCTION,
@@ -217,11 +259,7 @@ class MacroPlanner:
                     target=goal.structure_type.name,
                     target_count=desired,
                     priority=self.config.priority_for("production", posture),
-                    reason=(
-                        "production_below_opening_floor"
-                        if count.total < goal.minimum
-                        else "sustained_income_exceeds_busy_production_capacity"
-                    ),
+                    reason=reason,
                     cost=goal.cost,
                     now=now,
                 )
@@ -257,6 +295,9 @@ class MacroPlanner:
         economy: EconomyFacts,
         posture: MacroPosture,
         now: float,
+        *,
+        minerals: float,
+        vespene: float,
     ) -> tuple[EconomicProposal, ...]:
         goals = self.config.goals
         counts = {
@@ -266,7 +307,14 @@ class MacroPlanner:
         army_supply = sum(
             counts[goal.unit_type] * goal.cost.supply for goal in goals.army
         )
-        if army_supply >= goals.army_supply_target:
+        # A bank overflowing above the configured thresholds is evidence the
+        # standard army_supply_target is not absorbing income fast enough;
+        # raise the ceiling instead of sitting on the pile until a fight
+        # forces it to be spent.
+        overflow_supply_bonus = self.config.overflow.army_supply_bonus(
+            minerals=minerals, vespene=vespene
+        )
+        if army_supply >= goals.army_supply_target + overflow_supply_bonus:
             return ()
 
         total_weight = sum(goal.weight for goal in goals.army)
@@ -287,6 +335,10 @@ class MacroPlanner:
         desired_total = bottleneck_scale * total_weight
         if below_own_minimum:
             desired_total += goals.composition_lookahead
+        if overflow_supply_bonus > 0.0:
+            cheapest_supply = min(goal.cost.supply for goal in goals.army)
+            if cheapest_supply > 0.0:
+                desired_total += overflow_supply_bonus / cheapest_supply
         proposals: list[EconomicProposal] = []
         for goal in goals.army:
             ratio_target = ceil(desired_total * goal.weight / total_weight)

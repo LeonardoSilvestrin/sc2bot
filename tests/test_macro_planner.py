@@ -5,9 +5,14 @@ from dataclasses import replace
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
-from bot.behavior.macro import MacroPlanner
+from bot.behavior.macro import (
+    MacroPlanner,
+    MacroPlannerConfig,
+    ProductionGoal,
+    bio_three_one_one,
+)
 from bot.behavior.posture import MacroPosture
-from bot.engine.economy.models import EconomicActionKind
+from bot.engine.economy.models import EconomicActionKind, ResourceCost
 from bot.world.knowledge import AwarenessService
 from bot.world.observation.models import (
     AttentionSnapshot,
@@ -349,6 +354,111 @@ class TestMacroPlanner:
 
         assert defense_worker.priority < defense_army.priority
         assert greed_worker.priority > greed_army.priority
+
+    def test_bank_overflow_raises_production_targets_past_the_usual_ceiling(self):
+        # minerals=1700 is 3 steps over the default 800/400 overflow config,
+        # which must push the barracks target from its converged minimum (3)
+        # to 6, bypassing the usual "producers must be busy" gate entirely.
+        attention = economy_attention(minerals=1700)
+
+        barracks_proposal = next(
+            (
+                item
+                for item in proposals_for(attention)
+                if item.kind is EconomicActionKind.BUILD_PRODUCTION
+                and item.target == UnitTypeId.BARRACKS.name
+            ),
+            None,
+        )
+
+        assert barracks_proposal is not None
+        assert barracks_proposal.target_count == 6
+        assert barracks_proposal.reason == "resource_bank_overflowing"
+
+    def test_a_bank_under_the_overflow_threshold_does_not_inflate_targets(self):
+        attention = economy_attention(minerals=500)
+
+        assert not any(
+            item.kind is EconomicActionKind.BUILD_PRODUCTION
+            for item in proposals_for(attention)
+        )
+
+    def test_gas_overflow_also_raises_production_targets(self):
+        # vespene=500 is 1 step over the default 400/200 vespene overflow
+        # config: (500 - 400) // 200 + 1 == 1 extra production structure.
+        attention = economy_attention(vespene=500)
+
+        barracks_proposal = next(
+            (
+                item
+                for item in proposals_for(attention)
+                if item.kind is EconomicActionKind.BUILD_PRODUCTION
+                and item.target == UnitTypeId.BARRACKS.name
+            ),
+            None,
+        )
+
+        assert barracks_proposal is not None
+        assert barracks_proposal.target_count == 4
+
+    def test_bank_overflow_raises_the_army_supply_ceiling(self):
+        # CONVERGED_UNITS sits at 117 army supply, just above the default
+        # 115 target, so nothing is normally proposed (see
+        # test_converged_profile_has_no_proposals). An overflowing bank must
+        # still push production past that converged composition.
+        attention = economy_attention(minerals=1700)
+
+        siegetank_proposal = next(
+            (
+                item
+                for item in proposals_for(attention)
+                if item.kind is EconomicActionKind.PRODUCE_UNIT
+                and item.target == UnitTypeId.SIEGETANK.name
+            ),
+            None,
+        )
+
+        assert siegetank_proposal is not None
+
+    def test_reference_build_floors_a_production_goal_below_its_own_minimum(self):
+        # With the goal's own minimum dropped to zero, the only thing that
+        # can still justify a barracks below the standard build's benchmark
+        # is the reference build itself (income and overflow are both off).
+        goals = replace(
+            bio_three_one_one(),
+            production=(
+                ProductionGoal(
+                    UnitTypeId.BARRACKS,
+                    minimum=0,
+                    maximum=8,
+                    cost=ResourceCost(minerals=150),
+                ),
+            ),
+        )
+        config = MacroPlannerConfig(goals=goals)
+        attention = economy_attention(
+            time=100.0, structures={UnitTypeId.BARRACKS: (0, 0)}
+        )
+        awareness = replace(
+            AwarenessService().update(attention), macro_posture=MacroPosture.BALANCED
+        )
+
+        proposals = MacroPlanner(config=config).propose(attention, awareness)
+        barracks_proposal = next(
+            (
+                item
+                for item in proposals
+                if item.kind is EconomicActionKind.BUILD_PRODUCTION
+                and item.target == UnitTypeId.BARRACKS.name
+            ),
+            None,
+        )
+
+        assert barracks_proposal is not None
+        # The bio_three_one_one reference build reaches 1 barracks at 0:41
+        # and 2 at 1:51 -- at t=100 only the first checkpoint applies.
+        assert barracks_proposal.target_count == 1
+        assert barracks_proposal.reason == "production_below_reference_build_benchmark"
 
     def test_goal_identity_is_stable_across_frames(self):
         first = proposals_for(
