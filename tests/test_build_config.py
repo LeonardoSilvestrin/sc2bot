@@ -25,19 +25,29 @@ class TerranBuildConfigTests(unittest.TestCase):
 
     def test_commands_use_names_understood_by_ares(self):
         special = {"supply", "worker_scout", "orbital", "gas", "expand"}
-        commands = self.config["Builds"]["BioThreeOneOne"]["OpeningBuildOrder"]
         invalid: list[str] = []
-        for step in commands:
-            command = step.split()[1].lower()
-            if command in special:
-                continue
-            if (
-                command.upper() not in UnitTypeId.__members__
-                and command.upper() not in UpgradeId.__members__
-            ):
-                invalid.append(command)
+        for name, build in self.config["Builds"].items():
+            for step in build["OpeningBuildOrder"]:
+                command = step.split()[1].lower()
+                if command in special:
+                    continue
+                if (
+                    command.upper() not in UnitTypeId.__members__
+                    and command.upper() not in UpgradeId.__members__
+                ):
+                    invalid.append(f"{name}: {command}")
         self.assertEqual(invalid, [])
 
     def test_opening_does_not_bypass_the_mission_scout(self):
-        commands = self.config["Builds"]["BioThreeOneOne"]["OpeningBuildOrder"]
-        self.assertFalse(any("worker_scout" in step.lower() for step in commands))
+        for name, build in self.config["Builds"].items():
+            commands = build["OpeningBuildOrder"]
+            self.assertFalse(
+                any("worker_scout" in step.lower() for step in commands),
+                msg=f"{name} should not issue its own scout",
+            )
+
+    def test_banshee_cloak_build_is_available_for_every_matchup_and_test(self):
+        for matchup in ("Protoss", "Terran", "Zerg", "Random", "test_123"):
+            self.assertIn(
+                "BansheeCloak", self.config["BuildChoices"][matchup]["Cycle"]
+            )

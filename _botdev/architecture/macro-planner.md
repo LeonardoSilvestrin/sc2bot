@@ -76,6 +76,17 @@ unit commitments — no unit lease or executor lifecycle is needed.
 - `bot/app/runtime.py` calls `MacroPlanner().propose(attention,
   awareness)` from the same frame step that collects `IntelPlanner`
   proposals, gated on `build_order_runner.build_completed` being true.
+- Which `MacroGoalSet` that `MacroPlanner` converges toward is not fixed at
+  `BotRuntime` construction: `chosen_opening` is unknown until the Ares build
+  runner resolves it, so `BotRuntime._resolve_macro_profile` looks it up via
+  `bot.behavior.macro.profiles.macro_config_for_opening` on the first frame
+  it becomes non-empty and locks it in for the rest of the game (an opening
+  never changes mid-game). `MACRO_PROFILES` maps opening name ->
+  `MacroPlannerConfig`; an opening with no matching entry, or the opening not
+  yet being known, falls back to the default (Bio) profile rather than
+  raising. This is the only place the build order and dynamic macro actually
+  talk to each other -- see [opening.md](opening.md) for the `BansheeCloak`
+  opening this exists for.
 - `EconomyController.tick(...)` processes proposals by priority, reserving
   minerals/vespene against a running remainder seeded from the current bank
   so two proposals admitted in the same frame cannot both spend the same

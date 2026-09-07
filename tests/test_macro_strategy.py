@@ -6,7 +6,24 @@ import pytest
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.ids.upgrade_id import UpgradeId
 
-from bot.behavior.macro import MacroGoalSet, ProductionGoal, bio_three_one_one
+from bot.behavior.macro import (
+    MacroGoalSet,
+    ProductionGoal,
+    banshee_cloak,
+    bio_three_one_one,
+)
+
+
+def test_banshee_cloak_declares_a_banshee_led_composition():
+    goals = banshee_cloak()
+
+    assert goals.opening_name == "BansheeCloak"
+    assert UnitTypeId.BANSHEE in {goal.unit_type for goal in goals.army}
+    assert {goal.structure_type: goal.minimum for goal in goals.production} == {
+        UnitTypeId.BARRACKS: 2,
+        UnitTypeId.STARPORT: 1,
+        UnitTypeId.FACTORY: 1,
+    }
 
 
 def test_bio_three_one_one_declares_full_post_opening_convergence():

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
+from sc2.ids.ability_id import AbilityId
 from sc2.position import Point2
 
 
@@ -39,4 +40,13 @@ class MissionCommands(Protocol):
         ...
 
     def release(self, *, mission_id: str, unit_tag: int) -> None:
+        ...
+
+    def use_ability(
+        self,
+        *,
+        mission_id: str,
+        unit_tag: int,
+        ability: AbilityId,
+    ) -> None:
         ...
