@@ -37,6 +37,18 @@ class FakeCommands:
             ("path_to", mission_id, unit_tag, target, success_at_distance)
         )
 
+    def attack_move(
+        self,
+        *,
+        mission_id,
+        unit_tag,
+        target,
+        success_at_distance,
+    ) -> None:
+        self.commands.append(
+            ("attack_move", mission_id, unit_tag, target, success_at_distance)
+        )
+
     def release(self, *, mission_id, unit_tag) -> None:
         self.commands.append(("release", mission_id, unit_tag))
 

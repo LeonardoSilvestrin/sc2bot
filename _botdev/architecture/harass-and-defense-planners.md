@@ -1,0 +1,110 @@
+# Harass and Defense planners
+
+This slice reorganizes `bot/planners/` and `bot/executors/` into one directory per
+mission kind and adds the second and third mission planners after
+[scout-pilot-migration.md](scout-pilot-migration.md)'s `IntelPlanner`.
+
+## Directory layout
+
+```text
+bot/planners/
+  intel/planner.py       -> IntelPlanner, IntelPlannerConfig
+  harass/planner.py      -> HarassPlanner, HarassPlannerConfig
+  defense/planner.py     -> DefensePlanner, DefensePlannerConfig
+  macro.py               -> MacroPlanner (unchanged; produces EconomicProposal, not
+                             admitted by MissionController -- see macro-planner.md)
+
+bot/executors/
+  base.py                 -> MissionExecutor / MissionContext / MissionResult (shared)
+  intel/scout.py           -> ScoutExecutor
+  harass/worker_line.py    -> WorkerLineHarassExecutor
+  defense/defend_base.py   -> DefendBaseExecutor
+```
+
+Each executor is named after the concrete action it performs, not its planner, per
+the project's rule against generic `<Kind>Executor` classes. `bot/planners/__init__.py`
+and `bot/executors/__init__.py` re-export every public name so existing imports
+(`from bot.planners import IntelPlanner`, `from bot.executors import ScoutExecutor`)
+keep working unchanged.
+
+`MissionKind` gained `HARASS` and `DEFENSE` in `bot/ego/models.py`; it stays the
+shared vocabulary in `ego`, alongside `MissionProposal`/`Mission`/`MissionController`.
+`BotRuntime` now holds a tuple of mission planners and concatenates their proposals
+every frame instead of calling a single planner by name, so wiring in a future
+planner does not require touching the admission call site.
+
+## New command port
+
+Neither harass nor defense can be expressed with `path_to` alone: both need the
+assigned units to fight, not just arrive. `MissionCommands` gained `attack_move`,
+implemented in `AresMissionCommands` with the `AMove` behavior (the attack-capable
+counterpart of the `PathUnitToTarget` behavior the scout already uses) and assigning
+`UnitRole.ATTACKING`, mirroring how `path_to` always assigns `UnitRole.SCOUTING`
+regardless of the calling mission's kind.
+
+## HarassPlanner
+
+Proposes one `MissionProposal` (`MissionKind.HARASS`) to attack-move a Reaper into
+the enemy natural's worker line. Conditions, all read from existing Attention/
+Awareness facts -- no new fact was invented for this planner:
+
+- `awareness.enemy.location("enemy_natural").last_observed_at` is not `None` --
+  harass only follows up on a location `IntelPlanner` (or a future scout) has
+  already found; it never guesses a target.
+- `awareness.threat.visible_enemy_units == 0` -- conservative: it withholds harass
+  the instant any enemy unit is visible anywhere, since this slice has no notion of
+  "the target base specifically is undefended" versus "a threat is visible
+  somewhere else."
+- The economy has reached `minimum_workers` (16, matching `IntelPlannerConfig`) and
+  a configured harass unit (Reaper by default) is alive.
+
+Priority 60, `can_preempt=False` (harass is opportunistic and should never steal
+units from another live mission), dedup key `harass:<target_key>`. Its executor,
+`WorkerLineHarassExecutor`, attack-moves into the target and completes with
+`harass_target_defended` the moment a non-worker, attack-capable enemy unit is
+observed within `disengage_radius` of the target -- it disengages from a fight it
+wasn't sent to win instead of trading the harasser away.
+
+## DefensePlanner
+
+Proposes one `MissionProposal` (`MissionKind.DEFENSE`) whenever a currently visible,
+non-worker, attack-capable enemy unit is within `detection_radius` (25) of an owned
+structure, or of `own_start` before any structure is tracked. No new fact was added
+to Attention or Awareness for this: distance from `WorldFacts.enemy_units` to
+`WorldFacts.own_structures` / `MapFacts.own_start` was already expressible with data
+the builder already produces.
+
+Priority 95 with `can_preempt=True` -- the highest of the pilot's planners on
+purpose, so it can preempt a live Intel or Harass mission for the same unit once the
+`UnitAllocator`'s preemption margin (10) and the donor's commitment window allow it
+(see `tests/test_mission_arbitration.py` for the full preemption sequence). Dedup
+key `defense:own_base`: one active defense mission for the whole base at a time;
+splitting by base or by threat is future work once the bot has more than one base
+worth defending independently.
+
+Its executor, `DefendBaseExecutor`, attack-moves every assigned unit toward the
+threat closest to where the mission was admitted and completes with
+`threat_cleared_near_own_base` once no matching enemy remains within
+`engagement_radius` of that point.
+
+## Deliberately not built in this slice
+
+- Splitting defense per base/expansion, or harass beyond a single worker-line target.
+- Worker-rush detection (an enemy worker alone is not treated as a threat).
+- Any retreat/repositioning micro beyond `AMove`'s built-in engage-on-the-way
+  behavior.
+- Unit-specific Ares roles such as `HARASSING_REAPER`; `attack_move` always assigns
+  the generic `UnitRole.ATTACKING`, matching `path_to`'s existing
+  one-port-one-role convention.
+- Changing `MacroPlanner`: it stays outside the `MissionProposal` model, as recorded
+  in [macro-planner.md](macro-planner.md).
+
+## Deferred decisions
+
+- Whether Defense should eventually pull SCVs or request reinforcements instead of
+  only reacting with existing combat units.
+- Whether Harass should chain multiple targets (natural, then main) instead of a
+  single fixed `target_key`.
+- Whether a defended-but-currently-unseen base should be inferable (e.g. from
+  `EnemyAwareness.sightings`) so Harass does not have to treat every visible enemy,
+  anywhere on the map, as a reason to hold back.
