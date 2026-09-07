@@ -23,8 +23,8 @@ The pilot reimplemented these useful ideas rather than copying their code:
 - The old monolithic `Ego`: it mixed planning, allocation, scheduling, execution,
   memory, and logging.
 - The global key/value `MemoryStore`: the pilot uses typed enemy location knowledge.
-- `PrioritizationIntel`: priority 55 is explicit until several real planners need
-  arbitration inputs.
+- `PrioritizationIntel`: scout priority 65 is explicit and keeps the initial
+  information mission ahead of opportunistic Reaper harass.
 - The giant `DefensePlanner`, synthetic threats, bunker logic, SCV pulls, and repair
   orchestration: none are required to prove the scout flow.
 - `MacroOrchestratorPlanner`, desired composition, and spending heuristics: economy
@@ -33,33 +33,38 @@ The pilot reimplemented these useful ideas rather than copying their code:
   runtime.
 - Generic task factories, pick-policy protocols, event buses, service locators, and
   lease heartbeats: each adds machinery without helping this single mission.
-- Multi-target scout routes, scans, Reaper scouting, rush-specific cadence, retreat
-  micro, and probabilistic inference: useful candidates, but outside this pilot.
+- Scans, rush-specific cadence, and probabilistic inference remain outside this
+  slice.
 
 ## End-to-end behavior
 
-1. Attention selects the enemy natural and records whether it is visible now.
-2. Awareness remembers its last real observation and computes age/confidence.
+1. Attention selects the enemy main and natural, then derives an enemy-main
+   perimeter route from map-analysis data. The route starts at the natural,
+   enters the main from a cliff-side point away from the ramp, circles its
+   perimeter, and closes the lap.
+2. Awareness remembers real observations, enemy structures, and townhalls; the
+   runtime logs them through `knowledge.enemy_intel`.
 3. `IntelPlanner` emits a reasoned `MissionProposal` when it is unknown or stale.
 4. `MissionController` logs the proposal, rejects duplicates/cooldown conflicts, or
    admits it as a distinct `Mission`.
-5. `UnitAllocator` leases one eligible SCV and can later support priority-based
-   preemption without allowing missions to steal tags directly.
+5. `UnitAllocator` leases one eligible Reaper (with SCV fallback when none is
+   alive); maps without a specialized main route use the natural objective. The
+   allocator supports priority-based preemption without allowing missions to
+   steal tags directly.
 6. `ScoutExecutor` carries out the admitted mission through `MissionCommands`.
-7. The Ares adapter assigns `UnitRole.SCOUTING` and registers
-   `PathUnitToTarget` every frame.
-8. When `bot.is_visible(enemy_natural)` becomes true, Awareness records a newer
-   observation.
-9. The mission completes for `target_observed_after_mission_started`, releases the
-   lease, restores `UnitRole.GATHERING`, and the baseline Ares `Mining` behavior
-   resumes worker control.
+7. The Ares adapter assigns `UnitRole.SCOUTING` and registers a maneuver with
+   `KeepUnitSafe` followed by `PathUnitToTarget`, using the climber grid for a
+   Reaper so cliff jumps are pathable.
+8. `ScoutExecutor` advances only when each route point is reached or visible; merely
+   seeing the main does not complete a routed scout.
+9. The mission completes with `enemy_main_route_completed` after the closed lap,
+   releases the lease, and restores the unit to `UnitRole.IDLE`.
 
 The opening's independent `worker_scout` step was removed so this flow has one
 authority and one causal record.
 
 ## Deferred decisions
 
-- Whether future scout profiles should target main, ramp, natural, or a route.
 - Whether a scout should return home before completion or release immediately to
   Ares mining.
 - How emergency priority 100 should bypass or shorten commitment protection.

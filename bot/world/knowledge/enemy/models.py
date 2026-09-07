@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
+from bot.world.observation.models import TOWNHALL_TYPES
+
 
 @dataclass(frozen=True, slots=True)
 class EnemySighting:
@@ -42,3 +44,16 @@ class EnemyAwareness:
 
     def location(self, key: str) -> EnemyLocationKnowledge | None:
         return next((item for item in self.locations if item.key == key), None)
+
+    @property
+    def known_base_count(self) -> int:
+        """Count enemy townhalls retained in the current world knowledge."""
+
+        return sum(
+            sighting.is_structure and sighting.unit_type in TOWNHALL_TYPES
+            for sighting in self.sightings
+        )
+
+    @property
+    def known_structure_count(self) -> int:
+        return sum(sighting.is_structure for sighting in self.sightings)

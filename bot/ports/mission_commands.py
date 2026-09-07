@@ -28,6 +28,15 @@ class MissionCommands(Protocol):
     ) -> None:
         ...
 
+    def attack_unit(
+        self,
+        *,
+        mission_id: str,
+        unit_tag: int,
+        target_unit_tag: int,
+    ) -> None:
+        ...
+
     def safe_path_to(
         self,
         *,
@@ -35,6 +44,7 @@ class MissionCommands(Protocol):
         unit_tag: int,
         target: Point2,
         success_at_distance: float,
+        search_radius: float = 14.0,
     ) -> None:
         ...
 

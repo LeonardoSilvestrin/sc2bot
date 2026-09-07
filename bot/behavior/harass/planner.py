@@ -10,13 +10,7 @@ from bot.world.observation.models import AttentionSnapshot
 
 @dataclass(slots=True)
 class HarassPlanner:
-    """Proposes one worker-line harass when it is known and looks undefended.
-
-    Conservative on purpose: it only argues for harass once the target has
-    been observed at least once (``IntelPlanner`` already owns discovering
-    it) and while no enemy unit is currently visible anywhere, since this
-    slice has no notion of a defended-but-unseen base.
-    """
+    """Proposes worker-line pressure for a known base when a Reaper is free."""
 
     config: HarassPlannerConfig = field(default_factory=HarassPlannerConfig)
     planner_id: str = "harass_planner"
@@ -35,13 +29,15 @@ class HarassPlanner:
         location = awareness.enemy.location(self.config.target_key)
         if location is None or location.last_observed_at is None:
             return ()
-        if awareness.threat.visible_enemy_units > 0:
-            return ()
         workers = sum(unit.is_worker for unit in world.own_units)
         if workers < self.config.minimum_workers:
             return ()
         if not any(
-            unit.unit_type in self.config.unit_types for unit in world.own_units
+            unit.unit_type in self.config.unit_types
+            and unit.available_for_mission
+            and unit.is_ready
+            and unit.health_percentage >= self.config.minimum_unit_health
+            for unit in world.own_units
         ):
             return ()
 
@@ -59,7 +55,7 @@ class HarassPlanner:
                 priority=self.config.priority,
                 target_key=self.config.target_key,
                 target=location.position,
-                reason="enemy_worker_line_known_and_currently_undefended",
+                reason="enemy_worker_line_known_and_reaper_available",
                 requirement=UnitRequirement(
                     unit_types=self.config.unit_types,
                     desired=1,

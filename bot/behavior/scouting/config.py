@@ -5,13 +5,13 @@ from sc2.ids.unit_typeid import UnitTypeId
 
 @dataclass(frozen=True, slots=True)
 class IntelPlannerConfig:
-    target_key: str = "enemy_natural"
+    target_key: str = "enemy_main"
     location_stale_after: float = 90.0
     minimum_workers: int = 16
     repeat_scouts_after: float = 240.0
     proposal_cadence: float = 65.0
-    priority: int = 55
-    mission_timeout: float = 70.0
+    priority: int = 65
+    mission_timeout: float = 105.0
     failure_cooldown: float = 18.0
     unit_types: frozenset[UnitTypeId] = field(
         default_factory=lambda: frozenset({UnitTypeId.REAPER})

@@ -42,6 +42,35 @@ def unit(
 
 
 class AttentionBuilderTests(unittest.TestCase):
+    def test_builds_enemy_main_route_from_perimeter_away_from_ramp(self):
+        main = Point2((90, 90))
+        natural = Point2((90, 70))
+        region = SimpleNamespace(
+            center=main,
+            perimeter=((80, 90), (90, 100), (100, 90), (82, 82)),
+            region_ramps=(SimpleNamespace(top_center=Point2((90, 80))),),
+        )
+        mediator = SimpleNamespace(
+            get_enemy_nat=natural,
+            get_enemy_ramp=SimpleNamespace(top_center=Point2((90, 80))),
+            get_map_data_object=SimpleNamespace(in_region_p=lambda _: region),
+        )
+        bot = SimpleNamespace(
+            enemy_start_locations=(main,),
+            mediator=mediator,
+            is_visible=lambda _: False,
+        )
+
+        routes = AttentionBuilder._map_routes(bot)
+
+        self.assertEqual(len(routes), 1)
+        self.assertEqual(routes[0].key, "enemy_main")
+        self.assertEqual(routes[0].waypoints[0].position, natural)
+        self.assertEqual(
+            routes[0].waypoints[-1].position,
+            routes[0].waypoints[1].position,
+        )
+
     def test_flags_ares_memory_units_as_not_currently_visible(self):
         natural = Point2((80, 80))
         bot = SimpleNamespace(
