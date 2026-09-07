@@ -1,0 +1,49 @@
+Leitura do oponente (flags prontas de rush/greed/expand)
+===========================================================
+
+O QUE E
+  O data_manager do ares ja deriva, a partir do que foi observado, uma serie
+  de flags booleanas sobre o estilo do oponente:
+    get_did_enemy_rush, get_enemy_expanded, get_enemy_four_gate,
+    get_enemy_has_base_outside_natural, get_enemy_ling_rushed,
+    get_enemy_marine_rush, get_enemy_marauder_rush, get_enemy_ravager_rush,
+    get_enemy_roach_rushed, get_enemy_was_greedy, get_enemy_went_four_gate,
+    get_enemy_went_marine_rush, get_enemy_went_marauder_rush,
+    get_enemy_went_reaper, get_enemy_worker_rushed, get_is_proxy_zealot
+  Tambem ha get_main_ground_threats_near_townhall / get_main_air_threats_near_
+  townhall e get_th_tag_with_largest_ground_threat, que ja fazem o trabalho de
+  "quais inimigos ameacam qual base" separando ar de terra.
+
+ONDE FICA
+  ares-sc2/src/ares/managers/manager_mediator.py:545-877 (threats + flags)
+
+GAP NO BOT
+  bot/world/knowledge/service.py e bot/world/knowledge/models.py nao usam
+  nenhuma dessas flags -- MacroPosture e derivado so de contagem de unidades
+  proximas (`nearby_enemy_combat`, ver _derive_macro_posture). Isso significa
+  que a defesa so reage quando o inimigo ja esta fisicamente perto da base,
+  nunca antecipando um padrao (ex.: "marine rush detectado" antes das
+  unidades chegarem).
+
+  Atualizacao (2026-09-07, ver _botdev/architecture/base-model.md):
+  bot/world/knowledge/bases/knowledge.py:BaseSecurityAssessor agora calcula
+  threat_score/protection_score por base usando um loop equivalente na mao
+  (visible, nao-trabalhador, capaz de atacar, dentro de um raio), ainda sem
+  usar get_main_ground_threats_near_townhall / get_main_air_threats_near_
+  townhall nem separar ameaca aerea de terrestre -- DefensePlannerConfig.
+  unit_types continua um unico set {MARINE, REAPER} para qualquer tipo de
+  ameaca, entao um Reaper ainda pode ser escalado sozinho contra uma ameaca
+  aerea que ele nao consegue atacar. O gap original persiste, so mudou de
+  arquivo (planner.py -> knowledge/bases/knowledge.py).
+
+IDEIA DE USO
+  1. Trocar o loop de BaseSecurityAssessor._assess por
+     get_main_ground_threats_near_townhall / get_main_air_threats_near_
+     townhall (ja cacheados por frame), e fazer DefensePlanner escolher
+     unit_types de defesa de acordo com o tipo de ameaca de cada base (nao
+     mandar Reaper sozinho contra ameaca aerea).
+  2. Alimentar AwarenessService com get_enemy_marine_rush / get_did_enemy_rush
+     / get_enemy_worker_rushed etc. para antecipar MacroPosture.DEFENSE antes
+     do inimigo chegar fisicamente perto da base -- worker-rush continua fora
+     de escopo (BaseSecurityAssessor tambem filtra is_worker fora do
+     threat_score), ver "Deliberately not built" em base-model.md.

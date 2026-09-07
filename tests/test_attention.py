@@ -42,7 +42,7 @@ def unit(
 
 
 class AttentionBuilderTests(unittest.TestCase):
-    def test_publishes_current_facts_without_ares_memory_units(self):
+    def test_flags_ares_memory_units_as_not_currently_visible(self):
         natural = Point2((80, 80))
         bot = SimpleNamespace(
             time=12.0,
@@ -70,11 +70,40 @@ class AttentionBuilderTests(unittest.TestCase):
 
         world = AttentionBuilder().world_facts(bot, iteration=1)
 
-        self.assertEqual(tuple(item.tag for item in world.enemy_units), (3,))
+        # Memory units are kept -- not silently dropped -- but flagged as not
+        # currently visible so callers can tell "there now" from "last known
+        # here" (see bot.world.knowledge.enemy.EnemyKnowledge).
+        self.assertEqual(
+            {item.tag: item.visible_now for item in world.enemy_units},
+            {3: True, 4: False},
+        )
         self.assertEqual(tuple(item.tag for item in world.enemy_structures), (5,))
         self.assertEqual(tuple(item.tag for item in world.own_structures), (2,))
         self.assertTrue(world.map.observation("enemy_natural").visible_now)
         self.assertTrue(world.own_units[0].available_for_mission)
+
+    def test_recognizes_enemy_workers_of_any_race(self):
+        bot = SimpleNamespace(
+            time=10.0,
+            minerals=0,
+            vespene=0,
+            supply_used=0,
+            supply_cap=0,
+            worker_type=UnitTypeId.SCV,
+            units=(),
+            enemy_units=(
+                unit(1, UnitTypeId.SCV),
+                unit(2, UnitTypeId.PROBE),
+                unit(3, UnitTypeId.DRONE),
+            ),
+            enemy_start_locations=(Point2((90, 90)),),
+            start_location=Point2((10, 10)),
+            game_info=SimpleNamespace(map_center=Point2((50, 50))),
+        )
+
+        world = AttentionBuilder().world_facts(bot, iteration=1)
+
+        self.assertTrue(all(item.is_worker for item in world.enemy_units))
 
     def test_publishes_opening_income_pending_counts_and_producer_capacity(self):
         barracks = (

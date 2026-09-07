@@ -4,11 +4,13 @@ import math
 from collections import Counter
 from collections.abc import Mapping
 
+from ares.consts import ALL_STRUCTURES, WORKER_TYPES
 from sc2.dicts.unit_train_build_abilities import TRAIN_INFO
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
 from bot.world.observation.models import (
+    TOWNHALL_TYPES,
     AttentionSnapshot,
     CountFacts,
     EconomyFacts,
@@ -20,28 +22,9 @@ from bot.world.observation.models import (
     WorldFacts,
 )
 
-_TOWNHALL_TYPES: frozenset[UnitTypeId] = frozenset(
-    {
-        UnitTypeId.COMMANDCENTER,
-        UnitTypeId.ORBITALCOMMAND,
-        UnitTypeId.PLANETARYFORTRESS,
-        UnitTypeId.NEXUS,
-        UnitTypeId.HATCHERY,
-        UnitTypeId.LAIR,
-        UnitTypeId.HIVE,
-    }
-)
-_KNOWN_STRUCTURE_TYPES: frozenset[UnitTypeId] = frozenset(
-    {
-        *_TOWNHALL_TYPES,
-        UnitTypeId.SUPPLYDEPOT,
-        UnitTypeId.SUPPLYDEPOTLOWERED,
-        UnitTypeId.PYLON,
-        UnitTypeId.REFINERY,
-        UnitTypeId.ASSIMILATOR,
-        UnitTypeId.EXTRACTOR,
-    }
-)
+# All-race building types, used only as a fast path in _looks_like_structure:
+# anything missing here still falls back to inspecting game_data attributes.
+_KNOWN_STRUCTURE_TYPES: frozenset[UnitTypeId] = frozenset(ALL_STRUCTURES)
 
 
 def _ability_value(value) -> int | None:
@@ -377,7 +360,7 @@ class AttentionBuilder:
             pending=worker_count.pending if worker_count else 0,
         )
 
-        townhall_types = set(_TOWNHALL_TYPES)
+        townhall_types = set(TOWNHALL_TYPES)
         base_type = cls._safe_attr(bot, "base_townhall_type")
         if isinstance(base_type, UnitTypeId):
             townhall_types.add(base_type)
@@ -483,7 +466,7 @@ class AttentionBuilder:
 
     @staticmethod
     def _unit_snapshot(
-        bot, unit, *, visible_now: bool, available_for_mission: bool = True
+        unit, *, visible_now: bool, available_for_mission: bool = True
     ) -> UnitSnapshot:
         return UnitSnapshot(
             tag=int(unit.tag),
@@ -491,7 +474,7 @@ class AttentionBuilder:
             position=unit.position,
             health_percentage=float(unit.health_percentage),
             is_flying=bool(unit.is_flying),
-            is_worker=bool(unit.type_id == bot.worker_type),
+            is_worker=bool(unit.type_id in WORKER_TYPES),
             can_attack_air=bool(unit.can_attack_air),
             can_attack_ground=bool(unit.can_attack_ground),
             visible_now=visible_now,
@@ -548,7 +531,6 @@ class AttentionBuilder:
         raw_enemy_structures = self._items(bot, "enemy_structures")
         own_units = tuple(
             self._unit_snapshot(
-                bot,
                 unit,
                 visible_now=True,
                 available_for_mission=(
@@ -558,18 +540,26 @@ class AttentionBuilder:
             for unit in raw_own_units
         )
         own_structures = tuple(
-            self._unit_snapshot(bot, unit, visible_now=True)
+            self._unit_snapshot(unit, visible_now=True)
             for unit in raw_own_structures
         )
+        # Ares merges out-of-vision "memory" units into enemy_units/structures,
+        # flagged per-unit via is_memory; keep them (as attention has always
+        # done for currently visible ones) instead of discarding that signal,
+        # so Awareness can tell "still there" from "last known here" and drop
+        # sightings once Ares itself stops reporting a tag, rather than
+        # inventing a separate expiry policy on top of Ares' own.
         enemy_units = tuple(
-            self._unit_snapshot(bot, unit, visible_now=True)
+            self._unit_snapshot(
+                unit, visible_now=not bool(getattr(unit, "is_memory", False))
+            )
             for unit in raw_enemy_units
-            if not bool(getattr(unit, "is_memory", False))
         )
         enemy_structures = tuple(
-            self._unit_snapshot(bot, unit, visible_now=True)
+            self._unit_snapshot(
+                unit, visible_now=not bool(getattr(unit, "is_memory", False))
+            )
             for unit in raw_enemy_structures
-            if not bool(getattr(unit, "is_memory", False))
         )
         return WorldFacts(
             iteration=int(iteration),

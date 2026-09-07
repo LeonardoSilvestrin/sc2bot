@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from bot.world.knowledge.bases import BaseSecurityAssessor
 from bot.world.knowledge.enemy import (
     EnemyAwareness,
     EnemyKnowledge,
@@ -11,7 +12,7 @@ from bot.world.knowledge.models import (
     RelativeStrength,
     ThreatAssessment,
 )
-from bot.world.observation.models import AttentionSnapshot
+from bot.world.observation.models import TOWNHALL_TYPES, AttentionSnapshot
 
 
 class AwarenessService:
@@ -38,6 +39,7 @@ class AwarenessService:
         self.posture_min_hold = float(posture_min_hold)
         self.greed_safe_after = float(greed_safe_after)
         self.enemy_knowledge = EnemyKnowledge()
+        self._base_assessor = BaseSecurityAssessor()
         self._location_last_observed: dict[str, float] = {}
         self._macro_posture = MacroPosture.BALANCED
         self._posture_changed_at = float("-inf")
@@ -79,7 +81,9 @@ class AwarenessService:
         enemy_combat = sum(
             1
             for unit in world.enemy_units
-            if not unit.is_worker and (unit.can_attack_air or unit.can_attack_ground)
+            if unit.visible_now
+            and not unit.is_worker
+            and (unit.can_attack_air or unit.can_attack_ground)
         )
         known_total = own_combat + enemy_combat
         score = 0.0 if known_total == 0 else (own_combat - enemy_combat) / known_total
@@ -93,7 +97,8 @@ class AwarenessService:
         nearby_enemies = tuple(
             unit
             for unit in world.enemy_units
-            if any(
+            if unit.visible_now
+            and any(
                 unit.position.distance_to(anchor) <= self.own_base_threat_radius
                 for anchor in anchors
             )
@@ -104,7 +109,9 @@ class AwarenessService:
             if not unit.is_worker and (unit.can_attack_air or unit.can_attack_ground)
         )
         visible_enemy_combat = sum(
-            not unit.is_worker and (unit.can_attack_air or unit.can_attack_ground)
+            unit.visible_now
+            and not unit.is_worker
+            and (unit.can_attack_air or unit.can_attack_ground)
             for unit in world.enemy_units
         )
         macro_posture = self._derive_macro_posture(
@@ -139,6 +146,7 @@ class AwarenessService:
             ),
             updated_at=world.time,
             macro_posture=macro_posture,
+            bases=self._base_assessor.update(world),
         )
 
     def _derive_macro_posture(
@@ -158,16 +166,7 @@ class AwarenessService:
         townhalls = sum(
             structure.is_ready
             and not structure.is_flying
-            and structure.unit_type.name
-            in {
-                "COMMANDCENTER",
-                "ORBITALCOMMAND",
-                "PLANETARYFORTRESS",
-                "NEXUS",
-                "HATCHERY",
-                "LAIR",
-                "HIVE",
-            }
+            and structure.unit_type in TOWNHALL_TYPES
             for structure in world.own_structures
         )
 

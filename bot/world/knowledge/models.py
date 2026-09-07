@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum, auto
 
+from bot.world.knowledge.bases.models import BaseAwareness
 from bot.world.knowledge.enemy.models import EnemyAwareness
 
 
@@ -46,3 +47,4 @@ class AwarenessSnapshot:
     threat: ThreatAssessment
     updated_at: float
     macro_posture: MacroPosture = MacroPosture.BALANCED
+    bases: BaseAwareness = field(default_factory=BaseAwareness)

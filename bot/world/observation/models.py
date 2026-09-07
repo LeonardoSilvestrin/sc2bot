@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from ares.consts import TOWNHALL_TYPES as _ARES_TOWNHALL_TYPES
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
@@ -22,6 +23,28 @@ class UnitSnapshot:
     is_structure: bool = False
     is_constructing: bool = False
     available_for_mission: bool = True
+
+
+# Sourced from Ares rather than hand-listed: the previous local set predated
+# COMMANDCENTERFLYING/ORBITALCOMMANDFLYING and missed a relocating base.
+TOWNHALL_TYPES: frozenset[UnitTypeId] = frozenset(_ARES_TOWNHALL_TYPES)
+
+
+@dataclass(frozen=True, slots=True)
+class BaseSnapshot:
+    """One base the bot currently holds and where it sits.
+
+    Derived purely from ``own_structures`` -- no threat/protection judgement
+    lives here, see ``BaseAssessment`` in ``bot.world.knowledge.bases`` for
+    that. Synthesizes a single placeholder at ``own_start`` before any
+    townhall is observed (e.g. the very first frames of the game) so
+    downstream code always has at least one base to reason about.
+    """
+
+    base_id: str
+    position: Point2
+    is_main: bool
+    townhall: UnitSnapshot | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -144,6 +167,32 @@ class WorldFacts:
     own_structures: tuple[UnitSnapshot, ...] = ()
     enemy_structures: tuple[UnitSnapshot, ...] = ()
     economy: EconomyFacts = field(default_factory=EconomyFacts)
+
+    @property
+    def bases(self) -> tuple[BaseSnapshot, ...]:
+        townhalls = tuple(
+            structure
+            for structure in self.own_structures
+            if structure.unit_type in TOWNHALL_TYPES
+        )
+        if not townhalls:
+            return (
+                BaseSnapshot(
+                    base_id="own_base",
+                    position=self.map.own_start,
+                    is_main=True,
+                    townhall=None,
+                ),
+            )
+        return tuple(
+            BaseSnapshot(
+                base_id=f"base:{townhall.tag}",
+                position=townhall.position,
+                is_main=townhall.position.distance_to(self.map.own_start) < 3.0,
+                townhall=townhall,
+            )
+            for townhall in townhalls
+        )
 
 
 @dataclass(frozen=True, slots=True)

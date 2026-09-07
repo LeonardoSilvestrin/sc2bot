@@ -38,17 +38,89 @@ def hydralisk(*, visible: bool, position: Point2) -> UnitSnapshot:
 
 
 class EnemyKnowledgeTests(unittest.TestCase):
-    def test_preserves_when_and_where_enemy_was_last_seen(self):
+    def test_tracks_first_and_last_seen_while_visible(self):
         knowledge = EnemyKnowledge()
         knowledge.update(
             world(10.0, (hydralisk(visible=True, position=Point2((30, 30))),))
         )
 
-        view = knowledge.update(world(15.0, ()))
+        view = knowledge.update(
+            world(12.0, (hydralisk(visible=True, position=Point2((31, 30))),))
+        )
         sighting = next(item for item in view if item.tag == 77)
 
-        self.assertIsNotNone(sighting)
         self.assertEqual(sighting.first_seen_at, 10.0)
-        self.assertEqual(sighting.last_seen_at, 10.0)
+        self.assertEqual(sighting.last_seen_at, 12.0)
+        self.assertEqual(sighting.last_position, Point2((31, 30)))
+        self.assertTrue(sighting.visible_now)
+
+    def test_keeps_last_known_position_while_ares_still_remembers_it(self):
+        """Ares keeps reporting an out-of-vision unit (visible_now=False) for
+        a while after it leaves vision -- see UnitMemoryManager's ~30s ghost
+        expiry. While Ares still reports the tag, the sighting survives with
+        its last known position and does not forget when it was first seen.
+        """
+
+        knowledge = EnemyKnowledge()
+        knowledge.update(
+            world(10.0, (hydralisk(visible=True, position=Point2((30, 30))),))
+        )
+
+        view = knowledge.update(
+            world(15.0, (hydralisk(visible=False, position=Point2((30, 30))),))
+        )
+        sighting = next(item for item in view if item.tag == 77)
+
+        self.assertEqual(sighting.first_seen_at, 10.0)
         self.assertEqual(sighting.last_position, Point2((30, 30)))
         self.assertFalse(sighting.visible_now)
+
+    def test_does_not_advance_last_seen_while_only_remembered(self):
+        knowledge = EnemyKnowledge()
+        knowledge.update(
+            world(10.0, (hydralisk(visible=True, position=Point2((30, 30))),))
+        )
+        knowledge.update(
+            world(15.0, (hydralisk(visible=False, position=Point2((30, 30))),))
+        )
+
+        view = knowledge.update(
+            world(20.0, (hydralisk(visible=False, position=Point2((30, 30))),))
+        )
+        sighting = next(item for item in view if item.tag == 77)
+
+        self.assertEqual(sighting.last_seen_at, 10.0)
+
+    def test_drops_sighting_once_ares_stops_reporting_it_at_all(self):
+        """Once a tag no longer appears at all -- Ares confirmed it destroyed,
+        or its own out-of-vision memory expired -- the sighting is dropped
+        instead of being remembered forever.
+        """
+
+        knowledge = EnemyKnowledge()
+        knowledge.update(
+            world(10.0, (hydralisk(visible=True, position=Point2((30, 30))),))
+        )
+
+        view = knowledge.update(world(45.0, ()))
+
+        self.assertEqual(tuple(item.tag for item in view), ())
+
+    def test_captures_a_memory_only_unit_never_seen_visible_by_this_runtime(self):
+        """Ares can expose a memory unit before this runtime ever saw it
+        visible (e.g. on startup, or after a game load)."""
+
+        knowledge = EnemyKnowledge()
+
+        view = knowledge.update(
+            world(5.0, (hydralisk(visible=False, position=Point2((30, 30))),))
+        )
+        sighting = next(item for item in view if item.tag == 77)
+
+        self.assertEqual(sighting.first_seen_at, 5.0)
+        self.assertEqual(sighting.last_seen_at, 5.0)
+        self.assertFalse(sighting.visible_now)
+
+
+if __name__ == "__main__":
+    unittest.main()

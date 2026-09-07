@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from dataclasses import replace
 
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
@@ -168,6 +169,81 @@ class DefensePlannerTests(unittest.TestCase):
 
         self.assertEqual(len(proposals), 1)
         self.assertEqual(proposals[0].target, Point2((11, 10)))
+
+    def test_proposes_independently_for_each_threatened_base(self):
+        current = attention(
+            10.0,
+            enemy_units=(
+                enemy_marine(1, Point2((41, 40))),
+                enemy_marine(2, Point2((71, 70))),
+            ),
+            own_structures=(
+                townhall(10, Point2((40, 40))),
+                townhall(11, Point2((70, 70))),
+            ),
+        )
+        awareness = AwarenessService().update(current)
+
+        proposals = DefensePlanner().propose(current, awareness)
+
+        self.assertEqual(len(proposals), 2)
+        dedup_keys = {proposal.deduplication_key for proposal in proposals}
+        self.assertEqual(dedup_keys, {"defense:base:10", "defense:base:11"})
+
+    def test_does_not_propose_for_a_base_with_no_threat_nearby(self):
+        current = attention(
+            10.0,
+            enemy_units=(enemy_marine(1, Point2((41, 40))),),
+            own_structures=(
+                townhall(10, Point2((40, 40))),
+                townhall(11, Point2((70, 70))),
+            ),
+        )
+        awareness = AwarenessService().update(current)
+
+        proposals = DefensePlanner().propose(current, awareness)
+
+        self.assertEqual(len(proposals), 1)
+        self.assertEqual(proposals[0].deduplication_key, "defense:base:10")
+
+    def test_an_already_defended_base_gets_lower_priority_than_an_undefended_one(self):
+        current = attention(
+            10.0,
+            enemy_units=(
+                enemy_marine(1, Point2((41, 40))),
+                enemy_marine(2, Point2((71, 70))),
+            ),
+            own_structures=(
+                townhall(10, Point2((40, 40))),
+                townhall(11, Point2((70, 70))),
+            ),
+        )
+        current = replace(
+            current,
+            world=replace(
+                current.world,
+                own_units=(
+                    UnitSnapshot(
+                        tag=99,
+                        unit_type=UnitTypeId.MARINE,
+                        position=Point2((40, 40)),
+                        health_percentage=1.0,
+                        is_flying=False,
+                        is_worker=False,
+                        can_attack_air=False,
+                        can_attack_ground=True,
+                    ),
+                ),
+            ),
+        )
+        awareness = AwarenessService().update(current)
+
+        proposals = DefensePlanner().propose(current, awareness)
+        by_key = {proposal.deduplication_key: proposal for proposal in proposals}
+
+        self.assertLess(
+            by_key["defense:base:10"].priority, by_key["defense:base:11"].priority
+        )
 
     def test_respects_its_proposal_cadence(self):
         planner = DefensePlanner()

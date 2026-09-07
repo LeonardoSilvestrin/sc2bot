@@ -67,29 +67,34 @@ wasn't sent to win instead of trading the harasser away.
 
 ## DefensePlanner
 
-Proposes one `MissionProposal` (`MissionKind.DEFENSE`) whenever a currently visible,
-non-worker, attack-capable enemy unit is within `detection_radius` (25) of an owned
-structure, or of `own_start` before any structure is tracked. No new fact was added
-to Attention or Awareness for this: distance from `WorldFacts.enemy_units` to
-`WorldFacts.own_structures` / `MapFacts.own_start` was already expressible with data
-the builder already produces.
+**Updated by [base-model.md](base-model.md):** proposes one `MissionProposal`
+(`MissionKind.DEFENSE`) per currently threatened base, reading
+`awareness.bases` (`BaseAwareness`, one `BaseAssessment` per base the bot
+holds) instead of scanning all enemy units against a single `own_base`
+anchor. See that doc for `BaseSnapshot`/`BaseAssessment`, why protection
+never fully suppresses a proposal, and the dedup key change
+(`defense:own_base` fixed -> `defense:{base.base_id}` per base). The
+conditions that gate a proposal at all are unchanged: a currently visible,
+non-worker, attack-capable enemy unit within `proximity_radius` (25, same
+default as the old `detection_radius`) of the base.
 
-Priority 95 with `can_preempt=True` -- the highest of the pilot's planners on
-purpose, so it can preempt a live Intel or Harass mission for the same unit once the
-`UnitAllocator`'s preemption margin (10) and the donor's commitment window allow it
-(see `tests/test_mission_arbitration.py` for the full preemption sequence). Dedup
-key `defense:own_base`: one active defense mission for the whole base at a time;
-splitting by base or by threat is future work once the bot has more than one base
-worth defending independently.
+Priority is now `critical_priority` (95, undefended base) or
+`threatened_priority` (85, base has some protection already), both with
+`can_preempt=True` -- still the highest of the pilot's planners on purpose,
+so it can preempt a live Intel or Harass mission for the same unit once the
+`UnitAllocator`'s preemption margin (10) and the donor's commitment window
+allow it (see `tests/test_mission_arbitration.py` for the full preemption
+sequence).
 
-Its executor, `DefendBaseExecutor`, attack-moves every assigned unit toward the
-threat closest to where the mission was admitted and completes with
-`threat_cleared_near_own_base` once no matching enemy remains within
-`engagement_radius` of that point.
+Its executor, `DefendBaseExecutor`, is unchanged by the base-model slice:
+attack-moves every assigned unit toward the threat closest to where the
+mission was admitted and completes with `threat_cleared_near_own_base` once
+no matching enemy remains within `engagement_radius` of that point.
 
 ## Deliberately not built in this slice
 
-- Splitting defense per base/expansion, or harass beyond a single worker-line target.
+- Splitting defense per base/expansion is now done, see
+  [base-model.md](base-model.md); harass is still a single worker-line target.
 - Worker-rush detection (an enemy worker alone is not treated as a threat).
 - Any retreat/repositioning micro beyond `AMove`'s built-in engage-on-the-way
   behavior.

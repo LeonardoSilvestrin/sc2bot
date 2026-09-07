@@ -1,0 +1,32 @@
+Squads e group behaviors
+=========================
+
+O QUE E
+  ares mantem "UnitSquad" (dataclass com squad_id, squad_position, squad_units,
+  tags) via squad_manager, acessivel por mediator.get_squads(...). Em cima
+  disso existem behaviors de grupo que movem/lutam com o squad inteiro em vez
+  de unidade por unidade:
+    - AMoveGroup, PathGroupToTarget
+    - StutterGroupBack / StutterGroupForward
+    - KeepGroupSafe
+    - GroupUseAbility
+
+ONDE FICA
+  ares-sc2/src/ares/managers/squad_manager.py (UnitSquad)
+  ares-sc2/src/ares/managers/manager_mediator.py:1943 (get_squads)
+  ares-sc2/src/ares/behaviors/combat/group/
+
+GAP NO BOT
+  DefendBaseExecutor.step (bot/behavior/defense/executor.py) itera
+  `context.assigned_units` e manda attack_move individual pra cada unidade.
+  Nao ha nocao de squad: se a defesa tiver 4 unidades vindo de pontos
+  diferentes do mapa, elas nao se agrupam antes de engajar, e cada uma pode
+  chegar e morder sozinha.
+
+IDEIA DE USO
+  Quando o time de defesa/ataque tiver mais de ~3 unidades, usar
+  mediator.get_squads(...) pra saber se ja estao agrupadas e, se nao, mandar
+  PathGroupToTarget ate convergirem antes de trocar pra AMoveGroup /
+  StutterGroupBack. Isso e mais relevante depois que o item de combat micro
+  (01) estiver resolvido pra unidades soltas -- squads importam mais quando o
+  exercito comeca a ter tamanho (mid-game pra frente).

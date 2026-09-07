@@ -1,23 +1,28 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 from bot.behavior.defense.config import DefensePlannerConfig
 from bot.engine.missions.models import MissionKind, MissionProposal, UnitRequirement
+from bot.world.knowledge.bases.models import BaseAssessment, BaseSecurityLevel
 from bot.world.knowledge.models import AwarenessSnapshot
-from bot.world.observation.models import AttentionSnapshot, UnitSnapshot, WorldFacts
+from bot.world.observation.models import AttentionSnapshot
 
 
 @dataclass(slots=True)
 class DefensePlanner:
-    """Proposes one base-defense mission while a combat threat is observed.
+    """Proposes one defense mission per currently threatened base.
 
-    Conservative on purpose: it only reacts to enemy units that are
-    currently visible, not a worker, and able to attack, within
-    ``detection_radius`` of an owned structure (or the starting location
-    before any structure is tracked). It carries the highest default
-    priority of the pilot planners so it can preempt lower-priority
-    missions once ``UnitAllocator``'s preemption margin allows it.
+    Reads ``awareness.bases`` -- one ``BaseAssessment`` per base the bot
+    currently holds, each already scoring nearby enemy threat against nearby
+    own protection (see ``BaseSecurityAssessor``). A base only gets a
+    proposal once its security drops to THREATENED or CRITICAL, so several
+    bases under attack at the same time get independent missions instead of
+    all competing for a single global "own_base" slot, and a base that
+    already has enough defenders nearby does not pull reinforcements it
+    doesn't need. Requested unit count grows with how outnumbered the base's
+    current defenders are.
     """
 
     config: DefensePlannerConfig = field(default_factory=DefensePlannerConfig)
@@ -34,57 +39,50 @@ class DefensePlanner:
         if world.time - self._last_proposed_at < self.config.proposal_cadence:
             return ()
 
-        threat = self._closest_threat(world)
-        if threat is None:
+        threatened = awareness.bases.threatened
+        if not threatened:
             return ()
 
         self._last_proposed_at = world.time
+        return tuple(self._proposal_for(base, world.time) for base in threatened)
+
+    def _proposal_for(self, base: BaseAssessment, now: float) -> MissionProposal:
         self._sequence += 1
-        return (
-            MissionProposal(
-                proposal_id=(
-                    f"{self.planner_id}:defense:{self.config.target_key}:"
-                    f"{self._sequence}"
-                ),
-                deduplication_key=f"defense:{self.config.target_key}",
-                planner=self.planner_id,
-                kind=MissionKind.DEFENSE,
-                priority=self.config.priority,
-                target_key=self.config.target_key,
-                target=threat.position,
-                reason="enemy_combat_unit_observed_near_own_base",
-                requirement=UnitRequirement(
-                    unit_types=self.config.unit_types,
-                    desired=self.config.desired_units,
-                    minimum=self.config.minimum_units,
-                    minimum_health=self.config.minimum_unit_health,
-                    exclude_resource_carriers=True,
-                    exclude_constructors=True,
-                ),
-                created_at=world.time,
-                timeout_seconds=self.config.mission_timeout,
-                cooldown_seconds=self.config.failure_cooldown,
-                can_preempt=True,
-                commitment_seconds=self.config.commitment_seconds,
+        is_critical = base.security is BaseSecurityLevel.CRITICAL
+        target = base.nearest_threat_position or base.position
+        return MissionProposal(
+            proposal_id=f"{self.planner_id}:defense:{base.base_id}:{self._sequence}",
+            deduplication_key=f"defense:{base.base_id}",
+            planner=self.planner_id,
+            kind=MissionKind.DEFENSE,
+            priority=(
+                self.config.critical_priority
+                if is_critical
+                else self.config.threatened_priority
             ),
+            target_key=base.base_id,
+            target=target,
+            reason=(
+                "base_undefended_against_observed_threat"
+                if is_critical
+                else "base_outnumbered_by_observed_threat"
+            ),
+            requirement=UnitRequirement(
+                unit_types=self.config.unit_types,
+                desired=self._desired_units(base),
+                minimum=self.config.minimum_units,
+                minimum_health=self.config.minimum_unit_health,
+                exclude_resource_carriers=True,
+                exclude_constructors=True,
+            ),
+            created_at=now,
+            timeout_seconds=self.config.mission_timeout,
+            cooldown_seconds=self.config.failure_cooldown,
+            can_preempt=True,
+            commitment_seconds=self.config.commitment_seconds,
         )
 
-    def _closest_threat(self, world: WorldFacts) -> UnitSnapshot | None:
-        anchors = [structure.position for structure in world.own_structures]
-        if not anchors:
-            anchors = [world.map.own_start]
-
-        closest: UnitSnapshot | None = None
-        closest_distance: float | None = None
-        for enemy in world.enemy_units:
-            if not enemy.visible_now or enemy.is_worker:
-                continue
-            if not (enemy.can_attack_ground or enemy.can_attack_air):
-                continue
-            distance = min(enemy.position.distance_to(anchor) for anchor in anchors)
-            if distance > self.config.detection_radius:
-                continue
-            if closest_distance is None or distance < closest_distance:
-                closest = enemy
-                closest_distance = distance
-        return closest
+    def _desired_units(self, base: BaseAssessment) -> int:
+        gap = base.threat_score - base.protection_score
+        desired = max(self.config.minimum_units, math.ceil(gap))
+        return min(self.config.max_desired_units, desired)

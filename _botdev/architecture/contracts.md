@@ -3,8 +3,13 @@
 ## Dependency rules
 
 1. Attention contains only selected state observable in the current frame.
-2. Ares memory units are excluded from Attention; persistent sightings belong to
-   Awareness.
+2. Attention exposes Ares' own visible/memory distinction per enemy unit
+   (`UnitSnapshot.visible_now`) instead of discarding memory units; it never leaks
+   mutable Ares objects. Awareness (`EnemyKnowledge`) owns persistent first/last-seen
+   sighting history on top of that, keeping a sighting only as long as Ares itself
+   keeps reporting the tag -- once Ares drops it (confirmed destroyed, or its own
+   out-of-vision memory expired), the sighting is dropped too, instead of being kept
+   forever.
 3. Awareness describes the world. Controller state, leases, cooldowns, and mission
    status never enter Awareness.
 4. A planner reads Attention and Awareness and returns immutable proposals. A

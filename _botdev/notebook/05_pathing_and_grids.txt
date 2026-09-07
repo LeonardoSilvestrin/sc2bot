@@ -1,0 +1,33 @@
+Grids de pathing/perigo e checagem de seguranca
+==================================================
+
+O QUE E
+  Alem do get_ground_grid ja usado, o ares mantem varios grids prontos por
+  frame:
+    get_air_grid, get_air_avoidance_grid, get_ground_avoidance_grid,
+    get_climber_grid, get_tactical_ground_grid, get_priority_ground_
+    avoidance_grid, get_air_vs_ground_grid, get_ground_to_air_grid
+  E utilitarios de posicao:
+    is_position_safe(position) -> bool
+    find_closest_safe_spot(position, grid) -> Point2
+    find_raw_path / find_path_next_point / find_low_priority_path
+
+ONDE FICA
+  ares-sc2/src/ares/managers/manager_mediator.py:1182-1642
+
+GAP NO BOT
+  bot/adapters/ares/mission_commands.py:path_to usa get_ground_grid apenas
+  para PathUnitToTarget do scout.
+
+  bot/behavior/harass/executor.py define "disengage" com um raio fixo
+  (disengage_radius=12.0) contando defensores visiveis dentro desse raio do
+  alvo -- nao usa nenhum grid, entao nao reage a perigo fora desse raio
+  exato nem a dano de area.
+
+IDEIA DE USO
+  No WorkerLineHarassExecutor, trocar (ou complementar) o raio fixo por
+  is_position_safe(harasser.position) usando o grid tatico -- reage a perigo
+  real (incluindo coisas que o raio fixo nao pega, tipo bunker com range
+  maior) em vez de um numero magico. find_closest_safe_spot tambem serve como
+  alvo de retirada quando o harasser precisa recuar em vez de simplesmente
+  parar.

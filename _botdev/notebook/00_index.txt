@@ -1,0 +1,24 @@
+ares-sc2: funcionalidades disponiveis e nao usadas pelo bot
+=============================================================
+
+Levantamento feito em 2026-09-07 comparando o submodulo ares-sc2/ (framework)
+com o que bot/ realmente importa e usa. Objetivo: virar contexto para puxar
+melhorias incrementais rumo a um bot competitivo, sem reescrever a arquitetura
+de missions/planners que ja existe.
+
+Arquivos deste diretorio:
+  01_combat_micro.txt        - behaviors individuais de combate (kiting, safety)
+  02_squads_and_groups.txt   - UnitSquad / group behaviors
+  03_combat_sim.txt          - can_win_fight e decisao de engajar/recuar
+  04_opponent_modeling.txt   - flags prontas de leitura do oponente (rush etc)
+  05_pathing_and_grids.txt   - grids de pathing/perigo e is_position_safe
+  06_macro_controllers.txt   - macro behaviors do ares nao usados
+
+Cada arquivo segue o mesmo formato:
+  O QUE E        -> a funcionalidade do ares-sc2
+  ONDE FICA       -> caminho dentro de ares-sc2/src/ares
+  GAP NO BOT      -> onde o bot faz isso na mao hoje (arquivo:linha)
+  IDEIA DE USO    -> como plugar isso na arquitetura atual (missions/planners)
+
+Uso: quando for atacar uma dessas frentes, abrir o txt correspondente antes de
+mexer no codigo para nao redescobrir a API do zero.

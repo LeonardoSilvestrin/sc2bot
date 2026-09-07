@@ -55,6 +55,20 @@ def enemy_marine(tag: int, position: Point2) -> UnitSnapshot:
     )
 
 
+def enemy_worker(tag: int, unit_type: UnitTypeId, position: Point2) -> UnitSnapshot:
+    return UnitSnapshot(
+        tag=tag,
+        unit_type=unit_type,
+        position=position,
+        health_percentage=1.0,
+        is_flying=False,
+        is_worker=True,
+        can_attack_air=False,
+        can_attack_ground=False,
+        visible_now=True,
+    )
+
+
 def context(
     *,
     enemy_units: tuple[UnitSnapshot, ...] = (),
@@ -125,6 +139,33 @@ class DefendBaseExecutorTests(unittest.IsolatedAsyncioTestCase):
 
         result = await executor.step(
             context(assigned_units=(defender,), commands=commands)
+        )
+
+        self.assertEqual(result.outcome, MissionOutcome.COMPLETED)
+        self.assertEqual(result.reason, "threat_cleared_near_own_base")
+        self.assertEqual(commands.commands, [])
+
+    async def test_enemy_workers_of_any_race_are_not_treated_as_threats(self):
+        commands = FakeCommands()
+        executor = DefendBaseExecutor(
+            mission_id="mission-0001",
+            target_key="own_base",
+            target=Point2((12, 10)),
+            started_at=10.0,
+        )
+        nearby_workers = (
+            enemy_worker(91, UnitTypeId.PROBE, Point2((13, 10))),
+            enemy_worker(92, UnitTypeId.DRONE, Point2((13, 10))),
+            enemy_worker(93, UnitTypeId.SCV, Point2((13, 10))),
+        )
+        defender = reaper(1, Point2((10, 10)))
+
+        result = await executor.step(
+            context(
+                enemy_units=nearby_workers,
+                assigned_units=(defender,),
+                commands=commands,
+            )
         )
 
         self.assertEqual(result.outcome, MissionOutcome.COMPLETED)

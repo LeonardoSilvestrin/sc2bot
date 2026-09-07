@@ -1,0 +1,44 @@
+Combat micro individual (stutter-step, safety)
+================================================
+
+O QUE E
+  Behaviors individuais de combate prontos, cada um resolvendo uma decisao de
+  micro por unidade e por frame:
+    - ShootTargetInRange: atira se ja tiver alvo no alcance.
+    - StutterUnitBack / StutterUnitForward: kiting classico (atira e recua /
+      avanca entre janelas de cooldown da arma).
+    - KeepUnitSafe(unit, grid): foge de perigo usando um grid de influencia
+      (dano de area, unidades inimigas, etc.), sem precisar de raio fixo.
+    - MoveToSafeTarget, WorkerKiteBack: variantes para fuga e kiting de
+      trabalhador.
+  Essas behaviors se compoem com CombatManeuver: voce empilha em ordem de
+  prioridade ("atira se puder, senao kita, senao foge, senao a-move") e chama
+  uma unica vez por unidade por frame.
+
+ONDE FICA
+  ares-sc2/src/ares/behaviors/combat/individual/
+    shoot_target_in_range.py
+    stutter_unit_back.py
+    stutter_unit_forward.py
+    keep_unit_safe.py
+    move_to_safe_target.py
+    worker_kite_back.py
+  ares-sc2/src/ares/behaviors/combat/combat_maneuver.py (CombatManeuver)
+
+GAP NO BOT
+  bot/behavior/defense/executor.py (DefendBaseExecutor.step) e
+  bot/behavior/harass/executor.py (WorkerLineHarassExecutor.step) so chamam
+  context.commands.attack_move, que no fundo e so a behavior AMove (ver
+  bot/adapters/ares/mission_commands.py:attack_move). Isso e attack-move puro:
+  sem stutter-step, sem fugir de dano de area, sem decidir "recuar porque
+  estou perdendo essa troca".
+
+IDEIA DE USO
+  Trocar o attack_move cru por uma nova operacao no MissionCommands (ex.:
+  `fight` ou `engage`) que monta um CombatManeuver por unidade:
+    1. ShootTargetInRange (se alvo no alcance, atira)
+    2. StutterUnitBack (se on cooldown e sob risco, kita)
+    3. AMove (fallback: avanca ate o alvo)
+  Isso melhora DefendBaseExecutor e WorkerLineHarassExecutor ao mesmo tempo,
+  sem tocar em planners/allocator -- so o novo metodo no command port + os
+  executors chamando ele em vez de attack_move.
