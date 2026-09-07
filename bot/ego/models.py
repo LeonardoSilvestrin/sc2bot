@@ -10,6 +10,8 @@ from bot.contracts.allocation import UnitRequirement
 
 class MissionKind(Enum):
     SCOUT = auto()
+    HARASS = auto()
+    DEFENSE = auto()
 
 
 class MissionStatus(Enum):

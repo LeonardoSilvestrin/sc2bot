@@ -54,6 +54,24 @@ class AresMissionCommands:
             )
         )
 
+    def attack_move(
+        self,
+        *,
+        mission_id: str,
+        unit_tag: int,
+        target: Point2,
+        success_at_distance: float,
+    ) -> None:
+        unit = self._unit(mission_id=mission_id, unit_tag=unit_tag)
+        # Local imports keep Ares behind the infrastructure boundary.
+        from ares.behaviors.combat.individual import AMove
+        from ares.consts import UnitRole
+
+        self._bot.mediator.assign_role(tag=unit_tag, role=UnitRole.ATTACKING)
+        self._bot.register_behavior(
+            AMove(unit=unit, target=target, success_at_distance=success_at_distance)
+        )
+
     def release(self, *, mission_id: str, unit_tag: int) -> None:
         self._authorize(mission_id=mission_id, unit_tag=unit_tag)
         unit = self._bot.unit_tag_dict.get(unit_tag)

@@ -6,25 +6,43 @@ from bot.awareness.service import AwarenessService
 from bot.contracts.logging import BotLogger
 from bot.ego import MissionController
 from bot.infrastructure.ares import AresMissionCommands, register_baseline_behaviors
-from bot.planners import IntelPlanner, IntelPlannerConfig
+from bot.planners import (
+    DefensePlanner,
+    DefensePlannerConfig,
+    HarassPlanner,
+    HarassPlannerConfig,
+    IntelPlanner,
+    IntelPlannerConfig,
+)
 
 
 class BotRuntime:
-    """Composition root for the traceable scout vertical slice."""
+    """Composition root wiring Attention/Awareness into the mission planners."""
 
     def __init__(
         self,
         *,
         logger: BotLogger,
         intel_config: IntelPlannerConfig | None = None,
+        harass_config: HarassPlannerConfig | None = None,
+        defense_config: DefensePlannerConfig | None = None,
     ) -> None:
         self.logger = logger
         self.intel_config = intel_config or IntelPlannerConfig()
+        self.harass_config = harass_config or HarassPlannerConfig()
+        self.defense_config = defense_config or DefensePlannerConfig()
         self.attention_builder = AttentionBuilder()
         self.awareness = AwarenessService(
             location_stale_after=self.intel_config.location_stale_after
         )
         self.intel_planner = IntelPlanner(config=self.intel_config)
+        self.harass_planner = HarassPlanner(config=self.harass_config)
+        self.defense_planner = DefensePlanner(config=self.defense_config)
+        self._mission_planners = (
+            self.intel_planner,
+            self.harass_planner,
+            self.defense_planner,
+        )
         self.missions = MissionController(logger=logger)
         self._last_build_signature: tuple | None = None
         self._last_awareness_signature: tuple | None = None
@@ -42,7 +60,11 @@ class BotRuntime:
         world = self.attention_builder.world_facts(bot, iteration=iteration)
         attention = self.attention_builder.build(world=world)
         awareness = self.awareness.update(attention)
-        proposals = self.intel_planner.propose(attention, awareness)
+        proposals = tuple(
+            proposal
+            for planner in self._mission_planners
+            for proposal in planner.propose(attention, awareness)
+        )
 
         register_baseline_behaviors(bot)
         commands = AresMissionCommands(bot, self.missions.allocator)

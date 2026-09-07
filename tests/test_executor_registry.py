@@ -2,9 +2,23 @@ from __future__ import annotations
 
 import unittest
 
+from sc2.ids.unit_typeid import UnitTypeId
+from sc2.position import Point2
+
 from bot.awareness import AwarenessService
+from bot.contracts.allocation import UnitRequirement
 from bot.ego import Mission, MissionController, MissionKind, MissionStatus
-from bot.executors import MissionContext, MissionExecutor, MissionOutcome, MissionResult
+from bot.ego.executor_registry import DEFAULT_EXECUTOR_FACTORIES
+from bot.ego.models import MissionProposal
+from bot.executors import (
+    DefendBaseExecutor,
+    MissionContext,
+    MissionExecutor,
+    MissionOutcome,
+    MissionResult,
+    ScoutExecutor,
+    WorkerLineHarassExecutor,
+)
 from bot.planners import IntelPlanner
 from tests.fakes import FakeCommands, FakeLogger
 from tests.test_scout_slice import attention
@@ -86,3 +100,46 @@ class ExecutorRegistryTests(unittest.IsolatedAsyncioTestCase):
             event for event in logger.events if event["name"] == "proposal_rejected"
         )
         self.assertEqual(rejection["data"]["reason"], "unsupported_mission_kind")
+
+
+def _proposal(kind: MissionKind) -> MissionProposal:
+    return MissionProposal(
+        proposal_id="test-proposal",
+        deduplication_key="test-dedup",
+        planner="test_planner",
+        kind=kind,
+        priority=50,
+        target_key="test_target",
+        target=Point2((10, 10)),
+        reason="test_reason",
+        requirement=UnitRequirement(
+            unit_types=frozenset({UnitTypeId.REAPER}), desired=1, minimum=1
+        ),
+        created_at=0.0,
+    )
+
+
+class DefaultExecutorFactoryCoverageTests(unittest.TestCase):
+    def test_every_mission_kind_has_a_registered_default_factory(self):
+        self.assertEqual(set(DEFAULT_EXECUTOR_FACTORIES), set(MissionKind))
+
+    def test_scout_kind_builds_a_scout_executor(self):
+        mission = Mission(
+            mission_id="m1", proposal=_proposal(MissionKind.SCOUT), admitted_at=0.0
+        )
+        executor = DEFAULT_EXECUTOR_FACTORIES[MissionKind.SCOUT](mission, 0.0)
+        self.assertIsInstance(executor, ScoutExecutor)
+
+    def test_harass_kind_builds_a_worker_line_harass_executor(self):
+        mission = Mission(
+            mission_id="m1", proposal=_proposal(MissionKind.HARASS), admitted_at=0.0
+        )
+        executor = DEFAULT_EXECUTOR_FACTORIES[MissionKind.HARASS](mission, 0.0)
+        self.assertIsInstance(executor, WorkerLineHarassExecutor)
+
+    def test_defense_kind_builds_a_defend_base_executor(self):
+        mission = Mission(
+            mission_id="m1", proposal=_proposal(MissionKind.DEFENSE), admitted_at=0.0
+        )
+        executor = DEFAULT_EXECUTOR_FACTORIES[MissionKind.DEFENSE](mission, 0.0)
+        self.assertIsInstance(executor, DefendBaseExecutor)

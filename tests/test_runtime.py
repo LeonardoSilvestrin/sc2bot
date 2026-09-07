@@ -8,7 +8,7 @@ from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
 from bot.application import BotRuntime
-from bot.ego import MissionStatus
+from bot.ego import MissionKind, MissionStatus
 from tests.fakes import FakeCommands, FakeLogger
 
 
@@ -41,6 +41,23 @@ def reaper(tag: int):
         is_carrying_resource=False,
         is_constructing_scv=False,
         is_structure=False,
+    )
+
+
+def enemy_marine(tag: int, position: Point2):
+    return SimpleNamespace(
+        tag=tag,
+        type_id=UnitTypeId.MARINE,
+        position=position,
+        health_percentage=1.0,
+        is_flying=False,
+        can_attack_air=False,
+        can_attack_ground=True,
+        is_ready=True,
+        is_carrying_resource=False,
+        is_constructing_scv=False,
+        is_structure=False,
+        is_memory=False,
     )
 
 
@@ -118,3 +135,44 @@ class RuntimePilotTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("path_to", [command[0] for command in commands.commands])
         self.assertIn("release", [command[0] for command in commands.commands])
+
+    async def test_runtime_defends_the_base_and_outprioritizes_the_scout_for_it(self):
+        commands = FakeCommands()
+        bot = SimpleNamespace(
+            time=10.0,
+            minerals=400,
+            vespene=0,
+            supply_used=16,
+            supply_cap=23,
+            units=(*(worker(tag) for tag in range(1, 17)), reaper(17)),
+            structures=(),
+            enemy_units=(enemy_marine(50, Point2((12, 10))),),
+            enemy_structures=(),
+            worker_type=UnitTypeId.SCV,
+            start_location=Point2((10, 10)),
+            enemy_start_locations=[Point2((90, 90))],
+            game_info=SimpleNamespace(map_center=Point2((50, 50)), map_name="PilotMap"),
+            mediator=SimpleNamespace(
+                get_enemy_nat=Point2((80, 80)),
+                get_unit_role_dict={"GATHERING": set(range(1, 17)), "IDLE": {17}},
+            ),
+        )
+        bot.is_visible = lambda position: False
+        runtime = BotRuntime(logger=FakeLogger())
+
+        with (
+            patch(
+                "bot.application.runtime.AresMissionCommands",
+                return_value=commands,
+            ),
+            patch("bot.application.runtime.register_baseline_behaviors"),
+        ):
+            await runtime.on_step(bot, iteration=1)
+
+        missions = runtime.missions.snapshots()
+        defense = next(m for m in missions if m.kind is MissionKind.DEFENSE)
+        scout = next(m for m in missions if m.kind is MissionKind.SCOUT)
+
+        self.assertEqual(defense.status, MissionStatus.ACTIVE)
+        self.assertEqual(scout.status, MissionStatus.BLOCKED)
+        self.assertIn("attack_move", [command[0] for command in commands.commands])
