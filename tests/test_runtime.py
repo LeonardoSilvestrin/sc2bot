@@ -337,6 +337,69 @@ class RuntimePilotTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(economy_commands.commands)
 
+    async def test_runtime_redispatches_a_still_pending_economic_action_every_tick(
+        self,
+    ):
+        # Regression test: Ares macro behaviors (SpawnController,
+        # BuildStructure, ...) only make one unit of progress per call and
+        # must be re-invoked every frame to keep working toward a proposal's
+        # target_count. Before the fix, the runtime only ever dispatched
+        # `result.admitted_actions` -- the single tick an action was first
+        # admitted -- then left it dispatched-and-forgotten until a 60s
+        # confirmation timeout, stalling all further production in that
+        # category. It must now dispatch every live (pending/in-flight)
+        # commitment on every tick.
+        economy_commands = FakeEconomyCommands()
+        base_townhall = SimpleNamespace(
+            tag=999,
+            type_id=UnitTypeId.COMMANDCENTER,
+            position=Point2((10, 10)),
+            health_percentage=1.0,
+            is_flying=False,
+            can_attack_air=False,
+            can_attack_ground=False,
+            is_ready=True,
+            is_structure=True,
+        )
+        bot = SimpleNamespace(
+            time=200.0,
+            minerals=500,
+            vespene=0,
+            supply_used=10,
+            supply_cap=30,
+            units=tuple(worker(tag) for tag in range(1, 11)),
+            structures=(base_townhall,),
+            enemy_units=(),
+            enemy_structures=(),
+            worker_type=UnitTypeId.SCV,
+            start_location=Point2((10, 10)),
+            enemy_start_locations=[Point2((90, 90))],
+            game_info=SimpleNamespace(map_center=Point2((50, 50)), map_name="PilotMap"),
+            build_order_runner=SimpleNamespace(build_completed=True),
+        )
+        runtime = BotRuntime(logger=FakeLogger())
+
+        with (
+            patch(
+                "bot.app.runtime.AresEconomyCommands",
+                return_value=economy_commands,
+            ),
+            patch("bot.app.runtime.register_baseline_behaviors"),
+        ):
+            await runtime.on_step(bot, iteration=1)
+            first_tick_commands = len(economy_commands.commands)
+
+            bot.time = 201.0
+            await runtime.on_step(bot, iteration=2)
+            second_tick_commands = len(economy_commands.commands)
+
+        self.assertGreater(first_tick_commands, 0)
+        # The worker count and bank did not change between ticks, so the
+        # macro planner proposes the exact same worker deficit again; it
+        # must still be dispatched again while its action stays pending or
+        # in flight, not silently dropped because the key is already live.
+        self.assertGreater(second_tick_commands, first_tick_commands)
+
     async def test_runtime_tolerates_ares_driving_the_bank_negative(self):
         # Ares behaviors (eg. SpawnController) decrement bot.minerals/vespene
         # in place to simulate virtual spend across chained behaviors in one

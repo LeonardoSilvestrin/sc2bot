@@ -110,16 +110,22 @@ class BotRuntime:
                 vespene=max(0, world.vespene),
                 supply_available=max(0.0, world.supply_cap - world.supply_used),
             )
-            result = self.economy.tick(
+            self.economy.tick(
                 now=world.time,
                 bank=bank,
                 proposals=economic_proposals,
                 feedback=feedback,
             )
             economy_commands = AresEconomyCommands(bot)
+            live_actions = tuple(
+                snapshot.action
+                for snapshot in self.economy.snapshots()
+                if not snapshot.status.terminal
+            )
             self._pending_economic_feedback = tuple(
-                economy_commands.dispatch(action)
-                for action in result.admitted_actions
+                dispatched
+                for action in live_actions
+                if (dispatched := economy_commands.dispatch(action)) is not None
             )
         else:
             self._pending_economic_feedback = ()

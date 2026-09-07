@@ -17,12 +17,22 @@ class AresEconomyCommands:
     Behaviors are executed here, after Ares updated its managers for the frame,
     so the economy controller receives truthful dispatch feedback.  Strategic
     decisions and resource arbitration remain outside this adapter.
+
+    Ares' own macro behaviors (``SpawnController``, ``BuildStructure``, ...)
+    are built to be invoked every frame until their goal is met -- one call
+    only ever produces one unit of progress (one train order, one worker sent
+    to build). ``bot.app.runtime.BotRuntime`` therefore calls ``dispatch``
+    again on every tick for as long as an action stays pending or in flight,
+    so a ``False`` return here just means "nothing to do this frame"
+    (producer busy, no placement free yet) -- not a failure. Only an
+    exception is a real failure worth ending the commitment for; everything
+    else is bounded by the proposal's own dispatch/confirmation timeouts.
     """
 
     def __init__(self, bot) -> None:
         self._bot = bot
 
-    def dispatch(self, action: EconomicAction) -> EconomicFeedback:
+    def dispatch(self, action: EconomicAction) -> EconomicFeedback | None:
         try:
             dispatched = self._execute(action)
         except Exception as error:
@@ -32,16 +42,13 @@ class AresEconomyCommands:
                 reason=f"ares_dispatch_error:{type(error).__name__}:{error}",
             )
 
+        if not dispatched:
+            return None
+
         return EconomicFeedback(
             action_id=action.action_id,
-            kind=(
-                EconomicFeedbackKind.DISPATCHED
-                if dispatched
-                else EconomicFeedbackKind.FAILED
-            ),
-            reason=(
-                "ares_command_accepted" if dispatched else "ares_no_action_available"
-            ),
+            kind=EconomicFeedbackKind.DISPATCHED,
+            reason="ares_command_accepted",
         )
 
     def _execute(self, action: EconomicAction) -> bool:
