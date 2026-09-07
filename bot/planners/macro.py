@@ -17,6 +17,20 @@ _TOWNHALL_TYPES: frozenset[UnitTypeId] = frozenset(
 )
 
 
+def ready_townhall_count(world: WorldFacts) -> int:
+    """Ready townhall count, floored at 1 so ideal-worker math never divides
+    by zero for a snapshot without a tracked townhall."""
+
+    return max(
+        1,
+        sum(
+            1
+            for structure in world.own_structures
+            if structure.unit_type in _TOWNHALL_TYPES and structure.is_ready
+        ),
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class MacroPlannerConfig:
     """Thresholds for the first macroeconomic planning slice."""
@@ -71,7 +85,7 @@ class MacroPlanner:
         awareness: AwarenessSnapshot,
     ) -> tuple[EconomicProposal, ...]:
         world = attention.world
-        townhalls = self._ready_townhall_count(world)
+        townhalls = ready_townhall_count(world)
         ideal_workers = min(
             townhalls * self.config.workers_per_townhall,
             self.config.max_workers,
@@ -161,15 +175,4 @@ class MacroPlanner:
             reason="worker_count_saturated_for_current_bases",
             cost=self.config.expansion_cost,
             created_at=world.time,
-        )
-
-    @staticmethod
-    def _ready_townhall_count(world: WorldFacts) -> int:
-        return max(
-            1,
-            sum(
-                1
-                for structure in world.own_structures
-                if structure.unit_type in _TOWNHALL_TYPES and structure.is_ready
-            ),
         )

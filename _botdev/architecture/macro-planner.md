@@ -1,11 +1,12 @@
-# Macro planner: first economic vertical slice
+# Macro planner: economic vertical slice
 
-This is the first slice of the macroeconomic planning described as deferred work
-in [scout-pilot-migration.md](scout-pilot-migration.md): "The future economy
+This is the economic counterpart to the scout vertical slice, filling in the
+work described as deferred in
+[scout-pilot-migration.md](scout-pilot-migration.md): "The future economy
 contract: `SpendProposal`, real resource reservations, and an
-`EconomyController` remain intentionally unimplemented." This slice implements
-the planning half only. Admission, reservation, and execution stay
-unimplemented on purpose.
+`EconomyController` remain intentionally unimplemented." It now covers both
+halves: `MacroPlanner` argues for economic actions, and `EconomyController`
+admits, reserves against, and executes them (see "Integration" below).
 
 ## Contracts
 
@@ -57,41 +58,39 @@ slice — `MacroPlanner` only ever returns proposals.
 
 ## Deliberately not built in this slice
 
-- Any connection to `bot/application/runtime.py`, `MissionController`, or a
-  new `EconomyController`. Nothing admits, arbitrates, or executes these
-  proposals yet.
-- Real resource reservation semantics (declared out of scope in
-  [scout-pilot-migration.md](scout-pilot-migration.md) for the same reason the
-  old `ResourceReserve` was dropped: declarative reservations with no
-  effective enforcement add machinery without behavior).
-- Expansion location selection. `EconomicProposal` has no target; picking
-  *where* to expand is a future planner concern once map facts expose
-  expansion sites.
-- Build-order/tech interaction. This planner does not know about the
-  `BuildOrderRunner` opening from [opening.md](opening.md); it is only meant
-  to take over once `build_order_runner.build_completed` is true.
+- Expansion location selection beyond what Ares's own `ExpansionController`
+  already resolves (see below) — this planner itself still declares no
+  target; it only argues *that* an expansion is warranted.
 - Production-queue/idle-structure awareness. `UnitSnapshot` has no "currently
   training" or order-queue signal yet, so this slice proposes based on counts
-  and resources only, not on whether a townhall is currently idle.
+  and resources only, not on whether a townhall is currently idle (Ares's own
+  macro behaviors, described below, do check idle state at execution time).
 
-## Future integration point (not implemented here)
+## Integration: `EconomyController`
 
-A future task must, without changing this planner's contract:
+`bot/ego/economy_controller.py` admits `EconomicProposal`s the way
+`MissionController` admits `MissionProposal`s, sized down for the fact that
+economic actions are single-frame and self-gating rather than multi-frame
+unit commitments — no unit lease or executor lifecycle is needed.
 
-1. Call `MacroPlanner().propose(attention, awareness)` from the same frame
-   step in `bot/application/runtime.py` that currently collects
-   `IntelPlanner` proposals, once the opening's `build_completed` flag is
-   true.
-2. Introduce whatever admits `EconomicProposal`s — an `EconomyController`
-   analogous to `MissionController`, or an extension of it — that decides
-   real spending order, applies real resource reservation, and logs
-   `proposal_admitted`/`proposal_rejected` for these proposals the same way
-   `MissionController` does for scouting.
-3. Add the execution side: something that turns an admitted `PRODUCE_WORKER`
-   into a real train command, `PRODUCE_SUPPLY` into a depot placement, and
-   `EXPAND` into a chosen expansion location plus a build command — all
-   through explicit command ports, per the dependency rules in
-   [contracts.md](contracts.md).
-4. Decide expansion-site selection, which base to train workers from, and
-   where to place supply — none of which this slice needs, since it never
-   executes anything.
+- `bot/application/runtime.py` calls `MacroPlanner().propose(attention,
+  awareness)` from the same frame step that collects `IntelPlanner`
+  proposals, gated on `build_order_runner.build_completed` being true.
+- `EconomyController.tick(...)` processes proposals by priority, reserving
+  minerals/vespene against a running remainder seeded from the current bank
+  so two proposals admitted in the same frame cannot both spend the same
+  resources. Admitted proposals log `economy.proposal_admitted`; proposals
+  that lose the in-tick reservation race log `economy.proposal_rejected`
+  (`reason="insufficient_reserved_resources"`). Logging is transition-based
+  (mirroring `MissionController._block`), so a proposal admitted across many
+  consecutive frames logs once, not every tick; when a kind stops being
+  proposed, `economy.action_resolved` is logged once.
+- Execution goes through `EconomyCommands` (`bot/contracts/commands.py`),
+  implemented by `AresEconomyCommands`
+  (`bot/infrastructure/ares/commands.py`), which registers Ares's own macro
+  behaviors: `BuildWorkers` for `PRODUCE_WORKER`, `AutoSupply` for
+  `PRODUCE_SUPPLY` (at `WorldFacts.map.own_start`), and `ExpansionController`
+  for `EXPAND` (`to_count` = current ready townhalls, via
+  `ready_townhall_count`, plus one). These Ares behaviors own worker
+  selection, structure placement, and expansion-site selection themselves;
+  `MacroPlanner` only argues that the action is warranted and affordable.

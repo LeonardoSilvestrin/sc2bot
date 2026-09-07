@@ -39,3 +39,17 @@ class FakeCommands:
 
     def release(self, *, mission_id, unit_tag) -> None:
         self.commands.append(("release", mission_id, unit_tag))
+
+
+class FakeEconomyCommands:
+    def __init__(self) -> None:
+        self.commands: list[tuple] = []
+
+    def produce_worker(self, *, to_count) -> None:
+        self.commands.append(("produce_worker", to_count))
+
+    def produce_supply(self, *, base_location) -> None:
+        self.commands.append(("produce_supply", base_location))
+
+    def expand(self, *, to_count) -> None:
+        self.commands.append(("expand", to_count))

@@ -20,3 +20,16 @@ class MissionCommands(Protocol):
 
     def release(self, *, mission_id: str, unit_tag: int) -> None:
         ...
+
+
+class EconomyCommands(Protocol):
+    """Authorized execution operations available to the economy controller."""
+
+    def produce_worker(self, *, to_count: int) -> None:
+        ...
+
+    def produce_supply(self, *, base_location: Point2) -> None:
+        ...
+
+    def expand(self, *, to_count: int) -> None:
+        ...

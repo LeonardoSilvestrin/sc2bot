@@ -4,9 +4,18 @@ from bot.attention.builder import AttentionBuilder
 from bot.awareness.models import AwarenessSnapshot
 from bot.awareness.service import AwarenessService
 from bot.contracts.logging import BotLogger
-from bot.ego import MissionController
-from bot.infrastructure.ares import AresMissionCommands, register_baseline_behaviors
-from bot.planners import IntelPlanner, IntelPlannerConfig
+from bot.ego import EconomyController, MissionController
+from bot.infrastructure.ares import (
+    AresEconomyCommands,
+    AresMissionCommands,
+    register_baseline_behaviors,
+)
+from bot.planners import (
+    IntelPlanner,
+    IntelPlannerConfig,
+    MacroPlanner,
+    MacroPlannerConfig,
+)
 
 
 class BotRuntime:
@@ -17,15 +26,19 @@ class BotRuntime:
         *,
         logger: BotLogger,
         intel_config: IntelPlannerConfig | None = None,
+        macro_config: MacroPlannerConfig | None = None,
     ) -> None:
         self.logger = logger
         self.intel_config = intel_config or IntelPlannerConfig()
+        self.macro_config = macro_config or MacroPlannerConfig()
         self.attention_builder = AttentionBuilder()
         self.awareness = AwarenessService(
             location_stale_after=self.intel_config.location_stale_after
         )
         self.intel_planner = IntelPlanner(config=self.intel_config)
+        self.macro_planner = MacroPlanner(config=self.macro_config)
         self.missions = MissionController(logger=logger)
+        self.economy = EconomyController(logger=logger, config=self.macro_config)
         self._last_build_signature: tuple | None = None
         self._last_awareness_signature: tuple | None = None
         self._last_snapshot_at: float = -999.0
@@ -52,6 +65,16 @@ class BotRuntime:
             proposals=proposals,
             commands=commands,
         )
+
+        runner = getattr(bot, "build_order_runner", None)
+        if bool(getattr(runner, "build_completed", False)):
+            economic_proposals = self.macro_planner.propose(attention, awareness)
+            self.economy.tick(
+                attention=attention,
+                proposals=economic_proposals,
+                commands=AresEconomyCommands(bot),
+            )
+
         self._log_build_order(bot, game_time=world.time)
         self._log_awareness(attention, awareness)
 
