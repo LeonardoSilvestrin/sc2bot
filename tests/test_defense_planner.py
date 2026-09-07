@@ -135,7 +135,16 @@ class DefensePlannerTests(unittest.TestCase):
         self.assertGreaterEqual(proposal.cooldown_seconds, 0.0)
         self.assertEqual(
             proposal.requirement.unit_types,
-            frozenset({UnitTypeId.MARINE, UnitTypeId.REAPER}),
+            frozenset(
+                {
+                    UnitTypeId.MARINE,
+                    UnitTypeId.MARAUDER,
+                    UnitTypeId.REAPER,
+                    UnitTypeId.SIEGETANK,
+                    UnitTypeId.SIEGETANKSIEGED,
+                    UnitTypeId.BANSHEE,
+                }
+            ),
         )
         self.assertEqual(proposal.requirement.minimum, 1)
         self.assertGreaterEqual(
