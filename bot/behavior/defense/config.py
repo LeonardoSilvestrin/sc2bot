@@ -2,6 +2,17 @@ from dataclasses import dataclass, field
 
 from sc2.ids.unit_typeid import UnitTypeId
 
+_DEFAULT_DEFENDER_TYPES: frozenset[UnitTypeId] = frozenset(
+    {
+        UnitTypeId.MARINE,
+        UnitTypeId.MARAUDER,
+        UnitTypeId.REAPER,
+        UnitTypeId.SIEGETANK,
+        UnitTypeId.SIEGETANKSIEGED,
+        UnitTypeId.BANSHEE,
+    }
+)
+
 
 @dataclass(frozen=True, slots=True)
 class DefensePlannerConfig:
@@ -13,7 +24,7 @@ class DefensePlannerConfig:
     mission_timeout: float = 120.0
     failure_cooldown: float = 10.0
     unit_types: frozenset[UnitTypeId] = field(
-        default_factory=lambda: frozenset({UnitTypeId.MARINE, UnitTypeId.REAPER})
+        default_factory=lambda: _DEFAULT_DEFENDER_TYPES
     )
     minimum_units: int = 1
     max_desired_units: int = 6
