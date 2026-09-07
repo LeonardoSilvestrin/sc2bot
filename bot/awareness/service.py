@@ -2,18 +2,42 @@ from __future__ import annotations
 
 from bot.attention.models import AttentionSnapshot
 from bot.awareness.enemy import EnemyAwareness, EnemyKnowledge, EnemyLocationKnowledge
-from bot.awareness.models import AwarenessSnapshot, RelativeStrength, ThreatAssessment
+from bot.awareness.models import (
+    AwarenessSnapshot,
+    MacroPosture,
+    RelativeStrength,
+    ThreatAssessment,
+)
 
 
 class AwarenessService:
     """Owns world memory and derives beliefs without issuing commands."""
 
-    def __init__(self, *, location_stale_after: float = 90.0) -> None:
+    def __init__(
+        self,
+        *,
+        location_stale_after: float = 90.0,
+        own_base_threat_radius: float = 28.0,
+        defense_release_after: float = 10.0,
+        posture_min_hold: float = 8.0,
+        greed_safe_after: float = 20.0,
+    ) -> None:
         if location_stale_after <= 0.0:
             raise ValueError("location_stale_after must be positive")
+        if own_base_threat_radius <= 0.0:
+            raise ValueError("own_base_threat_radius must be positive")
+        if min(defense_release_after, posture_min_hold, greed_safe_after) < 0.0:
+            raise ValueError("posture timings must not be negative")
         self.location_stale_after = float(location_stale_after)
+        self.own_base_threat_radius = float(own_base_threat_radius)
+        self.defense_release_after = float(defense_release_after)
+        self.posture_min_hold = float(posture_min_hold)
+        self.greed_safe_after = float(greed_safe_after)
         self.enemy_knowledge = EnemyKnowledge()
         self._location_last_observed: dict[str, float] = {}
+        self._macro_posture = MacroPosture.BALANCED
+        self._posture_changed_at = float("-inf")
+        self._last_base_threat_at = float("-inf")
 
     def update(self, attention: AttentionSnapshot) -> AwarenessSnapshot:
         world = attention.world
@@ -57,6 +81,37 @@ class AwarenessService:
         score = 0.0 if known_total == 0 else (own_combat - enemy_combat) / known_total
         strength_confidence = min(1.0, len(sightings) / 12.0) if sightings else 0.0
 
+        anchors = tuple(
+            structure.position
+            for structure in world.own_structures
+            if structure.is_ready and not structure.is_flying
+        ) or (world.map.own_start,)
+        nearby_enemies = tuple(
+            unit
+            for unit in world.enemy_units
+            if any(
+                unit.position.distance_to(anchor) <= self.own_base_threat_radius
+                for anchor in anchors
+            )
+        )
+        nearby_combat = tuple(
+            unit
+            for unit in nearby_enemies
+            if not unit.is_worker and (unit.can_attack_air or unit.can_attack_ground)
+        )
+        visible_enemy_combat = sum(
+            not unit.is_worker and (unit.can_attack_air or unit.can_attack_ground)
+            for unit in world.enemy_units
+        )
+        macro_posture = self._derive_macro_posture(
+            world=world,
+            own_combat=own_combat,
+            enemy_combat=enemy_combat,
+            strength_score=score,
+            strength_confidence=strength_confidence,
+            nearby_enemy_combat=len(nearby_combat),
+        )
+
         return AwarenessSnapshot(
             enemy=EnemyAwareness(
                 sightings=sightings,
@@ -74,6 +129,66 @@ class AwarenessService:
                 visible_anti_air_units=sum(
                     u.visible_now and u.can_attack_air for u in world.enemy_units
                 ),
+                visible_enemy_combat_units=visible_enemy_combat,
+                near_own_base_enemy_units=len(nearby_enemies),
+                near_own_base_enemy_combat_units=len(nearby_combat),
             ),
             updated_at=world.time,
+            macro_posture=macro_posture,
         )
+
+    def _derive_macro_posture(
+        self,
+        *,
+        world,
+        own_combat: int,
+        enemy_combat: int,
+        strength_score: float,
+        strength_confidence: float,
+        nearby_enemy_combat: int,
+    ) -> MacroPosture:
+        """Apply immediate danger and slow release/greed hysteresis."""
+
+        now = world.time
+        workers = sum(unit.is_worker for unit in world.own_units)
+        townhalls = sum(
+            structure.is_ready
+            and not structure.is_flying
+            and structure.unit_type.name
+            in {
+                "COMMANDCENTER",
+                "ORBITALCOMMAND",
+                "PLANETARYFORTRESS",
+                "NEXUS",
+                "HATCHERY",
+                "LAIR",
+                "HIVE",
+            }
+            for structure in world.own_structures
+        )
+
+        if nearby_enemy_combat:
+            candidate = MacroPosture.DEFENSE
+            self._last_base_threat_at = now
+        elif now - self._last_base_threat_at < self.defense_release_after:
+            candidate = MacroPosture.DEFENSE
+        elif townhalls == 0 or (now >= 90.0 and workers < 8):
+            candidate = MacroPosture.RECOVERY
+        elif (
+            now - self._last_base_threat_at >= self.greed_safe_after
+            and strength_confidence >= 0.5
+            and own_combat >= 6
+            and strength_score >= 0.25
+        ):
+            candidate = MacroPosture.GREED
+        else:
+            candidate = MacroPosture.BALANCED
+
+        immediate = candidate in {MacroPosture.DEFENSE, MacroPosture.RECOVERY}
+        if (
+            candidate is not self._macro_posture
+            and (immediate or now - self._posture_changed_at >= self.posture_min_hold)
+        ):
+            self._macro_posture = candidate
+            self._posture_changed_at = now
+        return self._macro_posture

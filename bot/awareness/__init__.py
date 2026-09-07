@@ -1,5 +1,5 @@
 from .enemy import EnemyAwareness, EnemyLocationKnowledge, EnemySighting
-from .models import AwarenessSnapshot, RelativeStrength, ThreatAssessment
+from .models import AwarenessSnapshot, MacroPosture, RelativeStrength, ThreatAssessment
 from .service import AwarenessService
 
 __all__ = [
@@ -8,6 +8,7 @@ __all__ = [
     "EnemyAwareness",
     "EnemyLocationKnowledge",
     "EnemySighting",
+    "MacroPosture",
     "RelativeStrength",
     "ThreatAssessment",
 ]

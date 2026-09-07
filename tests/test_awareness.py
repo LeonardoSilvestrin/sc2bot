@@ -12,7 +12,7 @@ from bot.attention.models import (
     UnitSnapshot,
     WorldFacts,
 )
-from bot.awareness import AwarenessService
+from bot.awareness import AwarenessService, MacroPosture
 
 
 def unit(tag: int, unit_type: UnitTypeId, *, enemy_air_attack: bool = False):
@@ -50,6 +50,40 @@ class AwarenessServiceTests(unittest.TestCase):
 
         self.assertGreater(snapshot.relative_strength.score, 0)
         self.assertEqual(snapshot.threat.known_anti_air_units, 1)
+        self.assertEqual(snapshot.threat.near_own_base_enemy_combat_units, 1)
+        self.assertEqual(snapshot.macro_posture, MacroPosture.DEFENSE)
+
+    def test_defense_posture_releases_only_after_safe_window(self):
+        service = AwarenessService(defense_release_after=10.0, posture_min_hold=0.0)
+
+        def observed(time: float, enemies: tuple[UnitSnapshot, ...]):
+            return service.update(
+                AttentionSnapshot(
+                    WorldFacts(
+                        iteration=int(time),
+                        time=time,
+                        minerals=50,
+                        vespene=0,
+                        supply_used=15,
+                        supply_cap=23,
+                        own_units=(unit(1, UnitTypeId.MARINE),),
+                        enemy_units=enemies,
+                        map=MapFacts(
+                            center=Point2((50, 50)),
+                            own_start=Point2((10, 10)),
+                            enemy_starts=(Point2((90, 90)),),
+                        ),
+                    )
+                )
+            )
+
+        danger = observed(30.0, (unit(2, UnitTypeId.ZERGLING),))
+        still_defending = observed(35.0, ())
+        released = observed(41.0, ())
+
+        self.assertEqual(danger.macro_posture, MacroPosture.DEFENSE)
+        self.assertEqual(still_defending.macro_posture, MacroPosture.DEFENSE)
+        self.assertEqual(released.macro_posture, MacroPosture.RECOVERY)
 
     def test_location_freshness_is_typed_and_persistent(self):
         target = Point2((80, 80))
