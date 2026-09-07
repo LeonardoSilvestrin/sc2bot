@@ -87,6 +87,134 @@ class RuntimePilotTests(unittest.IsolatedAsyncioTestCase):
             any(event["name"] == "game.started" for event in runtime.logger.events)
         )
 
+    async def test_runtime_logs_structured_awareness_and_world_state(self):
+        commands = FakeCommands()
+        townhall = SimpleNamespace(
+            tag=999,
+            type_id=UnitTypeId.COMMANDCENTER,
+            position=Point2((10, 10)),
+            health_percentage=1.0,
+            is_flying=False,
+            can_attack_air=False,
+            can_attack_ground=False,
+            is_ready=True,
+            is_structure=True,
+            ideal_harvesters=20,
+            assigned_harvesters=18,
+        )
+        bot = SimpleNamespace(
+            time=120.0,
+            minerals=375,
+            vespene=125,
+            supply_used=24,
+            supply_cap=31,
+            units=(worker(1), reaper(2)),
+            structures=(townhall,),
+            enemy_units=(enemy_marine(50, Point2((80, 80))),),
+            enemy_structures=(),
+            worker_type=UnitTypeId.SCV,
+            start_location=Point2((10, 10)),
+            enemy_start_locations=[Point2((90, 90))],
+            game_info=SimpleNamespace(
+                map_center=Point2((50, 50)), map_name="PilotMap"
+            ),
+            build_order_runner=SimpleNamespace(
+                build_completed=False,
+                build_step=0,
+                build_order=(),
+                chosen_opening="ReaperExpand",
+            ),
+            state=SimpleNamespace(
+                score=SimpleNamespace(
+                    collection_rate_minerals=720.0,
+                    collection_rate_vespene=180.0,
+                )
+            ),
+            pending_units={UnitTypeId.SCV: 2},
+            supply_pending=1,
+        )
+        runtime = BotRuntime(logger=FakeLogger())
+
+        with (
+            patch(
+                "bot.application.runtime.AresMissionCommands",
+                return_value=commands,
+            ),
+            patch("bot.application.runtime.register_baseline_behaviors"),
+        ):
+            await runtime.on_step(bot, iteration=1)
+
+            bot.time = 121.0
+            bot.minerals = 400
+            await runtime.on_step(bot, iteration=2)
+
+            bot.time = 130.0
+            await runtime.on_step(bot, iteration=3)
+
+        awareness_events = [
+            event
+            for event in runtime.logger.events
+            if event["name"] == "awareness.updated"
+        ]
+        world_events = [
+            event
+            for event in runtime.logger.events
+            if event["name"] == "attention.world_state"
+        ]
+
+        self.assertEqual(len(awareness_events), 2)
+        self.assertEqual(len(world_events), 2)
+        self.assertNotIn(
+            "attention.snapshot", [event["name"] for event in runtime.logger.events]
+        )
+        self.assertEqual(
+            awareness_events[0]["data"],
+            {
+                "posture": "RECOVERY",
+                "relative_strength": {
+                    "score": 0.0,
+                    "confidence": 0.083,
+                    "own_combat_units": 1,
+                    "known_enemy_combat_units": 1,
+                },
+                "threat": {
+                    "visible_enemy_units": 1,
+                    "known_anti_air_units": 0,
+                    "visible_anti_air_units": 0,
+                    "visible_enemy_combat_units": 1,
+                    "near_own_base_enemy_units": 0,
+                    "near_own_base_enemy_combat_units": 0,
+                },
+                "enemy_sightings": 1,
+                "active_missions": 0,
+            },
+        )
+        self.assertEqual(
+            world_events[0]["data"],
+            {
+                "minerals": 375,
+                "vespene": 125,
+                "supply_used": 24.0,
+                "supply_cap": 31.0,
+                "economy": {
+                    "opening_name": "ReaperExpand",
+                    "opening_completed": False,
+                    "mineral_collection_rate": 720.0,
+                    "vespene_collection_rate": 180.0,
+                    "workers": {"existing": 1, "ready": 1, "pending": 2},
+                    "townhalls": {"existing": 1, "ready": 1, "pending": 0},
+                    "ideal_harvesters": 20,
+                    "assigned_harvesters": 18,
+                    "supply_pending": 1,
+                },
+                "own_unit_count": 2,
+                "own_structure_count": 1,
+                "visible_enemy_unit_count": 1,
+            },
+        )
+        self.assertEqual(world_events[1]["game_time"], 130.0)
+        self.assertEqual(world_events[1]["data"]["minerals"], 400)
+
     async def test_runtime_wires_unknown_to_scout_and_new_vision_to_completion(self):
         target = Point2((80, 80))
         commands = FakeCommands()

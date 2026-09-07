@@ -152,6 +152,8 @@ class BotRuntime:
         )
 
     def _log_awareness(self, attention, awareness: AwarenessSnapshot) -> None:
+        world = attention.world
+        economy = world.economy
         strength = awareness.relative_strength
         threat = awareness.threat
         live_missions = tuple(
@@ -160,36 +162,91 @@ class BotRuntime:
             if not mission.status.terminal
         )
         signature = (
+            awareness.macro_posture,
+            round(strength.score, 3),
+            round(strength.confidence, 3),
             strength.own_combat_units,
             strength.known_enemy_combat_units,
             threat.visible_enemy_units,
             threat.known_anti_air_units,
+            threat.visible_anti_air_units,
+            threat.visible_enemy_combat_units,
+            threat.near_own_base_enemy_units,
+            threat.near_own_base_enemy_combat_units,
             len(awareness.enemy.sightings),
             tuple(
                 (mission.mission_id, mission.status.name) for mission in live_missions
             ),
         )
         changed = signature != self._last_awareness_signature
-        periodic = attention.world.time - self._last_snapshot_at >= 10.0
+        periodic = world.time - self._last_snapshot_at >= 10.0
         if not changed and not periodic:
             return
         self._last_awareness_signature = signature
-        self._last_snapshot_at = attention.world.time
+        self._last_snapshot_at = world.time
         self.logger.event(
-            "attention.snapshot",
+            "awareness.updated",
             component="application.runtime",
-            game_time=attention.world.time,
+            game_time=world.time,
             data={
-                "minerals": attention.world.minerals,
-                "vespene": attention.world.vespene,
-                "supply": [attention.world.supply_used, attention.world.supply_cap],
-                "own_combat_units": strength.own_combat_units,
-                "known_enemy_combat_units": strength.known_enemy_combat_units,
-                "strength_score": round(strength.score, 3),
-                "strength_confidence": round(strength.confidence, 3),
-                "visible_enemies": threat.visible_enemy_units,
-                "known_anti_air": threat.known_anti_air_units,
+                "posture": awareness.macro_posture.name,
+                "relative_strength": {
+                    "score": round(strength.score, 3),
+                    "confidence": round(strength.confidence, 3),
+                    "own_combat_units": strength.own_combat_units,
+                    "known_enemy_combat_units": strength.known_enemy_combat_units,
+                },
+                "threat": {
+                    "visible_enemy_units": threat.visible_enemy_units,
+                    "known_anti_air_units": threat.known_anti_air_units,
+                    "visible_anti_air_units": threat.visible_anti_air_units,
+                    "visible_enemy_combat_units": (
+                        threat.visible_enemy_combat_units
+                    ),
+                    "near_own_base_enemy_units": (
+                        threat.near_own_base_enemy_units
+                    ),
+                    "near_own_base_enemy_combat_units": (
+                        threat.near_own_base_enemy_combat_units
+                    ),
+                },
+                "enemy_sightings": len(awareness.enemy.sightings),
                 "active_missions": len(live_missions),
+            },
+        )
+        self.logger.event(
+            "attention.world_state",
+            component="application.runtime",
+            game_time=world.time,
+            data={
+                "minerals": world.minerals,
+                "vespene": world.vespene,
+                "supply_used": world.supply_used,
+                "supply_cap": world.supply_cap,
+                "economy": {
+                    "opening_name": economy.opening_name,
+                    "opening_completed": economy.opening_completed,
+                    "mineral_collection_rate": economy.mineral_collection_rate,
+                    "vespene_collection_rate": economy.vespene_collection_rate,
+                    "workers": {
+                        "existing": economy.workers.existing,
+                        "ready": economy.workers.ready,
+                        "pending": economy.workers.pending,
+                    },
+                    "townhalls": {
+                        "existing": economy.townhalls.existing,
+                        "ready": economy.townhalls.ready,
+                        "pending": economy.townhalls.pending,
+                    },
+                    "ideal_harvesters": economy.ideal_harvesters,
+                    "assigned_harvesters": economy.assigned_harvesters,
+                    "supply_pending": economy.supply_pending,
+                },
+                "own_unit_count": len(world.own_units),
+                "own_structure_count": len(world.own_structures),
+                "visible_enemy_unit_count": sum(
+                    unit.visible_now for unit in world.enemy_units
+                ),
             },
         )
 

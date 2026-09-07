@@ -91,8 +91,28 @@
     background: var(--bg);
     color: var(--text);
   }
+  header .spacer { flex: 1; }
+  .stream-menu {
+    display: inline-flex;
+    gap: 2px;
+    padding: 3px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg);
+  }
+  .stream-menu button {
+    border: 0;
+    border-radius: 5px;
+    padding: 5px 9px;
+    color: var(--muted);
+    background: transparent;
+    font: inherit;
+    cursor: pointer;
+  }
+  .stream-menu button:hover { color: var(--text); }
+  .stream-menu button.active { color: var(--text); background: var(--panel); box-shadow: 0 0 0 1px var(--border); }
+  .stream-menu .count { margin-left: 4px; color: var(--telemetry); font: 11px var(--mono); }
   header button.link {
-    margin-left: auto;
     background: none;
     border: none;
     color: var(--accent);
@@ -101,22 +121,40 @@
   }
   main { flex: 1; overflow: hidden; display: flex; }
   #timeline { flex: 1; overflow-y: auto; padding: 8px 0; }
-  #missions {
-    width: 320px;
+  #side-panel {
+    width: 340px;
     border-left: 1px solid var(--border);
     overflow-y: auto;
     background: var(--panel);
   }
-  #missions h2, #timeline h2 { display: none; }
-  .mission-card {
+  #side-panel h2 {
+    margin: 0;
+    padding: 10px 14px;
+    font-size: 13px;
+    border-bottom: 1px solid var(--border);
+  }
+  .group-heading {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    padding: 7px 14px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--muted);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+  }
+  .group-heading .count { float: right; font: 11px var(--mono); }
+  .entity-card {
     padding: 10px 14px;
     border-bottom: 1px solid var(--border);
     cursor: pointer;
   }
-  .mission-card:hover { background: var(--bg); }
-  .mission-card.active-filter { background: color-mix(in srgb, var(--accent) 15%, transparent); }
-  .mission-card .id { font-family: var(--mono); font-weight: 600; }
-  .mission-card .meta { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .entity-card:hover { background: var(--bg); }
+  .entity-card.active-filter { background: color-mix(in srgb, var(--accent) 15%, transparent); }
+  .entity-card .id { font-family: var(--mono); font-weight: 600; overflow-wrap: anywhere; }
+  .entity-card .meta { color: var(--muted); font-size: 12px; margin-top: 2px; overflow-wrap: anywhere; }
   .status-pill {
     display: inline-block;
     padding: 1px 8px;
@@ -129,6 +167,13 @@
   .status-ACTIVE, .status-QUEUED, .status-PROPOSED { background: color-mix(in srgb, var(--accent) 20%, transparent); color: var(--accent); }
   .status-BLOCKED { background: color-mix(in srgb, var(--warn) 20%, transparent); color: var(--warn); }
   .status-FAILED, .status-CANCELLED { background: color-mix(in srgb, var(--bad) 20%, transparent); color: var(--bad); }
+  .status-CONFIRMED, .status-COMPLETED { background: color-mix(in srgb, var(--ok) 20%, transparent); color: var(--ok); }
+  .status-DEFERRED, .status-PENDING, .status-DISPATCHED, .status-IN_FLIGHT { background: color-mix(in srgb, var(--warn) 20%, transparent); color: var(--warn); }
+  .status-REJECTED, .status-TIMED_OUT { background: color-mix(in srgb, var(--bad) 20%, transparent); color: var(--bad); }
+  .status-BALANCED { background: color-mix(in srgb, var(--accent) 20%, transparent); color: var(--accent); }
+  .status-GREED { background: color-mix(in srgb, var(--ok) 20%, transparent); color: var(--ok); }
+  .status-DEFENSE { background: color-mix(in srgb, var(--bad) 20%, transparent); color: var(--bad); }
+  .status-RECOVERY { background: color-mix(in srgb, var(--warn) 20%, transparent); color: var(--warn); }
 
   .row {
     display: grid;
@@ -161,6 +206,17 @@
   .ev-mission_completed { color: var(--ok); }
   .ev-mission_blocked { color: var(--warn); }
 
+  .data-view { padding: 14px 16px; overflow: auto; height: 100%; }
+  .data-view h2 { margin: 0 0 10px; font-size: 16px; }
+  .data-view table { width: 100%; border-collapse: collapse; font-family: var(--mono); }
+  .data-view th, .data-view td { padding: 6px 8px; border-bottom: 1px solid var(--border); text-align: right; }
+  .data-view th:first-child, .data-view td:first-child,
+  .data-view th:nth-child(2), .data-view td:nth-child(2) { text-align: left; }
+  .data-view th { position: sticky; top: 0; background: var(--bg); }
+  .load-more { display: block; margin: 12px auto; padding: 7px 14px; font: inherit; cursor: pointer; }
+  .notice { color: var(--muted); padding: 10px 14px; }
+  .parse-error { color: var(--bad); }
+
   #empty-state { color: var(--muted); padding: 30px; text-align: center; }
 </style>
 </head>
@@ -180,25 +236,45 @@
     <label>mission
       <select id="mission-filter"><option value="">all</option></select>
     </label>
+    <nav class="stream-menu" id="stream-menu" aria-label="Log stream">
+      <button type="button" class="active" data-view="events">Events<span class="count" data-count="events">0</span></button>
+      <button type="button" data-view="attention">Attention<span class="count" data-count="attention">0</span></button>
+      <button type="button" data-view="awareness">Awareness<span class="count" data-count="awareness">0</span></button>
+      <button type="button" data-view="economy">Economy<span class="count" data-count="economy">0</span></button>
+    </nav>
+    <span class="spacer"></span>
     <button class="link" id="load-another">load another file</button>
   </header>
   <main>
     <section id="timeline"></section>
-    <aside id="missions"></aside>
+    <aside id="side-panel"></aside>
   </main>
 </div>
 
 <script>
 const NARRATIVE_EVENTS = new Set([
   "game.started", "game.ended",
+  "macro.build_order_progress", "awareness.updated", "attention.world_state",
   "proposal_created", "proposal_admitted", "proposal_rejected",
   "mission_queued", "mission_started", "mission_blocked",
   "units_assigned", "units_reassigned", "units_released",
   "mission_completed", "mission_failed", "mission_cancelled",
+  "economic_proposal_created", "economic_proposal_rejected",
+  "economic_proposal_deferred", "economic_action_admitted",
+  "economic_action_pending", "economic_action_dispatched",
+  "economic_action_confirmed", "economic_action_failed",
+  "economic_action_timed_out", "economic_feedback_rejected",
 ]);
 
+const PAGE_SIZE = 500;
+const SIDE_LIMIT = 300;
 let records = [];
 let missions = new Map(); // mission_id -> {kind, target, events:[{time,event,status}]}
+let economicItems = new Map(); // action_id/deduplication_key -> lifecycle
+let visibleRows = PAGE_SIZE;
+let visibleSideItems = SIDE_LIMIT;
+let parseWarnings = [];
+let currentView = "events";
 
 function formatTime(seconds) {
   seconds = Math.max(0, seconds);
@@ -235,13 +311,71 @@ function fieldsFor(record) {
     out.push(`result=${data.result}`);
   } else if (event === "macro.build_order_progress") {
     out.push(`step=${data.step}/${data.total_steps}`, `command=${data.command}`, `completed=${data.completed}`);
+  } else if (event === "awareness.updated") {
+    out.push(
+      `posture=${data.posture}`,
+      `strength=${data.relative_strength?.score}`,
+      `confidence=${data.relative_strength?.confidence}`,
+      `own=${data.relative_strength?.own_combat_units}`,
+      `enemy=${data.relative_strength?.known_enemy_combat_units}`,
+      `visible=${data.threat?.visible_enemy_units}`,
+      `near_base=${data.threat?.near_own_base_enemy_combat_units}`,
+      `missions=${data.active_missions}`,
+    );
+  } else if (event === "attention.world_state") {
+    out.push(
+      `minerals=${data.minerals}`,
+      `vespene=${data.vespene}`,
+      `supply=${data.supply_used}/${data.supply_cap}`,
+      `workers=${countSummary(data.economy?.workers)}`,
+      `townhalls=${countSummary(data.economy?.townhalls)}`,
+      `income=${data.economy?.mineral_collection_rate}/${data.economy?.vespene_collection_rate}`,
+    );
   } else if (event === "attention.snapshot") {
+    // Kept for logs written before awareness.updated/attention.world_state.
     out.push(`minerals=${data.minerals}`, `vespene=${data.vespene}`, `supply=${JSON.stringify(data.supply)}`,
       `own=${data.own_combat_units}`, `enemy_known=${data.known_enemy_combat_units}`, `strength=${data.strength_score}`);
+  } else if (event === "economic_proposal_created") {
+    out.push(`kind=${data.action_kind}`, `target=${economicTarget(data)}`, `priority=${data.priority}`, `cost=${costSummary(data.cost)}`);
+  } else if (event === "economic_proposal_deferred") {
+    out.push(`kind=${data.action_kind}`, `target=${economicTarget(data)}`, `bank=${bankSummary(data.available_bank)}`, `held=${costSummary(data.held_cost)}`);
+  } else if (event === "economic_proposal_rejected") {
+    out.push(`kind=${data.action_kind}`, `target=${economicTarget(data)}`);
+    if (data.action_id) out.push(`action=${data.action_id}`);
+    if (data.status) out.push(`status=${data.status}`);
+  } else if (["economic_action_admitted", "economic_action_pending", "economic_action_dispatched", "economic_action_confirmed", "economic_action_failed", "economic_action_timed_out"].includes(event)) {
+    out.push(`action=${data.action_id}`, `kind=${data.action_kind}`, `target=${economicTarget(data)}`);
+    if (data.status) out.push(`status=${data.status}`);
+    if (data.cost) out.push(`cost=${costSummary(data.cost)}`);
+  } else if (event === "economic_feedback_rejected") {
+    out.push(`action=${data.action_id}`, `feedback=${data.feedback_kind}`, `detail=${data.feedback_reason}`);
   } else {
     for (const [k, v] of Object.entries(data)) if (k !== "reason") out.push(`${k}=${JSON.stringify(v)}`);
   }
+  if (data.deduplication_key) out.unshift(`key=${data.deduplication_key}`);
   return out.join("  ");
+}
+
+function countSummary(value) {
+  if (!value) return "?";
+  const ready = Number(value.ready ?? 0);
+  const pending = Number(value.pending ?? 0);
+  return `${ready + pending} (${ready} ready, ${pending} pending)`;
+}
+
+function costSummary(value) {
+  if (!value) return "?";
+  return `${value.minerals ?? 0}m/${value.vespene ?? 0}g/${value.supply ?? 0}s`;
+}
+
+function bankSummary(value) {
+  if (!value) return "?";
+  return `${value.minerals ?? 0}m/${value.vespene ?? 0}g/${value.supply_available ?? 0}s`;
+}
+
+function economicTarget(data) {
+  const count = data.target_count == null ? "" : ` x${data.target_count}`;
+  return `${data.target ?? "?"}${count}`;
 }
 
 function reasonOf(record) {
@@ -255,42 +389,191 @@ function buildMissions() {
     const missionId = r.data?.mission_id;
     if (!missionId) continue;
     if (!missions.has(missionId)) {
-      missions.set(missionId, { kind: r.data.mission_kind, target: r.data.target_key, events: [], unitTypes: new Set() });
+      missions.set(missionId, {
+        planner: r.data.planner_id,
+        kind: r.data.mission_kind,
+        target: r.data.target_key,
+        events: [],
+        unitTypes: new Set(),
+      });
     }
     const mission = missions.get(missionId);
+    mission.planner ||= r.data.planner_id;
     mission.events.push({ time: r.game_time, event: r.event, status: r.data.status });
     for (const t of r.data.unit_types || []) if (t) mission.unitTypes.add(t);
   }
 }
 
+function economicStatus(record) {
+  const explicit = record.data?.status;
+  const lifecycle = {
+    economic_proposal_created: "CREATED",
+    economic_proposal_deferred: "DEFERRED",
+    economic_proposal_rejected: "REJECTED",
+    economic_action_admitted: "ADMITTED",
+    economic_action_pending: "PENDING",
+    economic_action_dispatched: "DISPATCHED",
+    economic_action_confirmed: "CONFIRMED",
+    economic_action_failed: "FAILED",
+    economic_action_timed_out: "TIMED_OUT",
+    economic_feedback_rejected: "REJECTED",
+  }[record.event];
+  return lifecycle ?? explicit ?? record.event;
+}
+
+function buildEconomicItems() {
+  economicItems = new Map();
+  for (const r of records) {
+    if (!r.event?.startsWith("economic_")) continue;
+    const data = r.data ?? {};
+    const actionLifecycle = r.event.startsWith("economic_action_");
+    const id = actionLifecycle
+      ? data.action_id
+      : (data.deduplication_key || data.proposal_id || data.action_id);
+    if (!id) continue;
+    const key = actionLifecycle ? `action:${id}` : `proposal:${id}`;
+    if (!economicItems.has(key)) {
+      const proposalEvents = actionLifecycle && data.deduplication_key
+        ? [...(economicItems.get(`proposal:${data.deduplication_key}`)?.events ?? [])]
+        : [];
+      economicItems.set(key, {
+        id,
+        actionId: actionLifecycle ? data.action_id : undefined,
+        deduplicationKey: data.deduplication_key,
+        planner: data.planner_id,
+        kind: data.action_kind,
+        target: data.target,
+        events: proposalEvents,
+      });
+    }
+    const item = economicItems.get(key);
+    item.actionId ||= data.action_id;
+    item.deduplicationKey ||= data.deduplication_key;
+    item.planner ||= data.planner_id;
+    item.kind ||= data.action_kind;
+    item.target ||= data.target;
+    const status = economicStatus(r);
+    const previous = item.events[item.events.length - 1];
+    if (!previous || previous.status !== status || previous.reason !== data.reason) {
+      item.events.push({ time: r.game_time, status, reason: data.reason });
+    }
+  }
+}
+
+function appendTextElement(parent, tag, className, text) {
+  const element = document.createElement(tag);
+  if (className) element.className = className;
+  element.textContent = text;
+  parent.appendChild(element);
+  return element;
+}
+
+function appendStatus(parent, status) {
+  return appendTextElement(parent, "span", `status-pill status-${status}`, status);
+}
+
+function appendGroupHeading(parent, label, count) {
+  const heading = appendTextElement(parent, "div", "group-heading", label || "unknown proposer");
+  appendTextElement(heading, "span", "count", String(count));
+  return heading;
+}
+
+function groupBy(items, keyOf) {
+  const groups = new Map();
+  for (const item of items) {
+    const key = keyOf(item) || "unknown";
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(item);
+  }
+  return groups;
+}
+
 function renderMissions() {
-  const el = document.getElementById("missions");
-  el.innerHTML = "";
+  const el = document.getElementById("side-panel");
+  el.replaceChildren();
+  appendTextElement(el, "h2", "", `Missions (${missions.size})`);
   const activeFilter = document.getElementById("mission-filter").value;
-  for (const [id, info] of missions) {
-    const start = info.events[0].time;
-    const end = info.events[info.events.length - 1].time;
-    const final = [...info.events].reverse().find((e) => e.status)?.status ?? "?";
-    const card = document.createElement("div");
-    card.className = "mission-card" + (activeFilter === id ? " active-filter" : "");
-    card.innerHTML = `
-      <div class="id">${id}<span class="status-pill status-${final}">${final}</span></div>
-      <div class="meta">${info.kind || "?"} · target=${info.target}${info.unitTypes.size ? " · " + [...info.unitTypes].join(", ") : ""}</div>
-      <div class="meta">${formatTime(start)} .. ${formatTime(end)}</div>
-    `;
-    card.addEventListener("click", () => {
-      const select = document.getElementById("mission-filter");
-      select.value = select.value === id ? "" : id;
-      render();
+  const entries = [...missions].map(([id, info]) => ({ id, ...info }));
+  for (const [planner, plannerMissions] of groupBy(entries, (item) => item.planner)) {
+    appendGroupHeading(el, planner, plannerMissions.length);
+    for (const info of plannerMissions) {
+      const start = info.events[0].time;
+      const end = info.events[info.events.length - 1].time;
+      const final = [...info.events].reverse().find((event) => event.status)?.status ?? "?";
+      const card = document.createElement("div");
+      card.className = "entity-card" + (activeFilter === info.id ? " active-filter" : "");
+      const heading = appendTextElement(card, "div", "id", info.id);
+      appendStatus(heading, final);
+      appendTextElement(
+        card,
+        "div",
+        "meta",
+        `${info.kind || "?"} · target=${info.target}${info.unitTypes.size ? " · " + [...info.unitTypes].join(", ") : ""}`,
+      );
+      appendTextElement(card, "div", "meta", `${formatTime(start)} .. ${formatTime(end)}`);
+      card.addEventListener("click", () => {
+        const select = document.getElementById("mission-filter");
+        select.value = select.value === info.id ? "" : info.id;
+        switchView("events");
+      });
+      el.appendChild(card);
+    }
+  }
+  if (!missions.size) appendTextElement(el, "div", "notice", "No mission events in this log.");
+}
+
+function renderEconomyPanel() {
+  const el = document.getElementById("side-panel");
+  el.replaceChildren();
+  appendTextElement(el, "h2", "", `Economy (${economicItems.size})`);
+  const items = [...economicItems.values()]
+    .sort((a, b) => (b.events.at(-1)?.time ?? 0) - (a.events.at(-1)?.time ?? 0));
+  const displayed = items.slice(0, visibleSideItems);
+  for (const [group, groupItems] of groupBy(displayed, (item) => `${item.planner || "unknown"} · ${item.kind || "proposal"}`)) {
+    appendGroupHeading(el, group, groupItems.length);
+    for (const info of groupItems) {
+      const last = info.events.at(-1);
+      const card = document.createElement("div");
+      card.className = "entity-card";
+      const heading = appendTextElement(card, "div", "id", info.id);
+      appendStatus(heading, last?.status ?? "?");
+      appendTextElement(card, "div", "meta", `target=${info.target || "?"}`);
+      if (info.actionId && info.deduplicationKey) {
+        appendTextElement(card, "div", "meta", `key=${info.deduplicationKey}`);
+      }
+      appendTextElement(
+        card,
+        "div",
+        "meta",
+        info.events.map((event) => `${formatTime(event.time)} ${event.status}`).join(" → "),
+      );
+      card.title = info.events.map((event) => `${formatTime(event.time)} ${event.status}: ${event.reason ?? ""}`).join("\n");
+      card.addEventListener("click", () => {
+        document.getElementById("search").value = info.actionId || info.deduplicationKey || info.id;
+        switchView("events");
+      });
+      el.appendChild(card);
+    }
+  }
+  if (!items.length) appendTextElement(el, "div", "notice", "No economic events in this log.");
+  if (items.length > visibleSideItems) {
+    const button = appendTextElement(el, "button", "load-more", `Load ${Math.min(SIDE_LIMIT, items.length - visibleSideItems)} more`);
+    button.type = "button";
+    button.addEventListener("click", () => {
+      visibleSideItems += SIDE_LIMIT;
+      renderEconomyPanel();
     });
-    el.appendChild(card);
   }
 }
 
 function populateMissionSelect() {
   const select = document.getElementById("mission-filter");
   const current = select.value;
-  select.innerHTML = '<option value="">all</option>';
+  select.replaceChildren();
+  const all = document.createElement("option");
+  all.value = "";
+  all.textContent = "all";
+  select.appendChild(all);
   for (const id of missions.keys()) {
     const opt = document.createElement("option");
     opt.value = id;
@@ -301,14 +584,30 @@ function populateMissionSelect() {
 }
 
 function render() {
+  if (currentView === "attention") {
+    renderResources();
+    renderAttentionPanel();
+  } else if (currentView === "awareness") {
+    renderAwareness();
+    renderAwarenessPanel();
+  } else if (currentView === "economy") {
+    renderEconomySummary();
+    renderEconomyPanel();
+  } else {
+    renderTimeline();
+    renderMissions();
+  }
+}
+
+function renderTimeline() {
   const showAll = document.getElementById("all-events").checked;
   const search = document.getElementById("search").value.trim().toLowerCase();
   const missionFilter = document.getElementById("mission-filter").value;
 
   const timeline = document.getElementById("timeline");
-  timeline.innerHTML = "";
-  let shown = 0;
-
+  timeline.className = "";
+  timeline.replaceChildren();
+  const matching = [];
   for (const r of records) {
     const isNarrative = NARRATIVE_EVENTS.has(r.event);
     if (!showAll && !isNarrative) continue;
@@ -319,15 +618,17 @@ function render() {
     const reason = reasonOf(r);
     const haystack = `${r.event} ${reason} ${missionId} ${fields}`.toLowerCase();
     if (search && !haystack.includes(search)) continue;
+    matching.push({ record: r, isNarrative, missionId, fields, reason });
+  }
 
+  for (const item of matching.slice(0, visibleRows)) {
+    const { record: r, isNarrative, missionId, fields, reason } = item;
     const row = document.createElement("div");
     row.className = "row" + (isNarrative ? "" : " telemetry");
-    row.innerHTML = `
-      <span class="time">${formatTime(r.game_time)}</span>
-      <span class="mission-id">${missionId}</span>
-      <span class="event ev-${r.event}">${r.event}${reason ? " · " + reason : ""}</span>
-      <span class="fields">${fields}</span>
-    `;
+    appendTextElement(row, "span", "time", formatTime(r.game_time));
+    appendTextElement(row, "span", "mission-id", missionId);
+    appendTextElement(row, "span", `event ev-${String(r.event).replace(/[^a-zA-Z0-9_-]/g, "-")}`, `${r.event}${reason ? " · " + reason : ""}`);
+    appendTextElement(row, "span", "fields", fields);
     row.addEventListener("click", () => {
       const already = row.querySelector("pre");
       if (already) { already.remove(); row.classList.remove("expanded"); return; }
@@ -337,33 +638,235 @@ function render() {
       row.classList.add("expanded");
     });
     timeline.appendChild(row);
-    shown++;
   }
 
-  if (shown === 0) {
-    timeline.innerHTML = '<div id="empty-state">No events match this filter.</div>';
+  if (!matching.length) {
+    appendTextElement(timeline, "div", "notice", "No events match this filter.");
+  } else if (matching.length > visibleRows) {
+    const button = appendTextElement(timeline, "button", "load-more", `Load ${Math.min(PAGE_SIZE, matching.length - visibleRows)} more of ${matching.length}`);
+    button.type = "button";
+    button.addEventListener("click", () => {
+      visibleRows += PAGE_SIZE;
+      renderTimeline();
+    });
   }
+  if (parseWarnings.length) {
+    appendTextElement(timeline, "div", "notice parse-error", `${parseWarnings.length} malformed line(s) skipped: ${parseWarnings.slice(0, 3).join("; ")}`);
+  }
+}
 
-  renderMissions();
+function renderTable(title, headings, rows, emptyMessage) {
+  const root = document.getElementById("timeline");
+  root.replaceChildren();
+  root.className = "data-view";
+  appendTextElement(root, "h2", "", title);
+  if (!rows.length) {
+    appendTextElement(root, "div", "notice", emptyMessage);
+    return;
+  }
+  const table = document.createElement("table");
+  const head = document.createElement("thead");
+  const headRow = document.createElement("tr");
+  for (const heading of headings) appendTextElement(headRow, "th", "", heading);
+  head.appendChild(headRow);
+  table.appendChild(head);
+  const body = document.createElement("tbody");
+  for (const values of rows) {
+    const tr = document.createElement("tr");
+    for (const value of values) appendTextElement(tr, "td", "", String(value ?? "—"));
+    body.appendChild(tr);
+  }
+  table.appendChild(body);
+  root.appendChild(table);
+}
+
+function renderAwareness() {
+  const snapshots = records.filter((r) => r.event === "awareness.updated");
+  renderTable(
+    "Awareness over time",
+    ["time", "posture", "strength", "confidence", "visible enemies", "near base", "sightings"],
+    snapshots.map((r) => [
+      formatTime(r.game_time), r.data?.posture, r.data?.relative_strength?.score,
+      r.data?.relative_strength?.confidence, r.data?.threat?.visible_enemy_units,
+      r.data?.threat?.near_own_base_enemy_combat_units, r.data?.enemy_sightings,
+    ]),
+    "No awareness.updated events in this log.",
+  );
+}
+
+function renderResources() {
+  const snapshots = records.filter((r) => r.event === "attention.world_state");
+  renderTable(
+    "Economy and resources over time",
+    ["time", "opening", "minerals", "vespene", "supply", "workers", "townhalls", "mineral rate", "vespene rate"],
+    snapshots.map((r) => [
+      formatTime(r.game_time), r.data?.economy?.opening_name, r.data?.minerals, r.data?.vespene,
+      `${r.data?.supply_used ?? "?"}/${r.data?.supply_cap ?? "?"}`,
+      countSummary(r.data?.economy?.workers), countSummary(r.data?.economy?.townhalls),
+      r.data?.economy?.mineral_collection_rate, r.data?.economy?.vespene_collection_rate,
+    ]),
+    "No attention.world_state events in this log.",
+  );
+}
+
+function renderAttentionPanel() {
+  const el = document.getElementById("side-panel");
+  el.replaceChildren();
+  const snapshots = records.filter((record) => record.event === "attention.world_state");
+  appendTextElement(el, "h2", "", `Attention (${snapshots.length} snapshots)`);
+  if (!snapshots.length) {
+    appendTextElement(el, "div", "notice", "No attention.world_state events in this log.");
+    return;
+  }
+  for (const [component, componentSnapshots] of groupBy(snapshots, (record) => record.component)) {
+    appendGroupHeading(el, component, componentSnapshots.length);
+    const first = componentSnapshots[0];
+    const latest = componentSnapshots.at(-1);
+    const card = document.createElement("div");
+    card.className = "entity-card";
+    appendTextElement(card, "div", "id", latest.data?.economy?.opening_name || "world state");
+    appendTextElement(card, "div", "meta", `${formatTime(first.game_time)} .. ${formatTime(latest.game_time)}`);
+    appendTextElement(card, "div", "meta", `resources ${latest.data?.minerals ?? "?"}m / ${latest.data?.vespene ?? "?"}g`);
+    appendTextElement(card, "div", "meta", `supply ${latest.data?.supply_used ?? "?"}/${latest.data?.supply_cap ?? "?"} · workers ${countSummary(latest.data?.economy?.workers)}`);
+    appendTextElement(card, "div", "meta", `units ${latest.data?.own_unit_count ?? "?"} · structures ${latest.data?.own_structure_count ?? "?"} · visible enemy ${latest.data?.visible_enemy_unit_count ?? "?"}`);
+    el.appendChild(card);
+  }
+}
+
+function awarenessPhases(snapshots) {
+  const phases = [];
+  for (const record of snapshots) {
+    const posture = record.data?.posture || "UNKNOWN";
+    let phase = phases.at(-1);
+    if (!phase || phase.posture !== posture) {
+      phase = {
+        posture,
+        start: record.game_time,
+        end: record.game_time,
+        samples: 0,
+        minStrength: Number.POSITIVE_INFINITY,
+        maxStrength: Number.NEGATIVE_INFINITY,
+        maxVisible: 0,
+      };
+      phases.push(phase);
+    }
+    const strength = Number(record.data?.relative_strength?.score ?? 0);
+    phase.end = record.game_time;
+    phase.samples += 1;
+    phase.minStrength = Math.min(phase.minStrength, strength);
+    phase.maxStrength = Math.max(phase.maxStrength, strength);
+    phase.maxVisible = Math.max(phase.maxVisible, Number(record.data?.threat?.visible_enemy_units ?? 0));
+  }
+  return phases;
+}
+
+function renderAwarenessPanel() {
+  const el = document.getElementById("side-panel");
+  el.replaceChildren();
+  const snapshots = records.filter((record) => record.event === "awareness.updated");
+  const phases = awarenessPhases(snapshots);
+  appendTextElement(el, "h2", "", `Awareness (${phases.length} phases)`);
+  if (!phases.length) {
+    appendTextElement(el, "div", "notice", "No awareness.updated events in this log.");
+    return;
+  }
+  appendGroupHeading(el, snapshots[0]?.component || "awareness", snapshots.length);
+  for (const phase of phases) {
+    const card = document.createElement("div");
+    card.className = "entity-card";
+    const heading = appendTextElement(card, "div", "id", phase.posture);
+    appendStatus(heading, phase.posture);
+    appendTextElement(card, "div", "meta", `${formatTime(phase.start)} .. ${formatTime(phase.end)} · ${phase.samples} snapshots`);
+    appendTextElement(card, "div", "meta", `strength ${phase.minStrength.toFixed(3)} .. ${phase.maxStrength.toFixed(3)} · max visible ${phase.maxVisible}`);
+    card.addEventListener("click", () => {
+      document.getElementById("search").value = `posture=${phase.posture}`;
+      switchView("events");
+    });
+    el.appendChild(card);
+  }
+}
+
+function renderEconomySummary() {
+  const actions = [...economicItems.values()].filter((item) => item.actionId);
+  const rows = [];
+  for (const [key, items] of groupBy(actions, (item) => `${item.planner || "unknown"} · ${item.kind || "unknown"}`)) {
+    const statuses = items.map((item) => item.events.at(-1)?.status);
+    rows.push([
+      key,
+      items.length,
+      statuses.filter((status) => status === "CONFIRMED").length,
+      statuses.filter((status) => status === "FAILED").length,
+      statuses.filter((status) => status === "TIMED_OUT").length,
+      statuses.filter((status) => !["CONFIRMED", "FAILED", "TIMED_OUT"].includes(status)).length,
+    ]);
+  }
+  renderTable(
+    "Economic work by proposer",
+    ["proposer · action kind", "actions", "confirmed", "failed", "timed out", "open"],
+    rows,
+    "No economic actions in this log.",
+  );
+}
+
+function updateStreamCounts() {
+  const counts = {
+    events: records.length,
+    attention: records.filter((record) => record.event === "attention.world_state").length,
+    awareness: records.filter((record) => record.event === "awareness.updated").length,
+    economy: [...economicItems.values()].filter((item) => item.actionId).length,
+  };
+  for (const [view, count] of Object.entries(counts)) {
+    document.querySelector(`[data-count="${view}"]`).textContent = String(count);
+  }
+}
+
+function switchView(view) {
+  currentView = view;
+  visibleRows = PAGE_SIZE;
+  for (const button of document.querySelectorAll("#stream-menu button")) {
+    const active = button.dataset.view === view;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-current", active ? "page" : "false");
+  }
+  render();
 }
 
 function loadText(text, name) {
-  records = text
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => JSON.parse(line));
+  records = [];
+  parseWarnings = [];
+  for (const [index, rawLine] of text.split("\n").entries()) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    try {
+      const record = JSON.parse(line);
+      if (!record || typeof record !== "object" || typeof record.event !== "string") {
+        throw new Error("record has no event name");
+      }
+      records.push(record);
+    } catch (error) {
+      parseWarnings.push(`line ${index + 1}: ${error.message}`);
+    }
+  }
+  visibleRows = PAGE_SIZE;
+  visibleSideItems = SIDE_LIMIT;
   buildMissions();
+  buildEconomicItems();
   populateMissionSelect();
+  updateStreamCounts();
   document.getElementById("path-label").textContent = name;
   document.getElementById("drop").classList.add("hidden");
   document.getElementById("app").classList.add("active");
-  render();
+  switchView("events");
 }
 
 function loadFile(file) {
   const reader = new FileReader();
   reader.onload = () => loadText(reader.result, file.name);
+  reader.onerror = () => {
+    const message = document.querySelector("#drop p");
+    message.textContent = `Could not read ${file.name}.`;
+    message.classList.add("parse-error");
+  };
   reader.readAsText(file);
 }
 
@@ -388,8 +891,11 @@ document.getElementById("load-another").addEventListener("click", () => {
 });
 
 document.getElementById("all-events").addEventListener("change", render);
-document.getElementById("search").addEventListener("input", render);
-document.getElementById("mission-filter").addEventListener("change", render);
+document.getElementById("search").addEventListener("input", () => { visibleRows = PAGE_SIZE; render(); });
+document.getElementById("mission-filter").addEventListener("change", () => switchView("events"));
+for (const button of document.querySelectorAll("#stream-menu button")) {
+  button.addEventListener("click", () => switchView(button.dataset.view));
+}
 </script>
 </body>
 </html>

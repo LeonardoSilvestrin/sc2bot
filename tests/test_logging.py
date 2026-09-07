@@ -30,3 +30,21 @@ class JsonlBotLoggerTests(unittest.TestCase):
             self.assertEqual(len(lines), 1)
             self.assertEqual(record["event"], "action.route_changed")
             self.assertEqual(record["data"]["reason"], "anti_air_detected")
+
+    def test_rejects_session_names_that_escape_the_log_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+
+            with self.assertRaises(ValueError):
+                JsonlBotLogger(root / "logs", session_name="../outside")
+
+            self.assertFalse((root / "outside.jsonl").exists())
+
+    def test_does_not_append_to_an_existing_session(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            first = JsonlBotLogger(root, session_name="pilot")
+            first.close()
+
+            with self.assertRaises(FileExistsError):
+                JsonlBotLogger(root, session_name="pilot")

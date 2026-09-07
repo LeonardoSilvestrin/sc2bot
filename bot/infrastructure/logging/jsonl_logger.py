@@ -11,11 +11,16 @@ class JsonlBotLogger:
     """Append-only structured logger intended only for local development."""
 
     def __init__(self, directory: Path, *, session_name: str | None = None) -> None:
+        directory = directory.resolve()
         directory.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
         name = session_name or f"game-{timestamp}"
-        self.path = directory / f"{name}.jsonl"
-        self._file: TextIO = self.path.open("a", encoding="utf-8")
+        if not name.strip() or name in {".", ".."} or Path(name).name != name:
+            raise ValueError("session_name must be a non-empty file name")
+        self.path = (directory / f"{name}.jsonl").resolve()
+        if self.path.parent != directory:
+            raise ValueError("session_name must stay inside the log directory")
+        self._file: TextIO = self.path.open("x", encoding="utf-8")
         self._lock = Lock()
 
     def event(

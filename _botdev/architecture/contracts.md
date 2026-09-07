@@ -49,16 +49,38 @@ clears registered behaviors in `_after_step`.
 
 ## Causal logging
 
-Proposal and mission transitions are structured events. Each event includes a
-reason plus proposal/planner/mission identifiers where applicable:
+Local event logs are JSONL files with one `{event, component, game_time, data}`
+record per line. Transition events include a reason and their correlation keys
+where applicable (`proposal_id`, `mission_id`, `deduplication_key`, or
+`action_id`). The current catalog is:
 
-- `proposal_created`, `proposal_admitted`, `proposal_rejected`
-- `mission_queued`, `mission_started`, `mission_blocked`
-- `units_assigned`, `units_reassigned`, `units_released`
-- `mission_completed`, `mission_failed`, `mission_cancelled`
+- Application lifecycle: `game.started`, `game.ended`.
+- Opening progress: `macro.build_order_progress`.
+- Periodic/changed awareness: `awareness.updated` contains macro posture,
+  relative strength, threat counts, enemy sightings, and the active-mission
+  count.
+- Periodic/changed world state: `attention.world_state` contains resources,
+  supply, economy/harvester facts, and visible entity counts. It is emitted
+  alongside `awareness.updated`; both share the same change signature and
+  ten-second heartbeat. `attention.snapshot` is a retired legacy event that the
+  standalone viewer can still read.
+- Mission proposals: `proposal_created`, `proposal_admitted`,
+  `proposal_rejected`.
+- Mission lifecycle: `mission_queued`, `mission_started`, `mission_blocked`,
+  `mission_completed`, `mission_failed`, `mission_cancelled`.
+- Unit leases: `units_assigned`, `units_reassigned`, `units_released`.
+- Economic proposals: `economic_proposal_created`,
+  `economic_proposal_deferred`, `economic_proposal_rejected`.
+- Economic actions: `economic_action_admitted`, `economic_action_pending`,
+  `economic_action_dispatched`, `economic_action_confirmed`,
+  `economic_action_failed`, `economic_action_timed_out`.
+- Invalid economic feedback: `economic_feedback_rejected`.
 
-Local runs opt in with `--bot-log events`. Ladder runs retain `NullBotLogger` and do
-not open files.
+Local runs opt in with `--bot-log events` and write under `_botdev/logs/`.
+Ladder runs retain `NullBotLogger` and do not open files. The standalone
+`scripts/log_viewer.html` keeps mission and economic histories separate from the
+event timeline and derives its Awareness and Economy/Resources views exclusively
+from the structured events above.
 
 ## Mission loss and cleanup
 
