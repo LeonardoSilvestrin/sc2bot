@@ -16,6 +16,34 @@ class StubExecutor(MissionExecutor):
 
 
 class ExecutorRegistryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_factory_exception_fails_and_releases_without_starting(self):
+        def broken_factory(mission: Mission, now: float) -> MissionExecutor:
+            raise ValueError("invalid executor configuration")
+
+        logger = FakeLogger()
+        commands = FakeCommands()
+        controller = MissionController(
+            logger=logger,
+            executor_factories={MissionKind.SCOUT: broken_factory},
+        )
+        current = attention(10.0, visible=False)
+        awareness = AwarenessService().update(current)
+        await controller.tick(
+            attention=current,
+            awareness=awareness,
+            proposals=IntelPlanner().propose(current, awareness),
+            commands=commands,
+        )
+        mission = controller.snapshots()[0]
+        self.assertEqual(mission.status, MissionStatus.FAILED)
+        self.assertIsNone(mission.started_at)
+        self.assertEqual(
+            mission.reason, "executor_error:ValueError:invalid executor configuration"
+        )
+        self.assertEqual(controller.allocator.assigned_tags(mission.mission_id), ())
+        self.assertEqual(commands.commands, [("release", mission.mission_id, 9000)])
+        self.assertNotIn("mission_started", [event["name"] for event in logger.events])
+
     async def test_custom_factory_is_used_for_registered_mission_kind(self):
         def build_stub(mission: Mission, now: float) -> MissionExecutor:
             return StubExecutor()

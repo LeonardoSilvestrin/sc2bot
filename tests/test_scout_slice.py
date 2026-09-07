@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import unittest
 from dataclasses import replace
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
@@ -14,7 +16,10 @@ from bot.attention.models import (
     WorldFacts,
 )
 from bot.awareness import AwarenessService
+from bot.contracts import UnitRequirement
 from bot.ego import MissionController, MissionStatus
+from bot.executors import MissionOutcome, MissionResult
+from bot.infrastructure.ares.commands import AresMissionCommands
 from bot.planners import IntelPlanner
 from tests.fakes import FakeCommands, FakeLogger
 
@@ -73,6 +78,283 @@ def attention(
 
 
 class ScoutVerticalSliceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_preemption_recipient_completion_does_not_restart_donor(self):
+        class CompleteUrgentExecutor:
+            async def step(self, context):
+                return MissionResult(MissionOutcome.COMPLETED, "urgent_done")
+
+        from bot.ego.executor_registry import DEFAULT_EXECUTOR_FACTORIES
+
+        service = AwarenessService()
+        current = attention(10, visible=False)
+        awareness = service.update(current)
+        proposal = IntelPlanner().propose(current, awareness)[0]
+        default_factory = DEFAULT_EXECUTOR_FACTORIES[proposal.kind]
+        controller = MissionController(
+            logger=FakeLogger(),
+            executor_factories={
+                proposal.kind: lambda mission, now: (
+                    CompleteUrgentExecutor()
+                    if mission.proposal.priority == 100
+                    else default_factory(mission, now)
+                )
+            },
+        )
+        commands = FakeCommands()
+        await controller.tick(
+            attention=current,
+            awareness=awareness,
+            proposals=(proposal,),
+            commands=commands,
+        )
+        urgent = replace(
+            proposal,
+            proposal_id="urgent",
+            deduplication_key="urgent",
+            priority=100,
+            can_preempt=True,
+        )
+        current = attention(16, visible=False)
+        await controller.tick(
+            attention=current,
+            awareness=service.update(current),
+            proposals=(urgent,),
+            commands=commands,
+        )
+        donor, recipient = controller.snapshots()
+        self.assertEqual(donor.status, MissionStatus.FAILED)
+        self.assertEqual(recipient.status, MissionStatus.COMPLETED)
+        self.assertIsNone(controller.allocator.owner_of(9000))
+        self.assertEqual(donor.assigned_unit_tags, ())
+        self.assertEqual(recipient.assigned_unit_tags, ())
+
+    async def test_partial_loss_blocked_mission_times_out_and_releases_survivor(self):
+        service = AwarenessService()
+        current = attention(10, visible=False, reapers=2)
+        awareness = service.update(current)
+        proposal = replace(
+            IntelPlanner().propose(current, awareness)[0],
+            timeout_seconds=2,
+            requirement=UnitRequirement(
+                unit_types=frozenset({UnitTypeId.REAPER}),
+                desired=2,
+                minimum=2,
+            ),
+        )
+        controller = MissionController(logger=FakeLogger())
+        commands = FakeCommands()
+        for now, count in ((10, 2), (11, 1), (12, 1)):
+            current = attention(now, visible=False, reapers=count)
+            await controller.tick(
+                attention=current,
+                awareness=service.update(current),
+                proposals=(proposal,) if now == 10 else (),
+                commands=commands,
+            )
+            if now == 11:
+                self.assertEqual(
+                    controller.snapshots()[0].status, MissionStatus.BLOCKED
+                )
+        mission = controller.snapshots()[0]
+        self.assertEqual(mission.status, MissionStatus.CANCELLED)
+        self.assertEqual(mission.reason, "mission_timeout")
+        self.assertEqual(mission.finished_at, 12)
+        self.assertIsNone(controller.allocator.owner_of(9000))
+        self.assertIn(("release", mission.mission_id, 9000), commands.commands)
+
+    async def test_total_loss_is_not_hidden_by_an_available_replacement(self):
+        service = AwarenessService()
+        controller = MissionController(logger=FakeLogger())
+        commands = FakeCommands()
+        current = attention(10, visible=False)
+        awareness = service.update(current)
+        await controller.tick(
+            attention=current,
+            awareness=awareness,
+            proposals=IntelPlanner().propose(current, awareness),
+            commands=commands,
+        )
+        old = controller.snapshots()[0]
+        current = replace(
+            current,
+            world=replace(
+                current.world,
+                time=11,
+                own_units=tuple(
+                    u
+                    for u in current.world.own_units
+                    if u.tag not in old.assigned_unit_tags
+                )
+                + (reaper(9999),),
+            ),
+        )
+        await controller.tick(
+            attention=current,
+            awareness=service.update(current),
+            proposals=(),
+            commands=commands,
+        )
+        self.assertEqual(controller.snapshots()[0].reason, "all_assigned_units_lost")
+        self.assertEqual(controller.snapshots()[0].status, MissionStatus.FAILED)
+        self.assertIsNone(controller.allocator.owner_of(9999))
+
+    async def test_partial_loss_blocks_below_minimum_and_resumes_with_replacement(self):
+        for minimum in (1, 2):
+            with self.subTest(minimum=minimum):
+                service = AwarenessService()
+                controller = MissionController(logger=FakeLogger())
+                commands = FakeCommands()
+                current = attention(10, visible=False, reapers=2)
+                awareness = service.update(current)
+                proposal = replace(
+                    IntelPlanner().propose(current, awareness)[0],
+                    requirement=UnitRequirement(
+                        unit_types=frozenset({UnitTypeId.REAPER}),
+                        desired=2,
+                        minimum=minimum,
+                    ),
+                )
+                await controller.tick(
+                    attention=current,
+                    awareness=awareness,
+                    proposals=(proposal,),
+                    commands=commands,
+                )
+                commands.commands.clear()
+                current = attention(11, visible=False, reapers=1)
+                await controller.tick(
+                    attention=current,
+                    awareness=service.update(current),
+                    proposals=(),
+                    commands=commands,
+                )
+                mission = controller.snapshots()[0]
+                self.assertEqual(mission.assigned_unit_tags, (9000,))
+                self.assertEqual(
+                    mission.status,
+                    MissionStatus.ACTIVE if minimum == 1 else MissionStatus.BLOCKED,
+                )
+                self.assertEqual(bool(commands.commands), minimum == 1)
+                current = attention(12, visible=False, reapers=2)
+                await controller.tick(
+                    attention=current,
+                    awareness=service.update(current),
+                    proposals=(),
+                    commands=commands,
+                )
+                self.assertEqual(controller.snapshots()[0].status, MissionStatus.ACTIVE)
+                self.assertEqual(controller.snapshots()[0].started_at, 10)
+
+    async def test_terminal_outcomes_restore_roles_and_release_once(self):
+        from ares.consts import UnitRole
+
+        for outcome in ("completed", "timeout", "error"):
+            for unit_type, role in (
+                (UnitTypeId.SCV, UnitRole.GATHERING),
+                (UnitTypeId.REAPER, UnitRole.IDLE),
+            ):
+                with self.subTest(outcome=outcome, unit_type=unit_type):
+                    logger = FakeLogger()
+                    controller = MissionController(logger=logger)
+                    service = AwarenessService()
+                    current = attention(10, visible=False)
+                    awareness = service.update(current)
+                    proposal = replace(
+                        IntelPlanner().propose(current, awareness)[0],
+                        timeout_seconds=1,
+                        requirement=UnitRequirement(
+                            unit_types=frozenset({unit_type}),
+                            desired=1,
+                            minimum=1,
+                        ),
+                    )
+                    bot = SimpleNamespace(
+                        worker_type=UnitTypeId.SCV,
+                        unit_tag_dict={
+                            u.tag: SimpleNamespace(type_id=u.unit_type)
+                            for u in current.world.own_units
+                        },
+                        mediator=Mock(),
+                    )
+                    commands = AresMissionCommands(bot, controller.allocator)
+                    commands.path_to = Mock()
+                    if outcome == "error":
+                        commands.path_to.side_effect = RuntimeError("path failed")
+                    await controller.tick(
+                        attention=current,
+                        awareness=awareness,
+                        proposals=(proposal,),
+                        commands=commands,
+                    )
+                    current = attention(
+                        10.5 if outcome == "completed" else 11,
+                        visible=outcome == "completed",
+                    )
+                    for _ in range(2):
+                        await controller.tick(
+                            attention=current,
+                            awareness=service.update(current),
+                            proposals=(),
+                            commands=commands,
+                        )
+                    mission = controller.snapshots()[0]
+                    expected = {
+                        "completed": MissionStatus.COMPLETED,
+                        "timeout": MissionStatus.CANCELLED,
+                        "error": MissionStatus.FAILED,
+                    }[outcome]
+                    self.assertEqual(mission.status, expected)
+                    self.assertEqual(mission.assigned_unit_tags, ())
+                    self.assertEqual(
+                        controller.allocator.assigned_tags(mission.mission_id), ()
+                    )
+                    bot.mediator.assign_role.assert_called_once()
+                    self.assertEqual(
+                        bot.mediator.assign_role.call_args.kwargs["role"], role
+                    )
+                    self.assertTrue(all(e["data"]["reason"] for e in logger.events))
+
+    async def test_preemption_finishes_donor_and_resets_role_before_new_executor(self):
+        service = AwarenessService()
+        logger = FakeLogger()
+        controller = MissionController(logger=logger)
+        commands = FakeCommands()
+        current = attention(10, visible=False)
+        awareness = service.update(current)
+        proposal = IntelPlanner().propose(current, awareness)[0]
+        await controller.tick(
+            attention=current,
+            awareness=awareness,
+            proposals=(proposal,),
+            commands=commands,
+        )
+        donor = controller.snapshots()[0]
+        tag = donor.assigned_unit_tags[0]
+        urgent = replace(
+            proposal,
+            proposal_id="urgent",
+            deduplication_key="urgent",
+            priority=100,
+            can_preempt=True,
+        )
+        current = attention(16, visible=False)
+        commands.commands.clear()
+        await controller.tick(
+            attention=current,
+            awareness=service.update(current),
+            proposals=(urgent,),
+            commands=commands,
+        )
+        donor, recipient = controller.snapshots()
+        self.assertEqual(donor.reason, "all_assigned_units_preempted")
+        self.assertEqual(donor.status, MissionStatus.FAILED)
+        self.assertEqual(donor.assigned_unit_tags, ())
+        self.assertEqual(recipient.status, MissionStatus.ACTIVE)
+        self.assertEqual(controller.allocator.owner_of(tag), recipient.mission_id)
+        self.assertEqual(commands.commands[0], ("release", recipient.mission_id, tag))
+        self.assertEqual(commands.commands[1][0], "path_to")
+        self.assertTrue(all(e["data"]["reason"] for e in logger.events))
+
     async def test_second_proposal_for_live_objective_is_rejected(self):
         logger = FakeLogger()
         commands = FakeCommands()
