@@ -206,6 +206,51 @@ class RuntimePilotTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(economy_commands.commands)
 
+    async def test_runtime_tolerates_ares_driving_the_bank_negative(self):
+        # Ares behaviors (eg. SpawnController) decrement bot.minerals/vespene
+        # in place to simulate virtual spend across chained behaviors in one
+        # frame, which can leave them momentarily negative.
+        economy_commands = FakeEconomyCommands()
+        base_townhall = SimpleNamespace(
+            tag=999,
+            type_id=UnitTypeId.COMMANDCENTER,
+            position=Point2((10, 10)),
+            health_percentage=1.0,
+            is_flying=False,
+            can_attack_air=False,
+            can_attack_ground=False,
+            is_ready=True,
+            is_structure=True,
+        )
+        bot = SimpleNamespace(
+            time=200.0,
+            minerals=-25,
+            vespene=-10,
+            supply_used=10,
+            supply_cap=30,
+            units=tuple(worker(tag) for tag in range(1, 11)),
+            structures=(base_townhall,),
+            enemy_units=(),
+            enemy_structures=(),
+            worker_type=UnitTypeId.SCV,
+            start_location=Point2((10, 10)),
+            enemy_start_locations=[Point2((90, 90))],
+            game_info=SimpleNamespace(map_center=Point2((50, 50)), map_name="PilotMap"),
+            build_order_runner=SimpleNamespace(build_completed=True),
+        )
+        runtime = BotRuntime(logger=FakeLogger())
+
+        with (
+            patch(
+                "bot.application.runtime.AresEconomyCommands",
+                return_value=economy_commands,
+            ),
+            patch("bot.application.runtime.register_baseline_behaviors"),
+        ):
+            await runtime.on_step(bot, iteration=1)
+
+        self.assertEqual(economy_commands.commands, [])
+
     async def test_runtime_defends_the_base_and_outprioritizes_the_scout_for_it(self):
         commands = FakeCommands()
         bot = SimpleNamespace(

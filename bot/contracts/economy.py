@@ -74,7 +74,7 @@ class ResourceBank:
     def __post_init__(self) -> None:
         if self.minerals < 0 or self.vespene < 0:
             raise ValueError("minerals and vespene must not be negative")
-        if not isfinite(self.supply_available) or self.supply_available < 0.0:
+        if not isfinite(self.supply_available) or self.supply_available < 0.0: 
             raise ValueError("supply_available must be finite and non-negative")
 
     def can_afford(self, cost: ResourceCost) -> bool:
