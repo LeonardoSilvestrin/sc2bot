@@ -7,7 +7,7 @@ from bot.attention.models import AttentionSnapshot
 from bot.awareness.models import AwarenessSnapshot
 from bot.contracts.commands import MissionCommands
 from bot.contracts.logging import BotLogger
-from bot.ego.allocator import UnitAllocator
+from bot.ego.allocator import AllocationResult, UnitAllocator
 from bot.ego.executor_registry import DEFAULT_EXECUTOR_FACTORIES, MissionExecutorFactory
 from bot.ego.mission_board import MissionBoard
 from bot.ego.models import (
@@ -65,24 +65,10 @@ class MissionController:
             key=lambda item: (-item.proposal.priority, item.admitted_at),
         )
         for mission in missions:
-            location = awareness.enemy.location(mission.proposal.target_key)
-            if (
-                mission.started_at is None
-                and location is not None
-                and location.last_observed_at is not None
-                and location.last_observed_at > mission.admitted_at
-            ):
+            cancel_reason = self._cancellation_reason(mission, now, awareness)
+            if cancel_reason is not None:
                 self._finish(
-                    mission,
-                    MissionStatus.CANCELLED,
-                    "objective_satisfied_before_mission_started",
-                    now,
-                    commands,
-                )
-                continue
-            if now - mission.admitted_at >= mission.proposal.timeout_seconds:
-                self._finish(
-                    mission, MissionStatus.CANCELLED, "mission_timeout", now, commands
+                    mission, MissionStatus.CANCELLED, cancel_reason, now, commands
                 )
                 continue
 
@@ -95,81 +81,119 @@ class MissionController:
                 can_preempt=mission.proposal.can_preempt,
                 commitment_seconds=mission.proposal.commitment_seconds,
             )
-            for transfer in allocation.transfers:
-                previous = self.board.get(transfer.from_mission_id)
-                self._emit(
-                    "units_reassigned",
-                    now,
-                    "higher_priority_after_commitment_window",
-                    mission=mission,
-                    unit_tags=[transfer.unit_tag],
-                    unit_types=self._unit_type_names([transfer.unit_tag]),
-                    from_mission_id=transfer.from_mission_id,
-                    from_proposal_id=(
-                        previous.proposal.proposal_id if previous is not None else None
-                    ),
-                    from_priority=(
-                        previous.proposal.priority if previous is not None else None
-                    ),
-                )
+            self._apply_allocation(mission, allocation, now)
 
-            if mission.assigned_unit_tags != allocation.assigned_tags:
-                previous_tags = mission.assigned_unit_tags
-                mission.assigned_unit_tags = allocation.assigned_tags
-                self._emit(
-                    "units_assigned",
-                    now,
-                    "allocator_assignment_changed",
-                    mission=mission,
-                    previous_unit_tags=list(previous_tags),
-                    unit_tags=list(allocation.assigned_tags),
-                    unit_types=self._unit_type_names(allocation.assigned_tags),
-                )
             if not allocation.requirements_satisfied:
-                self._block(mission, "unit_requirements_not_satisfied", now)
-                continue
-
-            if mission.started_at is None:
-                mission.started_at = now
-                self._executors[mission.mission_id] = self._executor_factories[
-                    mission.proposal.kind
-                ](mission, now)
-                mission.status = MissionStatus.ACTIVE
-                mission.last_reason = "unit_requirements_satisfied"
-                self._emit("mission_started", now, mission.last_reason, mission=mission)
-            else:
-                mission.status = MissionStatus.ACTIVE
-
-            try:
-                result = await self._executors[mission.mission_id].step(
-                    MissionContext(
-                        attention=attention,
-                        awareness=awareness,
-                        assigned_units=self.allocator.assigned_units(
-                            mission.mission_id
-                        ),
-                        commands=commands,
+                if mission.started_at is not None and not allocation.assigned_tags:
+                    self._finish(
+                        mission,
+                        MissionStatus.FAILED,
+                        "all_assigned_units_lost",
+                        now,
+                        commands,
                     )
-                )
-            except Exception as error:
-                self._finish(
-                    mission,
-                    MissionStatus.FAILED,
-                    f"executor_error:{type(error).__name__}:{error}",
-                    now,
-                    commands,
-                )
+                else:
+                    self._block(mission, "unit_requirements_not_satisfied", now)
                 continue
 
-            mission.last_reason = result.reason
-            if result.outcome is MissionOutcome.COMPLETED:
-                self._finish(
-                    mission, MissionStatus.COMPLETED, result.reason, now, commands
+            await self._advance_executor(mission, now, attention, awareness, commands)
+
+    def _cancellation_reason(
+        self, mission: Mission, now: float, awareness: AwarenessSnapshot
+    ) -> str | None:
+        location = awareness.enemy.location(mission.proposal.target_key)
+        if (
+            mission.started_at is None
+            and location is not None
+            and location.last_observed_at is not None
+            and location.last_observed_at > mission.admitted_at
+        ):
+            return "objective_satisfied_before_mission_started"
+        if now - mission.admitted_at >= mission.proposal.timeout_seconds:
+            return "mission_timeout"
+        return None
+
+    def _apply_allocation(
+        self, mission: Mission, allocation: AllocationResult, now: float
+    ) -> None:
+        for transfer in allocation.transfers:
+            previous = self.board.get(transfer.from_mission_id)
+            self._emit(
+                "units_reassigned",
+                now,
+                "higher_priority_after_commitment_window",
+                mission=mission,
+                unit_tags=[transfer.unit_tag],
+                unit_types=self._unit_type_names([transfer.unit_tag]),
+                from_mission_id=transfer.from_mission_id,
+                from_proposal_id=(
+                    previous.proposal.proposal_id if previous is not None else None
+                ),
+                from_priority=(
+                    previous.proposal.priority if previous is not None else None
+                ),
+            )
+
+        if mission.assigned_unit_tags != allocation.assigned_tags:
+            previous_tags = mission.assigned_unit_tags
+            mission.assigned_unit_tags = allocation.assigned_tags
+            self._emit(
+                "units_assigned",
+                now,
+                "allocator_assignment_changed",
+                mission=mission,
+                previous_unit_tags=list(previous_tags),
+                unit_tags=list(allocation.assigned_tags),
+                unit_types=self._unit_type_names(allocation.assigned_tags),
+            )
+
+    async def _advance_executor(
+        self,
+        mission: Mission,
+        now: float,
+        attention: AttentionSnapshot,
+        awareness: AwarenessSnapshot,
+        commands: MissionCommands,
+    ) -> None:
+        if mission.started_at is None:
+            mission.started_at = now
+            self._executors[mission.mission_id] = self._executor_factories[
+                mission.proposal.kind
+            ](mission, now)
+            mission.status = MissionStatus.ACTIVE
+            mission.last_reason = "unit_requirements_satisfied"
+            self._emit("mission_started", now, mission.last_reason, mission=mission)
+        else:
+            mission.status = MissionStatus.ACTIVE
+
+        try:
+            result = await self._executors[mission.mission_id].step(
+                MissionContext(
+                    attention=attention,
+                    awareness=awareness,
+                    assigned_units=self.allocator.assigned_units(mission.mission_id),
+                    commands=commands,
                 )
-            elif result.outcome is MissionOutcome.FAILED:
-                self._finish(
-                    mission, MissionStatus.FAILED, result.reason, now, commands
-                )
+            )
+        except Exception as error:
+            self._finish(
+                mission,
+                MissionStatus.FAILED,
+                f"executor_error:{type(error).__name__}:{error}",
+                now,
+                commands,
+            )
+            return
+
+        mission.last_reason = result.reason
+        if result.outcome is MissionOutcome.COMPLETED:
+            self._finish(
+                mission, MissionStatus.COMPLETED, result.reason, now, commands
+            )
+        elif result.outcome is MissionOutcome.FAILED:
+            self._finish(
+                mission, MissionStatus.FAILED, result.reason, now, commands
+            )
 
     def _consider(self, proposal: MissionProposal, now: float) -> None:
         if proposal.proposal_id in self._processed_proposals:

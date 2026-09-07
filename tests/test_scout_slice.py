@@ -200,3 +200,37 @@ class ScoutVerticalSliceTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("executor_error:RuntimeError", mission.reason)
         self.assertEqual(mission.assigned_unit_tags, ())
         self.assertIn("mission_failed", [event["name"] for event in logger.events])
+
+    async def test_active_mission_fails_fast_when_all_assigned_units_are_lost(self):
+        logger = FakeLogger()
+        commands = FakeCommands()
+        service = AwarenessService()
+        planner = IntelPlanner()
+        current = attention(10.0, visible=False, reapers=1)
+        awareness = service.update(current)
+        controller = MissionController(logger=logger)
+
+        await controller.tick(
+            attention=current,
+            awareness=awareness,
+            proposals=planner.propose(current, awareness),
+            commands=commands,
+        )
+
+        active = controller.snapshots()[0]
+        self.assertEqual(active.status, MissionStatus.ACTIVE)
+
+        unit_lost_attention = attention(11.0, visible=False, reapers=0)
+        unit_lost_awareness = service.update(unit_lost_attention)
+        await controller.tick(
+            attention=unit_lost_attention,
+            awareness=unit_lost_awareness,
+            proposals=(),
+            commands=commands,
+        )
+
+        failed = controller.snapshots()[0]
+        self.assertEqual(failed.status, MissionStatus.FAILED)
+        self.assertEqual(failed.reason, "all_assigned_units_lost")
+        self.assertEqual(failed.assigned_unit_tags, ())
+        self.assertIn("mission_failed", [event["name"] for event in logger.events])
