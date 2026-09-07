@@ -49,6 +49,7 @@ class EconomyController:
         self.logger = logger
         self._commitments: dict[str, _Commitment] = {}
         self._known_proposal_ids: set[str] = set()
+        self._last_proposal_outcomes: dict[str, tuple[str, ...]] = {}
         self._action_sequence = 0
         self._last_tick_at = -1.0
 
@@ -95,7 +96,7 @@ class EconomyController:
             self._log_proposal_once(proposal, now)
 
             if proposal.proposal_id in considered_proposal_ids:
-                self._emit(
+                self._emit_proposal_outcome(
                     "economic_proposal_rejected",
                     now,
                     "duplicate_proposal_id_in_tick",
@@ -105,7 +106,7 @@ class EconomyController:
             considered_proposal_ids.add(proposal.proposal_id)
 
             if proposal.deduplication_key in considered_keys:
-                self._emit(
+                self._emit_proposal_outcome(
                     "economic_proposal_rejected",
                     now,
                     "lower_ranked_duplicate_in_tick",
@@ -116,17 +117,18 @@ class EconomyController:
 
             live = self._live_for_key(proposal.deduplication_key)
             if live is not None:
-                self._emit(
+                self._emit_proposal_outcome(
                     "economic_proposal_rejected",
                     now,
                     "matching_economic_action_already_live",
                     proposal=proposal,
                     action=live.action,
+                    outcome_detail=live.action.action_id,
                     status=live.status.name,
                 )
                 continue
             if proposal.deduplication_key in expired_keys:
-                self._emit(
+                self._emit_proposal_outcome(
                     "economic_proposal_rejected",
                     now,
                     "matching_economic_action_timed_out_this_tick",
@@ -138,7 +140,7 @@ class EconomyController:
             if not available.can_afford(proposal.cost):
                 available = available.hold_towards(proposal.cost)
                 held = available.consumed_from(bank_before)
-                self._emit(
+                self._emit_proposal_outcome(
                     "economic_proposal_deferred",
                     now,
                     "insufficient_virtual_bank",
@@ -182,6 +184,13 @@ class EconomyController:
             admitted_at=now,
         )
         self._commitments[action.action_id] = _Commitment(action=action)
+        # A later deferral/rejection for this stable proposal id is a new
+        # lifecycle state and must be visible even if the same outcome occurred
+        # before this action was admitted.
+        self._last_proposal_outcomes[proposal.proposal_id] = (
+            "economic_action_admitted",
+            action.action_id,
+        )
         self._emit(
             "economic_action_admitted",
             now,
@@ -348,6 +357,37 @@ class EconomyController:
             proposal=proposal,
         )
 
+    def _emit_proposal_outcome(
+        self,
+        event: str,
+        now: float,
+        reason: str,
+        *,
+        proposal: EconomicProposal,
+        action: EconomicAction | None = None,
+        outcome_detail: str = "",
+        **extra: Any,
+    ) -> None:
+        """Log a proposal state transition without repeating it every frame."""
+
+        signature = (
+            event,
+            reason,
+            outcome_detail,
+            str(extra.get("status", "")),
+        )
+        if self._last_proposal_outcomes.get(proposal.proposal_id) == signature:
+            return
+        self._last_proposal_outcomes[proposal.proposal_id] = signature
+        self._emit(
+            event,
+            now,
+            reason,
+            proposal=proposal,
+            action=action,
+            **extra,
+        )
+
     @staticmethod
     def _cost_data(cost: ResourceCost) -> dict[str, int | float]:
         return {
@@ -375,7 +415,7 @@ class EconomyController:
         feedback: EconomicFeedback | None = None,
         **extra: Any,
     ) -> None:
-        if action is not None:
+        if action is not None and proposal is None:
             proposal = action.proposal
         data: dict[str, Any] = {"reason": reason}
         if proposal is not None:
@@ -404,7 +444,7 @@ class EconomyController:
         data.update(extra)
         self.logger.event(
             event,
-            component="economy.controller",
+            component="engine.economy.controller",
             game_time=now,
             data=data,
         )

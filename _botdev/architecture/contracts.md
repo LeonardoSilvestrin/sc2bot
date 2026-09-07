@@ -62,14 +62,14 @@ where applicable (`proposal_id`, `mission_id`, `deduplication_key`, or
 
 - Application lifecycle: `game.started`, `game.ended`.
 - Opening progress: `macro.build_order_progress`.
-- Periodic/changed awareness: `awareness.updated` contains macro posture,
+- Periodic/changed observation: `observation.updated` contains resources,
+  supply, economy/harvester facts, and visible entity counts.
+- Periodic/changed knowledge: `knowledge.updated` contains macro posture,
   relative strength, threat counts, enemy sightings, and the active-mission
-  count.
-- Periodic/changed world state: `attention.world_state` contains resources,
-  supply, economy/harvester facts, and visible entity counts. It is emitted
-  alongside `awareness.updated`; both share the same change signature and
-  ten-second heartbeat. `attention.snapshot` is a retired legacy event that the
-  standalone viewer can still read.
+  count. It is emitted alongside `observation.updated`; both share the same
+  change signature and ten-second heartbeat. `attention.world_state`,
+  `awareness.updated`, and `attention.snapshot` are retired legacy events that
+  the standalone viewer can still read.
 - Mission proposals: `proposal_created`, `proposal_admitted`,
   `proposal_rejected`.
 - Mission lifecycle: `mission_queued`, `mission_started`, `mission_blocked`,
@@ -85,8 +85,11 @@ where applicable (`proposal_id`, `mission_id`, `deduplication_key`, or
 Local runs opt in with `--bot-log events` and write under `_botdev/logs/`.
 Ladder runs retain `NullBotLogger` and do not open files. The standalone
 `scripts/log_viewer.html` keeps mission and economic histories separate from the
-event timeline and derives its Awareness and Economy/Resources views exclusively
-from the structured events above.
+event timeline and derives its Observation, Knowledge, and Economy views
+exclusively from the structured events above. Component names mirror the current
+package layout (`app.runtime`, `world.observation`, `world.knowledge`,
+`engine.missions.controller`, and `engine.economy.controller`); the viewer maps
+pre-restructure component names when opening older logs.
 
 ## Mission loss and cleanup
 

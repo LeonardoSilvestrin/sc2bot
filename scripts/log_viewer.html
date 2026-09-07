@@ -120,9 +120,10 @@
     font: inherit;
   }
   main { flex: 1; overflow: hidden; display: flex; }
-  #timeline { flex: 1; overflow-y: auto; padding: 8px 0; }
+  #timeline { flex: 1 1 auto; min-width: 0; overflow-y: auto; padding: 8px 0; }
   #side-panel {
-    width: 340px;
+    flex: 0 0 340px;
+    min-width: 0;
     border-left: 1px solid var(--border);
     overflow-y: auto;
     background: var(--panel);
@@ -218,6 +219,14 @@
   .parse-error { color: var(--bad); }
 
   #empty-state { color: var(--muted); padding: 30px; text-align: center; }
+
+  @media (max-width: 900px) {
+    main { overflow: auto; flex-direction: column; }
+    #timeline { flex: 0 0 auto; width: 100%; min-height: 55vh; }
+    #side-panel { flex: 0 0 auto; width: 100%; border-left: 0; border-top: 1px solid var(--border); }
+    .row { grid-template-columns: 68px minmax(90px, 150px) minmax(150px, 1fr); }
+    .row .fields { grid-column: 2 / -1; }
+  }
 </style>
 </head>
 <body>
@@ -237,10 +246,10 @@
       <select id="mission-filter"><option value="">all</option></select>
     </label>
     <nav class="stream-menu" id="stream-menu" aria-label="Log stream">
-      <button type="button" class="active" data-view="events">Events<span class="count" data-count="events">0</span></button>
-      <button type="button" data-view="attention">Attention<span class="count" data-count="attention">0</span></button>
-      <button type="button" data-view="awareness">Awareness<span class="count" data-count="awareness">0</span></button>
-      <button type="button" data-view="economy">Economy<span class="count" data-count="economy">0</span></button>
+      <button type="button" class="active" data-view="events" title="raw events and bot.engine.missions">Events<span class="count" data-count="events">0</span></button>
+      <button type="button" data-view="observation" title="bot.world.observation">Observation<span class="count" data-count="observation">0</span></button>
+      <button type="button" data-view="knowledge" title="bot.world.knowledge">Knowledge<span class="count" data-count="knowledge">0</span></button>
+      <button type="button" data-view="economy" title="bot.engine.economy">Economy<span class="count" data-count="economy">0</span></button>
     </nav>
     <span class="spacer"></span>
     <button class="link" id="load-another">load another file</button>
@@ -252,9 +261,20 @@
 </div>
 
 <script>
+const OBSERVATION_EVENTS = new Set([
+  "observation.updated",
+  "attention.world_state",
+  "attention.snapshot",
+]);
+const KNOWLEDGE_EVENTS = new Set([
+  "knowledge.updated",
+  "awareness.updated",
+]);
 const NARRATIVE_EVENTS = new Set([
   "game.started", "game.ended",
-  "macro.build_order_progress", "awareness.updated", "attention.world_state",
+  "macro.build_order_progress",
+  ...OBSERVATION_EVENTS,
+  ...KNOWLEDGE_EVENTS,
   "proposal_created", "proposal_admitted", "proposal_rejected",
   "mission_queued", "mission_started", "mission_blocked",
   "units_assigned", "units_reassigned", "units_released",
@@ -275,8 +295,11 @@ let visibleRows = PAGE_SIZE;
 let visibleSideItems = SIDE_LIMIT;
 let parseWarnings = [];
 let currentView = "events";
+let streams = { observation: [], knowledge: [] };
 
 function formatTime(seconds) {
+  seconds = Number(seconds);
+  if (!Number.isFinite(seconds)) return "--:--.--";
   seconds = Math.max(0, seconds);
   const m = Math.floor(seconds / 60);
   const s = (seconds - m * 60).toFixed(2).padStart(5, "0");
@@ -284,8 +307,8 @@ function formatTime(seconds) {
 }
 
 function unitsWithTypes(data) {
-  const tags = data.unit_tags || [];
-  const types = data.unit_types || [];
+  const tags = Array.isArray(data.unit_tags) ? data.unit_tags : [];
+  const types = Array.isArray(data.unit_types) ? data.unit_types : [];
   const pairs = tags.map((tag, i) => (types[i] ? `${tag}:${types[i]}` : `${tag}`));
   return "[" + pairs.join(", ") + "]";
 }
@@ -311,7 +334,7 @@ function fieldsFor(record) {
     out.push(`result=${data.result}`);
   } else if (event === "macro.build_order_progress") {
     out.push(`step=${data.step}/${data.total_steps}`, `command=${data.command}`, `completed=${data.completed}`);
-  } else if (event === "awareness.updated") {
+  } else if (KNOWLEDGE_EVENTS.has(event)) {
     out.push(
       `posture=${data.posture}`,
       `strength=${data.relative_strength?.score}`,
@@ -322,7 +345,7 @@ function fieldsFor(record) {
       `near_base=${data.threat?.near_own_base_enemy_combat_units}`,
       `missions=${data.active_missions}`,
     );
-  } else if (event === "attention.world_state") {
+  } else if (OBSERVATION_EVENTS.has(event) && event !== "attention.snapshot") {
     out.push(
       `minerals=${data.minerals}`,
       `vespene=${data.vespene}`,
@@ -357,19 +380,19 @@ function fieldsFor(record) {
 }
 
 function countSummary(value) {
-  if (!value) return "?";
+  if (!value || typeof value !== "object") return "?";
   const ready = Number(value.ready ?? 0);
   const pending = Number(value.pending ?? 0);
   return `${ready + pending} (${ready} ready, ${pending} pending)`;
 }
 
 function costSummary(value) {
-  if (!value) return "?";
+  if (!value || typeof value !== "object") return "?";
   return `${value.minerals ?? 0}m/${value.vespene ?? 0}g/${value.supply ?? 0}s`;
 }
 
 function bankSummary(value) {
-  if (!value) return "?";
+  if (!value || typeof value !== "object") return "?";
   return `${value.minerals ?? 0}m/${value.vespene ?? 0}g/${value.supply_available ?? 0}s`;
 }
 
@@ -400,7 +423,8 @@ function buildMissions() {
     const mission = missions.get(missionId);
     mission.planner ||= r.data.planner_id;
     mission.events.push({ time: r.game_time, event: r.event, status: r.data.status });
-    for (const t of r.data.unit_types || []) if (t) mission.unitTypes.add(t);
+    const unitTypes = Array.isArray(r.data.unit_types) ? r.data.unit_types : [];
+    for (const t of unitTypes) if (t) mission.unitTypes.add(t);
   }
 }
 
@@ -447,7 +471,7 @@ function buildEconomicItems() {
       });
     }
     const item = economicItems.get(key);
-    item.actionId ||= data.action_id;
+    if (actionLifecycle) item.actionId ||= data.action_id;
     item.deduplicationKey ||= data.deduplication_key;
     item.planner ||= data.planner_id;
     item.kind ||= data.action_kind;
@@ -473,7 +497,7 @@ function appendStatus(parent, status) {
 }
 
 function appendGroupHeading(parent, label, count) {
-  const heading = appendTextElement(parent, "div", "group-heading", label || "unknown proposer");
+  const heading = appendTextElement(parent, "div", "group-heading", label || "unknown component");
   appendTextElement(heading, "span", "count", String(count));
   return heading;
 }
@@ -486,6 +510,43 @@ function groupBy(items, keyOf) {
     groups.get(key).push(item);
   }
   return groups;
+}
+
+function lastOf(items) {
+  return items.length ? items[items.length - 1] : undefined;
+}
+
+const COMPONENT_ALIASES = {
+  "application.runtime": "app.runtime",
+  "ego.mission_controller": "engine.missions.controller",
+  "economy.controller": "engine.economy.controller",
+};
+
+function componentOf(record) {
+  if (!record) return "unknown component";
+  if (record.component === "application.runtime") {
+    if (OBSERVATION_EVENTS.has(record.event)) return "world.observation";
+    if (KNOWLEDGE_EVENTS.has(record.event)) return "world.knowledge";
+  }
+  return COMPONENT_ALIASES[record.component] || record.component || "unknown component";
+}
+
+function buildStreams() {
+  streams = { observation: [], knowledge: [] };
+  for (const record of records) {
+    if (OBSERVATION_EVENTS.has(record.event)) streams.observation.push(record);
+    if (KNOWLEDGE_EVENTS.has(record.event)) streams.knowledge.push(record);
+  }
+}
+
+function appendParseWarnings(parent) {
+  if (!parseWarnings.length) return;
+  appendTextElement(
+    parent,
+    "div",
+    "notice parse-error",
+    `${parseWarnings.length} malformed line(s) skipped: ${parseWarnings.slice(0, 3).join("; ")}`,
+  );
 }
 
 function renderMissions() {
@@ -525,14 +586,15 @@ function renderMissions() {
 function renderEconomyPanel() {
   const el = document.getElementById("side-panel");
   el.replaceChildren();
-  appendTextElement(el, "h2", "", `Economy (${economicItems.size})`);
   const items = [...economicItems.values()]
-    .sort((a, b) => (b.events.at(-1)?.time ?? 0) - (a.events.at(-1)?.time ?? 0));
+    .filter((item) => item.actionId)
+    .sort((a, b) => (lastOf(b.events)?.time ?? 0) - (lastOf(a.events)?.time ?? 0));
+  appendTextElement(el, "h2", "", `Economic actions (${items.length})`);
   const displayed = items.slice(0, visibleSideItems);
-  for (const [group, groupItems] of groupBy(displayed, (item) => `${item.planner || "unknown"} · ${item.kind || "proposal"}`)) {
+  for (const [group, groupItems] of groupBy(displayed, (item) => `${item.planner || "unknown"} · ${item.kind || "unknown action"}`)) {
     appendGroupHeading(el, group, groupItems.length);
     for (const info of groupItems) {
-      const last = info.events.at(-1);
+      const last = lastOf(info.events);
       const card = document.createElement("div");
       card.className = "entity-card";
       const heading = appendTextElement(card, "div", "id", info.id);
@@ -584,12 +646,12 @@ function populateMissionSelect() {
 }
 
 function render() {
-  if (currentView === "attention") {
-    renderResources();
-    renderAttentionPanel();
-  } else if (currentView === "awareness") {
-    renderAwareness();
-    renderAwarenessPanel();
+  if (currentView === "observation") {
+    renderObservation();
+    renderObservationPanel();
+  } else if (currentView === "knowledge") {
+    renderKnowledge();
+    renderKnowledgePanel();
   } else if (currentView === "economy") {
     renderEconomySummary();
     renderEconomyPanel();
@@ -650,9 +712,7 @@ function renderTimeline() {
       renderTimeline();
     });
   }
-  if (parseWarnings.length) {
-    appendTextElement(timeline, "div", "notice parse-error", `${parseWarnings.length} malformed line(s) skipped: ${parseWarnings.slice(0, 3).join("; ")}`);
-  }
+  appendParseWarnings(timeline);
 }
 
 function renderTable(title, headings, rows, emptyMessage) {
@@ -662,6 +722,7 @@ function renderTable(title, headings, rows, emptyMessage) {
   appendTextElement(root, "h2", "", title);
   if (!rows.length) {
     appendTextElement(root, "div", "notice", emptyMessage);
+    appendParseWarnings(root);
     return;
   }
   const table = document.createElement("table");
@@ -671,33 +732,47 @@ function renderTable(title, headings, rows, emptyMessage) {
   head.appendChild(headRow);
   table.appendChild(head);
   const body = document.createElement("tbody");
-  for (const values of rows) {
+  for (const values of rows.slice(0, visibleRows)) {
     const tr = document.createElement("tr");
     for (const value of values) appendTextElement(tr, "td", "", String(value ?? "—"));
     body.appendChild(tr);
   }
   table.appendChild(body);
   root.appendChild(table);
+  if (rows.length > visibleRows) {
+    const button = appendTextElement(
+      root,
+      "button",
+      "load-more",
+      `Load ${Math.min(PAGE_SIZE, rows.length - visibleRows)} more of ${rows.length}`,
+    );
+    button.type = "button";
+    button.addEventListener("click", () => {
+      visibleRows += PAGE_SIZE;
+      render();
+    });
+  }
+  appendParseWarnings(root);
 }
 
-function renderAwareness() {
-  const snapshots = records.filter((r) => r.event === "awareness.updated");
+function renderKnowledge() {
+  const snapshots = streams.knowledge;
   renderTable(
-    "Awareness over time",
+    "Knowledge over time",
     ["time", "posture", "strength", "confidence", "visible enemies", "near base", "sightings"],
     snapshots.map((r) => [
       formatTime(r.game_time), r.data?.posture, r.data?.relative_strength?.score,
       r.data?.relative_strength?.confidence, r.data?.threat?.visible_enemy_units,
       r.data?.threat?.near_own_base_enemy_combat_units, r.data?.enemy_sightings,
     ]),
-    "No awareness.updated events in this log.",
+    "No knowledge snapshots in this log.",
   );
 }
 
-function renderResources() {
-  const snapshots = records.filter((r) => r.event === "attention.world_state");
+function renderObservation() {
+  const snapshots = streams.observation;
   renderTable(
-    "Economy and resources over time",
+    "World observation over time",
     ["time", "opening", "minerals", "vespene", "supply", "workers", "townhalls", "mineral rate", "vespene rate"],
     snapshots.map((r) => [
       formatTime(r.game_time), r.data?.economy?.opening_name, r.data?.minerals, r.data?.vespene,
@@ -705,23 +780,23 @@ function renderResources() {
       countSummary(r.data?.economy?.workers), countSummary(r.data?.economy?.townhalls),
       r.data?.economy?.mineral_collection_rate, r.data?.economy?.vespene_collection_rate,
     ]),
-    "No attention.world_state events in this log.",
+    "No observation snapshots in this log.",
   );
 }
 
-function renderAttentionPanel() {
+function renderObservationPanel() {
   const el = document.getElementById("side-panel");
   el.replaceChildren();
-  const snapshots = records.filter((record) => record.event === "attention.world_state");
-  appendTextElement(el, "h2", "", `Attention (${snapshots.length} snapshots)`);
+  const snapshots = streams.observation;
+  appendTextElement(el, "h2", "", `Observation (${snapshots.length} snapshots)`);
   if (!snapshots.length) {
-    appendTextElement(el, "div", "notice", "No attention.world_state events in this log.");
+    appendTextElement(el, "div", "notice", "No observation snapshots in this log.");
     return;
   }
-  for (const [component, componentSnapshots] of groupBy(snapshots, (record) => record.component)) {
+  for (const [component, componentSnapshots] of groupBy(snapshots, componentOf)) {
     appendGroupHeading(el, component, componentSnapshots.length);
     const first = componentSnapshots[0];
-    const latest = componentSnapshots.at(-1);
+    const latest = lastOf(componentSnapshots);
     const card = document.createElement("div");
     card.className = "entity-card";
     appendTextElement(card, "div", "id", latest.data?.economy?.opening_name || "world state");
@@ -733,11 +808,11 @@ function renderAttentionPanel() {
   }
 }
 
-function awarenessPhases(snapshots) {
+function knowledgePhases(snapshots) {
   const phases = [];
   for (const record of snapshots) {
     const posture = record.data?.posture || "UNKNOWN";
-    let phase = phases.at(-1);
+    let phase = lastOf(phases);
     if (!phase || phase.posture !== posture) {
       phase = {
         posture,
@@ -760,17 +835,17 @@ function awarenessPhases(snapshots) {
   return phases;
 }
 
-function renderAwarenessPanel() {
+function renderKnowledgePanel() {
   const el = document.getElementById("side-panel");
   el.replaceChildren();
-  const snapshots = records.filter((record) => record.event === "awareness.updated");
-  const phases = awarenessPhases(snapshots);
-  appendTextElement(el, "h2", "", `Awareness (${phases.length} phases)`);
+  const snapshots = streams.knowledge;
+  const phases = knowledgePhases(snapshots);
+  appendTextElement(el, "h2", "", `Knowledge (${phases.length} phases)`);
   if (!phases.length) {
-    appendTextElement(el, "div", "notice", "No awareness.updated events in this log.");
+    appendTextElement(el, "div", "notice", "No knowledge snapshots in this log.");
     return;
   }
-  appendGroupHeading(el, snapshots[0]?.component || "awareness", snapshots.length);
+  appendGroupHeading(el, componentOf(snapshots[0]), snapshots.length);
   for (const phase of phases) {
     const card = document.createElement("div");
     card.className = "entity-card";
@@ -790,7 +865,7 @@ function renderEconomySummary() {
   const actions = [...economicItems.values()].filter((item) => item.actionId);
   const rows = [];
   for (const [key, items] of groupBy(actions, (item) => `${item.planner || "unknown"} · ${item.kind || "unknown"}`)) {
-    const statuses = items.map((item) => item.events.at(-1)?.status);
+    const statuses = items.map((item) => lastOf(item.events)?.status);
     rows.push([
       key,
       items.length,
@@ -801,8 +876,8 @@ function renderEconomySummary() {
     ]);
   }
   renderTable(
-    "Economic work by proposer",
-    ["proposer · action kind", "actions", "confirmed", "failed", "timed out", "open"],
+    "Economic work by behavior",
+    ["behavior · action kind", "actions", "confirmed", "failed", "timed out", "open"],
     rows,
     "No economic actions in this log.",
   );
@@ -811,8 +886,8 @@ function renderEconomySummary() {
 function updateStreamCounts() {
   const counts = {
     events: records.length,
-    attention: records.filter((record) => record.event === "attention.world_state").length,
-    awareness: records.filter((record) => record.event === "awareness.updated").length,
+    observation: streams.observation.length,
+    knowledge: streams.knowledge.length,
     economy: [...economicItems.values()].filter((item) => item.actionId).length,
   };
   for (const [view, count] of Object.entries(counts)) {
@@ -823,6 +898,10 @@ function updateStreamCounts() {
 function switchView(view) {
   currentView = view;
   visibleRows = PAGE_SIZE;
+  const timelineControlsEnabled = view === "events";
+  document.getElementById("all-events").disabled = !timelineControlsEnabled;
+  document.getElementById("search").disabled = !timelineControlsEnabled;
+  document.getElementById("mission-filter").disabled = !timelineControlsEnabled;
   for (const button of document.querySelectorAll("#stream-menu button")) {
     const active = button.dataset.view === view;
     button.classList.toggle("active", active);
@@ -839,16 +918,30 @@ function loadText(text, name) {
     if (!line) continue;
     try {
       const record = JSON.parse(line);
-      if (!record || typeof record !== "object" || typeof record.event !== "string") {
+      if (!record || typeof record !== "object" || Array.isArray(record) || typeof record.event !== "string") {
         throw new Error("record has no event name");
       }
-      records.push(record);
+      const gameTime = Number(record.game_time);
+      const dataIsObject = record.data && typeof record.data === "object" && !Array.isArray(record.data);
+      if (!Number.isFinite(gameTime)) {
+        parseWarnings.push(`line ${index + 1}: invalid game_time; using 0`);
+      }
+      if (record.data != null && !dataIsObject) {
+        parseWarnings.push(`line ${index + 1}: data is not an object; using {}`);
+      }
+      records.push({
+        ...record,
+        component: typeof record.component === "string" ? record.component : "unknown component",
+        game_time: Number.isFinite(gameTime) ? gameTime : 0,
+        data: dataIsObject ? record.data : {},
+      });
     } catch (error) {
-      parseWarnings.push(`line ${index + 1}: ${error.message}`);
+      parseWarnings.push(`line ${index + 1}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
   visibleRows = PAGE_SIZE;
   visibleSideItems = SIDE_LIMIT;
+  buildStreams();
   buildMissions();
   buildEconomicItems();
   populateMissionSelect();
@@ -888,6 +981,7 @@ document.getElementById("file-input").addEventListener("change", (e) => {
 document.getElementById("load-another").addEventListener("click", () => {
   document.getElementById("app").classList.remove("active");
   document.getElementById("drop").classList.remove("hidden");
+  document.getElementById("file-input").value = "";
 });
 
 document.getElementById("all-events").addEventListener("change", render);

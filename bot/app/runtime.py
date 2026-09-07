@@ -66,13 +66,13 @@ class BotRuntime:
         self.economy = EconomyController(logger=logger)
         self._pending_economic_feedback: tuple[EconomicFeedback, ...] = ()
         self._last_build_signature: tuple | None = None
-        self._last_awareness_signature: tuple | None = None
-        self._last_snapshot_at: float = -999.0
+        self._last_world_signature: tuple | None = None
+        self._last_world_snapshot_at: float = -999.0
 
     async def on_start(self, bot) -> None:
         self.logger.event(
             "game.started",
-            component="application.runtime",
+            component="app.runtime",
             game_time=float(bot.time),
             data={"map": str(bot.game_info.map_name)},
         )
@@ -125,7 +125,7 @@ class BotRuntime:
             self._pending_economic_feedback = ()
 
         self._log_build_order(bot, game_time=world.time)
-        self._log_awareness(attention, awareness)
+        self._log_world_snapshots(attention, awareness)
 
     def _log_build_order(self, bot, *, game_time: float) -> None:
         runner = getattr(bot, "build_order_runner", None)
@@ -144,7 +144,7 @@ class BotRuntime:
         self._last_build_signature = signature
         self.logger.event(
             "macro.build_order_progress",
-            component="application.runtime",
+            component="app.runtime",
             game_time=game_time,
             data={
                 "opening": opening,
@@ -155,7 +155,7 @@ class BotRuntime:
             },
         )
 
-    def _log_awareness(self, attention, awareness: AwarenessSnapshot) -> None:
+    def _log_world_snapshots(self, attention, awareness: AwarenessSnapshot) -> None:
         world = attention.world
         economy = world.economy
         strength = awareness.relative_strength
@@ -182,15 +182,15 @@ class BotRuntime:
                 (mission.mission_id, mission.status.name) for mission in live_missions
             ),
         )
-        changed = signature != self._last_awareness_signature
-        periodic = world.time - self._last_snapshot_at >= 10.0
+        changed = signature != self._last_world_signature
+        periodic = world.time - self._last_world_snapshot_at >= 10.0
         if not changed and not periodic:
             return
-        self._last_awareness_signature = signature
-        self._last_snapshot_at = world.time
+        self._last_world_signature = signature
+        self._last_world_snapshot_at = world.time
         self.logger.event(
-            "awareness.updated",
-            component="application.runtime",
+            "knowledge.updated",
+            component="world.knowledge",
             game_time=world.time,
             data={
                 "posture": awareness.macro_posture.name,
@@ -219,8 +219,8 @@ class BotRuntime:
             },
         )
         self.logger.event(
-            "attention.world_state",
-            component="application.runtime",
+            "observation.updated",
+            component="world.observation",
             game_time=world.time,
             data={
                 "minerals": world.minerals,
@@ -257,7 +257,7 @@ class BotRuntime:
     async def on_end(self, bot, *, result) -> None:
         self.logger.event(
             "game.ended",
-            component="application.runtime",
+            component="app.runtime",
             game_time=float(bot.time),
             data={"result": str(result)},
         )

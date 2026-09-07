@@ -9,6 +9,9 @@ def test_viewer_covers_the_structured_logging_catalog() -> None:
     html = VIEWER.read_text(encoding="utf-8")
 
     for event in (
+        "observation.updated",
+        "knowledge.updated",
+        # Legacy aliases remain readable.
         "awareness.updated",
         "attention.world_state",
         "economic_proposal_created",
@@ -24,17 +27,19 @@ def test_viewer_covers_the_structured_logging_catalog() -> None:
     ):
         assert f'"{event}"' in html
 
-    assert "function renderAwareness()" in html
-    assert "function renderResources()" in html
+    assert "function renderKnowledge()" in html
+    assert "function renderObservation()" in html
     assert "function renderEconomyPanel()" in html
     assert 'id="stream-menu"' in html
-    assert 'data-view="attention"' in html
-    assert 'data-view="awareness"' in html
+    assert 'data-view="observation"' in html
+    assert 'data-view="knowledge"' in html
     assert 'data-view="economy"' in html
-    assert "function renderAttentionPanel()" in html
-    assert "function renderAwarenessPanel()" in html
+    assert "function renderObservationPanel()" in html
+    assert "function renderKnowledgePanel()" in html
     assert "function renderEconomySummary()" in html
     assert "item.planner" in html
+    assert '"ego.mission_controller": "engine.missions.controller"' in html
+    assert "buildStreams();" in html
 
 
 def test_viewer_never_injects_log_values_as_html() -> None:

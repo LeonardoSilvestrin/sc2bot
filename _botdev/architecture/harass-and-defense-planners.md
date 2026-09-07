@@ -1,34 +1,30 @@
 # Harass and Defense planners
 
-This slice reorganizes `bot/planners/` and `bot/executors/` into one directory per
-mission kind and adds the second and third mission planners after
+This slice keeps each planner and executor together under `bot/behavior/` and
+adds the second and third mission planners after
 [scout-pilot-migration.md](scout-pilot-migration.md)'s `IntelPlanner`.
 
 ## Directory layout
 
 ```text
-bot/planners/
-  intel/planner.py       -> IntelPlanner, IntelPlannerConfig
-  harass/planner.py      -> HarassPlanner, HarassPlannerConfig
-  defense/planner.py     -> DefensePlanner, DefensePlannerConfig
-  macro.py               -> MacroPlanner (unchanged; produces EconomicProposal, not
-                             admitted by MissionController -- see macro-planner.md)
+bot/behavior/
+  scouting/               -> IntelPlanner / ScoutExecutor / config
+  harass/                 -> HarassPlanner / WorkerLineHarassExecutor / config
+  defense/                -> DefensePlanner / DefendBaseExecutor / config
+  map_control/            -> MapControlPlanner / PatrolMapExecutor / config
+  macro/                  -> MacroPlanner / economic goals and config
 
-bot/executors/
-  base.py                 -> MissionExecutor / MissionContext / MissionResult (shared)
-  intel/scout.py           -> ScoutExecutor
-  harass/worker_line.py    -> WorkerLineHarassExecutor
-  defense/defend_base.py   -> DefendBaseExecutor
+bot/engine/missions/      -> controller, board, allocator, models, execution contracts
+bot/app/mission_registry.py -> concrete executor wiring
 ```
 
 Each executor is named after the concrete action it performs, not its planner, per
-the project's rule against generic `<Kind>Executor` classes. `bot/planners/__init__.py`
-and `bot/executors/__init__.py` re-export every public name so existing imports
-(`from bot.planners import IntelPlanner`, `from bot.executors import ScoutExecutor`)
-keep working unchanged.
+the project's rule against generic `<Kind>Executor` classes. Each behavior package
+re-exports its public planner, executor, and configuration names.
 
-`MissionKind` gained `HARASS` and `DEFENSE` in `bot/ego/models.py`; it stays the
-shared vocabulary in `ego`, alongside `MissionProposal`/`Mission`/`MissionController`.
+`MissionKind` gained `HARASS` and `DEFENSE` in `bot/engine/missions/models.py`; it
+stays the shared vocabulary in the mission engine, alongside
+`MissionProposal`/`Mission`/`MissionController`.
 `BotRuntime` now holds a tuple of mission planners and concatenates their proposals
 every frame instead of calling a single planner by name, so wiring in a future
 planner does not require touching the admission call site.

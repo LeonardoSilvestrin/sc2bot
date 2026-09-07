@@ -87,7 +87,7 @@ class RuntimePilotTests(unittest.IsolatedAsyncioTestCase):
             any(event["name"] == "game.started" for event in runtime.logger.events)
         )
 
-    async def test_runtime_logs_structured_awareness_and_world_state(self):
+    async def test_runtime_logs_structured_observation_and_knowledge(self):
         commands = FakeCommands()
         townhall = SimpleNamespace(
             tag=999,
@@ -151,24 +151,25 @@ class RuntimePilotTests(unittest.IsolatedAsyncioTestCase):
             bot.time = 130.0
             await runtime.on_step(bot, iteration=3)
 
-        awareness_events = [
+        knowledge_events = [
             event
             for event in runtime.logger.events
-            if event["name"] == "awareness.updated"
+            if event["name"] == "knowledge.updated"
         ]
-        world_events = [
+        observation_events = [
             event
             for event in runtime.logger.events
-            if event["name"] == "attention.world_state"
+            if event["name"] == "observation.updated"
         ]
 
-        self.assertEqual(len(awareness_events), 2)
-        self.assertEqual(len(world_events), 2)
+        self.assertEqual(len(knowledge_events), 2)
+        self.assertEqual(len(observation_events), 2)
         self.assertNotIn(
-            "attention.snapshot", [event["name"] for event in runtime.logger.events]
+            "attention.world_state",
+            [event["name"] for event in runtime.logger.events],
         )
         self.assertEqual(
-            awareness_events[0]["data"],
+            knowledge_events[0]["data"],
             {
                 "posture": "RECOVERY",
                 "relative_strength": {
@@ -190,7 +191,7 @@ class RuntimePilotTests(unittest.IsolatedAsyncioTestCase):
             },
         )
         self.assertEqual(
-            world_events[0]["data"],
+            observation_events[0]["data"],
             {
                 "minerals": 375,
                 "vespene": 125,
@@ -212,8 +213,10 @@ class RuntimePilotTests(unittest.IsolatedAsyncioTestCase):
                 "visible_enemy_unit_count": 1,
             },
         )
-        self.assertEqual(world_events[1]["game_time"], 130.0)
-        self.assertEqual(world_events[1]["data"]["minerals"], 400)
+        self.assertEqual(observation_events[1]["game_time"], 130.0)
+        self.assertEqual(observation_events[1]["data"]["minerals"], 400)
+        self.assertEqual(observation_events[0]["component"], "world.observation")
+        self.assertEqual(knowledge_events[0]["component"], "world.knowledge")
 
     async def test_runtime_wires_unknown_to_scout_and_new_vision_to_completion(self):
         target = Point2((80, 80))

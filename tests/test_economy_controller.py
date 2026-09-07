@@ -422,8 +422,63 @@ class EconomyControllerTests(unittest.TestCase):
         self.assertEqual(result.admitted_actions, ())
         event = self.logger.events[-1]
         self.assertEqual(event["name"], "economic_feedback_rejected")
-        self.assertEqual(event["component"], "economy.controller")
+        self.assertEqual(event["component"], "engine.economy.controller")
         self.assertEqual(event["data"]["reason"], "unknown_economic_action")
+
+    def test_repeated_proposal_outcomes_are_logged_only_on_transition(self):
+        blocked = proposal("stable-worker", key="worker:17", minerals=50)
+
+        for now in (1.0, 2.0, 3.0):
+            self.controller.tick(
+                now=now,
+                bank=ResourceBank(0, 0, 10.0),
+                proposals=(blocked,),
+            )
+
+        deferred = [
+            event
+            for event in self.logger.events
+            if event["name"] == "economic_proposal_deferred"
+        ]
+        self.assertEqual(len(deferred), 1)
+
+    def test_live_proposal_rejection_is_logged_again_only_when_status_changes(self):
+        worker = proposal("stable-worker", key="worker:17")
+        action = self.controller.tick(
+            now=1.0,
+            bank=ResourceBank(50, 0, 10.0),
+            proposals=(worker,),
+        ).admitted_actions[0]
+
+        for now in (2.0, 3.0):
+            self.controller.tick(
+                now=now,
+                bank=ResourceBank(50, 0, 10.0),
+                proposals=(worker,),
+            )
+        self.controller.tick(
+            now=4.0,
+            bank=ResourceBank(50, 0, 10.0),
+            proposals=(worker,),
+            feedback=(
+                EconomicFeedback(
+                    action.action_id,
+                    EconomicFeedbackKind.DISPATCHED,
+                    "command_accepted",
+                ),
+            ),
+        )
+
+        rejected = [
+            event
+            for event in self.logger.events
+            if event["name"] == "economic_proposal_rejected"
+        ]
+        self.assertEqual(len(rejected), 2)
+        self.assertEqual(
+            [event["data"]["status"] for event in rejected],
+            ["PENDING", "IN_FLIGHT"],
+        )
 
     def test_default_dedupe_key_is_stable_across_frame_timestamps(self):
         first = EconomicProposal(

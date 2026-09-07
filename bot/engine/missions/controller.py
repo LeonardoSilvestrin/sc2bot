@@ -377,7 +377,7 @@ class MissionController:
         data.update(extra)
         self.logger.event(
             event,
-            component="ego.mission_controller",
+            component="engine.missions.controller",
             game_time=now,
             data=data,
         )

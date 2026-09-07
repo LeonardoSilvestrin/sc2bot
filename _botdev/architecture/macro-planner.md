@@ -10,7 +10,7 @@ admits, reserves against, and executes them (see "Integration" below).
 
 ## Contracts
 
-`bot/contracts/economy.py` adds:
+`bot/engine/economy/models.py` defines:
 
 - `EconomicActionKind` — `PRODUCE_WORKER`, `PRODUCE_SUPPLY`, `EXPAND`.
 - `ResourceCost` — a declared `minerals`/`vespene`/`supply` cost. Building one
@@ -24,7 +24,7 @@ admits, reserves against, and executes them (see "Integration" below).
 
 ## Planner
 
-`bot/planners/macro.py` adds `MacroPlanner` (`MacroPlannerConfig` for
+`bot/behavior/macro/planner.py` defines `MacroPlanner` (`MacroPlannerConfig` for
 thresholds). `propose(attention, awareness)` is a pure function of its inputs
 — no cadence state, no sequence counters — so it is trivially deterministic:
 the same snapshot always yields the same tuple of proposals in the same order
@@ -68,26 +68,24 @@ slice — `MacroPlanner` only ever returns proposals.
 
 ## Integration: `EconomyController`
 
-`bot/ego/economy_controller.py` admits `EconomicProposal`s the way
+`bot/engine/economy/controller.py` admits `EconomicProposal`s the way
 `MissionController` admits `MissionProposal`s, sized down for the fact that
 economic actions are single-frame and self-gating rather than multi-frame
 unit commitments — no unit lease or executor lifecycle is needed.
 
-- `bot/application/runtime.py` calls `MacroPlanner().propose(attention,
+- `bot/app/runtime.py` calls `MacroPlanner().propose(attention,
   awareness)` from the same frame step that collects `IntelPlanner`
   proposals, gated on `build_order_runner.build_completed` being true.
 - `EconomyController.tick(...)` processes proposals by priority, reserving
   minerals/vespene against a running remainder seeded from the current bank
   so two proposals admitted in the same frame cannot both spend the same
-  resources. Admitted proposals log `economy.proposal_admitted`; proposals
-  that lose the in-tick reservation race log `economy.proposal_rejected`
-  (`reason="insufficient_reserved_resources"`). Logging is transition-based
-  (mirroring `MissionController._block`), so a proposal admitted across many
-  consecutive frames logs once, not every tick; when a kind stops being
-  proposed, `economy.action_resolved` is logged once.
-- Execution goes through `EconomyCommands` (`bot/contracts/commands.py`),
-  implemented by `AresEconomyCommands`
-  (`bot/infrastructure/ares/commands.py`), which registers Ares's own macro
+  resources. Proposal outcomes use `economic_proposal_deferred` and
+  `economic_proposal_rejected`; actions move from
+  `economic_action_admitted`/`economic_action_pending` through dispatched,
+  confirmed, failed, or timed out. Repeated identical proposal outcomes are
+  suppressed until their lifecycle state changes.
+- Execution is implemented by `AresEconomyCommands`
+  (`bot/adapters/ares/economy_commands.py`), which registers Ares's own macro
   behaviors: `BuildWorkers` for `PRODUCE_WORKER`, `AutoSupply` for
   `PRODUCE_SUPPLY` (at `WorldFacts.map.own_start`), and `ExpansionController`
   for `EXPAND` (`to_count` = current ready townhalls, via

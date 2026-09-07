@@ -32,11 +32,11 @@ initial scout after the economy reaches 16 workers. A location observed previous
 can be scouted again after 240 game-seconds when its observation is at least 90
 seconds old. These values live in `IntelPlannerConfig`.
 
-Three mission planners are wired into `BotRuntime` today, each under its own
-directory in `bot/planners/<kind>/` with matching concrete executors under
-`bot/executors/<kind>/`: `IntelPlanner` (scouting, above), `HarassPlanner`
-(worker-line harass), and `DefensePlanner` (base defense). See
+Four mission planners are wired into `BotRuntime` today, each with its concrete
+executor under `bot/behavior/<kind>/`: `IntelPlanner` (scouting, above),
+`HarassPlanner` (worker-line harass), `DefensePlanner` (base defense), and
+`MapControlPlanner` (safe map presence). See
 [harass-and-defense-planners.md](harass-and-defense-planners.md) for their
 conditions, priorities, and the `attack_move` command port they share.
 `MacroPlanner` produces `EconomicProposal`s instead of `MissionProposal`s and is
-intentionally not yet wired into admission; see [macro-planner.md](macro-planner.md).
+admitted by `bot/engine/economy`; see [macro-planner.md](macro-planner.md).
