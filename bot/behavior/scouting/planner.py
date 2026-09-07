@@ -25,7 +25,15 @@ class IntelPlanner:
         awareness: AwarenessSnapshot,
     ) -> tuple[MissionProposal, ...]:
         world = attention.world
-        location = awareness.enemy.location(self.config.target_key)
+        target_key = self.config.target_key
+        location = awareness.enemy.location(target_key)
+        # Synthetic/unit-test maps and unusual custom maps may not expose a
+        # usable main perimeter. Keep the old natural scout as a fallback.
+        if target_key == "enemy_main" and (
+            location is None or world.map.route(target_key) is None
+        ):
+            target_key = "enemy_natural"
+            location = awareness.enemy.location(target_key)
         if location is None or not location.is_stale:
             return ()
         workers = sum(unit.is_worker for unit in world.own_units)
@@ -46,18 +54,18 @@ class IntelPlanner:
         self._last_proposed_at = world.time
         self._sequence += 1
         reason = (
-            f"{self.config.target_key}_information_unknown"
+            f"{target_key}_information_unknown"
             if location.last_observed_at is None
-            else f"{self.config.target_key}_information_stale"
+            else f"{target_key}_information_stale"
         )
         return (
             MissionProposal(
-                proposal_id=f"{self.planner_id}:scout:{self.config.target_key}:{self._sequence}",
-                deduplication_key=f"scout:{self.config.target_key}",
+                proposal_id=(f"{self.planner_id}:scout:{target_key}:{self._sequence}"),
+                deduplication_key=f"scout:{target_key}",
                 planner=self.planner_id,
                 kind=MissionKind.SCOUT,
                 priority=self.config.priority,
-                target_key=self.config.target_key,
+                target_key=target_key,
                 target=location.position,
                 reason=reason,
                 requirement=UnitRequirement(

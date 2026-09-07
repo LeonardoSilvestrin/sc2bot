@@ -108,5 +108,54 @@ class AresMissionCommandsSafePathTests(unittest.TestCase):
         bot.register_behavior.assert_called_once()
 
 
+class AresMissionCommandsScoutPathTests(unittest.TestCase):
+    def test_reaper_scout_combines_keep_safe_with_the_climber_grid(self):
+        bot, _ = make_bot(1)
+        climber_grid = object()
+        bot.mediator.get_climber_grid = climber_grid
+        bot.mediator.get_ground_grid = object()
+        commands = AresMissionCommands(bot, leased_allocator(1))
+
+        commands.path_to(
+            mission_id="mission-0001",
+            unit_tag=1,
+            target=Point2((20, 20)),
+            success_at_distance=2.0,
+        )
+
+        behavior = bot.register_behavior.call_args.args[0]
+        self.assertEqual(
+            [type(micro).__name__ for micro in behavior.micros],
+            ["KeepUnitSafe", "PathUnitToTarget"],
+        )
+        self.assertTrue(all(micro.grid is climber_grid for micro in behavior.micros))
+
+
+class AresMissionCommandsFocusedHarassTests(unittest.TestCase):
+    def test_reaper_focus_uses_harass_role_grenade_and_forward_stutter(self):
+        bot, _ = make_bot(1)
+        target = SimpleNamespace(tag=2)
+        bot.unit_tag_dict[2] = target
+        bot.enemy_units = (target,)
+        bot.start_location = Point2((10, 10))
+        bot.mediator.get_climber_grid = object()
+        commands = AresMissionCommands(bot, leased_allocator(1))
+
+        commands.attack_unit(
+            mission_id="mission-0001",
+            unit_tag=1,
+            target_unit_tag=2,
+        )
+
+        bot.mediator.assign_role.assert_called_once_with(
+            tag=1, role=UnitRole.HARASSING
+        )
+        behavior = bot.register_behavior.call_args.args[0]
+        self.assertEqual(
+            [type(micro).__name__ for micro in behavior.micros],
+            ["ReaperGrenade", "StutterUnitForward"],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

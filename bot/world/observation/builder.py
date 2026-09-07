@@ -16,7 +16,9 @@ from bot.world.observation.models import (
     EconomyFacts,
     MapFacts,
     MapObservation,
+    MapRoute,
     ProducerFacts,
+    RouteWaypoint,
     UnitSnapshot,
     UnitTypeCount,
     WorldFacts,
@@ -523,6 +525,106 @@ class AttentionBuilder:
             for key, position in selected
         )
 
+    @classmethod
+    def _map_routes(cls, bot) -> tuple[MapRoute, ...]:
+        """Build a clockwise lap around the enemy main's walkable perimeter.
+
+        The first main waypoint is deliberately chosen on the side nearest the
+        natural but away from the ramp. A Reaper using Ares' climber grid will
+        therefore prefer the cliff entrance, then circle the back of the main.
+        Maps without python-sc2-map-analysis data simply omit the specialized
+        route and retain the single-target scout fallback.
+        """
+
+        enemy_starts = tuple(cls._items(bot, "enemy_start_locations"))
+        if not enemy_starts:
+            return ()
+        main = enemy_starts[0]
+        mediator = cls._safe_attr(bot, "mediator")
+        map_data = cls._safe_attr(mediator, "get_map_data_object")
+        in_region = cls._safe_attr(map_data, "in_region_p")
+        if not callable(in_region):
+            return ()
+        try:
+            region = in_region(main)
+            perimeter_value = cls._safe_attr(region, "perimeter", ())
+            raw_perimeter = (
+                tuple(perimeter_value) if perimeter_value is not None else ()
+            )
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return ()
+        if not raw_perimeter:
+            return ()
+
+        try:
+            perimeter = tuple(
+                Point2((float(point[0]), float(point[1]))) for point in raw_perimeter
+            )
+        except (IndexError, TypeError, ValueError):
+            return ()
+
+        ramp = cls._safe_attr(mediator, "get_enemy_ramp")
+        ramp_top = cls._safe_attr(ramp, "top_center")
+        if ramp_top is None:
+            region_ramps = cls._safe_attr(region, "region_ramps", ())
+            try:
+                ramp_top = tuple(region_ramps)[0].top_center
+            except (AttributeError, IndexError, RuntimeError, TypeError):
+                return ()
+
+        perimeter = tuple(
+            point for point in perimeter if point.distance_to(ramp_top) > 8.0
+        )
+        if not perimeter:
+            return ()
+
+        center = cls._safe_attr(region, "center", main)
+        ordered = sorted(
+            perimeter,
+            key=lambda point: math.atan2(point.y - center.y, point.x - center.x),
+        )
+        natural = cls._safe_attr(mediator, "get_enemy_nat")
+        entry_anchor = natural if natural is not None else ramp_top
+        start_index = min(
+            range(len(ordered)),
+            key=lambda index: ordered[index].distance_to(entry_anchor),
+        )
+        ordered = ordered[start_index:] + ordered[:start_index]
+
+        sampled: list[Point2] = []
+        last_perimeter_point: Point2 | None = None
+        for point in ordered:
+            if (
+                last_perimeter_point is None
+                or point.distance_to(last_perimeter_point) >= 4.0
+            ):
+                sampled.append(point.towards(main, 2.0))
+                last_perimeter_point = point
+        if len(sampled) < 2:
+            return ()
+
+        # Start at the natural to confirm whether the opponent expanded, then
+        # close the loop by returning to the first cliff-side main waypoint.
+        positions = ([natural] if natural is not None else []) + sampled
+        positions.append(sampled[0])
+        is_visible = cls._safe_attr(bot, "is_visible")
+        return (
+            MapRoute(
+                key="enemy_main",
+                waypoints=tuple(
+                    RouteWaypoint(
+                        position=position,
+                        visible_now=(
+                            bool(is_visible(position))
+                            if callable(is_visible)
+                            else False
+                        ),
+                    )
+                    for position in positions
+                ),
+            ),
+        )
+
     def world_facts(self, bot, *, iteration: int) -> WorldFacts:
         unavailable_units = self._unavailable_unit_tags(bot)
         raw_own_units = self._items(bot, "units")
@@ -575,6 +677,7 @@ class AttentionBuilder:
                 own_start=bot.start_location,
                 enemy_starts=tuple(bot.enemy_start_locations),
                 observations=self._map_observations(bot),
+                routes=self._map_routes(bot),
             ),
             own_structures=own_structures,
             enemy_structures=enemy_structures,

@@ -68,6 +68,7 @@ class BotRuntime:
         self._last_build_signature: tuple | None = None
         self._last_world_signature: tuple | None = None
         self._last_world_snapshot_at: float = -999.0
+        self._last_enemy_intel_signature: tuple | None = None
 
     async def on_start(self, bot) -> None:
         self.logger.event(
@@ -163,6 +164,7 @@ class BotRuntime:
 
     def _log_world_snapshots(self, attention, awareness: AwarenessSnapshot) -> None:
         world = attention.world
+        self._log_enemy_intel(awareness, game_time=world.time)
         economy = world.economy
         strength = awareness.relative_strength
         threat = awareness.threat
@@ -257,6 +259,59 @@ class BotRuntime:
                 "visible_enemy_unit_count": sum(
                     unit.visible_now for unit in world.enemy_units
                 ),
+            },
+        )
+
+    def _log_enemy_intel(
+        self, awareness: AwarenessSnapshot, *, game_time: float
+    ) -> None:
+        """Expose scout discoveries without bloating periodic world snapshots."""
+
+        structures = tuple(
+            sighting for sighting in awareness.enemy.sightings if sighting.is_structure
+        )
+        confirmed_locations = tuple(
+            location.key
+            for location in awareness.enemy.locations
+            if location.last_observed_at is not None
+        )
+        signature = (
+            tuple(
+                (
+                    structure.tag,
+                    structure.unit_type,
+                    round(structure.last_position.x, 1),
+                    round(structure.last_position.y, 1),
+                    structure.visible_now,
+                )
+                for structure in structures
+            ),
+            confirmed_locations,
+        )
+        if signature == self._last_enemy_intel_signature:
+            return
+        self._last_enemy_intel_signature = signature
+        self.logger.event(
+            "knowledge.enemy_intel",
+            component="world.knowledge.enemy",
+            game_time=game_time,
+            data={
+                "known_enemy_bases": awareness.enemy.known_base_count,
+                "known_enemy_structures": awareness.enemy.known_structure_count,
+                "confirmed_locations": list(confirmed_locations),
+                "structures": [
+                    {
+                        "tag": structure.tag,
+                        "type": structure.unit_type.name,
+                        "position": [
+                            round(float(structure.last_position.x), 1),
+                            round(float(structure.last_position.y), 1),
+                        ],
+                        "visible_now": structure.visible_now,
+                        "last_seen_at": structure.last_seen_at,
+                    }
+                    for structure in structures
+                ],
             },
         )
 

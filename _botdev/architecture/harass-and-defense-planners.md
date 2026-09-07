@@ -32,11 +32,10 @@ planner does not require touching the admission call site.
 ## New command port
 
 Neither harass nor defense can be expressed with `path_to` alone: both need the
-assigned units to fight, not just arrive. `MissionCommands` gained `attack_move`,
-implemented in `AresMissionCommands` with the `AMove` behavior (the attack-capable
-counterpart of the `PathUnitToTarget` behavior the scout already uses) and assigning
-`UnitRole.ATTACKING`, mirroring how `path_to` always assigns `UnitRole.SCOUTING`
-regardless of the calling mission's kind.
+assigned units to fight, not just arrive. `MissionCommands` exposes `attack_move`
+for positional pressure and `attack_unit` for focused fire. The Reaper-specific
+adapter translates focused fire into `ReaperGrenade` plus aggressive
+`StutterUnitForward`, and assigns `UnitRole.HARASSING`.
 
 ## HarassPlanner
 
@@ -47,19 +46,15 @@ Awareness facts -- no new fact was invented for this planner:
 - `awareness.enemy.location("enemy_natural").last_observed_at` is not `None` --
   harass only follows up on a location `IntelPlanner` (or a future scout) has
   already found; it never guesses a target.
-- `awareness.threat.visible_enemy_units == 0` -- conservative: it withholds harass
-  the instant any enemy unit is visible anywhere, since this slice has no notion of
-  "the target base specifically is undefended" versus "a threat is visible
-  somewhere else."
 - The economy has reached `minimum_workers` (16, matching `IntelPlannerConfig`) and
-  a configured harass unit (Reaper by default) is alive.
+  a configured harass unit (Reaper by default) is healthy, ready, and available
+  for a new mission.
 
-Priority 60, `can_preempt=False` (harass is opportunistic and should never steal
-units from another live mission), dedup key `harass:<target_key>`. Its executor,
-`WorkerLineHarassExecutor`, attack-moves into the target and completes with
-`harass_target_defended` the moment a non-worker, attack-capable enemy unit is
-observed within `disengage_radius` of the target -- it disengages from a fight it
-wasn't sent to win instead of trading the harasser away.
+Priority 60, `can_preempt=False` (harass is opportunistic and never steals a live
+scout or defender), dedup key `harass:<target_key>`. Its executor attack-moves into
+the target, focuses the visible worker with the lowest health, and tolerates local
+defenders. At critical health it latches into retreat, follows a safe climber path
+to the own main, and completes only after reaching safety.
 
 ## DefensePlanner
 
@@ -92,11 +87,6 @@ no matching enemy remains within `engagement_radius` of that point.
 - Splitting defense per base/expansion is now done, see
   [base-model.md](base-model.md); harass is still a single worker-line target.
 - Worker-rush detection (an enemy worker alone is not treated as a threat).
-- Any retreat/repositioning micro beyond `AMove`'s built-in engage-on-the-way
-  behavior.
-- Unit-specific Ares roles such as `HARASSING_REAPER`; `attack_move` always assigns
-  the generic `UnitRole.ATTACKING`, matching `path_to`'s existing
-  one-port-one-role convention.
 - Changing `MacroPlanner`: it stays outside the `MissionProposal` model, as recorded
   in [macro-planner.md](macro-planner.md).
 
@@ -106,6 +96,5 @@ no matching enemy remains within `engagement_radius` of that point.
   only reacting with existing combat units.
 - Whether Harass should chain multiple targets (natural, then main) instead of a
   single fixed `target_key`.
-- Whether a defended-but-currently-unseen base should be inferable (e.g. from
-  `EnemyAwareness.sightings`) so Harass does not have to treat every visible enemy,
-  anywhere on the map, as a reason to hold back.
+- Whether a defended-but-currently-unseen base should be inferred from historical
+  sightings when choosing between several harass targets.

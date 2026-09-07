@@ -32,7 +32,7 @@ def worker(tag: int) -> UnitSnapshot:
     )
 
 
-def reaper(tag: int) -> UnitSnapshot:
+def reaper(tag: int, *, available: bool = True) -> UnitSnapshot:
     return UnitSnapshot(
         tag=tag,
         unit_type=UnitTypeId.REAPER,
@@ -42,6 +42,7 @@ def reaper(tag: int) -> UnitSnapshot:
         is_worker=False,
         can_attack_air=False,
         can_attack_ground=True,
+        available_for_mission=available,
     )
 
 
@@ -66,6 +67,7 @@ def attention(
     workers: int = 16,
     reapers: int = 1,
     visible_enemies: int = 0,
+    reaper_available: bool = True,
 ) -> AttentionSnapshot:
     world = WorldFacts(
         iteration=int(time),
@@ -76,7 +78,7 @@ def attention(
         supply_cap=30,
         own_units=(
             *(worker(tag) for tag in range(1, workers + 1)),
-            *(reaper(9000 + tag) for tag in range(reapers)),
+            *(reaper(9000 + tag, available=reaper_available) for tag in range(reapers)),
         ),
         enemy_units=tuple(enemy_marine(8000 + tag) for tag in range(visible_enemies)),
         map=MapFacts(
@@ -96,13 +98,13 @@ class HarassPlannerTests(unittest.TestCase):
 
         self.assertEqual(HarassPlanner().propose(current, awareness), ())
 
-    def test_no_proposal_while_an_enemy_unit_is_visible(self):
+    def test_visible_defenders_do_not_suppress_aggressive_harass(self):
         service = AwarenessService()
         service.update(attention(10.0, natural_visible=True))
         current = attention(20.0, natural_visible=False, visible_enemies=1)
         awareness = service.update(current)
 
-        self.assertEqual(HarassPlanner().propose(current, awareness), ())
+        self.assertEqual(len(HarassPlanner().propose(current, awareness)), 1)
 
     def test_no_proposal_below_the_economic_gate(self):
         service = AwarenessService()
@@ -116,6 +118,18 @@ class HarassPlannerTests(unittest.TestCase):
         service = AwarenessService()
         service.update(attention(10.0, natural_visible=True, reapers=0))
         current = attention(20.0, natural_visible=False, reapers=0)
+        awareness = service.update(current)
+
+        self.assertEqual(HarassPlanner().propose(current, awareness), ())
+
+    def test_no_proposal_while_the_only_reaper_is_busy(self):
+        service = AwarenessService()
+        service.update(attention(10.0, natural_visible=True))
+        current = attention(
+            20.0,
+            natural_visible=False,
+            reaper_available=False,
+        )
         awareness = service.update(current)
 
         self.assertEqual(HarassPlanner().propose(current, awareness), ())

@@ -5,11 +5,16 @@ import unittest
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
-from bot.world.knowledge.enemy import EnemyKnowledge
+from bot.world.knowledge.enemy import EnemyAwareness, EnemyKnowledge
 from bot.world.observation.models import MapFacts, UnitSnapshot, WorldFacts
 
 
-def world(time: float, enemies: tuple[UnitSnapshot, ...]) -> WorldFacts:
+def world(
+    time: float,
+    enemies: tuple[UnitSnapshot, ...],
+    *,
+    structures: tuple[UnitSnapshot, ...] = (),
+) -> WorldFacts:
     return WorldFacts(
         iteration=int(time),
         time=time,
@@ -20,6 +25,7 @@ def world(time: float, enemies: tuple[UnitSnapshot, ...]) -> WorldFacts:
         own_units=(),
         enemy_units=enemies,
         map=MapFacts(Point2((50, 50)), Point2((10, 10)), (Point2((90, 90)),)),
+        enemy_structures=structures,
     )
 
 
@@ -37,7 +43,38 @@ def hydralisk(*, visible: bool, position: Point2) -> UnitSnapshot:
     )
 
 
+def enemy_structure(tag: int, unit_type: UnitTypeId) -> UnitSnapshot:
+    return UnitSnapshot(
+        tag=tag,
+        unit_type=unit_type,
+        position=Point2((80 + tag, 80)),
+        health_percentage=1.0,
+        is_flying=False,
+        is_worker=False,
+        can_attack_air=False,
+        can_attack_ground=False,
+        is_structure=True,
+    )
+
+
 class EnemyKnowledgeTests(unittest.TestCase):
+    def test_reports_known_enemy_base_and_structure_counts(self):
+        sightings = EnemyKnowledge().update(
+            world(
+                10.0,
+                (),
+                structures=(
+                    enemy_structure(1, UnitTypeId.HATCHERY),
+                    enemy_structure(2, UnitTypeId.LAIR),
+                    enemy_structure(3, UnitTypeId.SPAWNINGPOOL),
+                ),
+            )
+        )
+        awareness = EnemyAwareness(sightings=sightings, locations=())
+
+        self.assertEqual(awareness.known_base_count, 2)
+        self.assertEqual(awareness.known_structure_count, 3)
+
     def test_tracks_first_and_last_seen_while_visible(self):
         knowledge = EnemyKnowledge()
         knowledge.update(

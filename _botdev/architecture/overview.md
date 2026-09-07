@@ -27,10 +27,12 @@ Game / Ares
 - `infrastructure/ares` translates those ports into Ares roles and behaviors.
 - `application` wires the frame together without containing strategic rules.
 
-The first vertical slice scouts the enemy natural. Unknown information creates an
-initial scout after the economy reaches 16 workers. A location observed previously
-can be scouted again after 240 game-seconds when its observation is at least 90
-seconds old. These values live in `IntelPlannerConfig`.
+The scouting slice sends a Reaper through the enemy natural and around the enemy
+main using a map-derived perimeter route and Ares' climber grid. It stays safe via
+`KeepUnitSafe`, records structures and the known enemy base count, and completes
+only after closing the lap. Unknown information creates the initial scout after the
+economy reaches 16 workers; stale information can be revisited in the periodic
+phase. These values live in `IntelPlannerConfig`.
 
 Four mission planners are wired into `BotRuntime` today, each with its concrete
 executor under `bot/behavior/<kind>/`: `IntelPlanner` (scouting, above),

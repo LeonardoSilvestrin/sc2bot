@@ -55,6 +55,15 @@ class FakeCommands:
             ("attack_move", mission_id, unit_tag, target, success_at_distance)
         )
 
+    def attack_unit(
+        self,
+        *,
+        mission_id,
+        unit_tag,
+        target_unit_tag,
+    ) -> None:
+        self.commands.append(("attack_unit", mission_id, unit_tag, target_unit_tag))
+
     def safe_path_to(
         self,
         *,
@@ -62,10 +71,18 @@ class FakeCommands:
         unit_tag,
         target,
         success_at_distance,
+        search_radius=14.0,
     ) -> None:
-        self.commands.append(
-            ("safe_path_to", mission_id, unit_tag, target, success_at_distance)
+        command = (
+            "safe_path_to",
+            mission_id,
+            unit_tag,
+            target,
+            success_at_distance,
         )
+        if search_radius != 14.0:
+            command += (search_radius,)
+        self.commands.append(command)
 
     def release(self, *, mission_id, unit_tag) -> None:
         self.commands.append(("release", mission_id, unit_tag))

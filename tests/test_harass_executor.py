@@ -29,12 +29,12 @@ MAP = MapFacts(
 )
 
 
-def reaper(tag: int, position: Point2) -> UnitSnapshot:
+def reaper(tag: int, position: Point2, *, health: float = 1.0) -> UnitSnapshot:
     return UnitSnapshot(
         tag=tag,
         unit_type=UnitTypeId.REAPER,
         position=position,
-        health_percentage=1.0,
+        health_percentage=health,
         is_flying=False,
         is_worker=False,
         can_attack_air=False,
@@ -56,12 +56,18 @@ def enemy_marine(tag: int, position: Point2) -> UnitSnapshot:
     )
 
 
-def enemy_worker(tag: int, unit_type: UnitTypeId, position: Point2) -> UnitSnapshot:
+def enemy_worker(
+    tag: int,
+    unit_type: UnitTypeId,
+    position: Point2,
+    *,
+    health: float = 1.0,
+) -> UnitSnapshot:
     return UnitSnapshot(
         tag=tag,
         unit_type=unit_type,
         position=position,
-        health_percentage=1.0,
+        health_percentage=health,
         is_flying=False,
         is_worker=True,
         can_attack_air=False,
@@ -131,7 +137,7 @@ class WorkerLineHarassExecutorTests(unittest.IsolatedAsyncioTestCase):
             ],
         )
 
-    async def test_enemy_workers_of_any_race_do_not_count_as_defenders(self):
+    async def test_focuses_the_lowest_health_worker_of_any_race(self):
         commands = FakeCommands()
         executor = WorkerLineHarassExecutor(
             mission_id="mission-0001",
@@ -141,9 +147,9 @@ class WorkerLineHarassExecutorTests(unittest.IsolatedAsyncioTestCase):
         )
         harasser = reaper(1, Point2((79, 80)))
         worker_line = (
-            enemy_worker(91, UnitTypeId.PROBE, Point2((81, 80))),
-            enemy_worker(92, UnitTypeId.DRONE, Point2((81, 80))),
-            enemy_worker(93, UnitTypeId.SCV, Point2((81, 80))),
+            enemy_worker(91, UnitTypeId.PROBE, Point2((81, 80)), health=0.8),
+            enemy_worker(92, UnitTypeId.DRONE, Point2((81, 80)), health=0.2),
+            enemy_worker(93, UnitTypeId.SCV, Point2((81, 80)), health=0.6),
         )
 
         result = await executor.step(
@@ -157,18 +163,10 @@ class WorkerLineHarassExecutorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.outcome, MissionOutcome.ACTIVE)
         self.assertEqual(
             commands.commands,
-            [
-                (
-                    "attack_move",
-                    "mission-0001",
-                    1,
-                    TARGET,
-                    executor.arrival_radius,
-                )
-            ],
+            [("attack_unit", "mission-0001", 1, 92)],
         )
 
-    async def test_completes_when_the_target_becomes_defended(self):
+    async def test_stays_aggressive_when_the_target_has_a_defender(self):
         commands = FakeCommands()
         executor = WorkerLineHarassExecutor(
             mission_id="mission-0001",
@@ -187,8 +185,61 @@ class WorkerLineHarassExecutorTests(unittest.IsolatedAsyncioTestCase):
             )
         )
 
+        self.assertEqual(result.outcome, MissionOutcome.ACTIVE)
+        self.assertEqual(result.reason, "harassing_enemy_worker_line")
+        self.assertEqual(commands.commands[0][0], "attack_move")
+
+    async def test_critical_reaper_retreats_to_own_main(self):
+        commands = FakeCommands()
+        executor = WorkerLineHarassExecutor(
+            mission_id="mission-0001",
+            target_key="enemy_natural",
+            target=TARGET,
+            started_at=10.0,
+        )
+
+        result = await executor.step(
+            context(
+                assigned_units=(reaper(1, Point2((70, 70)), health=0.25),),
+                commands=commands,
+            )
+        )
+
+        self.assertEqual(result.outcome, MissionOutcome.ACTIVE)
+        self.assertEqual(result.reason, "retreating_critical_reaper")
+        self.assertEqual(
+            commands.commands,
+            [
+                (
+                    "safe_path_to",
+                    "mission-0001",
+                    1,
+                    MAP.own_start,
+                    executor.retreat_arrival_radius,
+                    6.0,
+                )
+            ],
+        )
+
+    async def test_retreat_finishes_after_the_reaper_reaches_safety(self):
+        commands = FakeCommands()
+        executor = WorkerLineHarassExecutor(
+            mission_id="mission-0001",
+            target_key="enemy_natural",
+            target=TARGET,
+            started_at=10.0,
+        )
+        executor._retreating = True
+
+        result = await executor.step(
+            context(
+                assigned_units=(reaper(1, Point2((12, 12)), health=0.6),),
+                commands=commands,
+            )
+        )
+
         self.assertEqual(result.outcome, MissionOutcome.COMPLETED)
-        self.assertEqual(result.reason, "harass_target_defended")
+        self.assertEqual(result.reason, "critical_reaper_returned_to_safety")
         self.assertEqual(commands.commands, [])
 
     async def test_fails_when_the_assigned_unit_is_missing(self):
