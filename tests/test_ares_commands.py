@@ -88,5 +88,25 @@ class AresMissionCommandsAttackMoveTests(unittest.TestCase):
         bot.register_behavior.assert_called_once()
 
 
+class AresMissionCommandsSafePathTests(unittest.TestCase):
+    def test_assigns_map_control_role_and_registers_safe_movement(self):
+        bot, _ = make_bot(1)
+        bot.mediator.get_ground_grid = object()
+        allocator = leased_allocator(1)
+        commands = AresMissionCommands(bot, allocator)
+
+        commands.safe_path_to(
+            mission_id="mission-0001",
+            unit_tag=1,
+            target=Point2((20, 20)),
+            success_at_distance=2.0,
+        )
+
+        bot.mediator.assign_role.assert_called_once_with(
+            tag=1, role=UnitRole.MAP_CONTROL
+        )
+        bot.register_behavior.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()

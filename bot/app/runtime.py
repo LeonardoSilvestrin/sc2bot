@@ -9,6 +9,7 @@ from bot.app.mission_registry import DEFAULT_EXECUTOR_FACTORIES
 from bot.behavior.defense import DefensePlanner, DefensePlannerConfig
 from bot.behavior.harass import HarassPlanner, HarassPlannerConfig
 from bot.behavior.macro import MacroPlanner, MacroPlannerConfig
+from bot.behavior.map_control import MapControlPlanner, MapControlPlannerConfig
 from bot.behavior.scouting import IntelPlanner, IntelPlannerConfig
 from bot.engine.economy import (
     EconomicFeedback,
@@ -35,12 +36,14 @@ class BotRuntime:
         harass_config: HarassPlannerConfig | None = None,
         defense_config: DefensePlannerConfig | None = None,
         macro_config: MacroPlannerConfig | None = None,
+        map_control_config: MapControlPlannerConfig | None = None,
     ) -> None:
         self.logger = logger
         self.intel_config = intel_config or IntelPlannerConfig()
         self.harass_config = harass_config or HarassPlannerConfig()
         self.defense_config = defense_config or DefensePlannerConfig()
         self.macro_config = macro_config or MacroPlannerConfig()
+        self.map_control_config = map_control_config or MapControlPlannerConfig()
         self.attention_builder = AttentionBuilder()
         self.awareness = AwarenessService(
             location_stale_after=self.intel_config.location_stale_after
@@ -49,10 +52,12 @@ class BotRuntime:
         self.harass_planner = HarassPlanner(config=self.harass_config)
         self.defense_planner = DefensePlanner(config=self.defense_config)
         self.macro_planner = MacroPlanner(config=self.macro_config)
+        self.map_control_planner = MapControlPlanner(config=self.map_control_config)
         self._mission_planners = (
             self.intel_planner,
             self.harass_planner,
             self.defense_planner,
+            self.map_control_planner,
         )
         self.missions = MissionController(
             logger=logger,

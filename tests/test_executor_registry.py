@@ -8,6 +8,7 @@ from sc2.position import Point2
 from bot.app.mission_registry import DEFAULT_EXECUTOR_FACTORIES
 from bot.behavior.defense import DefendBaseExecutor
 from bot.behavior.harass import WorkerLineHarassExecutor
+from bot.behavior.map_control import MapControlExecutor
 from bot.behavior.scouting import IntelPlanner, ScoutExecutor
 from bot.engine.missions import (
     Mission,
@@ -145,3 +146,12 @@ class DefaultExecutorFactoryCoverageTests(unittest.TestCase):
         )
         executor = DEFAULT_EXECUTOR_FACTORIES[MissionKind.DEFENSE](mission, 0.0)
         self.assertIsInstance(executor, DefendBaseExecutor)
+
+    def test_map_control_kind_builds_a_map_control_executor(self):
+        mission = Mission(
+            mission_id="m1",
+            proposal=_proposal(MissionKind.MAP_CONTROL),
+            admitted_at=0.0,
+        )
+        executor = DEFAULT_EXECUTOR_FACTORIES[MissionKind.MAP_CONTROL](mission, 0.0)
+        self.assertIsInstance(executor, MapControlExecutor)

@@ -28,5 +28,15 @@ class MissionCommands(Protocol):
     ) -> None:
         ...
 
+    def safe_path_to(
+        self,
+        *,
+        mission_id: str,
+        unit_tag: int,
+        target: Point2,
+        success_at_distance: float,
+    ) -> None:
+        ...
+
     def release(self, *, mission_id: str, unit_tag: int) -> None:
         ...

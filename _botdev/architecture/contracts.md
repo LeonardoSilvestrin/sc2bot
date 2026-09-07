@@ -17,22 +17,23 @@
 5. `MissionController` alone admits/rejects proposals and changes mission status.
 6. `UnitAllocator` alone mutates the bidirectional unit-to-mission leases.
 7. Executors cannot import Ares or infrastructure. They issue requests via
-   `MissionCommands` (`path_to`, `attack_move`, `release`) and every result contains
-   a non-empty reason.
-8. Only `infrastructure/ares` assigns Ares roles or registers Ares behaviors. Each
+   `MissionCommands` (`path_to`, `safe_path_to`, `attack_move`, `release`) and
+   every result contains a non-empty reason.
+8. Only the Ares adapter assigns Ares roles or registers Ares behaviors. Each
    command port hardcodes one role regardless of the calling mission's kind:
-   `path_to` assigns `UnitRole.SCOUTING`, `attack_move` assigns
-   `UnitRole.ATTACKING`, `release` restores `GATHERING`/`IDLE`.
+   `path_to` assigns `UnitRole.SCOUTING`, `safe_path_to` assigns
+   `UnitRole.MAP_CONTROL`, `attack_move` assigns `UnitRole.ATTACKING`, and
+   `release` restores `GATHERING`/`IDLE`.
 
 ## Mission kinds and priorities
 
-`MissionKind` (`SCOUT`, `HARASS`, `DEFENSE`) is the shared vocabulary in `ego`; see
-[harass-and-defense-planners.md](harass-and-defense-planners.md) for what each
-concrete planner and executor does. Default priorities set the intended arbitration
-order under `UnitAllocator`'s preemption margin (10): Intel 55, Harass 60 (never
-preempts, `can_preempt=False`), Defense 95 (`can_preempt=True`, high enough to
-preempt either of the others once their commitment window has elapsed). Each
-planner's deduplication key follows `<kind>:<target_key>`.
+`MissionKind` (`SCOUT`, `HARASS`, `DEFENSE`, `MAP_CONTROL`) is the shared mission
+vocabulary. Default priorities set the intended arbitration order under
+`UnitAllocator`'s preemption margin (10): Map Control 40, Intel 55, Harass 60
+(neither opportunistic mission preempts), and Defense 85/95 (`can_preempt=True`).
+Map Control is described in [map-control.md](map-control.md); the other missions
+are described in
+[harass-and-defense-planners.md](harass-and-defense-planners.md).
 
 ## Frame lifecycle
 

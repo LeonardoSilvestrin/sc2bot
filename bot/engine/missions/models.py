@@ -57,6 +57,7 @@ class MissionKind(Enum):
     SCOUT = auto()
     HARASS = auto()
     DEFENSE = auto()
+    MAP_CONTROL = auto()
 
 
 class MissionStatus(Enum):

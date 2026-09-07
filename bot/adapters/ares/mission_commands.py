@@ -72,6 +72,32 @@ class AresMissionCommands:
             AMove(unit=unit, target=target, success_at_distance=success_at_distance)
         )
 
+    def safe_path_to(
+        self,
+        *,
+        mission_id: str,
+        unit_tag: int,
+        target: Point2,
+        success_at_distance: float,
+    ) -> None:
+        unit = self._unit(mission_id=mission_id, unit_tag=unit_tag)
+        from ares.behaviors.combat.individual import MoveToSafeTarget
+        from ares.consts import UnitRole
+
+        self._bot.mediator.assign_role(tag=unit_tag, role=UnitRole.MAP_CONTROL)
+        self._bot.register_behavior(
+            MoveToSafeTarget(
+                unit=unit,
+                grid=self._bot.mediator.get_ground_grid,
+                target=target,
+                success_at_distance=success_at_distance,
+                sense_danger=True,
+                danger_distance=24.0,
+                danger_threshold=1.0,
+                radius=14.0,
+            )
+        )
+
     def release(self, *, mission_id: str, unit_tag: int) -> None:
         self._authorize(mission_id=mission_id, unit_tag=unit_tag)
         unit = self._bot.unit_tag_dict.get(unit_tag)
