@@ -7,8 +7,17 @@ from bot.adapters.ares import (
 )
 from bot.app.mission_registry import DEFAULT_EXECUTOR_FACTORIES
 from bot.behavior.defense import DefensePlanner, DefensePlannerConfig
-from bot.behavior.harass import HarassPlanner, HarassPlannerConfig
-from bot.behavior.macro import MacroPlanner, MacroPlannerConfig
+from bot.behavior.harass import (
+    BansheeHarassPlanner,
+    BansheeHarassPlannerConfig,
+    HarassPlanner,
+    HarassPlannerConfig,
+)
+from bot.behavior.macro import (
+    MacroPlanner,
+    MacroPlannerConfig,
+    macro_config_for_opening,
+)
 from bot.behavior.map_control import MapControlPlanner, MapControlPlannerConfig
 from bot.behavior.scouting import IntelPlanner, IntelPlannerConfig
 from bot.engine.economy import (
@@ -34,6 +43,7 @@ class BotRuntime:
         logger: BotLogger,
         intel_config: IntelPlannerConfig | None = None,
         harass_config: HarassPlannerConfig | None = None,
+        banshee_harass_config: BansheeHarassPlannerConfig | None = None,
         defense_config: DefensePlannerConfig | None = None,
         macro_config: MacroPlannerConfig | None = None,
         map_control_config: MapControlPlannerConfig | None = None,
@@ -41,6 +51,9 @@ class BotRuntime:
         self.logger = logger
         self.intel_config = intel_config or IntelPlannerConfig()
         self.harass_config = harass_config or HarassPlannerConfig()
+        self.banshee_harass_config = (
+            banshee_harass_config or BansheeHarassPlannerConfig()
+        )
         self.defense_config = defense_config or DefensePlannerConfig()
         self.macro_config = macro_config or MacroPlannerConfig()
         self.map_control_config = map_control_config or MapControlPlannerConfig()
@@ -50,15 +63,23 @@ class BotRuntime:
         )
         self.intel_planner = IntelPlanner(config=self.intel_config)
         self.harass_planner = HarassPlanner(config=self.harass_config)
+        self.banshee_harass_planner = BansheeHarassPlanner(
+            config=self.banshee_harass_config
+        )
         self.defense_planner = DefensePlanner(config=self.defense_config)
         self.macro_planner = MacroPlanner(config=self.macro_config)
         self.map_control_planner = MapControlPlanner(config=self.map_control_config)
         self._mission_planners = (
             self.intel_planner,
             self.harass_planner,
+            self.banshee_harass_planner,
             self.defense_planner,
             self.map_control_planner,
         )
+        # `chosen_opening` is unknown until the Ares build runner resolves it
+        # (never, if a caller pins `macro_config` explicitly, e.g. tests) --
+        # see `_resolve_macro_profile`.
+        self._macro_profile_resolved = macro_config is not None
         self.missions = MissionController(
             logger=logger,
             executor_factories=DEFAULT_EXECUTOR_FACTORIES,
@@ -98,6 +119,7 @@ class BotRuntime:
         )
 
         runner = getattr(bot, "build_order_runner", None)
+        self._resolve_macro_profile(runner)
         if bool(getattr(runner, "build_completed", False)):
             economic_proposals = self.macro_planner.propose(attention, awareness)
             observed_feedback = observe_economic_confirmations(
@@ -133,6 +155,25 @@ class BotRuntime:
 
         self._log_build_order(bot, game_time=world.time)
         self._log_world_snapshots(attention, awareness)
+
+    def _resolve_macro_profile(self, runner) -> None:
+        """Pick the post-opening `MacroGoalSet` matching the chosen opening.
+
+        The Ares build runner only knows `chosen_opening` once it selects a
+        build from `terran_builds.yml`, which is not yet resolved at
+        `BotRuntime.__init__`. Resolved once and then locked in: an opening
+        does not change mid-game, and re-resolving every frame would just
+        rebuild an identical `MacroPlanner` for no reason.
+        """
+
+        if self._macro_profile_resolved:
+            return
+        opening = str(getattr(runner, "chosen_opening", "") or "")
+        if not opening:
+            return
+        self.macro_config = macro_config_for_opening(opening)
+        self.macro_planner = MacroPlanner(config=self.macro_config)
+        self._macro_profile_resolved = True
 
     def _log_build_order(self, bot, *, game_time: float) -> None:
         runner = getattr(bot, "build_order_runner", None)

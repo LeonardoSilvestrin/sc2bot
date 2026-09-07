@@ -9,7 +9,7 @@ adds the second and third mission planners after
 ```text
 bot/behavior/
   scouting/               -> IntelPlanner / ScoutExecutor / config
-  harass/                 -> HarassPlanner / WorkerLineHarassExecutor / config
+  harass/                 -> HarassPlanner / BansheeHarassPlanner / executors / config
   defense/                -> DefensePlanner / DefendBaseExecutor / config
   map_control/            -> MapControlPlanner / PatrolMapExecutor / config
   macro/                  -> MacroPlanner / economic goals and config
@@ -22,8 +22,9 @@ Each executor is named after the concrete action it performs, not its planner, p
 the project's rule against generic `<Kind>Executor` classes. Each behavior package
 re-exports its public planner, executor, and configuration names.
 
-`MissionKind` gained `HARASS` and `DEFENSE` in `bot/engine/missions/models.py`; it
-stays the shared vocabulary in the mission engine, alongside
+`MissionKind` gained `HARASS`, `AIR_HARASS`, and `DEFENSE` in
+`bot/engine/missions/models.py`; it stays the shared vocabulary in the mission
+engine, alongside
 `MissionProposal`/`Mission`/`MissionController`.
 `BotRuntime` now holds a tuple of mission planners and concatenates their proposals
 every frame instead of calling a single planner by name, so wiring in a future
@@ -36,6 +37,10 @@ assigned units to fight, not just arrive. `MissionCommands` exposes `attack_move
 for positional pressure and `attack_unit` for focused fire. The Reaper-specific
 adapter translates focused fire into `ReaperGrenade` plus aggressive
 `StutterUnitForward`, and assigns `UnitRole.HARASSING`.
+
+`MissionCommands` later gained `use_ability` for `BansheeHarassPlanner` below --
+an ability cast with no positional order attached, so unlike `attack_move` it
+does not reassign a `UnitRole`.
 
 ## HarassPlanner
 
@@ -55,6 +60,37 @@ scout or defender), dedup key `harass:<target_key>`. Its executor attack-moves i
 the target, focuses the visible worker with the lowest health, and tolerates local
 defenders. At critical health it latches into retreat, follows a safe climber path
 to the own main, and completes only after reaching safety.
+
+## BansheeHarassPlanner
+
+Proposes one `MissionProposal` (`MissionKind.AIR_HARASS`) to attack-move a
+Banshee into the enemy natural's worker line, for the `BansheeCloak` opening
+(see [opening.md](opening.md)). Same shape as `HarassPlanner`, with one
+condition swapped for the fact that a flying, cloaked harasser cannot be
+threatened by a ground-only defender: it withholds on
+`awareness.threat.visible_anti_air_units > 0` rather than "any enemy unit
+visible anywhere." It never checks cloak research directly -- see the
+executor below for why that's unnecessary. Priority 62, `can_preempt=False`,
+dedup key `air_harass:<target_key>` (distinct from `HarassPlanner`'s
+`harass:<target_key>`, so a Reaper harass and a Banshee harass can both be
+live at once without colliding).
+
+Its executor, `CloakedBansheeHarassExecutor`, attack-moves into the target
+and casts `AbilityId.BEHAVIOR_CLOAKON_BANSHEE` (via the new
+`MissionCommands.use_ability` port, `AresMissionCommands` wrapping Ares's
+`UseAbility` behavior) every step rather than tracking on/off state locally:
+`UseAbility` no-ops once the ability is not in `unit.abilities`, which is
+true both before Cloaking Field research finishes and once already cloaked,
+so re-issuing it is always safe and needs no bookkeeping. It completes with
+`harass_target_defended` the moment a non-worker, **anti-air-capable**
+enemy unit is observed within `disengage_radius` -- checking
+`can_attack_air` instead of `WorkerLineHarassExecutor`'s `can_attack_ground`,
+since that is the only kind of defender that can actually hit it.
+
+Deliberately not built here either: no detector-awareness (a defender that
+can only detect, not attack air -- e.g. a lone Observer -- does not trigger
+disengage), and no energy-aware cloak scheduling (cloak is cast blindly every
+step; it simply stops taking effect once energy runs out).
 
 ## DefensePlanner
 

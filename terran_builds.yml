@@ -10,22 +10,33 @@ BuildSelection: Cycle
 MinGamesWinrateBased: 3
 
 BuildChoices:
+    # test_123 is active if Debug: True (`config.yml`) -- use this to force a
+    # specific opening for a local pilot game without touching the ladder-safe
+    # cycles below (UseData: false means those always resolve to Cycle[0]).
+    test_123:
+        BotName: Test
+        Cycle:
+            - BansheeCloak
     Protoss:
         BotName: Protoss
         Cycle:
             - BioThreeOneOne
+            - BansheeCloak
     Terran:
         BotName: Terran
         Cycle:
             - BioThreeOneOne
+            - BansheeCloak
     Zerg:
         BotName: Zerg
         Cycle:
             - BioThreeOneOne
+            - BansheeCloak
     Random:
         BotName: Random
         Cycle:
             - BioThreeOneOne
+            - BansheeCloak
 
 Builds:
     # Safe TvX pilot: Reaper expand into the standard Bio 3-1-1 convergence.
@@ -59,3 +70,31 @@ Builds:
             - 30 orbital
             - 32 marine *4
             - 36 medivac *2
+
+    # Reaper expand into a 1 Factory / 1 Starport cloaked Banshee harass
+    # opener. Same safe Reaper-expand opening as `BioThreeOneOne`, then
+    # pivots at the Factory into a Starport Tech Lab for Banshees +
+    # Cloaking Field instead of Bio tech, so the harass wave lands cloaked.
+    BansheeCloak:
+        AutoSupplyAtSupply: 30
+        ConstantWorkerProductionTill: 50
+        PersistentWorker: false
+        ShouldHandleGasSteal: true
+        OpeningBuildOrder:
+            - 14 supply @ ramp
+            - 16 barracks @ ramp
+            - 16 gas
+            - 0 orbital
+            - 0 reaper
+            - 19 expand
+            - 20 supply @ ramp
+            - 20 factory @ ramp
+            - 21 gas
+            - 22 starport
+            - 23 starporttechlab
+            - 24 banshee *2
+            - 27 bansheecloak
+            - 28 orbital
+            - 30 barracksreactor
+            - 32 marine *2
+            - 36 banshee

@@ -56,6 +56,7 @@ class UnitRequirement:
 class MissionKind(Enum):
     SCOUT = auto()
     HARASS = auto()
+    AIR_HARASS = auto()
     DEFENSE = auto()
     MAP_CONTROL = auto()
 

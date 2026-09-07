@@ -34,10 +34,11 @@ only after closing the lap. Unknown information creates the initial scout after 
 economy reaches 16 workers; stale information can be revisited in the periodic
 phase. These values live in `IntelPlannerConfig`.
 
-Four mission planners are wired into `BotRuntime` today, each with its concrete
+Five mission planners are wired into `BotRuntime` today, each with its concrete
 executor under `bot/behavior/<kind>/`: `IntelPlanner` (scouting, above),
-`HarassPlanner` (worker-line harass), `DefensePlanner` (base defense), and
-`MapControlPlanner` (safe map presence). See
+`HarassPlanner` (worker-line harass), `BansheeHarassPlanner` (cloaked Banshee
+harass), `DefensePlanner` (base defense), and `MapControlPlanner` (safe map
+presence). See
 [harass-and-defense-planners.md](harass-and-defense-planners.md) for their
 conditions, priorities, and the `attack_move` command port they share.
 `MacroPlanner` produces `EconomicProposal`s instead of `MissionProposal`s and is

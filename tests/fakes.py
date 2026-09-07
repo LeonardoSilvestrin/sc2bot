@@ -87,6 +87,9 @@ class FakeCommands:
     def release(self, *, mission_id, unit_tag) -> None:
         self.commands.append(("release", mission_id, unit_tag))
 
+    def use_ability(self, *, mission_id, unit_tag, ability) -> None:
+        self.commands.append(("use_ability", mission_id, unit_tag, ability))
+
 
 class FakeEconomyCommands:
     def __init__(self) -> None:

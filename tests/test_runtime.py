@@ -8,6 +8,7 @@ from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
 from bot.app import BotRuntime
+from bot.behavior.macro import macro_config_for_opening
 from bot.engine.missions import MissionKind, MissionStatus
 from tests.fakes import FakeCommands, FakeEconomyCommands, FakeLogger
 
@@ -485,6 +486,47 @@ class RuntimePilotTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(defense.status, MissionStatus.ACTIVE)
         self.assertEqual(scout.status, MissionStatus.BLOCKED)
         self.assertIn("attack_move", [command[0] for command in commands.commands])
+
+    async def test_macro_profile_switches_to_match_the_chosen_opening(self):
+        # `MacroPlannerConfig` defaults to the Bio profile; once Ares resolves
+        # `chosen_opening` to `BansheeCloak` the runtime must pick up that
+        # opening's own convergence goals instead of silently keeping Bio's.
+        economy_commands = FakeEconomyCommands()
+        bot = SimpleNamespace(
+            time=5.0,
+            minerals=500,
+            vespene=0,
+            supply_used=10,
+            supply_cap=30,
+            units=(),
+            enemy_units=(),
+            worker_type=UnitTypeId.SCV,
+            start_location=Point2((10, 10)),
+            enemy_start_locations=[Point2((90, 90))],
+            game_info=SimpleNamespace(map_center=Point2((50, 50)), map_name="PilotMap"),
+            build_order_runner=SimpleNamespace(
+                build_completed=False,
+                build_step=0,
+                build_order=(),
+                chosen_opening="BansheeCloak",
+            ),
+        )
+        runtime = BotRuntime(logger=FakeLogger())
+
+        with (
+            patch(
+                "bot.app.runtime.AresEconomyCommands",
+                return_value=economy_commands,
+            ),
+            patch("bot.app.runtime.register_baseline_behaviors"),
+        ):
+            await runtime.on_step(bot, iteration=1)
+
+        expected = macro_config_for_opening("BansheeCloak")
+        self.assertEqual(runtime.macro_planner.config.goals.name, expected.goals.name)
+        self.assertEqual(
+            runtime.macro_planner.config.goals.opening_name, "BansheeCloak"
+        )
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from sc2.ids.ability_id import AbilityId
 from sc2.position import Point2
 
 from bot.engine.missions.allocator import UnitAllocator
@@ -148,6 +149,19 @@ class AresMissionCommands:
                 radius=search_radius,
             )
         )
+
+    def use_ability(
+        self,
+        *,
+        mission_id: str,
+        unit_tag: int,
+        ability: AbilityId,
+    ) -> None:
+        unit = self._unit(mission_id=mission_id, unit_tag=unit_tag)
+        # Local import keeps Ares behind the adapter boundary.
+        from ares.behaviors.combat.individual import UseAbility
+
+        self._bot.register_behavior(UseAbility(ability=ability, unit=unit))
 
     def release(self, *, mission_id: str, unit_tag: int) -> None:
         self._authorize(mission_id=mission_id, unit_tag=unit_tag)

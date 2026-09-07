@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 from ares.consts import UnitRole
+from sc2.ids.ability_id import AbilityId
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
@@ -85,6 +86,33 @@ class AresMissionCommandsAttackMoveTests(unittest.TestCase):
         bot.mediator.assign_role.assert_called_once_with(
             tag=1, role=UnitRole.ATTACKING
         )
+        bot.register_behavior.assert_called_once()
+
+
+class AresMissionCommandsUseAbilityTests(unittest.TestCase):
+    def test_raises_when_the_mission_does_not_own_the_unit(self):
+        bot, _ = make_bot(1)
+        commands = AresMissionCommands(bot, UnitAllocator())
+
+        with self.assertRaises(UnauthorizedUnitCommand):
+            commands.use_ability(
+                mission_id="mission-0001",
+                unit_tag=1,
+                ability=AbilityId.BEHAVIOR_CLOAKON_BANSHEE,
+            )
+
+    def test_registers_the_ability_behavior_without_reassigning_role(self):
+        bot, unit = make_bot(1)
+        allocator = leased_allocator(1)
+        commands = AresMissionCommands(bot, allocator)
+
+        commands.use_ability(
+            mission_id="mission-0001",
+            unit_tag=1,
+            ability=AbilityId.BEHAVIOR_CLOAKON_BANSHEE,
+        )
+
+        bot.mediator.assign_role.assert_not_called()
         bot.register_behavior.assert_called_once()
 
 
