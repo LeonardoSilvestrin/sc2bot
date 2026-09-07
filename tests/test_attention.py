@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
-from bot.attention import AttentionBuilder
+from bot.world.observation import AttentionBuilder
 
 
 def unit(

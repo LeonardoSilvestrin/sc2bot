@@ -4,8 +4,8 @@ import unittest
 
 from sc2.ids.unit_typeid import UnitTypeId
 
-from bot.attention.models import CountFacts, EconomyFacts, UnitTypeCount
-from bot.contracts.economy import (
+from bot.engine.economy import merge_economic_feedback, observe_economic_confirmations
+from bot.engine.economy.models import (
     EconomicAction,
     EconomicActionKind,
     EconomicActionSnapshot,
@@ -15,7 +15,7 @@ from bot.contracts.economy import (
     EconomicProposal,
     ResourceCost,
 )
-from bot.economy import merge_economic_feedback, observe_economic_confirmations
+from bot.world.observation.models import CountFacts, EconomyFacts, UnitTypeCount
 
 
 def snapshot(

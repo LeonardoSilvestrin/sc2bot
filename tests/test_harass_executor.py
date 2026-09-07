@@ -5,11 +5,20 @@ import unittest
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
-from bot.attention.models import AttentionSnapshot, MapFacts, UnitSnapshot, WorldFacts
-from bot.awareness.enemy.models import EnemyAwareness
-from bot.awareness.models import AwarenessSnapshot, RelativeStrength, ThreatAssessment
-from bot.executors import MissionContext, MissionOutcome
-from bot.executors.harass import WorkerLineHarassExecutor
+from bot.behavior.harass import WorkerLineHarassExecutor
+from bot.engine.missions import MissionContext, MissionOutcome
+from bot.world.knowledge.enemy.models import EnemyAwareness
+from bot.world.knowledge.models import (
+    AwarenessSnapshot,
+    RelativeStrength,
+    ThreatAssessment,
+)
+from bot.world.observation.models import (
+    AttentionSnapshot,
+    MapFacts,
+    UnitSnapshot,
+    WorldFacts,
+)
 from tests.fakes import FakeCommands
 
 TARGET = Point2((80, 80))

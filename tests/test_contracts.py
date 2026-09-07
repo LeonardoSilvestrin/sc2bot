@@ -5,8 +5,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from bot.executors import MissionOutcome, MissionResult
-from bot.infrastructure.logging import NullBotLogger
+from bot.adapters.logging import NullBotLogger
+from bot.engine.missions import MissionOutcome, MissionResult
 
 
 class ContractTests(unittest.TestCase):
@@ -20,13 +20,24 @@ class ContractTests(unittest.TestCase):
             logger.event("test", component="test", game_time=0.0)
             logger.close()
 
-    def test_domain_boundaries_keep_ares_in_infrastructure(self):
+    def test_dependency_boundaries_keep_core_independent_from_adapters(self):
         root = Path(__file__).parents[1] / "bot"
         scopes = {
-            root / "attention": ("bot.awareness", "bot.ego", "bot.executors"),
-            root / "awareness": ("bot.ego",),
-            root / "planners": ("ares", "bot.infrastructure"),
-            root / "executors": ("ares", "bot.infrastructure"),
+            root / "world" / "observation": (
+                "bot.adapters",
+                "bot.behavior",
+                "bot.engine",
+                "bot.world.knowledge",
+            ),
+            root / "world" / "knowledge": ("bot.adapters", "bot.app", "bot.engine"),
+            root / "behavior": ("ares", "bot.adapters", "bot.app"),
+            root / "engine": (
+                "ares",
+                "bot.adapters",
+                "bot.app",
+                "bot.behavior",
+            ),
+            root / "ports": ("ares", "bot.adapters", "bot.app", "bot.behavior"),
         }
         violations: list[str] = []
         for scope, forbidden in scopes.items():

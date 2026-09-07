@@ -5,7 +5,11 @@ from dataclasses import replace
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
-from bot.attention.models import (
+from bot.behavior.macro import MacroPlanner
+from bot.behavior.posture import MacroPosture
+from bot.engine.economy.models import EconomicActionKind
+from bot.world.knowledge import AwarenessService
+from bot.world.observation.models import (
     AttentionSnapshot,
     CountFacts,
     EconomyFacts,
@@ -14,9 +18,6 @@ from bot.attention.models import (
     UnitTypeCount,
     WorldFacts,
 )
-from bot.awareness import AwarenessService, MacroPosture
-from bot.contracts.economy import EconomicActionKind
-from bot.planners import MacroPlanner
 
 MAP = MapFacts(
     center=Point2((50, 50)),

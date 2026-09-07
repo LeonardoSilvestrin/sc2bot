@@ -6,9 +6,8 @@ from dataclasses import replace
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
-from bot.attention.models import UnitSnapshot
-from bot.contracts import UnitRequirement
-from bot.ego import UnitAllocator
+from bot.engine.missions import UnitAllocator, UnitRequirement
+from bot.world.observation.models import UnitSnapshot
 
 
 def marine(tag: int = 1) -> UnitSnapshot:

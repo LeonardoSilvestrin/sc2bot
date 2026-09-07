@@ -7,8 +7,8 @@ from unittest.mock import patch
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
-from bot.application import BotRuntime
-from bot.ego import MissionKind, MissionStatus
+from bot.app import BotRuntime
+from bot.engine.missions import MissionKind, MissionStatus
 from tests.fakes import FakeCommands, FakeEconomyCommands, FakeLogger
 
 
@@ -137,10 +137,10 @@ class RuntimePilotTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "bot.application.runtime.AresMissionCommands",
+                "bot.app.runtime.AresMissionCommands",
                 return_value=commands,
             ),
-            patch("bot.application.runtime.register_baseline_behaviors"),
+            patch("bot.app.runtime.register_baseline_behaviors"),
         ):
             await runtime.on_step(bot, iteration=1)
 
@@ -243,10 +243,10 @@ class RuntimePilotTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "bot.application.runtime.AresMissionCommands",
+                "bot.app.runtime.AresMissionCommands",
                 return_value=commands,
             ),
-            patch("bot.application.runtime.register_baseline_behaviors"),
+            patch("bot.app.runtime.register_baseline_behaviors"),
         ):
             await runtime.on_step(bot, iteration=1)
             self.assertEqual(
@@ -283,10 +283,10 @@ class RuntimePilotTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "bot.application.runtime.AresEconomyCommands",
+                "bot.app.runtime.AresEconomyCommands",
                 return_value=economy_commands,
             ),
-            patch("bot.application.runtime.register_baseline_behaviors"),
+            patch("bot.app.runtime.register_baseline_behaviors"),
         ):
             await runtime.on_step(bot, iteration=1)
 
@@ -325,10 +325,10 @@ class RuntimePilotTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "bot.application.runtime.AresEconomyCommands",
+                "bot.app.runtime.AresEconomyCommands",
                 return_value=economy_commands,
             ),
-            patch("bot.application.runtime.register_baseline_behaviors"),
+            patch("bot.app.runtime.register_baseline_behaviors"),
         ):
             await runtime.on_step(bot, iteration=1)
 
@@ -370,10 +370,10 @@ class RuntimePilotTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "bot.application.runtime.AresEconomyCommands",
+                "bot.app.runtime.AresEconomyCommands",
                 return_value=economy_commands,
             ),
-            patch("bot.application.runtime.register_baseline_behaviors"),
+            patch("bot.app.runtime.register_baseline_behaviors"),
         ):
             await runtime.on_step(bot, iteration=1)
 
@@ -405,10 +405,10 @@ class RuntimePilotTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "bot.application.runtime.AresMissionCommands",
+                "bot.app.runtime.AresMissionCommands",
                 return_value=commands,
             ),
-            patch("bot.application.runtime.register_baseline_behaviors"),
+            patch("bot.app.runtime.register_baseline_behaviors"),
         ):
             await runtime.on_step(bot, iteration=1)
 

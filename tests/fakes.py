@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from bot.contracts.economy import EconomicAction, EconomicFeedback, EconomicFeedbackKind
+from bot.engine.economy.models import (
+    EconomicAction,
+    EconomicFeedback,
+    EconomicFeedbackKind,
+)
 
 
 class FakeLogger:

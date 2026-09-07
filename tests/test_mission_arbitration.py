@@ -6,10 +6,13 @@ from dataclasses import replace
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
-from bot.attention.models import UnitSnapshot
-from bot.awareness import AwarenessService
-from bot.ego import MissionController, MissionKind, MissionStatus
-from bot.planners import DefensePlanner, HarassPlanner, IntelPlanner
+from bot.app.mission_registry import DEFAULT_EXECUTOR_FACTORIES
+from bot.behavior.defense import DefensePlanner
+from bot.behavior.harass import HarassPlanner
+from bot.behavior.scouting import IntelPlanner
+from bot.engine.missions import MissionController, MissionKind, MissionStatus
+from bot.world.knowledge import AwarenessService
+from bot.world.observation.models import UnitSnapshot
 from tests.fakes import FakeCommands, FakeLogger
 from tests.test_scout_slice import attention
 
@@ -35,7 +38,7 @@ class HarassDeduplicationTests(unittest.IsolatedAsyncioTestCase):
         logger = FakeLogger()
         commands = FakeCommands()
         service = AwarenessService()
-        controller = MissionController(logger=logger)
+        controller = MissionController(logger=logger, executor_factories=DEFAULT_EXECUTOR_FACTORIES)
 
         service.update(attention(10.0, visible=True))
         current = attention(20.0, visible=False)
@@ -62,7 +65,7 @@ class DefensePreemptionTests(unittest.IsolatedAsyncioTestCase):
         self,
     ):
         service = AwarenessService()
-        controller = MissionController(logger=FakeLogger())
+        controller = MissionController(logger=FakeLogger(), executor_factories=DEFAULT_EXECUTOR_FACTORIES)
         commands = FakeCommands()
 
         current = attention(10.0, visible=False)

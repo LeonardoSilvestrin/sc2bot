@@ -5,21 +5,23 @@ import unittest
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
-from bot.awareness import AwarenessService
-from bot.contracts.allocation import UnitRequirement
-from bot.ego import Mission, MissionController, MissionKind, MissionStatus
-from bot.ego.executor_registry import DEFAULT_EXECUTOR_FACTORIES
-from bot.ego.models import MissionProposal
-from bot.executors import (
-    DefendBaseExecutor,
+from bot.app.mission_registry import DEFAULT_EXECUTOR_FACTORIES
+from bot.behavior.defense import DefendBaseExecutor
+from bot.behavior.harass import WorkerLineHarassExecutor
+from bot.behavior.scouting import IntelPlanner, ScoutExecutor
+from bot.engine.missions import (
+    Mission,
     MissionContext,
+    MissionController,
     MissionExecutor,
+    MissionKind,
     MissionOutcome,
+    MissionProposal,
     MissionResult,
-    ScoutExecutor,
-    WorkerLineHarassExecutor,
+    MissionStatus,
+    UnitRequirement,
 )
-from bot.planners import IntelPlanner
+from bot.world.knowledge import AwarenessService
 from tests.fakes import FakeCommands, FakeLogger
 from tests.test_scout_slice import attention
 

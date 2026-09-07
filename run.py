@@ -19,7 +19,7 @@ sys.path.append("ares-sc2")
 import yaml
 
 from bot.main import MyBot
-from bot.infrastructure.logging import JsonlBotLogger, NullBotLogger
+from bot.adapters.logging import JsonlBotLogger, NullBotLogger
 from ladder import run_ladder_game
 
 plt = platform.system()

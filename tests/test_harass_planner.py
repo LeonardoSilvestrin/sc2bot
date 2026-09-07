@@ -5,16 +5,16 @@ import unittest
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
-from bot.attention.models import (
+from bot.behavior.harass import HarassPlanner
+from bot.engine.missions import MissionKind
+from bot.world.knowledge import AwarenessService
+from bot.world.observation.models import (
     AttentionSnapshot,
     MapFacts,
     MapObservation,
     UnitSnapshot,
     WorldFacts,
 )
-from bot.awareness import AwarenessService
-from bot.ego.models import MissionKind
-from bot.planners import HarassPlanner
 
 TARGET = Point2((80, 80))
 

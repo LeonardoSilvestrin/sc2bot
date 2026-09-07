@@ -2,9 +2,9 @@
 from ares import AresBot
 from sc2.data import Result
 
-from bot.application import BotRuntime
-from bot.contracts import BotLogger
-from bot.infrastructure.logging import NullBotLogger
+from bot.adapters.logging import NullBotLogger
+from bot.app import BotRuntime
+from bot.ports import BotLogger
 
 
 class MyBot(AresBot):

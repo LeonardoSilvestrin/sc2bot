@@ -5,11 +5,20 @@ import unittest
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
-from bot.attention.models import AttentionSnapshot, MapFacts, UnitSnapshot, WorldFacts
-from bot.awareness.enemy.models import EnemyAwareness
-from bot.awareness.models import AwarenessSnapshot, RelativeStrength, ThreatAssessment
-from bot.executors import MissionContext, MissionOutcome
-from bot.executors.defense import DefendBaseExecutor
+from bot.behavior.defense import DefendBaseExecutor
+from bot.engine.missions import MissionContext, MissionOutcome
+from bot.world.knowledge.enemy.models import EnemyAwareness
+from bot.world.knowledge.models import (
+    AwarenessSnapshot,
+    RelativeStrength,
+    ThreatAssessment,
+)
+from bot.world.observation.models import (
+    AttentionSnapshot,
+    MapFacts,
+    UnitSnapshot,
+    WorldFacts,
+)
 from tests.fakes import FakeCommands
 
 MAP = MapFacts(

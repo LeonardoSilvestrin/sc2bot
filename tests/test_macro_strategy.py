@@ -6,7 +6,7 @@ import pytest
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.ids.upgrade_id import UpgradeId
 
-from bot.strategy import MacroGoalSet, ProductionGoal, bio_three_one_one
+from bot.behavior.macro import MacroGoalSet, ProductionGoal, bio_three_one_one
 
 
 def test_bio_three_one_one_declares_full_post_opening_convergence():

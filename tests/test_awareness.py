@@ -5,14 +5,15 @@ import unittest
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
-from bot.attention.models import (
+from bot.behavior.posture import MacroPosture
+from bot.world.knowledge import AwarenessService
+from bot.world.observation.models import (
     AttentionSnapshot,
     MapFacts,
     MapObservation,
     UnitSnapshot,
     WorldFacts,
 )
-from bot.awareness import AwarenessService, MacroPosture
 
 
 def unit(tag: int, unit_type: UnitTypeId, *, enemy_air_attack: bool = False):

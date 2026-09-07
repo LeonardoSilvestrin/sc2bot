@@ -8,13 +8,12 @@ from ares.consts import UnitRole
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
-from bot.attention.models import UnitSnapshot
-from bot.contracts.allocation import UnitRequirement
-from bot.ego.allocator import UnitAllocator
-from bot.infrastructure.ares.commands import (
+from bot.adapters.ares.mission_commands import (
     AresMissionCommands,
     UnauthorizedUnitCommand,
 )
+from bot.engine.missions import UnitAllocator, UnitRequirement
+from bot.world.observation.models import UnitSnapshot
 
 
 def make_bot(tag: int):

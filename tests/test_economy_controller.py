@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import unittest
 
-from bot.contracts.economy import (
+from bot.engine.economy import EconomyController
+from bot.engine.economy.models import (
     EconomicActionKind,
     EconomicActionStatus,
     EconomicFeedback,
@@ -11,7 +12,6 @@ from bot.contracts.economy import (
     ResourceBank,
     ResourceCost,
 )
-from bot.economy import EconomyController
 from tests.fakes import FakeLogger
 
 

@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from bot.infrastructure.logging import JsonlBotLogger
+from bot.adapters.logging import JsonlBotLogger
 
 
 class JsonlBotLoggerTests(unittest.TestCase):

@@ -5,8 +5,8 @@ import unittest
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
-from bot.attention.models import MapFacts, UnitSnapshot, WorldFacts
-from bot.awareness.enemy import EnemyKnowledge
+from bot.world.knowledge.enemy import EnemyKnowledge
+from bot.world.observation.models import MapFacts, UnitSnapshot, WorldFacts
 
 
 def world(time: float, enemies: tuple[UnitSnapshot, ...]) -> WorldFacts:

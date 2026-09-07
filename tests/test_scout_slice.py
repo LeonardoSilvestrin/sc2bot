@@ -8,19 +8,24 @@ from unittest.mock import Mock
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
-from bot.attention.models import (
+from bot.adapters.ares.mission_commands import AresMissionCommands
+from bot.app.mission_registry import DEFAULT_EXECUTOR_FACTORIES
+from bot.behavior.scouting import IntelPlanner
+from bot.engine.missions import (
+    MissionController,
+    MissionOutcome,
+    MissionResult,
+    MissionStatus,
+    UnitRequirement,
+)
+from bot.world.knowledge import AwarenessService
+from bot.world.observation.models import (
     AttentionSnapshot,
     MapFacts,
     MapObservation,
     UnitSnapshot,
     WorldFacts,
 )
-from bot.awareness import AwarenessService
-from bot.contracts import UnitRequirement
-from bot.ego import MissionController, MissionStatus
-from bot.executors import MissionOutcome, MissionResult
-from bot.infrastructure.ares.commands import AresMissionCommands
-from bot.planners import IntelPlanner
 from tests.fakes import FakeCommands, FakeLogger
 
 TARGET = Point2((80, 80))
@@ -83,8 +88,6 @@ class ScoutVerticalSliceTests(unittest.IsolatedAsyncioTestCase):
             async def step(self, context):
                 return MissionResult(MissionOutcome.COMPLETED, "urgent_done")
 
-        from bot.ego.executor_registry import DEFAULT_EXECUTOR_FACTORIES
-
         service = AwarenessService()
         current = attention(10, visible=False)
         awareness = service.update(current)
@@ -141,7 +144,7 @@ class ScoutVerticalSliceTests(unittest.IsolatedAsyncioTestCase):
                 minimum=2,
             ),
         )
-        controller = MissionController(logger=FakeLogger())
+        controller = MissionController(logger=FakeLogger(), executor_factories=DEFAULT_EXECUTOR_FACTORIES)
         commands = FakeCommands()
         for now, count in ((10, 2), (11, 1), (12, 1)):
             current = attention(now, visible=False, reapers=count)
@@ -164,7 +167,7 @@ class ScoutVerticalSliceTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_total_loss_is_not_hidden_by_an_available_replacement(self):
         service = AwarenessService()
-        controller = MissionController(logger=FakeLogger())
+        controller = MissionController(logger=FakeLogger(), executor_factories=DEFAULT_EXECUTOR_FACTORIES)
         commands = FakeCommands()
         current = attention(10, visible=False)
         awareness = service.update(current)
@@ -202,7 +205,7 @@ class ScoutVerticalSliceTests(unittest.IsolatedAsyncioTestCase):
         for minimum in (1, 2):
             with self.subTest(minimum=minimum):
                 service = AwarenessService()
-                controller = MissionController(logger=FakeLogger())
+                controller = MissionController(logger=FakeLogger(), executor_factories=DEFAULT_EXECUTOR_FACTORIES)
                 commands = FakeCommands()
                 current = attention(10, visible=False, reapers=2)
                 awareness = service.update(current)
@@ -255,7 +258,7 @@ class ScoutVerticalSliceTests(unittest.IsolatedAsyncioTestCase):
             ):
                 with self.subTest(outcome=outcome, unit_type=unit_type):
                     logger = FakeLogger()
-                    controller = MissionController(logger=logger)
+                    controller = MissionController(logger=logger, executor_factories=DEFAULT_EXECUTOR_FACTORIES)
                     service = AwarenessService()
                     current = attention(10, visible=False)
                     awareness = service.update(current)
@@ -317,7 +320,7 @@ class ScoutVerticalSliceTests(unittest.IsolatedAsyncioTestCase):
     async def test_preemption_finishes_donor_and_resets_role_before_new_executor(self):
         service = AwarenessService()
         logger = FakeLogger()
-        controller = MissionController(logger=logger)
+        controller = MissionController(logger=logger, executor_factories=DEFAULT_EXECUTOR_FACTORIES)
         commands = FakeCommands()
         current = attention(10, visible=False)
         awareness = service.update(current)
@@ -364,7 +367,7 @@ class ScoutVerticalSliceTests(unittest.IsolatedAsyncioTestCase):
         awareness = service.update(current)
         first = planner.propose(current, awareness)[0]
         duplicate = replace(first, proposal_id=f"{first.proposal_id}:duplicate")
-        controller = MissionController(logger=logger)
+        controller = MissionController(logger=logger, executor_factories=DEFAULT_EXECUTOR_FACTORIES)
 
         await controller.tick(
             attention=current,
@@ -384,7 +387,7 @@ class ScoutVerticalSliceTests(unittest.IsolatedAsyncioTestCase):
         commands = FakeCommands()
         awareness_service = AwarenessService(location_stale_after=90.0)
         planner = IntelPlanner()
-        controller = MissionController(logger=logger)
+        controller = MissionController(logger=logger, executor_factories=DEFAULT_EXECUTOR_FACTORIES)
 
         first_attention = attention(10.0, visible=False)
         first_awareness = awareness_service.update(first_attention)
@@ -445,7 +448,7 @@ class ScoutVerticalSliceTests(unittest.IsolatedAsyncioTestCase):
         awareness = awareness_service.update(rich_attention)
         proposal = planner.propose(rich_attention, awareness)
         empty_attention = attention(10.0, visible=False, workers=0, reapers=0)
-        controller = MissionController(logger=logger)
+        controller = MissionController(logger=logger, executor_factories=DEFAULT_EXECUTOR_FACTORIES)
         await controller.tick(
             attention=empty_attention,
             awareness=awareness,
@@ -468,7 +471,7 @@ class ScoutVerticalSliceTests(unittest.IsolatedAsyncioTestCase):
         planner = IntelPlanner()
         current = attention(10.0, visible=False)
         awareness = service.update(current)
-        controller = MissionController(logger=logger)
+        controller = MissionController(logger=logger, executor_factories=DEFAULT_EXECUTOR_FACTORIES)
 
         await controller.tick(
             attention=current,
@@ -490,7 +493,7 @@ class ScoutVerticalSliceTests(unittest.IsolatedAsyncioTestCase):
         planner = IntelPlanner()
         current = attention(10.0, visible=False, reapers=1)
         awareness = service.update(current)
-        controller = MissionController(logger=logger)
+        controller = MissionController(logger=logger, executor_factories=DEFAULT_EXECUTOR_FACTORIES)
 
         await controller.tick(
             attention=current,
