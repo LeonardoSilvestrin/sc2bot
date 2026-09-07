@@ -2,24 +2,31 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from bot.behavior.harass.config import (
-    BansheeHarassPlannerConfig,
-    HarassPlannerConfig,
-)
-from bot.engine.missions.models import MissionKind, MissionProposal, UnitRequirement
+from sc2.position import Point2
+
+from bot.behavior.harass.config import HarassOption, HarassPlannerConfig
+from bot.engine.missions.models import MissionProposal, UnitRequirement
 from bot.engine.missions.planning import ProposalCadence
+from bot.world.knowledge.enemy.models import EnemyLocationKnowledge
 from bot.world.knowledge.models import AwarenessSnapshot
-from bot.world.observation.models import AttentionSnapshot
+from bot.world.observation.models import AttentionSnapshot, UnitSnapshot
 
 
 @dataclass(slots=True)
 class HarassPlanner:
-    """Proposes worker-line pressure for a known base when a Reaper is free."""
+    """Calls whichever configured harass raid (Reaper, cloaked Banshee, ...)
+    currently has a launchable unit and a known, safe-enough target.
+
+    Each `HarassOption` in `config.options` is gated and rate-limited
+    independently (its own cadence and sequence numbers), so more than one
+    can be live at once -- e.g. a Reaper harassing while a Banshee raid is
+    also in flight, each with its own `MissionKind` and dedup key.
+    """
 
     config: HarassPlannerConfig = field(default_factory=HarassPlannerConfig)
     planner_id: str = "harass_planner"
-    _cadence: ProposalCadence = field(
-        default_factory=ProposalCadence, init=False, repr=False
+    _cadences: dict[str, ProposalCadence] = field(
+        default_factory=dict, init=False, repr=False
     )
 
     def propose(
@@ -28,130 +35,90 @@ class HarassPlanner:
         awareness: AwarenessSnapshot,
     ) -> tuple[MissionProposal, ...]:
         world = attention.world
-        if not self._cadence.ready(world.time, self.config.proposal_cadence):
-            return ()
-
         location = awareness.enemy.location(self.config.target_key)
         if location is None or location.last_observed_at is None:
             return ()
         workers = sum(unit.is_worker for unit in world.own_units)
-        if workers < self.config.minimum_workers:
-            return ()
-        if not any(
-            unit.unit_type in self.config.unit_types
+
+        proposals: list[MissionProposal] = []
+        for option in self.config.options:
+            cadence = self._cadences.setdefault(option.name, ProposalCadence())
+            if not cadence.ready(world.time, option.proposal_cadence):
+                continue
+            if workers < option.minimum_workers:
+                continue
+            if not self._has_launchable_unit(option, world.own_units):
+                continue
+            if not self._is_target_safe(option, world.enemy_units, location.position):
+                continue
+
+            cadence.mark(world.time)
+            sequence = cadence.next_sequence()
+            proposals.append(
+                self._build_proposal(option, location, sequence, world.time)
+            )
+        return tuple(proposals)
+
+    @staticmethod
+    def _has_launchable_unit(
+        option: HarassOption, own_units: tuple[UnitSnapshot, ...]
+    ) -> bool:
+        if not option.require_ready_unit:
+            return any(unit.unit_type in option.unit_types for unit in own_units)
+        return any(
+            unit.unit_type in option.unit_types
             and unit.available_for_mission
             and unit.is_ready
-            and unit.health_percentage >= self.config.minimum_unit_health
-            for unit in world.own_units
-        ):
-            return ()
-
-        self._cadence.mark(world.time)
-        sequence = self._cadence.next_sequence()
-        return (
-            MissionProposal(
-                proposal_id=(
-                    f"{self.planner_id}:harass:{self.config.target_key}:"
-                    f"{sequence}"
-                ),
-                deduplication_key=f"harass:{self.config.target_key}",
-                planner=self.planner_id,
-                kind=MissionKind.HARASS,
-                priority=self.config.priority,
-                target_key=self.config.target_key,
-                target=location.position,
-                reason="enemy_worker_line_known_and_reaper_available",
-                requirement=UnitRequirement.combat(
-                    unit_types=self.config.unit_types,
-                    desired=1,
-                    minimum=1,
-                    minimum_health=self.config.minimum_unit_health,
-                ),
-                created_at=world.time,
-                evidence_last_observed_at=location.last_observed_at,
-                evidence_age=location.age,
-                evidence_stale_after=location.stale_after,
-                timeout_seconds=self.config.mission_timeout,
-                cooldown_seconds=self.config.failure_cooldown,
-                can_preempt=False,
-                commitment_seconds=self.config.commitment_seconds,
-            ),
+            and unit.health_percentage >= option.minimum_unit_health
+            for unit in own_units
         )
 
+    @staticmethod
+    def _is_target_safe(
+        option: HarassOption,
+        enemy_units: tuple[UnitSnapshot, ...],
+        position: Point2,
+    ) -> bool:
+        if option.anti_air_check_radius is None:
+            return True
+        return not any(
+            unit.visible_now
+            and unit.can_attack_air
+            and unit.position.distance_to(position) <= option.anti_air_check_radius
+            for unit in enemy_units
+        )
 
-@dataclass(slots=True)
-class BansheeHarassPlanner:
-    """Proposes one cloaked-Banshee raid once one is alive and the target
-    worker line is known.
-
-    Unlike ``HarassPlanner``'s ground Reaper, a flying Banshee cannot be
-    threatened by a ground-only defender, so this withholds on a currently
-    visible *anti-air* unit (``AwarenessSnapshot.threat.visible_anti_air_units``,
-    already tracked for exactly this kind of air-safety judgement) rather
-    than any enemy unit anywhere. It never checks cloak research directly --
-    ``CloakedBansheeHarassExecutor`` casts cloak every step and the ability
-    simply no-ops until the tech finishes, so the Banshee harasses visibly
-    for a few seconds rather than waiting idle.
-    """
-
-    config: BansheeHarassPlannerConfig = field(
-        default_factory=BansheeHarassPlannerConfig
-    )
-    planner_id: str = "banshee_harass_planner"
-    _cadence: ProposalCadence = field(
-        default_factory=ProposalCadence, init=False, repr=False
-    )
-
-    def propose(
+    def _build_proposal(
         self,
-        attention: AttentionSnapshot,
-        awareness: AwarenessSnapshot,
-    ) -> tuple[MissionProposal, ...]:
-        world = attention.world
-        if not self._cadence.ready(world.time, self.config.proposal_cadence):
-            return ()
-
-        location = awareness.enemy.location(self.config.target_key)
-        if location is None or location.last_observed_at is None:
-            return ()
-        if awareness.threat.visible_anti_air_units > 0:
-            return ()
-        workers = sum(unit.is_worker for unit in world.own_units)
-        if workers < self.config.minimum_workers:
-            return ()
-        if not any(
-            unit.unit_type in self.config.unit_types for unit in world.own_units
-        ):
-            return ()
-
-        self._cadence.mark(world.time)
-        sequence = self._cadence.next_sequence()
-        return (
-            MissionProposal(
-                proposal_id=(
-                    f"{self.planner_id}:air_harass:{self.config.target_key}:"
-                    f"{sequence}"
-                ),
-                deduplication_key=f"air_harass:{self.config.target_key}",
-                planner=self.planner_id,
-                kind=MissionKind.AIR_HARASS,
-                priority=self.config.priority,
-                target_key=self.config.target_key,
-                target=location.position,
-                reason="enemy_worker_line_known_and_no_visible_anti_air",
-                requirement=UnitRequirement.combat(
-                    unit_types=self.config.unit_types,
-                    desired=1,
-                    minimum=1,
-                    minimum_health=self.config.minimum_unit_health,
-                ),
-                created_at=world.time,
-                evidence_last_observed_at=location.last_observed_at,
-                evidence_age=location.age,
-                evidence_stale_after=location.stale_after,
-                timeout_seconds=self.config.mission_timeout,
-                cooldown_seconds=self.config.failure_cooldown,
-                can_preempt=False,
-                commitment_seconds=self.config.commitment_seconds,
+        option: HarassOption,
+        location: EnemyLocationKnowledge,
+        sequence: int,
+        now: float,
+    ) -> MissionProposal:
+        prefix = option.mission_kind.name.lower()
+        return MissionProposal(
+            proposal_id=(
+                f"{self.planner_id}:{prefix}:{self.config.target_key}:{sequence}"
             ),
+            deduplication_key=f"{prefix}:{self.config.target_key}",
+            planner=self.planner_id,
+            kind=option.mission_kind,
+            priority=option.priority,
+            target_key=self.config.target_key,
+            target=location.position,
+            reason=option.reason,
+            requirement=UnitRequirement.combat(
+                unit_types=option.unit_types,
+                desired=1,
+                minimum=1,
+                minimum_health=option.minimum_unit_health,
+            ),
+            created_at=now,
+            evidence_last_observed_at=location.last_observed_at,
+            evidence_age=location.age,
+            evidence_stale_after=location.stale_after,
+            timeout_seconds=option.mission_timeout,
+            cooldown_seconds=option.failure_cooldown,
+            can_preempt=False,
+            commitment_seconds=option.commitment_seconds,
         )

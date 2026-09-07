@@ -11,12 +11,7 @@ from bot.adapters.ares import (
 )
 from bot.app.mission_registry import DEFAULT_EXECUTOR_FACTORIES
 from bot.behavior.defense import DefensePlanner, DefensePlannerConfig
-from bot.behavior.harass import (
-    BansheeHarassPlanner,
-    BansheeHarassPlannerConfig,
-    HarassPlanner,
-    HarassPlannerConfig,
-)
+from bot.behavior.harass import HarassPlanner, HarassPlannerConfig
 from bot.behavior.macro import (
     MacroPlanner,
     MacroPlannerConfig,
@@ -58,7 +53,6 @@ class BotRuntime:
         logger: BotLogger,
         intel_config: IntelPlannerConfig | None = None,
         harass_config: HarassPlannerConfig | None = None,
-        banshee_harass_config: BansheeHarassPlannerConfig | None = None,
         defense_config: DefensePlannerConfig | None = None,
         macro_config: MacroPlannerConfig | None = None,
         map_control_config: MapControlPlannerConfig | None = None,
@@ -68,9 +62,6 @@ class BotRuntime:
         self._rng = rng or random.Random()
         self.intel_config = intel_config or IntelPlannerConfig()
         self.harass_config = harass_config or HarassPlannerConfig()
-        self.banshee_harass_config = (
-            banshee_harass_config or BansheeHarassPlannerConfig()
-        )
         self.defense_config = defense_config or DefensePlannerConfig()
         self.macro_config = macro_config or MacroPlannerConfig()
         self.map_control_config = map_control_config or MapControlPlannerConfig()
@@ -80,16 +71,12 @@ class BotRuntime:
         )
         self.intel_planner = IntelPlanner(config=self.intel_config)
         self.harass_planner = HarassPlanner(config=self.harass_config)
-        self.banshee_harass_planner = BansheeHarassPlanner(
-            config=self.banshee_harass_config
-        )
         self.defense_planner = DefensePlanner(config=self.defense_config)
         self.macro_planner = MacroPlanner(config=self.macro_config)
         self.map_control_planner = MapControlPlanner(config=self.map_control_config)
         self._mission_planners = (
             self.intel_planner,
             self.harass_planner,
-            self.banshee_harass_planner,
             self.defense_planner,
             self.map_control_planner,
         )

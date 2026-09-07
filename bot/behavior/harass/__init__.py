@@ -1,12 +1,12 @@
-from .config import BansheeHarassPlannerConfig, HarassPlannerConfig
+from .config import HarassOption, HarassPlannerConfig, default_harass_options
 from .executor import CloakedBansheeHarassExecutor, WorkerLineHarassExecutor
-from .planner import BansheeHarassPlanner, HarassPlanner
+from .planner import HarassPlanner
 
 __all__ = [
-    "BansheeHarassPlanner",
-    "BansheeHarassPlannerConfig",
     "CloakedBansheeHarassExecutor",
+    "HarassOption",
     "HarassPlanner",
     "HarassPlannerConfig",
     "WorkerLineHarassExecutor",
+    "default_harass_options",
 ]
