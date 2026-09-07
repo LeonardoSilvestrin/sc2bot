@@ -4,6 +4,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from ares.consts import BUILD_CHOICES, CYCLE
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
@@ -11,6 +12,28 @@ from bot.app import BotRuntime
 from bot.behavior.macro import macro_config_for_opening
 from bot.engine.missions import MissionKind, MissionStatus
 from tests.fakes import FakeCommands, FakeEconomyCommands, FakeLogger
+
+
+class FakeBuildOrderRunner:
+    def __init__(self, *, config: dict, chosen_opening: str) -> None:
+        self.config = config
+        self.chosen_opening = chosen_opening
+        self.build_completed = False
+        self.build_step = 0
+        self.build_order = ()
+        self.switch_calls: list[str] = []
+
+    def switch_opening(self, opening_name: str) -> None:
+        self.switch_calls.append(opening_name)
+        self.chosen_opening = opening_name
+
+
+class FakeChat:
+    def __init__(self) -> None:
+        self.messages: list[str] = []
+
+    async def __call__(self, message: str) -> None:
+        self.messages.append(message)
 
 
 def worker(tag: int):
@@ -486,6 +509,74 @@ class RuntimePilotTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(defense.status, MissionStatus.ACTIVE)
         self.assertEqual(scout.status, MissionStatus.BLOCKED)
         self.assertIn("attack_move", [command[0] for command in commands.commands])
+
+    async def test_on_start_rerolls_opening_from_build_choices_and_announces_it(self):
+        # `terran_builds.yml` sets `UseData: false`, which makes Ares' own
+        # cycle logic always resolve to `Cycle[0]` (`BioThreeOneOne`) --
+        # `BansheeCloak` would never be picked without this reroll.
+        runner = FakeBuildOrderRunner(
+            config={
+                BUILD_CHOICES: {
+                    "Zerg": {CYCLE: ["BioThreeOneOne", "BansheeCloak"]},
+                },
+            },
+            chosen_opening="BioThreeOneOne",
+        )
+        chat = FakeChat()
+        bot = SimpleNamespace(
+            time=0.0,
+            game_info=SimpleNamespace(map_name="PilotMap"),
+            build_order_runner=runner,
+            enemy_race=SimpleNamespace(name="Zerg"),
+            opponent_id=None,
+            chat_send=chat,
+        )
+        runtime = BotRuntime(
+            logger=FakeLogger(), rng=SimpleNamespace(choice=lambda seq: seq[1])
+        )
+
+        await runtime.on_start(bot)
+
+        self.assertEqual(runner.switch_calls, ["BansheeCloak"])
+        self.assertEqual(
+            chat.messages,
+            ["Plan: Reaper expand into cloaked Banshee harass."],
+        )
+
+    async def test_on_start_announces_without_switching_when_no_build_choices(self):
+        runner = FakeBuildOrderRunner(config={}, chosen_opening="BioThreeOneOne")
+        chat = FakeChat()
+        bot = SimpleNamespace(
+            time=0.0,
+            game_info=SimpleNamespace(map_name="PilotMap"),
+            build_order_runner=runner,
+            enemy_race=SimpleNamespace(name="Zerg"),
+            opponent_id=None,
+            chat_send=chat,
+        )
+        runtime = BotRuntime(logger=FakeLogger())
+
+        await runtime.on_start(bot)
+
+        self.assertEqual(runner.switch_calls, [])
+        self.assertEqual(chat.messages, ["Plan: Reaper expand into Bio 3-1-1."])
+
+    async def test_on_start_falls_back_to_a_generic_message_for_unmapped_openings(
+        self,
+    ):
+        runner = FakeBuildOrderRunner(config={}, chosen_opening="SomeFutureBuild")
+        chat = FakeChat()
+        bot = SimpleNamespace(
+            time=0.0,
+            game_info=SimpleNamespace(map_name="PilotMap"),
+            build_order_runner=runner,
+            chat_send=chat,
+        )
+        runtime = BotRuntime(logger=FakeLogger())
+
+        await runtime.on_start(bot)
+
+        self.assertEqual(chat.messages, ["Plan: SomeFutureBuild."])
 
     async def test_macro_profile_switches_to_match_the_chosen_opening(self):
         # `MacroPlannerConfig` defaults to the Bio profile; once Ares resolves
