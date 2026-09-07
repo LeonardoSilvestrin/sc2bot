@@ -45,3 +45,20 @@ reason plus proposal/planner/mission identifiers where applicable:
 
 Local runs opt in with `--bot-log events`. Ladder runs retain `NullBotLogger` and do
 not open files.
+
+## Mission loss and cleanup
+
+- After allocator synchronization, a started mission that has lost its entire
+  assigned team fails with `all_assigned_units_lost`, before replacement allocation.
+- Partial losses allow replenishment. Below the allocation minimum, the mission
+  stays blocked with its surviving leases and does not step its executor. Once
+  replenished, it resumes the same executor and retains its original start time.
+- Total preemption fails the donor with `all_assigned_units_preempted`. The donor
+  cannot restart if the recipient releases the units later in the same frame.
+  Partial preemption updates the donor's assignments before it is reconsidered.
+- Transferred units have their execution role reset through the command port using
+  the new lease owner, before the recipient executor runs. Terminal cleanup restores
+  surviving workers to GATHERING and other units to IDLE through the Ares adapter.
+- Timeout remains cancellation, measured from admission, including blocked time.
+  Executor construction and step exceptions fail with the exception type and message
+  in `executor_error`. Terminal missions release leases and discard their executor.

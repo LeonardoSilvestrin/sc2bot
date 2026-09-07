@@ -57,6 +57,20 @@ class MissionController:
     ) -> None:
         now = attention.world.time
         self.allocator.sync(attention.world.own_units)
+        # Check losses before allocation can silently replace the entire team.
+        for mission in self.board.live():
+            if (
+                mission.started_at is not None
+                and mission.assigned_unit_tags
+                and not self.allocator.assigned_tags(mission.mission_id)
+            ):
+                self._finish(
+                    mission,
+                    MissionStatus.FAILED,
+                    "all_assigned_units_lost",
+                    now,
+                    commands,
+                )
         for proposal in proposals:
             self._consider(proposal, now)
 
@@ -65,6 +79,8 @@ class MissionController:
             key=lambda item: (-item.proposal.priority, item.admitted_at),
         )
         for mission in missions:
+            if mission.status.terminal:
+                continue
             cancel_reason = self._cancellation_reason(mission, now, awareness)
             if cancel_reason is not None:
                 self._finish(
@@ -81,7 +97,7 @@ class MissionController:
                 can_preempt=mission.proposal.can_preempt,
                 commitment_seconds=mission.proposal.commitment_seconds,
             )
-            self._apply_allocation(mission, allocation, now)
+            self._apply_allocation(mission, allocation, now, commands)
 
             if not allocation.requirements_satisfied:
                 if mission.started_at is not None and not allocation.assigned_tags:
@@ -114,10 +130,16 @@ class MissionController:
         return None
 
     def _apply_allocation(
-        self, mission: Mission, allocation: AllocationResult, now: float
+        self,
+        mission: Mission,
+        allocation: AllocationResult,
+        now: float,
+        commands: MissionCommands,
     ) -> None:
         for transfer in allocation.transfers:
             previous = self.board.get(transfer.from_mission_id)
+            # Ownership has moved; reset the old role using the authorized owner.
+            commands.release(mission_id=mission.mission_id, unit_tag=transfer.unit_tag)
             self._emit(
                 "units_reassigned",
                 now,
@@ -133,6 +155,21 @@ class MissionController:
                     previous.proposal.priority if previous is not None else None
                 ),
             )
+
+        for previous_id in dict.fromkeys(
+            transfer.from_mission_id for transfer in allocation.transfers
+        ):
+            previous = self.board.get(previous_id)
+            if previous is not None:
+                previous.assigned_unit_tags = self.allocator.assigned_tags(previous_id)
+                if not previous.assigned_unit_tags:
+                    self._finish(
+                        previous,
+                        MissionStatus.FAILED,
+                        "all_assigned_units_preempted",
+                        now,
+                        commands,
+                    )
 
         if mission.assigned_unit_tags != allocation.assigned_tags:
             previous_tags = mission.assigned_unit_tags
@@ -156,10 +193,19 @@ class MissionController:
         commands: MissionCommands,
     ) -> None:
         if mission.started_at is None:
+            try:
+                executor = self._executor_factories[mission.proposal.kind](mission, now)
+            except Exception as error:
+                self._finish(
+                    mission,
+                    MissionStatus.FAILED,
+                    f"executor_error:{type(error).__name__}:{error}",
+                    now,
+                    commands,
+                )
+                return
             mission.started_at = now
-            self._executors[mission.mission_id] = self._executor_factories[
-                mission.proposal.kind
-            ](mission, now)
+            self._executors[mission.mission_id] = executor
             mission.status = MissionStatus.ACTIVE
             mission.last_reason = "unit_requirements_satisfied"
             self._emit("mission_started", now, mission.last_reason, mission=mission)
