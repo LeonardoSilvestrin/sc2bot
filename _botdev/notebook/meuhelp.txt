@@ -1,0 +1,65 @@
+Worktrees paralelas (Claude / Codex / etc)
+============================================
+
+Contexto: varios agentes trabalham na mesma repo ao mesmo tempo, cada um numa
+worktree separada (sc2bot.worktrees/claude, sc2bot.worktrees/codex, ...),
+cada worktree numa branch propria (agents/claude, agents/codex, ...). A pasta
+principal (sc2bot/) fica na branch recomeco. Fazer isso na mao evita gastar
+uma rodada de Claude so pra mover branch/worktree.
+
+VER O QUE EXISTE
+  git worktree list
+    -> lista todas as worktrees, a branch de cada uma e se tem mudanca
+       pendente.
+
+ATUALIZAR UMA WORKTREE EXISTENTE PRO COMMIT ATUAL (o caso mais comum: comecar
+um agente do zero a partir do estado mais recente de recomeco)
+  git -C ../sc2bot.worktrees/codex merge --ff-only recomeco
+    -> so funciona se o commit atual de recomeco for descendente direto do
+       que a branch tinha (fast-forward). Nunca descarta nada, seguro de
+       rodar sempre. Se a branch tiver commits proprios nao mergeados ainda,
+       da erro em vez de perder trabalho -- nesse caso, olhar o que tem la
+       antes (git -C ../sc2bot.worktrees/codex log --oneline) e decidir se
+       merge normal ou reset.
+
+  git -C ../sc2bot.worktrees/codex reset --hard recomeco
+    -> forca a branch pro commit atual, DESCARTA qualquer commit que so
+       existia naquela branch. So usar se tiver certeza que não tem nada de
+       valor la (ex.: branch "teste" descartavel).
+
+CRIAR UMA WORKTREE NOVA (branch nova) A PARTIR DO COMMIT ATUAL
+  git worktree add ../sc2bot.worktrees/nome-da-pasta -b agents/nome-da-branch HEAD
+    -> HEAD pode ser omitido, e o padrao.
+
+TRABALHAR NUMA WORKTREE E DEPOIS TRAZER DE VOLTA PRA recomeco
+  1. dentro da worktree: commitar o trabalho normalmente.
+  2. voltar pra pasta principal (sc2bot/), conferir "git status" -- se tiver
+     mudanca sem commit de outro agente, comitar ela primeiro (separado, pra
+     nao misturar autoria) antes do merge.
+  3. git merge --no-ff agents/nome-da-branch
+     -> --no-ff deixa explicito no historico que aquilo veio de uma branch
+        paralela, mesmo quando daria fast-forward.
+  4. se dois agentes mexeram no mesmo arquivo em regioes diferentes, o merge
+     resolve sozinho. Conflito de verdade (mesma linha) so aparece quando as
+     duas mudancas se sobrepoem mesmo -- ai sim olhar os dois lados antes de
+     decidir.
+
+REMOVER UMA WORKTREE QUANDO NAO PRECISAR MAIS
+  git worktree remove ../sc2bot.worktrees/nome-da-pasta
+    -> a branch continua existindo (so a worktree/pasta some). Pra apagar a
+       branch tambem: git branch -D agents/nome-da-branch
+
+CUIDADO
+  Nao dar checkout/reset numa branch que ja esta aberta em outra worktree a
+  partir de fora dela (da erro "already checked out"). Sempre usar
+  git -C <caminho-da-worktree> <comando>, ou entrar na pasta.
+
+RESET + ABRIR JANELA NOVA
+
+claude: git -C ../sc2bot.worktrees/claude reset --hard recomeço; code -n ../sc2bot.worktrees/claude
+codex: git -C ../sc2bot.worktrees/codex reset --hard recomeço; code -n ../sc2bot.worktrees/codex
+
+MERGE
+
+git merge --no-ff agents/claude
+git merge --no-ff agents/codex

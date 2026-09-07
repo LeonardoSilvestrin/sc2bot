@@ -22,3 +22,10 @@ Cada arquivo segue o mesmo formato:
 
 Uso: quando for atacar uma dessas frentes, abrir o txt correspondente antes de
 mexer no codigo para nao redescobrir a API do zero.
+
+---
+
+meuhelp.txt e um arquivo a parte, sem relacao com o ares-sc2: comandos de git
+worktree pra trabalhar com varios agentes em paralelo (mover uma worktree pro
+commit atual, criar uma nova, mergear de volta). Guia pessoal de workflow,
+nao pesquisa de API.
