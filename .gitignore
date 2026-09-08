@@ -135,3 +135,6 @@ _botdev/logs/
 _botdev/reports/
 _botdev/tmp/
 .ruff_cache/
+
+# AI-Arena upload build artifact
+bot.zip
