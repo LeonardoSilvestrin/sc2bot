@@ -1,13 +1,14 @@
 from dataclasses import dataclass, field
 
-from bot.behavior.macro.goal_profiles import bio_three_one_one
-from bot.behavior.macro.goals import MacroGoalSet
 from bot.behavior.macro.reference_build import (
     ReferenceBuild,
     bio_three_one_one_reference,
 )
-from bot.behavior.posture import MacroPosture
 from bot.engine.economy.models import ResourceCost
+from bot.world.knowledge import MacroPosture
+
+from .macro_goals import MacroGoalSet
+from .strategy_goal_profiles import bio_three_one_one
 
 
 @dataclass(frozen=True, slots=True)

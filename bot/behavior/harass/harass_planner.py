@@ -4,12 +4,12 @@ from dataclasses import dataclass, field
 
 from sc2.position import Point2
 
-from bot.behavior.harass.config import HarassOption, HarassPlannerConfig
+from .harass_config import HarassOption, HarassPlannerConfig
 from bot.engine.missions.models import MissionProposal, UnitRequirement
 from bot.engine.missions.planning import ProposalCadence
-from bot.world.knowledge.enemy.models import EnemyLocationKnowledge
-from bot.world.knowledge.models import AwarenessSnapshot
-from bot.world.observation.models import AttentionSnapshot, UnitSnapshot
+from bot.world.knowledge import AwarenessSnapshot
+from bot.world.knowledge.enemy import EnemyLocationKnowledge
+from bot.world.observation import AttentionSnapshot, UnitSnapshot
 
 
 @dataclass(slots=True)

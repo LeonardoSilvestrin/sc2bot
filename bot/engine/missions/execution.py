@@ -7,8 +7,8 @@ from enum import Enum, auto
 
 from bot.engine.missions.models import Mission
 from bot.ports.mission_commands import MissionCommands
-from bot.world.knowledge.models import AwarenessSnapshot
-from bot.world.observation.models import AttentionSnapshot, UnitSnapshot
+from bot.world.knowledge import AwarenessSnapshot
+from bot.world.observation import AttentionSnapshot, UnitSnapshot
 
 
 class MissionOutcome(Enum):

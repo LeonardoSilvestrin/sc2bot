@@ -4,11 +4,11 @@ from dataclasses import dataclass, field
 
 from sc2.ids.unit_typeid import UnitTypeId
 
-from bot.behavior.scouting.config import IntelPlannerConfig
+from .intel_config import IntelPlannerConfig
 from bot.engine.missions.models import MissionKind, MissionProposal, UnitRequirement
 from bot.engine.missions.planning import ProposalCadence
-from bot.world.knowledge.models import AwarenessSnapshot
-from bot.world.observation.models import AttentionSnapshot, WorldFacts
+from bot.world.knowledge import AwarenessSnapshot
+from bot.world.observation import AttentionSnapshot, WorldFacts
 
 
 @dataclass(slots=True)

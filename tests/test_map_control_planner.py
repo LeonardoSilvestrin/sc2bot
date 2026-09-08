@@ -8,15 +8,15 @@ from sc2.position import Point2
 
 from bot.behavior.map_control import MapControlPlanner, MapControlPlannerConfig
 from bot.engine.missions import MissionKind
-from bot.world.knowledge.bases.models import BaseAwareness
-from bot.world.knowledge.enemy.models import EnemyAwareness
-from bot.world.knowledge.models import (
+from bot.world.knowledge import (
     AwarenessSnapshot,
     MacroPosture,
     RelativeStrength,
     ThreatAssessment,
 )
-from bot.world.observation.models import (
+from bot.world.knowledge.bases import BaseAwareness
+from bot.world.knowledge.enemy import EnemyAwareness
+from bot.world.observation import (
     AttentionSnapshot,
     MapFacts,
     UnitSnapshot,

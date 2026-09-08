@@ -9,20 +9,12 @@ from sc2.dicts.unit_train_build_abilities import TRAIN_INFO
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
-from bot.world.observation.models import (
-    TOWNHALL_TYPES,
-    AttentionSnapshot,
-    CountFacts,
-    EconomyFacts,
-    MapFacts,
-    MapObservation,
-    MapRoute,
-    ProducerFacts,
-    RouteWaypoint,
-    UnitSnapshot,
-    UnitTypeCount,
-    WorldFacts,
-)
+from .attention_snapshot import AttentionSnapshot
+from .base_facts import TOWNHALL_TYPES
+from .economy_facts import CountFacts, EconomyFacts, ProducerFacts, UnitTypeCount
+from .map_facts import MapFacts, MapObservation, MapRoute, RouteWaypoint
+from .unit_facts import UnitSnapshot
+from .world_facts import WorldFacts
 
 # All-race building types, used only as a fast path in _looks_like_structure:
 # anything missing here still falls back to inspecting game_data attributes.

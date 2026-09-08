@@ -14,7 +14,7 @@ from bot.adapters.ares.mission_commands import (
     UnauthorizedUnitCommand,
 )
 from bot.engine.missions import UnitAllocator, UnitRequirement
-from bot.world.observation.models import UnitSnapshot
+from bot.world.observation import UnitSnapshot
 
 
 def make_bot(tag: int):

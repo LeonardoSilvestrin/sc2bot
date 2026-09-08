@@ -15,7 +15,7 @@ from bot.engine.economy.models import (
     EconomicProposal,
     ResourceCost,
 )
-from bot.world.observation.models import CountFacts, EconomyFacts, UnitTypeCount
+from bot.world.observation import CountFacts, EconomyFacts, UnitTypeCount
 
 
 def snapshot(

@@ -7,13 +7,13 @@ from sc2.position import Point2
 
 from bot.behavior.defense import DefendBaseExecutor
 from bot.engine.missions import MissionContext, MissionOutcome
-from bot.world.knowledge.enemy.models import EnemyAwareness
-from bot.world.knowledge.models import (
+from bot.world.knowledge import (
     AwarenessSnapshot,
     RelativeStrength,
     ThreatAssessment,
 )
-from bot.world.observation.models import (
+from bot.world.knowledge.enemy import EnemyAwareness
+from bot.world.observation import (
     AttentionSnapshot,
     MapFacts,
     UnitSnapshot,

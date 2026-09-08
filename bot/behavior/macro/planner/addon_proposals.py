@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from bot.behavior.macro.config import MacroPlannerConfig
-from bot.behavior.macro.planner.common import build_proposal
-from bot.behavior.posture import MacroPosture
 from bot.engine.economy.models import EconomicActionKind, EconomicProposal
-from bot.world.observation.models import EconomyFacts
+from bot.world.knowledge import MacroPosture
+from bot.world.observation import EconomyFacts
+
+from ..macro_config import MacroPlannerConfig
+from .proposal_helpers import build_proposal
 
 
 def propose_addons(

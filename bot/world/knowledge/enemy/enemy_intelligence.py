@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
-from bot.world.observation.models import TOWNHALL_TYPES
+from bot.world.observation import TOWNHALL_TYPES
 
 
 @dataclass(frozen=True, slots=True)

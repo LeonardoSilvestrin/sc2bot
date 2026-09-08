@@ -18,7 +18,8 @@ ONDE FICA
   ares-sc2/src/ares/managers/manager_mediator.py:545-877 (threats + flags)
 
 GAP NO BOT
-  bot/world/knowledge/service.py e bot/world/knowledge/models.py nao usam
+  bot/world/knowledge/awareness_service.py e
+  bot/world/knowledge/awareness.py nao usam
   nenhuma dessas flags -- MacroPosture e derivado so de contagem de unidades
   proximas (`nearby_enemy_combat`, ver _derive_macro_posture). Isso significa
   que a defesa so reage quando o inimigo ja esta fisicamente perto da base,
@@ -26,7 +27,8 @@ GAP NO BOT
   unidades chegarem).
 
   Atualizacao (2026-09-07, ver _botdev/architecture/base-model.md):
-  bot/world/knowledge/bases/knowledge.py:BaseSecurityAssessor agora calcula
+  bot/world/knowledge/bases/base_security_assessor.py:BaseSecurityAssessor
+  agora calcula
   threat_score/protection_score por base usando um loop equivalente na mao
   (visible, nao-trabalhador, capaz de atacar, dentro de um raio), ainda sem
   usar get_main_ground_threats_near_townhall / get_main_air_threats_near_

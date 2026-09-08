@@ -1,13 +1,13 @@
-from .config import MacroPlannerConfig, ResourceOverflowConfig
-from .goal_profiles import banshee_cloak, bio_three_one_one
-from .goals import ArmyUnitGoal, MacroGoalSet, ProductionGoal, UpgradeGoal
+from .macro_config import MacroPlannerConfig, ResourceOverflowConfig
+from .macro_goals import ArmyUnitGoal, MacroGoalSet, ProductionGoal, UpgradeGoal
+from .opening_macro_profiles import MACRO_PROFILES, macro_config_for_opening
 from .planner import MacroPlanner
-from .profiles import MACRO_PROFILES, macro_config_for_opening
 from .reference_build import (
     ReferenceBuild,
     ReferenceBuildPoint,
     bio_three_one_one_reference,
 )
+from .strategy_goal_profiles import banshee_cloak, bio_three_one_one
 
 __all__ = [
     "MACRO_PROFILES",

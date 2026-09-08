@@ -14,7 +14,7 @@ from bot.behavior.macro import (
 from bot.behavior.posture import MacroPosture
 from bot.engine.economy.models import EconomicActionKind, ResourceCost
 from bot.world.knowledge import AwarenessService
-from bot.world.observation.models import (
+from bot.world.observation import (
     AttentionSnapshot,
     CountFacts,
     EconomyFacts,

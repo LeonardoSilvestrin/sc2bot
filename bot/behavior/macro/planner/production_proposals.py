@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from bot.behavior.macro.config import MacroPlannerConfig
-from bot.behavior.macro.goals import ProductionGoal
-from bot.behavior.macro.planner.common import build_proposal
-from bot.behavior.posture import MacroPosture
 from bot.engine.economy.models import EconomicActionKind, EconomicProposal
-from bot.world.observation.models import EconomyFacts, ProducerFacts
+from bot.world.knowledge import MacroPosture
+from bot.world.observation import EconomyFacts, ProducerFacts
+
+from ..macro_config import MacroPlannerConfig
+from ..macro_goals import ProductionGoal
+from .proposal_helpers import build_proposal
 
 
 def propose_production(

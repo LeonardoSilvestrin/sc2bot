@@ -1,7 +1,12 @@
+from .awareness import (
+    AwarenessSnapshot,
+    MacroPosture,
+    RelativeStrength,
+    ThreatAssessment,
+)
+from .awareness_service import AwarenessService
 from .bases import BaseAssessment, BaseAwareness, BaseSecurityLevel
 from .enemy import EnemyAwareness, EnemyLocationKnowledge, EnemySighting
-from .models import AwarenessSnapshot, MacroPosture, RelativeStrength, ThreatAssessment
-from .service import AwarenessService
 
 __all__ = [
     "AwarenessService",

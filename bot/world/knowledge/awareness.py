@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum, auto
 
-from bot.world.knowledge.bases.models import BaseAwareness
-from bot.world.knowledge.enemy.models import EnemyAwareness
+from .bases.base_security import BaseAwareness
+from .enemy.enemy_intelligence import EnemyAwareness
 
 
 class MacroPosture(Enum):

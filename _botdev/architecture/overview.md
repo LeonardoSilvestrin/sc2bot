@@ -27,6 +27,20 @@ Game / Ares
 - `infrastructure/ares` translates those ports into Ares roles and behaviors.
 - `application` wires the frame together without containing strategic rules.
 
+## World package layout
+
+Observation facts are split by subject so each module has room to grow without
+turning into a generic model catalog: `unit_facts.py`, `base_facts.py`,
+`map_facts.py`, `economy_facts.py`, `world_facts.py`, and
+`attention_snapshot.py`. `attention_builder.py` remains the sole Ares-to-facts
+adapter. Consumers import the stable public API from `bot.world.observation`.
+
+Knowledge follows the same naming rule: `awareness.py` holds the combined
+belief snapshot, `awareness_service.py` derives it, and the base/enemy packages
+use explicit state/derivation names instead of repeated `models.py` and
+`knowledge.py` files. Consumers import from `bot.world.knowledge` or the
+relevant `bases`/`enemy` package.
+
 The scouting slice sends a Reaper through the enemy natural and around the enemy
 main using a map-derived perimeter route and Ares' climber grid. It stays safe via
 `KeepUnitSafe`, records structures and the known enemy base count, and completes

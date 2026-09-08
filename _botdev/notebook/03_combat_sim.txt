@@ -12,10 +12,10 @@ ONDE FICA
   ares-sc2/src/ares/managers/manager_mediator.py:235 (can_win_fight)
 
 GAP NO BOT
-  bot/world/knowledge/service.py:74-85 calcula RelativeStrength contando
+  bot/world/knowledge/awareness_service.py calcula RelativeStrength contando
   unidades de combate (`own_combat - enemy_combat`) sem olhar tipo de
   unidade, upgrade ou HP. Um marine e um siege tank contam igual. Esse score
-  alimenta MacroPosture (bot/world/knowledge/models.py).
+  alimenta MacroPosture (bot/world/knowledge/awareness.py).
 
   Do lado da execucao, DefendBaseExecutor.step (bot/behavior/defense/
   executor.py) so verifica "ainda existe ameaca no raio?" -- nunca decide
@@ -31,7 +31,7 @@ IDEIA DE USO
      can_win_fight(assigned_units vs threats). Se perdendo, trocar para
      retirada (KeepUnitSafe / regroup num ponto seguro, ex. rampa) em vez de
      continuar mandando AMove ate morrer.
-  2. AwarenessService.update (bot/world/knowledge/service.py): substituir ou
+  2. AwarenessService.update (bot/world/knowledge/awareness_service.py): substituir ou
      complementar o RelativeStrength por um resultado de can_win_fight entre
      own_army vs cached_enemy_army, deixando MacroPosture reagir a poder de
      fogo real, nao contagem de unidades.

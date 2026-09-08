@@ -10,7 +10,7 @@ from bot.engine.economy.models import (
     EconomicFeedback,
     EconomicFeedbackKind,
 )
-from bot.world.observation.models import EconomyFacts
+from bot.world.observation import EconomyFacts
 
 
 def observe_economic_confirmations(

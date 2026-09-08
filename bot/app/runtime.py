@@ -28,9 +28,8 @@ from bot.engine.economy import (
 )
 from bot.engine.missions import MissionController
 from bot.ports.logging import BotLogger
-from bot.world.knowledge.models import AwarenessSnapshot
-from bot.world.knowledge.service import AwarenessService
-from bot.world.observation.builder import AttentionBuilder
+from bot.world.knowledge import AwarenessService, AwarenessSnapshot
+from bot.world.observation import AttentionBuilder
 
 # `terran_builds.yml` sets `UseData: false` (ladder-safe: never persist
 # opponent history to disk), which makes Ares' own build-selection cycle

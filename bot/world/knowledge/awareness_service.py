@@ -1,18 +1,19 @@
 from __future__ import annotations
 
-from bot.world.knowledge.bases import BaseSecurityAssessor
-from bot.world.knowledge.enemy import (
-    EnemyAwareness,
-    EnemyKnowledge,
-    EnemyLocationKnowledge,
-)
-from bot.world.knowledge.models import (
+from bot.world.observation import TOWNHALL_TYPES, AttentionSnapshot
+
+from .awareness import (
     AwarenessSnapshot,
     MacroPosture,
     RelativeStrength,
     ThreatAssessment,
 )
-from bot.world.observation.models import TOWNHALL_TYPES, AttentionSnapshot
+from .bases import BaseSecurityAssessor
+from .enemy import (
+    EnemyAwareness,
+    EnemyKnowledge,
+    EnemyLocationKnowledge,
+)
 
 
 class AwarenessService:

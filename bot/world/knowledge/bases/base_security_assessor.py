@@ -4,12 +4,13 @@ from dataclasses import dataclass
 
 from sc2.ids.unit_typeid import UnitTypeId
 
-from bot.world.knowledge.bases.models import (
+from bot.world.observation import BaseSnapshot, WorldFacts
+
+from .base_security import (
     BaseAssessment,
     BaseAwareness,
     BaseSecurityLevel,
 )
-from bot.world.observation.models import BaseSnapshot, WorldFacts
 
 _STATIC_DEFENSE_TYPES: frozenset[UnitTypeId] = frozenset(
     {

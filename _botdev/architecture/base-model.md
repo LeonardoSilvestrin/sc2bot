@@ -7,19 +7,18 @@ Attention/Awareness split from [overview.md](overview.md): the base inventory
 itself is a fact (`BaseSnapshot`, `attention`), the threat/protection reading
 is a belief (`BaseAssessment`, `awareness`).
 
-## `BaseSnapshot` (attention, `bot/world/observation/models.py`)
+## `BaseSnapshot` (attention, `bot/world/observation/base_facts.py`)
 
 ```python
 BaseSnapshot(base_id, position, is_main, townhall: UnitSnapshot | None)
 ```
 
-One entry per owned townhall (`TOWNHALL_TYPES`, moved from `builder.py` into
-`observation/models.py` so both the builder and this property share one
-definition). Exposed as `WorldFacts.bases`, a computed property rather than a
-stored field: it is a pure, lossless transform of `own_structures` plus
+One entry per owned townhall (`TOWNHALL_TYPES` lives beside the snapshot in
+`base_facts.py`). Exposed as `WorldFacts.bases`, a computed property rather
+than a stored field: it is a pure, lossless transform of `own_structures` plus
 `map.own_start`, so it stays correct whether `WorldFacts` was built by
-`AttentionBuilder` or constructed by hand in a test, with no extra
-constructor argument to keep in sync. `base_id` is `f"base:{townhall.tag}"`.
+`AttentionBuilder` or constructed by hand in a test, with no extra constructor
+argument to keep in sync. `base_id` is `f"base:{townhall.tag}"`.
 
 Before any townhall is observed (the first frame or two of a real game, or a
 sparse test fixture) `bases` returns a single placeholder,
@@ -29,9 +28,9 @@ to hardcode, now just the natural empty case of the general rule.
 
 ## `BaseAssessment` / `BaseAwareness` (awareness, `bot/world/knowledge/bases/`)
 
-Mirrors the existing `bot/world/knowledge/enemy/` split (`models.py` for the
-dataclasses, a `knowledge.py`/`*.py` for the derivation) since this is where
-the scoring logic is expected to grow.
+Mirrors the existing `bot/world/knowledge/enemy/` split: `base_security.py`
+holds the immutable state and `base_security_assessor.py` derives it. This is
+where the scoring logic is expected to grow.
 
 `BaseSecurityAssessor.update(world) -> BaseAwareness` scores each
 `BaseSnapshot`, stateless for now (recomputed every frame, no memory):

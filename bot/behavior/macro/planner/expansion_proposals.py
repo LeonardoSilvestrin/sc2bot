@@ -4,11 +4,12 @@ from math import ceil
 
 from sc2.ids.unit_typeid import UnitTypeId
 
-from bot.behavior.macro.config import MacroPlannerConfig
-from bot.behavior.macro.planner.common import build_proposal, saturation_target
-from bot.behavior.posture import MacroPosture
 from bot.engine.economy.models import EconomicActionKind, EconomicProposal
-from bot.world.observation.models import EconomyFacts
+from bot.world.knowledge import MacroPosture
+from bot.world.observation import EconomyFacts
+
+from ..macro_config import MacroPlannerConfig
+from .proposal_helpers import build_proposal, saturation_target
 
 _SATURATION_THRESHOLD: dict[MacroPosture, float] = {
     MacroPosture.BALANCED: 0.90,

@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from bot.behavior.map_control.config import MapControlPlannerConfig
+from .map_control_config import MapControlPlannerConfig
 from bot.engine.missions.models import MissionKind, MissionProposal, UnitRequirement
 from bot.engine.missions.planning import ProposalCadence
-from bot.world.knowledge.models import AwarenessSnapshot, MacroPosture
-from bot.world.observation.models import AttentionSnapshot, UnitSnapshot
+from bot.world.knowledge import AwarenessSnapshot, MacroPosture
+from bot.world.observation import AttentionSnapshot, UnitSnapshot
 
 
 @dataclass(slots=True)
