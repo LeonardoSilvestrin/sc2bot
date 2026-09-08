@@ -1,3 +1,28 @@
+# sc2bot
+
+A Terran StarCraft II bot built on [ares-sc2](https://github.com/AresSC2/ares-sc2). Two openers are defined in
+`terran_builds.yml`: a Reaper-expand into standard Bio 3-1-1 (stim/shields/+1 attack, medivacs), and a pivot into
+cloaked Banshee harass off a Starport tech lab.
+
+## Architecture
+
+The bot is layered as a sense → believe → decide → arbitrate → act pipeline:
+
+- `bot/world/attention/` — raw per-tick facts (economy, map, units, bases).
+- `bot/world/awareness/` — derived beliefs from those facts: enemy sighting memory/confidence, per-base security,
+  and macro posture (turtle vs. greedy expand) via `AwarenessService`.
+- `bot/behavior/` — decision logic, split by concern (`macro/`, `defense/`, `harass/`, `scouting/`, `map_control/`),
+  each following a planner (proposes actions) / executor (config) split.
+- `bot/engine/` — arbitration: `missions/` (bidding/allocation/controller) and `economy/` commit proposals into
+  concrete actions.
+- `bot/adapters/ares/` — translates between the bot's world model and the Ares/python-sc2 API.
+- `bot/app/runtime.py` — composition root wiring all of the above together each tick.
+
+See `_botdev/architecture/` for versioned design docs and contracts, and `_botdev/README.md` for the dev workspace
+conventions (the ladder entrypoint must always compose the bot with `NullBotLogger`).
+
+---
+
 **Useful Links**
 
 [ares-sc2 framework repo](https://github.com/AresSC2/ares-sc2)  
