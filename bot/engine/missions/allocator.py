@@ -6,7 +6,7 @@ from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
 from bot.engine.missions.models import UnitRequirement
-from bot.world.observation import UnitSnapshot
+from bot.world.attention import UnitSnapshot
 
 
 @dataclass(frozen=True, slots=True)

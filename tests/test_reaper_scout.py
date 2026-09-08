@@ -7,8 +7,7 @@ from sc2.position import Point2
 
 from bot.behavior.scouting import ScoutExecutor
 from bot.engine.missions import MissionContext, MissionOutcome
-from bot.world.knowledge import AwarenessService
-from bot.world.observation import (
+from bot.world.attention import (
     AttentionSnapshot,
     MapFacts,
     MapObservation,
@@ -17,6 +16,7 @@ from bot.world.observation import (
     UnitSnapshot,
     WorldFacts,
 )
+from bot.world.awareness import AwarenessService
 from tests.fakes import FakeCommands
 
 

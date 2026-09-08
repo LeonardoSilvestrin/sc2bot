@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
-from bot.world.observation import AttentionBuilder
+from bot.adapters.ares import AresWorldObserver
 
 
 def unit(
@@ -41,7 +41,7 @@ def unit(
     )
 
 
-class AttentionBuilderTests(unittest.TestCase):
+class AresWorldObserverTests(unittest.TestCase):
     def test_builds_enemy_main_route_from_perimeter_away_from_ramp(self):
         main = Point2((90, 90))
         natural = Point2((90, 70))
@@ -61,7 +61,7 @@ class AttentionBuilderTests(unittest.TestCase):
             is_visible=lambda _: False,
         )
 
-        routes = AttentionBuilder._map_routes(bot)
+        routes = AresWorldObserver._map_routes(bot)
 
         self.assertEqual(len(routes), 1)
         self.assertEqual(routes[0].key, "enemy_main")
@@ -97,11 +97,11 @@ class AttentionBuilderTests(unittest.TestCase):
             is_visible=lambda position: position == natural,
         )
 
-        world = AttentionBuilder().world_facts(bot, iteration=1)
+        world = AresWorldObserver().world_facts(bot, iteration=1)
 
         # Memory units are kept -- not silently dropped -- but flagged as not
         # currently visible so callers can tell "there now" from "last known
-        # here" (see bot.world.knowledge.enemy.EnemyKnowledge).
+        # here" (see bot.world.awareness.enemy.EnemyKnowledge).
         self.assertEqual(
             {item.tag: item.visible_now for item in world.enemy_units},
             {3: True, 4: False},
@@ -130,7 +130,7 @@ class AttentionBuilderTests(unittest.TestCase):
             game_info=SimpleNamespace(map_center=Point2((50, 50))),
         )
 
-        world = AttentionBuilder().world_facts(bot, iteration=1)
+        world = AresWorldObserver().world_facts(bot, iteration=1)
 
         self.assertTrue(all(item.is_worker for item in world.enemy_units))
 
@@ -219,7 +219,7 @@ class AttentionBuilderTests(unittest.TestCase):
             structure_pending=lambda unit_type: pending_structures.get(unit_type, 0),
         )
 
-        economy = AttentionBuilder().world_facts(bot, iteration=10).economy
+        economy = AresWorldObserver().world_facts(bot, iteration=10).economy
 
         self.assertEqual(economy.opening_name, "BioThreeOneOne")
         self.assertTrue(economy.opening_completed)
@@ -260,7 +260,7 @@ class AttentionBuilderTests(unittest.TestCase):
             game_info=SimpleNamespace(map_center=Point2((50, 50))),
         )
 
-        economy = AttentionBuilder().world_facts(bot, iteration=1).economy
+        economy = AresWorldObserver().world_facts(bot, iteration=1).economy
 
         self.assertEqual(economy.opening_name, "")
         self.assertFalse(economy.opening_completed)

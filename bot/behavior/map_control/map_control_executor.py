@@ -11,9 +11,9 @@ from bot.engine.missions.execution import (
     MissionOutcome,
     MissionResult,
 )
-from bot.world.knowledge import MacroPosture
-from bot.world.knowledge.bases import BaseSecurityLevel
-from bot.world.observation import MapFacts, UnitSnapshot
+from bot.world.attention import MapFacts, UnitSnapshot
+from bot.world.awareness import MacroPosture
+from bot.world.awareness.bases import BaseSecurityLevel
 
 
 @dataclass(slots=True)

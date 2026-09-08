@@ -5,7 +5,7 @@ from bot.behavior.macro.reference_build import (
     bio_three_one_one_reference,
 )
 from bot.engine.economy.models import ResourceCost
-from bot.world.knowledge import MacroPosture
+from bot.world.awareness import MacroPosture
 
 from .macro_goals import MacroGoalSet
 from .strategy_goal_profiles import bio_three_one_one

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from bot.engine.economy.models import EconomicActionKind, EconomicProposal, ResourceCost
-from bot.world.observation import EconomyFacts
+from bot.world.attention import EconomyFacts
 
 
 def saturation_target(economy: EconomyFacts, workers_per_townhall: int) -> int:

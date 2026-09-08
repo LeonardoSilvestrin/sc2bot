@@ -7,6 +7,7 @@ from ares.consts import BUILD_CHOICES, CYCLE, DEBUG, TEST_OPPONENT_ID
 from bot.adapters.ares import (
     AresEconomyCommands,
     AresMissionCommands,
+    AresWorldObserver,
     register_baseline_behaviors,
 )
 from bot.app.mission_registry import DEFAULT_EXECUTOR_FACTORIES
@@ -28,8 +29,8 @@ from bot.engine.economy import (
 )
 from bot.engine.missions import MissionController
 from bot.ports.logging import BotLogger
-from bot.world.knowledge import AwarenessService, AwarenessSnapshot
-from bot.world.observation import AttentionBuilder
+from bot.world.attention import AttentionService
+from bot.world.awareness import AwarenessService, AwarenessSnapshot
 
 # `terran_builds.yml` sets `UseData: false` (ladder-safe: never persist
 # opponent history to disk), which makes Ares' own build-selection cycle
@@ -64,7 +65,7 @@ class BotRuntime:
         self.defense_config = defense_config or DefensePlannerConfig()
         self.macro_config = macro_config or MacroPlannerConfig()
         self.map_control_config = map_control_config or MapControlPlannerConfig()
-        self.attention_builder = AttentionBuilder()
+        self.world_observer = AresWorldObserver()
         self.awareness = AwarenessService(
             location_stale_after=self.intel_config.location_stale_after
         )
@@ -151,8 +152,8 @@ class BotRuntime:
         return tuple(build_choices[key].get(CYCLE, ()) or ())
 
     async def on_step(self, bot, *, iteration: int) -> None:
-        world = self.attention_builder.world_facts(bot, iteration=iteration)
-        attention = self.attention_builder.build(world=world)
+        world = self.world_observer.world_facts(bot, iteration=iteration)
+        attention = AttentionService.build(world=world)
         awareness = self.awareness.update(attention)
         proposals = tuple(
             proposal
@@ -290,7 +291,7 @@ class BotRuntime:
         self._last_world_snapshot_at = world.time
         self.logger.event(
             "knowledge.updated",
-            component="world.knowledge",
+            component="world.awareness",
             game_time=world.time,
             data={
                 "posture": awareness.macro_posture.name,
@@ -320,7 +321,7 @@ class BotRuntime:
         )
         self.logger.event(
             "observation.updated",
-            component="world.observation",
+            component="world.attention",
             game_time=world.time,
             data={
                 "minerals": world.minerals,
@@ -385,7 +386,7 @@ class BotRuntime:
         self._last_enemy_intel_signature = signature
         self.logger.event(
             "knowledge.enemy_intel",
-            component="world.knowledge.enemy",
+            component="world.awareness.enemy",
             game_time=game_time,
             data={
                 "known_enemy_bases": awareness.enemy.known_base_count,

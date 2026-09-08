@@ -7,7 +7,7 @@ from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
 from bot.engine.missions import UnitAllocator, UnitRequirement
-from bot.world.observation import UnitSnapshot
+from bot.world.attention import UnitSnapshot
 
 
 def marine(tag: int = 1) -> UnitSnapshot:

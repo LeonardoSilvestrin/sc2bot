@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from bot.world.observation import WorldFacts
+from bot.world.attention import WorldFacts
 
-from .enemy_intelligence import EnemySighting
+from .knowledge import EnemySighting
 
 
 class EnemyKnowledge:

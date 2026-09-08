@@ -1,18 +1,18 @@
 from __future__ import annotations
 
-from bot.world.observation import TOWNHALL_TYPES, AttentionSnapshot
+from bot.world.attention import TOWNHALL_TYPES, AttentionSnapshot
 
-from .awareness import (
-    AwarenessSnapshot,
-    MacroPosture,
-    RelativeStrength,
-    ThreatAssessment,
-)
 from .bases import BaseSecurityAssessor
 from .enemy import (
     EnemyAwareness,
     EnemyKnowledge,
     EnemyLocationKnowledge,
+)
+from .posture import PostureState, derive_macro_posture
+from .snapshot import (
+    AwarenessSnapshot,
+    RelativeStrength,
+    ThreatAssessment,
 )
 
 
@@ -42,9 +42,7 @@ class AwarenessService:
         self.enemy_knowledge = EnemyKnowledge()
         self._base_assessor = BaseSecurityAssessor()
         self._location_last_observed: dict[str, float] = {}
-        self._macro_posture = MacroPosture.BALANCED
-        self._posture_changed_at = float("-inf")
-        self._last_base_threat_at = float("-inf")
+        self._posture_state = PostureState()
 
     def update(self, attention: AttentionSnapshot) -> AwarenessSnapshot:
         world = attention.world
@@ -115,13 +113,25 @@ class AwarenessService:
             and (unit.can_attack_air or unit.can_attack_ground)
             for unit in world.enemy_units
         )
-        macro_posture = self._derive_macro_posture(
-            world=world,
+        workers = sum(unit.is_worker for unit in world.own_units)
+        townhalls = sum(
+            structure.is_ready
+            and not structure.is_flying
+            and structure.unit_type in TOWNHALL_TYPES
+            for structure in world.own_structures
+        )
+        self._posture_state = derive_macro_posture(
+            now=world.time,
+            workers=workers,
+            townhalls=townhalls,
             own_combat=own_combat,
-            enemy_combat=enemy_combat,
             strength_score=score,
             strength_confidence=strength_confidence,
             nearby_enemy_combat=len(nearby_combat),
+            state=self._posture_state,
+            defense_release_after=self.defense_release_after,
+            greed_safe_after=self.greed_safe_after,
+            posture_min_hold=self.posture_min_hold,
         )
 
         return AwarenessSnapshot(
@@ -146,53 +156,6 @@ class AwarenessService:
                 near_own_base_enemy_combat_units=len(nearby_combat),
             ),
             updated_at=world.time,
-            macro_posture=macro_posture,
+            macro_posture=self._posture_state.posture,
             bases=self._base_assessor.update(world),
         )
-
-    def _derive_macro_posture(
-        self,
-        *,
-        world,
-        own_combat: int,
-        enemy_combat: int,
-        strength_score: float,
-        strength_confidence: float,
-        nearby_enemy_combat: int,
-    ) -> MacroPosture:
-        """Apply immediate danger and slow release/greed hysteresis."""
-
-        now = world.time
-        workers = sum(unit.is_worker for unit in world.own_units)
-        townhalls = sum(
-            structure.is_ready
-            and not structure.is_flying
-            and structure.unit_type in TOWNHALL_TYPES
-            for structure in world.own_structures
-        )
-
-        if nearby_enemy_combat:
-            candidate = MacroPosture.DEFENSE
-            self._last_base_threat_at = now
-        elif now - self._last_base_threat_at < self.defense_release_after:
-            candidate = MacroPosture.DEFENSE
-        elif townhalls == 0 or (now >= 90.0 and workers < 8):
-            candidate = MacroPosture.RECOVERY
-        elif (
-            now - self._last_base_threat_at >= self.greed_safe_after
-            and strength_confidence >= 0.5
-            and own_combat >= 6
-            and strength_score >= 0.25
-        ):
-            candidate = MacroPosture.GREED
-        else:
-            candidate = MacroPosture.BALANCED
-
-        immediate = candidate in {MacroPosture.DEFENSE, MacroPosture.RECOVERY}
-        if (
-            candidate is not self._macro_posture
-            and (immediate or now - self._posture_changed_at >= self.posture_min_hold)
-        ):
-            self._macro_posture = candidate
-            self._posture_changed_at = now
-        return self._macro_posture

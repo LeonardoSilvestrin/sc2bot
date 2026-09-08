@@ -23,13 +23,13 @@ class ContractTests(unittest.TestCase):
     def test_dependency_boundaries_keep_core_independent_from_adapters(self):
         root = Path(__file__).parents[1] / "bot"
         scopes = {
-            root / "world" / "observation": (
+            root / "world" / "attention": (
                 "bot.adapters",
                 "bot.behavior",
                 "bot.engine",
-                "bot.world.knowledge",
+                "bot.world.awareness",
             ),
-            root / "world" / "knowledge": ("bot.adapters", "bot.app", "bot.engine"),
+            root / "world" / "awareness": ("bot.adapters", "bot.app", "bot.engine"),
             root / "behavior": ("ares", "bot.adapters", "bot.app"),
             root / "engine": (
                 "ares",

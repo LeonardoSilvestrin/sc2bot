@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from bot.engine.economy.models import EconomicProposal
-from bot.world.knowledge import AwarenessSnapshot
-from bot.world.observation import AttentionSnapshot
+from bot.world.attention import AttentionSnapshot
+from bot.world.awareness import AwarenessSnapshot
 
 from ..macro_config import MacroPlannerConfig
 from . import (

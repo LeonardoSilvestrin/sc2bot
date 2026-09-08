@@ -11,8 +11,8 @@ from bot.behavior.defense import DefensePlanner
 from bot.behavior.harass import HarassPlanner
 from bot.behavior.scouting import IntelPlanner
 from bot.engine.missions import MissionController, MissionKind, MissionStatus
-from bot.world.knowledge import AwarenessService
-from bot.world.observation import UnitSnapshot
+from bot.world.attention import UnitSnapshot
+from bot.world.awareness import AwarenessService
 from tests.fakes import FakeCommands, FakeLogger
 from tests.test_scout_slice import attention
 

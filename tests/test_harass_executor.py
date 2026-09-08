@@ -8,18 +8,18 @@ from sc2.position import Point2
 
 from bot.behavior.harass import CloakedBansheeHarassExecutor, WorkerLineHarassExecutor
 from bot.engine.missions import MissionContext, MissionOutcome
-from bot.world.knowledge import (
-    AwarenessSnapshot,
-    RelativeStrength,
-    ThreatAssessment,
-)
-from bot.world.knowledge.enemy import EnemyAwareness
-from bot.world.observation import (
+from bot.world.attention import (
     AttentionSnapshot,
     MapFacts,
     UnitSnapshot,
     WorldFacts,
 )
+from bot.world.awareness import (
+    AwarenessSnapshot,
+    RelativeStrength,
+    ThreatAssessment,
+)
+from bot.world.awareness.enemy import EnemyAwareness
 from tests.fakes import FakeCommands
 
 TARGET = Point2((80, 80))

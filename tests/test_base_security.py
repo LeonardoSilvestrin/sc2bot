@@ -5,8 +5,8 @@ import unittest
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
-from bot.world.knowledge.bases import BaseSecurityAssessor, BaseSecurityLevel
-from bot.world.observation import MapFacts, UnitSnapshot, WorldFacts
+from bot.world.attention import MapFacts, UnitSnapshot, WorldFacts
+from bot.world.awareness.bases import BaseSecurityAssessor, BaseSecurityLevel
 
 MAP = MapFacts(
     center=Point2((50, 50)),

@@ -8,13 +8,13 @@ from sc2.position import Point2
 
 from bot.behavior.defense import DefensePlanner
 from bot.engine.missions import MissionKind
-from bot.world.knowledge import AwarenessService
-from bot.world.observation import (
+from bot.world.attention import (
     AttentionSnapshot,
     MapFacts,
     UnitSnapshot,
     WorldFacts,
 )
+from bot.world.awareness import AwarenessService
 
 MAP = MapFacts(
     center=Point2((50, 50)),

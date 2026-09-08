@@ -7,24 +7,24 @@ from sc2.position import Point2
 
 from bot.behavior.map_control import MapControlExecutor
 from bot.engine.missions import MissionContext, MissionOutcome
-from bot.world.knowledge import (
-    AwarenessSnapshot,
-    MacroPosture,
-    RelativeStrength,
-    ThreatAssessment,
-)
-from bot.world.knowledge.bases import (
-    BaseAssessment,
-    BaseAwareness,
-    BaseSecurityLevel,
-)
-from bot.world.knowledge.enemy import EnemyAwareness
-from bot.world.observation import (
+from bot.world.attention import (
     AttentionSnapshot,
     MapFacts,
     UnitSnapshot,
     WorldFacts,
 )
+from bot.world.awareness import (
+    AwarenessSnapshot,
+    MacroPosture,
+    RelativeStrength,
+    ThreatAssessment,
+)
+from bot.world.awareness.bases import (
+    BaseAssessment,
+    BaseAwareness,
+    BaseSecurityLevel,
+)
+from bot.world.awareness.enemy import EnemyAwareness
 from tests.fakes import FakeCommands
 
 MAP = MapFacts(

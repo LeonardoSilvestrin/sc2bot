@@ -18,14 +18,14 @@ from bot.engine.missions import (
     MissionStatus,
     UnitRequirement,
 )
-from bot.world.knowledge import AwarenessService
-from bot.world.observation import (
+from bot.world.attention import (
     AttentionSnapshot,
     MapFacts,
     MapObservation,
     UnitSnapshot,
     WorldFacts,
 )
+from bot.world.awareness import AwarenessService
 from tests.fakes import FakeCommands, FakeLogger
 
 TARGET = Point2((80, 80))

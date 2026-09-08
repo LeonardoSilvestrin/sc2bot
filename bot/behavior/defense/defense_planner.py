@@ -3,12 +3,13 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 
-from .defense_config import DefensePlannerConfig
 from bot.engine.missions.models import MissionKind, MissionProposal, UnitRequirement
 from bot.engine.missions.planning import ProposalCadence
-from bot.world.knowledge import AwarenessSnapshot
-from bot.world.knowledge.bases import BaseAssessment, BaseSecurityLevel
-from bot.world.observation import AttentionSnapshot
+from bot.world.attention import AttentionSnapshot
+from bot.world.awareness import AwarenessSnapshot
+from bot.world.awareness.bases import BaseAssessment, BaseSecurityLevel
+
+from .defense_config import DefensePlannerConfig
 
 
 @dataclass(slots=True)

@@ -4,9 +4,9 @@ from dataclasses import dataclass
 
 from sc2.ids.unit_typeid import UnitTypeId
 
-from bot.world.observation import BaseSnapshot, WorldFacts
+from bot.world.attention import BaseSnapshot, WorldFacts
 
-from .base_security import (
+from .security import (
     BaseAssessment,
     BaseAwareness,
     BaseSecurityLevel,

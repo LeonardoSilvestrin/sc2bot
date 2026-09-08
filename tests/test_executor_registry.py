@@ -22,7 +22,7 @@ from bot.engine.missions import (
     MissionStatus,
     UnitRequirement,
 )
-from bot.world.knowledge import AwarenessService
+from bot.world.awareness import AwarenessService
 from tests.fakes import FakeCommands, FakeLogger
 from tests.test_scout_slice import attention
 

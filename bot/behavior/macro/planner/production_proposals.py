@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from bot.engine.economy.models import EconomicActionKind, EconomicProposal
-from bot.world.knowledge import MacroPosture
-from bot.world.observation import EconomyFacts, ProducerFacts
+from bot.world.attention import EconomyFacts, ProducerFacts
+from bot.world.awareness import MacroPosture
 
 from ..macro_config import MacroPlannerConfig
 from ..macro_goals import ProductionGoal

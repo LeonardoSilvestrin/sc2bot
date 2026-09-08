@@ -1,23 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum, auto
 
-from .bases.base_security import BaseAwareness
-from .enemy.enemy_intelligence import EnemyAwareness
-
-
-class MacroPosture(Enum):
-    """Coarse strategic pressure used to arbitrate economic spending.
-
-    The posture describes how risky spending is right now; behavior policies
-    still own what the bot is trying to build.
-    """
-
-    DEFENSE = auto()
-    BALANCED = auto()
-    GREED = auto()
-    RECOVERY = auto()
+from .bases import BaseAwareness
+from .enemy import EnemyAwareness
+from .posture import MacroPosture
 
 
 @dataclass(frozen=True, slots=True)

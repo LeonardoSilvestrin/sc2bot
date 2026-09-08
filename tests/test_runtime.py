@@ -239,8 +239,8 @@ class RuntimePilotTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(observation_events[1]["game_time"], 130.0)
         self.assertEqual(observation_events[1]["data"]["minerals"], 400)
-        self.assertEqual(observation_events[0]["component"], "world.observation")
-        self.assertEqual(knowledge_events[0]["component"], "world.knowledge")
+        self.assertEqual(observation_events[0]["component"], "world.attention")
+        self.assertEqual(knowledge_events[0]["component"], "world.awareness")
 
     async def test_runtime_wires_unknown_to_scout_and_new_vision_to_completion(self):
         target = Point2((80, 80))

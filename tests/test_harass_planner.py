@@ -7,14 +7,14 @@ from sc2.position import Point2
 
 from bot.behavior.harass import HarassPlanner
 from bot.engine.missions import MissionKind
-from bot.world.knowledge import AwarenessService
-from bot.world.observation import (
+from bot.world.attention import (
     AttentionSnapshot,
     MapFacts,
     MapObservation,
     UnitSnapshot,
     WorldFacts,
 )
+from bot.world.awareness import AwarenessService
 
 TARGET = Point2((80, 80))
 

@@ -3,13 +3,14 @@ from __future__ import annotations
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.ids.upgrade_id import UpgradeId
 
+from bot.engine.economy.models import ResourceCost
+
 from .macro_goals import (
     ArmyUnitGoal,
     MacroGoalSet,
     ProductionGoal,
     UpgradeGoal,
 )
-from bot.engine.economy.models import ResourceCost
 
 
 def bio_three_one_one() -> MacroGoalSet:

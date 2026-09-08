@@ -5,7 +5,7 @@ import unittest
 from sc2.ids.unit_typeid import UnitTypeId
 
 from bot.behavior.scouting import IntelPlanner
-from bot.world.knowledge import AwarenessService
+from bot.world.awareness import AwarenessService
 from tests.test_scout_slice import attention
 
 

@@ -20,8 +20,8 @@ from bot.engine.missions.models import (
 )
 from bot.ports.logging import BotLogger
 from bot.ports.mission_commands import MissionCommands
-from bot.world.knowledge import AwarenessSnapshot
-from bot.world.observation import AttentionSnapshot
+from bot.world.attention import AttentionSnapshot
+from bot.world.awareness import AwarenessSnapshot
 
 
 class MissionController:
