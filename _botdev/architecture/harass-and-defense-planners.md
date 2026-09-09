@@ -9,9 +9,10 @@ adds the second and third mission planners after
 ```text
 bot/behavior/
   scouting/               -> IntelPlanner / ScoutExecutor / config
-  harass/                 -> HarassPlanner / BansheeHarassPlanner / executors / config
+  harass/                 -> HarassPlanner (options: reaper, banshee) / executors / config
   defense/                -> DefensePlanner / DefendBaseExecutor / config
-  map_control/            -> MapControlPlanner / PatrolMapExecutor / config
+  map_control/            -> MapControlPlanner / MapControlExecutor / config
+  army/                   -> DispositionPlanner / PositioningExecutor / config (see army-disposition.md)
   macro/                  -> MacroPlanner / economic goals and config
 
 bot/engine/missions/      -> controller, board, allocator, models, execution contracts
@@ -30,6 +31,47 @@ engine, alongside
 every frame instead of calling a single planner by name, so wiring in a future
 planner does not require touching the admission call site.
 
+## Arbitration: how a unit ends up on one mission and not another
+
+Every planner only proposes; `MissionController` sorts live missions by
+`-priority` each tick and asks `UnitAllocator.allocate` for units in that
+order. A proposal never steals a unit directly -- only the allocator decides,
+per mission, whether a candidate unit is free, already leased, or
+preemptible.
+
+```mermaid
+flowchart TD
+    Tick(["Every frame, per live mission\n(sorted by -priority)"]) --> Existing["Keep leased units still matching\nrequirement identity, up to desired\n(excess released immediately)"]
+    Existing --> Pool["Rank candidate pools by\ndistance to target + health:\nfree (unleased) units,\nand -- if can_preempt -- units leased by a\nlower-priority mission past its\ncommitment window (priority margin >= 10)"]
+    Pool --> Feasible{"existing + free + preemptible\n>= requirement.minimum?"}
+    Feasible -->|no| Blocked["requirements_satisfied = False\nstays BLOCKED\n(or FAILS if already started and now has zero units)"]
+    Feasible -->|yes| Fill["Fill up to desired:\nexisting, then free, then preemptible\n(preemption used even past minimum,\nif priority allows reaching desired)"]
+    Fill --> Transfer["Preempted units are transferred;\nthe donor mission's assignment\nshrinks (or fails if left with zero)"]
+    Transfer --> Done["requirements_satisfied = True"]
+```
+
+A donor that loses its entire team this way fails with
+`all_assigned_units_preempted`; a partial loss just updates its assignment on
+the next tick. Note that preemption is not gated on the recipient being below
+its *minimum* -- a mission already meeting its minimum will still preempt
+further units from a lower-priority mission to climb toward its *desired*
+count, as long as the priority margin and the donor's `commitment_seconds`
+protection window both allow it.
+
+`SCOUT` (65) is the only task-shaped mission with `can_preempt=False` --
+scouting never steals a unit already committed elsewhere. Every other
+task-shaped kind now can preempt (`HARASS`/`AIR_HARASS` at 60/62,
+`MAP_CONTROL` at 40, `DEFENSE` at 85/95): once `DispositionPlanner`'s standing
+`POSITION` slots (priority 5-30, see [army-disposition.md](army-disposition.md))
+started absorbing most otherwise-idle combat units, every opportunistic
+mission needed `can_preempt=True` just to pull a unit out of standing duty --
+their own priority ordering among each other (`DEFENSE` > `SCOUT`/`AIR_HARASS`
+/`HARASS` > `MAP_CONTROL`) still decides who wins when two of them want the
+same unit at the same time. Only `position:reserve` (priority 5) keeps
+`can_preempt=False` -- it is the catch-all floor, never a competitor. See
+[contracts.md](contracts.md) for the full priority table and
+`tests/test_mission_arbitration.py` for the concrete preemption sequence.
+
 ## New command port
 
 Neither harass nor defense can be expressed with `path_to` alone: both need the
@@ -38,54 +80,69 @@ for positional pressure and `attack_unit` for focused fire. The Reaper-specific
 adapter translates focused fire into `ReaperGrenade` plus aggressive
 `StutterUnitForward`, and assigns `UnitRole.HARASSING`.
 
-`MissionCommands` later gained `use_ability` for `BansheeHarassPlanner` below --
-an ability cast with no positional order attached, so unlike `attack_move` it
-does not reassign a `UnitRole`.
+`MissionCommands` later gained `use_ability` for the cloaked-Banshee raid
+below -- an ability cast with no positional order attached, so unlike
+`attack_move` it does not reassign a `UnitRole`.
 
 ## HarassPlanner
 
-Proposes one `MissionProposal` (`MissionKind.HARASS`) to attack-move a Reaper into
-the enemy natural's worker line. Conditions, all read from existing Attention/
-Awareness facts -- no new fact was invented for this planner:
+A single planner now calls every configured raid: `HarassPlanner.propose`
+loops over `HarassPlannerConfig.options`, a tuple of `HarassOption` (one raid
+recipe each -- unit types, `MissionKind`, priority, thresholds), gates and
+rate-limits each independently with its own `ProposalCadence`, and can emit
+more than one live proposal per tick -- e.g. a Reaper harassing while a
+Banshee raid is also in flight, each with its own mission kind and dedup key.
+There is no more separate `BansheeHarassPlanner` class; "reaper" and
+"banshee" are just the two default `HarassOption`s
+(`default_harass_options()`), read from `HarassPlannerConfig.options`.
 
-- `awareness.enemy.location("enemy_natural").last_observed_at` is not `None` --
-  harass only follows up on a location `IntelPlanner` (or a future scout) has
-  already found; it never guesses a target.
-- The economy has reached `minimum_workers` (16, matching `IntelPlannerConfig`) and
-  a configured harass unit (Reaper by default) is healthy, ready, and available
-  for a new mission.
+```mermaid
+flowchart TD
+    Propose(["HarassPlanner.propose"]) --> Loc{"awareness.enemy.location(target_key)\nlast_observed_at is not None?"}
+    Loc -->|no| Empty["() -- no target known yet"]
+    Loc -->|yes| PerOption["For each HarassOption\n(reaper, banshee, ...)"]
+    PerOption --> Cadence{"option's own cadence ready?"}
+    Cadence -->|no| Skip["skip this option this tick"]
+    Cadence -->|yes| Workers{"workers >= option.minimum_workers?"}
+    Workers -->|no| Skip
+    Workers -->|yes| Launchable{"a matching unit is launchable?\n(ready+healthy+available,\nor just 'exists' if require_ready_unit=False)"}
+    Launchable -->|no| Skip
+    Launchable -->|yes| Safe{"anti_air_check_radius set AND\na visible anti-air enemy sits\nwithin it of the target?"}
+    Safe -->|withhold| Skip
+    Safe -->|clear, or check disabled| Emit["Emit MissionProposal(option.mission_kind)\ndedup key = {kind}:{target_key}"]
+```
 
-Priority 60, `can_preempt=False` (harass is opportunistic and never steals a live
-scout or defender), dedup key `harass:<target_key>`. Its executor attack-moves into
-the target, focuses the visible worker with the lowest health, and tolerates local
-defenders. At critical health it latches into retreat, follows a safe climber path
-to the own main, and completes only after reaching safety.
+| Option | Mission kind | Priority | min workers | ready-unit required | anti-air check |
+| --- | --- | --- | --- | --- | --- |
+| `reaper` | `HARASS` | 60 | 16 | yes (only ever 1-2 Reapers; never steal one mid-scout) | none -- tolerates local ground defenders |
+| `banshee` | `AIR_HARASS` | 62 | 12 | no (Banshees are numerous; the allocator's own requirement still filters at assignment time) | withholds only if a visible anti-air unit sits within 15 of the target |
 
-## BansheeHarassPlanner
+Both options read `awareness.enemy.location(target_key)` (default
+`"enemy_natural"`) -- harass only follows up on a location `IntelPlanner` (or
+a future scout) has already found; it never guesses a target. Both are
+`can_preempt=True` (see "Arbitration" above) with dedup keys
+`harass:<target_key>` / `air_harass:<target_key>`, so a Reaper raid and a
+Banshee raid can be live at the same time without colliding.
 
-Proposes one `MissionProposal` (`MissionKind.AIR_HARASS`) to attack-move a
-Banshee into the enemy natural's worker line, for the `BansheeCloak` opening
-(see [opening.md](opening.md)). Same shape as `HarassPlanner`, with one
-condition swapped for the fact that a flying, cloaked harasser cannot be
-threatened by a ground-only defender: it withholds on
-`awareness.threat.visible_anti_air_units > 0` rather than "any enemy unit
-visible anywhere." It never checks cloak research directly -- see the
-executor below for why that's unnecessary. Priority 62, `can_preempt=False`,
-dedup key `air_harass:<target_key>` (distinct from `HarassPlanner`'s
-`harass:<target_key>`, so a Reaper harass and a Banshee harass can both be
-live at once without colliding).
+`WorkerLineHarassExecutor` (Reaper) attack-moves into the target, focuses the
+visible worker with the lowest health, and tolerates local defenders. At 40%
+health it latches into retreat, follows a safe path to the own main, and
+completes only after reaching within `retreat_arrival_radius` (10).
 
-Its executor, `CloakedBansheeHarassExecutor`, attack-moves into the target
-and casts `AbilityId.BEHAVIOR_CLOAKON_BANSHEE` (via the new
-`MissionCommands.use_ability` port, `AresMissionCommands` wrapping Ares's
-`UseAbility` behavior) every step rather than tracking on/off state locally:
-`UseAbility` no-ops once the ability is not in `unit.abilities`, which is
-true both before Cloaking Field research finishes and once already cloaked,
-so re-issuing it is always safe and needs no bookkeeping. It completes with
-`harass_target_defended` the moment a non-worker, **anti-air-capable**
-enemy unit is observed within `disengage_radius` -- checking
-`can_attack_air` instead of `WorkerLineHarassExecutor`'s `can_attack_ground`,
-since that is the only kind of defender that can actually hit it.
+`CloakedBansheeHarassExecutor` (Banshee, for the `BansheeCloak` opening, see
+[opening.md](opening.md)) attack-moves into the target and casts
+`AbilityId.BEHAVIOR_CLOAKON_BANSHEE` (via `MissionCommands.use_ability`,
+`AresMissionCommands` wrapping Ares's `UseAbility` behavior) every step
+rather than tracking on/off state locally: `UseAbility` no-ops once the
+ability is not in `unit.abilities`, which is true both before Cloaking Field
+research finishes and once already cloaked, so re-issuing it is always safe
+and needs no bookkeeping. It never checks cloak research directly for the
+same reason. It completes with `harass_target_defended` the moment a
+non-worker, **anti-air-capable** enemy unit is observed within
+`disengage_radius` (12) -- checking
+`unit.is_visible_combat_threat(against_ground=False)` instead of
+`WorkerLineHarassExecutor`'s ground-focused targeting, since that is the only
+kind of defender that can actually hit it.
 
 Deliberately not built here either: no detector-awareness (a defender that
 can only detect, not attack air -- e.g. a lone Observer -- does not trigger

@@ -27,31 +27,95 @@
 
 ## Mission kinds and priorities
 
-`MissionKind` (`SCOUT`, `HARASS`, `DEFENSE`, `MAP_CONTROL`) is the shared mission
-vocabulary. Default priorities set the intended arbitration order under
-`UnitAllocator`'s preemption margin (10): Map Control 40, Intel 55, Harass 60
-(neither opportunistic mission preempts), and Defense 85/95 (`can_preempt=True`).
-Map Control is described in [map-control.md](map-control.md); the other missions
-are described in
-[harass-and-defense-planners.md](harass-and-defense-planners.md).
+`MissionKind` (`SCOUT`, `HARASS`, `AIR_HARASS`, `DEFENSE`, `MAP_CONTROL`,
+`POSITION`) is the shared mission vocabulary. Default priorities set the
+intended arbitration order under `UnitAllocator`'s preemption margin (10):
+
+| Kind | Priority | `can_preempt` |
+| --- | --- | --- |
+| `POSITION` (reserve slot) | 5 | no |
+| `POSITION` (main slot) | 12 | yes |
+| `POSITION` (natural slot) | 18 | yes |
+| `POSITION` (forward slot) | 25 | yes |
+| `POSITION` (third slot) | 30 | yes |
+| `MAP_CONTROL` | 40 | yes |
+| `HARASS` | 60 | yes |
+| `AIR_HARASS` | 62 | yes |
+| `SCOUT` | 65 | no |
+| `DEFENSE` (threatened base) | 85 | yes |
+| `DEFENSE` (critical base) | 95 | yes |
+
+`POSITION` (`DispositionPlanner`) is kept comfortably below `MAP_CONTROL` and
+`HARASS`/`AIR_HARASS`/`SCOUT` so a standing slot is always freely preemptible
+by any of them. `SCOUT` and the `position:reserve` catch-all are the only two
+proposals that cannot preempt another mission themselves -- every other kind
+gained `can_preempt=True` once `DispositionPlanner`'s standing slots started
+holding most otherwise-idle units, so an opportunistic mission needs it just
+to pull a unit out of standing duty; priority order among the preemptible
+kinds still decides who wins a contested unit. Map Control is described in
+[map-control.md](map-control.md), the standing disposition slots in
+[army-disposition.md](army-disposition.md), and the opportunistic/defense
+missions in [harass-and-defense-planners.md](harass-and-defense-planners.md).
 
 ## Frame lifecycle
 
 ```text
-observe current Ares state
-build AttentionSnapshot
-update AwarenessSnapshot and freshness
-collect planner proposals
-log and admit/reject proposals
-sync unit allocator
-allocate or preempt by priority after the commitment window
-step active missions
-register Ares behaviors
-apply mission result and release terminal leases
+observe current Ares state (AresWorldObserver)
+build AttentionSnapshot (AttentionService)
+update AwarenessSnapshot and freshness (AwarenessService)
+collect mission proposals from every planner (Intel/Harass/BansheeHarass/
+    Defense/MapControl/Disposition)
+MissionController.tick:
+    fail missions that lost their whole team
+    admit/reject/update-standing each proposal (cooldown, duplicate, unsupported kind)
+    reconcile standing missions a planner stopped declaring this tick
+    sort live missions by priority, allocate or preempt after the commitment window
+    step each active mission's executor through the Ares command port
+if build_order_runner.build_completed:
+    MacroPlanner.propose -> EconomyController.tick against a virtual bank
+    dispatch admitted economic actions through AresEconomyCommands
+log build order progress, world/knowledge snapshots, and disposition state
 ```
 
 `PathUnitToTarget` and `Mining` are registered every frame because Ares executes and
 clears registered behaviors in `_after_step`.
+
+```mermaid
+sequenceDiagram
+    participant Ares as Game / Ares
+    participant Obs as AresWorldObserver
+    participant Att as AttentionService
+    participant Awa as AwarenessService
+    participant Pln as Mission planners
+    participant Mac as MacroPlanner
+    participant MC as MissionController
+    participant Alloc as UnitAllocator
+    participant Exec as MissionExecutor
+    participant EC as EconomyController
+    participant Cmd as Ares adapters
+
+    Ares->>Obs: raw bot state
+    Obs->>Att: WorldFacts
+    Att->>Awa: AttentionSnapshot
+    Awa-->>Pln: AwarenessSnapshot
+    Att-->>Pln: AttentionSnapshot
+    Pln->>MC: tuple[MissionProposal]
+    MC->>MC: admit / reject / update-standing / cancel
+    MC->>Alloc: allocate(priority, requirement, can_preempt)
+    Alloc-->>MC: assigned/preempted/released tags
+    MC->>Exec: step(MissionContext)
+    Exec->>Cmd: MissionCommands (path_to/attack_move/...)
+    Cmd->>Ares: register Ares behavior
+
+    alt build_order_runner.build_completed
+        Awa-->>Mac: AwarenessSnapshot
+        Att-->>Mac: AttentionSnapshot
+        Mac->>EC: tuple[EconomicProposal]
+        EC->>EC: admit against virtual ResourceBank
+        EC->>Cmd: AresEconomyCommands.dispatch(action)
+        Cmd->>Ares: register macro behavior
+    end
+```
 
 ## Causal logging
 
@@ -81,15 +145,26 @@ where applicable (`proposal_id`, `mission_id`, `deduplication_key`, or
   `economic_action_dispatched`, `economic_action_confirmed`,
   `economic_action_failed`, `economic_action_timed_out`.
 - Invalid economic feedback: `economic_feedback_rejected`.
+- Standing disposition: `disposition.updated` (posture, standing slot
+  desired/assigned counts, per-kind allocation, unassigned eligible unit
+  count) and `disposition.unassigned_units_persisting` when eligible combat
+  units have gone without any mission for `_UNASSIGNED_WARNING_AFTER` (15s) --
+  see [army-disposition.md](army-disposition.md).
 
 Local runs opt in with `--bot-log events` and write under `_botdev/logs/`.
 Ladder runs retain `NullBotLogger` and do not open files. The standalone
 `scripts/log_viewer.html` keeps mission and economic histories separate from the
 event timeline and derives its Observation, Knowledge, and Economy views
 exclusively from the structured events above. Component names mirror the current
-package layout (`app.runtime`, `world.observation`, `world.knowledge`,
-`engine.missions.controller`, and `engine.economy.controller`); the viewer maps
-pre-restructure component names when opening older logs.
+package layout (`app.runtime`, `world.attention`, `world.awareness`,
+`behavior.army.disposition`, `engine.missions.controller`, and
+`engine.economy.controller`); the viewer's `COMPONENT_ALIASES` table maps
+older component strings (`application.runtime`, `ego.mission_controller`,
+`economy.controller`) onto the current names -- and, for a log old enough that
+every event still shared the single `application.runtime` component, further
+splits it into `world.observation`/`world.knowledge` pseudo-components purely
+by event name -- so pre-restructure logs still group correctly in the
+Observation/Knowledge/Economy views.
 
 ## Mission loss and cleanup
 

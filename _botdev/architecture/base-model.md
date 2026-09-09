@@ -7,7 +7,7 @@ Attention/Awareness split from [overview.md](overview.md): the base inventory
 itself is a fact (`BaseSnapshot`, `attention`), the threat/protection reading
 is a belief (`BaseAssessment`, `awareness`).
 
-## `BaseSnapshot` (attention, `bot/world/observation/base_facts.py`)
+## `BaseSnapshot` (attention, `bot/world/attention/facts/base_facts.py`)
 
 ```python
 BaseSnapshot(base_id, position, is_main, townhall: UnitSnapshot | None)
@@ -26,10 +26,10 @@ sparse test fixture) `bases` returns a single placeholder,
 this is what `DefensePlannerConfig`'s old fixed `target_key="own_base"` used
 to hardcode, now just the natural empty case of the general rule.
 
-## `BaseAssessment` / `BaseAwareness` (awareness, `bot/world/knowledge/bases/`)
+## `BaseAssessment` / `BaseAwareness` (awareness, `bot/world/awareness/bases/`)
 
-Mirrors the existing `bot/world/knowledge/enemy/` split: `base_security.py`
-holds the immutable state and `base_security_assessor.py` derives it. This is
+Mirrors the existing `bot/world/awareness/enemy/` split: `security.py`
+holds the immutable state and `security_assessor.py` derives it. This is
 where the scoring logic is expected to grow.
 
 `BaseSecurityAssessor.update(world) -> BaseAwareness` scores each
@@ -49,6 +49,24 @@ where the scoring logic is expected to grow.
 
 `AwarenessSnapshot.bases: BaseAwareness` is populated by `AwarenessService.
 update` alongside `enemy`/`relative_strength`/`threat`/`macro_posture`.
+
+```mermaid
+flowchart TD
+    Start(["Per owned base, every frame"]) --> Count["Count visible, non-worker,\nattack-capable enemy units\nwithin proximity_radius (25)"]
+    Count --> ThreatZero{"threat_score == 0?"}
+    ThreatZero -->|yes| Safe["security = SAFE\nno proposal"]
+    ThreatZero -->|no| Protect["Count own combat units +\nstatic defense (x2 weight)\nwithin same radius -> protection_score"]
+    Protect --> ProtectZero{"protection_score == 0?"}
+    ProtectZero -->|yes| Critical["security = CRITICAL\npriority = critical_priority (95)"]
+    ProtectZero -->|no| Threatened["security = THREATENED\npriority = threatened_priority (85)"]
+    Critical --> Size["desired = clamp(minimum, max_desired,\nceil(threat_score - protection_score))"]
+    Threatened --> Size
+    Size --> Propose["DefensePlanner emits one\nMissionProposal(DEFENSE)\ndedup key = defense:{base_id}"]
+```
+
+Protection only ever picks `CRITICAL` vs `THREATENED` (and sizes
+`desired_units`) -- it never suppresses the proposal outright; see "Why
+protection never suppresses a proposal" below.
 
 ### Why protection never suppresses a proposal
 
