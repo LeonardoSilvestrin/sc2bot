@@ -190,7 +190,9 @@ class ReaperHarassTests(unittest.TestCase):
         self.assertTrue(0 <= proposal.priority <= 100)
         self.assertGreater(proposal.timeout_seconds, 0.0)
         self.assertGreaterEqual(proposal.cooldown_seconds, 0.0)
-        self.assertFalse(proposal.can_preempt)
+        # Standing POSITION/RESERVE missions hold most idle units now, so
+        # harass must be able to preempt them to get a raider at all.
+        self.assertTrue(proposal.can_preempt)
         self.assertEqual(
             proposal.requirement.unit_types, frozenset({UnitTypeId.REAPER})
         )
@@ -318,7 +320,9 @@ class BansheeHarassTests(unittest.TestCase):
         self.assertEqual(proposal.target, TARGET)
         self.assertEqual(proposal.target_key, "enemy_natural")
         self.assertEqual(proposal.deduplication_key, "air_harass:enemy_natural")
-        self.assertFalse(proposal.can_preempt)
+        # Standing POSITION/RESERVE missions hold most idle units now, so
+        # harass must be able to preempt them to get a raider at all.
+        self.assertTrue(proposal.can_preempt)
         self.assertEqual(
             proposal.requirement.unit_types, frozenset({UnitTypeId.BANSHEE})
         )

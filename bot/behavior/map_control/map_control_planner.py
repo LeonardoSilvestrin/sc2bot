@@ -66,7 +66,11 @@ class MapControlPlanner:
                 created_at=world.time,
                 timeout_seconds=self.config.mission_timeout,
                 cooldown_seconds=self.config.failure_cooldown,
-                can_preempt=False,
+                # See the equivalent comment in HarassPlanner: standing
+                # POSITION/RESERVE missions now hold most idle units, so
+                # map control must be able to preempt them to acquire its
+                # patrol squad at all.
+                can_preempt=True,
                 commitment_seconds=self.config.commitment_seconds,
             ),
         )

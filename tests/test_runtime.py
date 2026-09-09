@@ -106,7 +106,13 @@ class RuntimePilotTests(unittest.IsolatedAsyncioTestCase):
         await runtime.on_start(fake_bot)
         await runtime.on_step(fake_bot, iteration=1)
 
-        self.assertEqual(runtime.missions.snapshots(), ())
+        # No scout/harass/defense/map-control target exists on this bare
+        # map, but the standing disposition planner still gives every
+        # eligible unit (there are none here) a home -- only POSITION
+        # missions (main/reserve) come up, never a FINITE one.
+        self.assertTrue(
+            all(m.kind is MissionKind.POSITION for m in runtime.missions.snapshots())
+        )
         self.assertTrue(
             any(event["name"] == "game.started" for event in runtime.logger.events)
         )
@@ -211,7 +217,12 @@ class RuntimePilotTests(unittest.IsolatedAsyncioTestCase):
                     "near_own_base_enemy_combat_units": 0,
                 },
                 "enemy_sightings": 1,
-                "active_missions": 0,
+                # The standing disposition planner now always claims
+                # position:main and position:reserve for this single-base
+                # setup (RECOVERY macro posture maps to CombatPosture.TURTLE,
+                # see derive_combat_posture), even though nothing else
+                # (scout/harass/defense) is active.
+                "active_missions": 2,
             },
         )
         self.assertEqual(

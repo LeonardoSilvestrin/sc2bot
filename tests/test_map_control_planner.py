@@ -130,7 +130,9 @@ class MapControlPlannerTests(unittest.TestCase):
             frozenset({UnitTypeId.MARINE}),
         )
         self.assertEqual(proposal.priority, 40)
-        self.assertFalse(proposal.can_preempt)
+        # Standing POSITION/RESERVE missions hold most idle units now, so
+        # map control must be able to preempt them to get its squad at all.
+        self.assertTrue(proposal.can_preempt)
 
     def test_respects_proposal_cadence(self):
         planner = MapControlPlanner()

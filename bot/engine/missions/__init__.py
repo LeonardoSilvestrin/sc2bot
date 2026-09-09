@@ -11,6 +11,7 @@ from .execution import (
 from .models import (
     Mission,
     MissionKind,
+    MissionMode,
     MissionProposal,
     MissionSnapshot,
     MissionStatus,
@@ -25,6 +26,7 @@ __all__ = [
     "MissionExecutor",
     "MissionExecutorFactory",
     "MissionKind",
+    "MissionMode",
     "MissionOutcome",
     "MissionProposal",
     "MissionResult",

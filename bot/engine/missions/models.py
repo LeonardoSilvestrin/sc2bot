@@ -85,6 +85,26 @@ class MissionKind(Enum):
     AIR_HARASS = auto()
     DEFENSE = auto()
     MAP_CONTROL = auto()
+    POSITION = auto()
+
+
+class MissionMode(Enum):
+    """Whether a mission is a one-shot job or a permanent responsibility.
+
+    ``FINITE`` is the existing behavior: a proposal is admitted once, runs to
+    completion/failure/cancellation, and a second proposal for the same
+    ``deduplication_key`` while it is live is rejected as a duplicate.
+
+    ``STANDING`` describes an ongoing responsibility (see
+    ``bot.behavior.army.DispositionPlanner``) that a planner re-proposes on
+    every cadence tick. A live ``STANDING`` mission is never rejected as a
+    duplicate -- its ``Mission.proposal`` is replaced in place so the same
+    mission_id/lease history continues, only the requirement/priority/target
+    change. See ``MissionController._update_standing``.
+    """
+
+    FINITE = auto()
+    STANDING = auto()
 
 
 class MissionStatus(Enum):
@@ -122,6 +142,7 @@ class MissionProposal:
     cooldown_seconds: float = 65.0
     can_preempt: bool = False
     commitment_seconds: float = 5.0
+    mode: MissionMode = MissionMode.FINITE
 
     def __post_init__(self) -> None:
         text_fields = (

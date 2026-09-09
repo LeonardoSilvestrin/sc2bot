@@ -11,6 +11,7 @@ from bot.adapters.ares import (
     register_baseline_behaviors,
 )
 from bot.app.mission_registry import DEFAULT_EXECUTOR_FACTORIES
+from bot.behavior.army import DispositionPlanner, DispositionPlannerConfig
 from bot.behavior.defense import DefensePlanner, DefensePlannerConfig
 from bot.behavior.harass import HarassPlanner, HarassPlannerConfig
 from bot.behavior.macro import (
@@ -27,7 +28,7 @@ from bot.engine.economy import (
     merge_economic_feedback,
     observe_economic_confirmations,
 )
-from bot.engine.missions import MissionController
+from bot.engine.missions import MissionController, MissionKind
 from bot.ports.logging import BotLogger
 from bot.world.attention import AttentionService
 from bot.world.awareness import AwarenessService, AwarenessSnapshot
@@ -47,6 +48,11 @@ _OPENING_ANNOUNCEMENTS: dict[str, str] = {
 class BotRuntime:
     """Composition root wiring Attention/Awareness into the mission planners."""
 
+    # How long an eligible combat unit may sit without any mission owning it
+    # before it is worth a distinct log line -- Invariant 1 of the
+    # disposition pilot says this should not normally happen at all.
+    _UNASSIGNED_WARNING_AFTER = 15.0
+
     def __init__(
         self,
         *,
@@ -56,6 +62,7 @@ class BotRuntime:
         defense_config: DefensePlannerConfig | None = None,
         macro_config: MacroPlannerConfig | None = None,
         map_control_config: MapControlPlannerConfig | None = None,
+        disposition_config: DispositionPlannerConfig | None = None,
         rng: random.Random | None = None,
     ) -> None:
         self.logger = logger
@@ -65,6 +72,7 @@ class BotRuntime:
         self.defense_config = defense_config or DefensePlannerConfig()
         self.macro_config = macro_config or MacroPlannerConfig()
         self.map_control_config = map_control_config or MapControlPlannerConfig()
+        self.disposition_config = disposition_config or DispositionPlannerConfig()
         self.world_observer = AresWorldObserver()
         self.awareness = AwarenessService(
             location_stale_after=self.intel_config.location_stale_after
@@ -74,11 +82,18 @@ class BotRuntime:
         self.defense_planner = DefensePlanner(config=self.defense_config)
         self.macro_planner = MacroPlanner(config=self.macro_config)
         self.map_control_planner = MapControlPlanner(config=self.map_control_config)
+        self.disposition_planner = DispositionPlanner(config=self.disposition_config)
         self._mission_planners = (
             self.intel_planner,
             self.harass_planner,
             self.defense_planner,
             self.map_control_planner,
+            # Lowest-priority planner last: standing POSITION/RESERVE
+            # proposals should not shadow anything above in reasoning about
+            # this tick's proposal list, though admission order does not
+            # actually depend on list order (MissionController sorts live
+            # missions by priority every tick regardless).
+            self.disposition_planner,
         )
         # `chosen_opening` is unknown until the Ares build runner resolves it
         # (never, if a caller pins `macro_config` explicitly, e.g. tests) --
@@ -94,6 +109,9 @@ class BotRuntime:
         self._last_world_signature: tuple | None = None
         self._last_world_snapshot_at: float = -999.0
         self._last_enemy_intel_signature: tuple | None = None
+        self._last_disposition_signature: tuple | None = None
+        self._last_disposition_log_at: float = -999.0
+        self._unassigned_eligible_since: float | None = None
 
     async def on_start(self, bot) -> None:
         await self._choose_and_announce_opening(bot)
@@ -207,6 +225,7 @@ class BotRuntime:
 
         self._log_build_order(bot, game_time=world.time)
         self._log_world_snapshots(attention, awareness)
+        self._log_disposition(attention)
 
     def _resolve_macro_profile(self, runner) -> None:
         """Pick the post-opening `MacroGoalSet` matching the chosen opening.
@@ -354,6 +373,90 @@ class BotRuntime:
                 ),
             },
         )
+
+    def _log_disposition(self, attention) -> None:
+        """Surface standing-army ownership so "why is this unit here?" and
+        "how many units have no mission?" are answerable from the logs.
+
+        Grouped by ``deduplication_key``/``kind`` straight off the live
+        ``Mission`` objects (not ``MissionSnapshot``, which drops
+        ``requirement.desired``) -- this is diagnostics, not a second source
+        of truth: ownership itself still lives only in ``UnitAllocator``.
+        """
+
+        world = attention.world
+        standing: dict[str, tuple[int, int]] = {}
+        allocation_by_kind: dict[str, int] = {}
+        for mission in self.missions.board.live():
+            kind_name = mission.proposal.kind.name
+            allocation_by_kind[kind_name] = allocation_by_kind.get(
+                kind_name, 0
+            ) + len(mission.assigned_unit_tags)
+            if mission.proposal.kind is MissionKind.POSITION:
+                slot = mission.proposal.deduplication_key.removeprefix("position:")
+                standing[slot] = (
+                    mission.proposal.requirement.desired,
+                    len(mission.assigned_unit_tags),
+                )
+
+        eligible_types = self.disposition_config.unit_types
+        unassigned_tags = tuple(
+            unit.tag
+            for unit in world.own_units
+            if unit.unit_type in eligible_types
+            and unit.available_for_mission
+            and self.missions.allocator.owner_of(unit.tag) is None
+        )
+
+        if unassigned_tags:
+            if self._unassigned_eligible_since is None:
+                self._unassigned_eligible_since = world.time
+        else:
+            self._unassigned_eligible_since = None
+        unassigned_duration = (
+            0.0
+            if self._unassigned_eligible_since is None
+            else world.time - self._unassigned_eligible_since
+        )
+
+        signature = (
+            self.disposition_planner.last_posture.name,
+            tuple(sorted(standing.items())),
+            tuple(sorted(allocation_by_kind.items())),
+            len(unassigned_tags),
+        )
+        periodic = world.time - self._last_disposition_log_at >= 10.0
+        if signature == self._last_disposition_signature and not periodic:
+            return
+        self._last_disposition_signature = signature
+        self._last_disposition_log_at = world.time
+
+        self.logger.event(
+            "disposition.updated",
+            component="behavior.army.disposition",
+            game_time=world.time,
+            data={
+                "combat_posture": self.disposition_planner.last_posture.name,
+                "standing": {
+                    slot: {"desired": desired, "assigned": assigned}
+                    for slot, (desired, assigned) in sorted(standing.items())
+                },
+                "mission_allocation": allocation_by_kind,
+                "unassigned_eligible_units": len(unassigned_tags),
+            },
+        )
+
+        if unassigned_tags and unassigned_duration >= self._UNASSIGNED_WARNING_AFTER:
+            self.logger.event(
+                "disposition.unassigned_units_persisting",
+                component="behavior.army.disposition",
+                game_time=world.time,
+                data={
+                    "unassigned_eligible_units": len(unassigned_tags),
+                    "unassigned_unit_tags": list(unassigned_tags),
+                    "duration_seconds": round(unassigned_duration, 1),
+                },
+            )
 
     def _log_enemy_intel(
         self, awareness: AwarenessSnapshot, *, game_time: float

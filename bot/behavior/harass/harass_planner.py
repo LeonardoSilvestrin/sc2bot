@@ -120,6 +120,11 @@ class HarassPlanner:
             evidence_stale_after=location.stale_after,
             timeout_seconds=option.mission_timeout,
             cooldown_seconds=option.failure_cooldown,
-            can_preempt=False,
+            # Standing POSITION/RESERVE missions (see
+            # bot.behavior.army.DispositionPlanner) now hold most otherwise
+            # idle combat units, so harass must be able to preempt them --
+            # their low priority plus the allocator's margin means DEFENSE
+            # still outranks harass for the same units either way.
+            can_preempt=True,
             commitment_seconds=option.commitment_seconds,
         )

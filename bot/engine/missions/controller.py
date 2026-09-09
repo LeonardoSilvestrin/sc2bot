@@ -14,6 +14,7 @@ from bot.engine.missions.execution import (
 from bot.engine.missions.models import (
     Mission,
     MissionKind,
+    MissionMode,
     MissionProposal,
     MissionSnapshot,
     MissionStatus,
@@ -63,6 +64,10 @@ class MissionController:
                 mission.started_at is not None
                 and mission.assigned_unit_tags
                 and not self.allocator.assigned_tags(mission.mission_id)
+                # A requirement with minimum=0 (standing POSITION/RESERVE
+                # missions) explicitly tolerates holding zero units -- that
+                # is not a failure, just an idle standing responsibility.
+                and mission.proposal.requirement.minimum > 0
             ):
                 self._finish(
                     mission,
@@ -162,7 +167,10 @@ class MissionController:
             previous = self.board.get(previous_id)
             if previous is not None:
                 previous.assigned_unit_tags = self.allocator.assigned_tags(previous_id)
-                if not previous.assigned_unit_tags:
+                if (
+                    not previous.assigned_unit_tags
+                    and previous.proposal.requirement.minimum > 0
+                ):
                     self._finish(
                         previous,
                         MissionStatus.FAILED,
@@ -249,6 +257,12 @@ class MissionController:
 
         live = self.board.live_for_key(proposal.deduplication_key)
         if live is not None:
+            if (
+                proposal.mode is MissionMode.STANDING
+                and live.proposal.mode is MissionMode.STANDING
+            ):
+                self._update_standing(live, proposal, now)
+                return
             self._emit(
                 "proposal_rejected",
                 now,
@@ -290,6 +304,37 @@ class MissionController:
         mission.status = MissionStatus.QUEUED
         mission.last_reason = "waiting_for_unit_allocation"
         self._emit("mission_queued", now, mission.last_reason, mission=mission)
+
+    def _update_standing(
+        self, mission: Mission, proposal: MissionProposal, now: float
+    ) -> None:
+        """Refresh a live standing mission's intent in place.
+
+        Unlike a FINITE duplicate, a new STANDING proposal for the same key
+        is not a competing request -- it is the same planner re-declaring
+        its ongoing responsibility, possibly with a changed requirement or
+        priority (e.g. ``DispositionPlanner`` reacting to a new
+        ``CombatPosture``). Keeping ``mission_id`` stable preserves lease
+        history, the running executor instance, and started_at/admitted_at.
+        """
+
+        previous = mission.proposal
+        changed = (
+            previous.requirement != proposal.requirement
+            or previous.priority != proposal.priority
+            or previous.target_key != proposal.target_key
+            or previous.target != proposal.target
+        )
+        mission.proposal = proposal
+        if changed:
+            self._emit(
+                "standing_mission_updated",
+                now,
+                "standing_requirement_changed",
+                mission=mission,
+                previous_priority=previous.priority,
+                previous_desired=previous.requirement.desired,
+            )
 
     def _unit_type_names(self, tags: Iterable[int]) -> list[str | None]:
         return [
