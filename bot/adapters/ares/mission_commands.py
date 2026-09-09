@@ -126,12 +126,28 @@ class AresMissionCommands:
         target: Point2,
         success_at_distance: float,
         search_radius: float = 14.0,
+        keep_available: bool = False,
     ) -> None:
+        """Move ``unit_tag`` toward ``target`` while avoiding danger.
+
+        ``keep_available`` controls the Ares role this leaves behind: a real
+        active responsibility (MAP_CONTROL patrol, a harass retreat) should
+        keep looking "busy" to ``WorldObserver.available_for_mission`` --
+        the default ``MAP_CONTROL`` role does that. A standing POSITION/
+        RESERVE mission is the opposite: it is always the lowest-priority
+        claim on a unit (see ``DispositionPlanner``), so parking a unit
+        there must not make it invisible to higher-priority planners
+        (HARASS/MAP_CONTROL/SCOUT) that gate proposing on unit availability.
+        """
+
         unit = self._unit(mission_id=mission_id, unit_tag=unit_tag)
         from ares.behaviors.combat.individual import MoveToSafeTarget
         from ares.consts import UnitRole
 
-        self._bot.mediator.assign_role(tag=unit_tag, role=UnitRole.MAP_CONTROL)
+        self._bot.mediator.assign_role(
+            tag=unit_tag,
+            role=UnitRole.IDLE if keep_available else UnitRole.MAP_CONTROL,
+        )
         grid = (
             self._bot.mediator.get_climber_grid
             if unit.type_id.name == "REAPER"

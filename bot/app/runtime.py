@@ -10,7 +10,7 @@ from bot.adapters.ares import (
     AresWorldObserver,
     register_baseline_behaviors,
 )
-from bot.app.mission_registry import DEFAULT_EXECUTOR_FACTORIES
+from bot.app.mission_registry import build_executor_factories
 from bot.behavior.army import DispositionPlanner, DispositionPlannerConfig
 from bot.behavior.defense import DefensePlanner, DefensePlannerConfig
 from bot.behavior.harass import HarassPlanner, HarassPlannerConfig
@@ -101,7 +101,9 @@ class BotRuntime:
         self._macro_profile_resolved = macro_config is not None
         self.missions = MissionController(
             logger=logger,
-            executor_factories=DEFAULT_EXECUTOR_FACTORIES,
+            executor_factories=build_executor_factories(
+                disposition_config=self.disposition_config
+            ),
         )
         self.economy = EconomyController(logger=logger)
         self._pending_economic_feedback: tuple[EconomicFeedback, ...] = ()

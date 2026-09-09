@@ -135,6 +135,27 @@ class AresMissionCommandsSafePathTests(unittest.TestCase):
         )
         bot.register_behavior.assert_called_once()
 
+    def test_keep_available_assigns_idle_instead_of_map_control(self):
+        """A standing POSITION/RESERVE park (see PositioningExecutor) must not
+        look "busy" to WorldObserver.available_for_mission the way an active
+        MAP_CONTROL patrol or harass retreat does."""
+
+        bot, _ = make_bot(1)
+        bot.mediator.get_ground_grid = object()
+        allocator = leased_allocator(1)
+        commands = AresMissionCommands(bot, allocator)
+
+        commands.safe_path_to(
+            mission_id="mission-0001",
+            unit_tag=1,
+            target=Point2((20, 20)),
+            success_at_distance=2.0,
+            keep_available=True,
+        )
+
+        bot.mediator.assign_role.assert_called_once_with(tag=1, role=UnitRole.IDLE)
+        bot.register_behavior.assert_called_once()
+
 
 class AresMissionCommandsScoutPathTests(unittest.TestCase):
     def test_reaper_scout_combines_keep_safe_with_the_climber_grid(self):

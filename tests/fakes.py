@@ -30,6 +30,7 @@ class FakeLogger:
 class FakeCommands:
     def __init__(self) -> None:
         self.commands: list[tuple] = []
+        self.kept_available: set[int] = set()
 
     def path_to(
         self,
@@ -72,6 +73,7 @@ class FakeCommands:
         target,
         success_at_distance,
         search_radius=14.0,
+        keep_available=False,
     ) -> None:
         command = (
             "safe_path_to",
@@ -83,6 +85,10 @@ class FakeCommands:
         if search_radius != 14.0:
             command += (search_radius,)
         self.commands.append(command)
+        if keep_available:
+            self.kept_available.add(unit_tag)
+        else:
+            self.kept_available.discard(unit_tag)
 
     def release(self, *, mission_id, unit_tag) -> None:
         self.commands.append(("release", mission_id, unit_tag))

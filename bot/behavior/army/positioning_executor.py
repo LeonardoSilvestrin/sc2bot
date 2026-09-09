@@ -10,6 +10,7 @@ from bot.engine.missions.execution import (
     MissionOutcome,
     MissionResult,
 )
+from bot.engine.missions.models import Mission
 
 
 @dataclass(slots=True)
@@ -34,6 +35,10 @@ class PositioningExecutor(MissionExecutor):
     started_at: float
     arrival_radius: float = 4.0
 
+    def refresh(self, mission: Mission) -> None:
+        self.target_key = mission.proposal.target_key
+        self.target = mission.proposal.target
+
     async def step(self, context: MissionContext) -> MissionResult:
         units = context.assigned_units
         if not units:
@@ -48,6 +53,11 @@ class PositioningExecutor(MissionExecutor):
                 unit_tag=unit.tag,
                 target=self.target,
                 success_at_distance=self.arrival_radius,
+                # A standing POSITION/RESERVE responsibility is always the
+                # lowest-priority claim on a unit (see DispositionPlanner) --
+                # it must never look "busy" to other planners the way an
+                # active MAP_CONTROL patrol or DEFENSE engagement does.
+                keep_available=True,
             )
             moved = True
 

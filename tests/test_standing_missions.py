@@ -6,7 +6,7 @@ from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
 from bot.app.mission_registry import DEFAULT_EXECUTOR_FACTORIES
-from bot.behavior.army import DispositionPlanner
+from bot.behavior.army import CombatPosture, DispositionPlanner
 from bot.engine.missions import (
     MissionController,
     MissionKind,
@@ -18,7 +18,15 @@ from bot.engine.missions import (
     UnitRequirement,
 )
 from bot.world.attention import AttentionSnapshot, MapFacts, UnitSnapshot, WorldFacts
-from bot.world.awareness import AwarenessService
+from bot.world.awareness import (
+    AwarenessService,
+    AwarenessSnapshot,
+    MacroPosture,
+    RelativeStrength,
+    ThreatAssessment,
+)
+from bot.world.awareness.bases import BaseSecurityAssessor
+from bot.world.awareness.enemy import EnemyAwareness
 from tests.fakes import FakeCommands, FakeLogger
 
 MAP = MapFacts(
@@ -93,6 +101,78 @@ def harass_proposal(now: float, *, priority: int = 60) -> MissionProposal:
         timeout_seconds=60.0,
         cooldown_seconds=5.0,
         can_preempt=True,
+        commitment_seconds=1.0,
+        mode=MissionMode.FINITE,
+    )
+
+
+def posture_awareness(
+    current: AttentionSnapshot,
+    *,
+    macro_posture: MacroPosture = MacroPosture.BALANCED,
+    score: float = 0.0,
+    confidence: float = 0.0,
+) -> AwarenessSnapshot:
+    """Craft an AwarenessSnapshot that deterministically drives
+    ``derive_combat_posture`` to a specific CombatPosture -- mirrors
+    ``test_disposition_planner.awareness_for``."""
+
+    return AwarenessSnapshot(
+        enemy=EnemyAwareness(sightings=(), locations=()),
+        relative_strength=RelativeStrength(
+            score=score,
+            confidence=confidence,
+            own_combat_units=0,
+            known_enemy_combat_units=0,
+        ),
+        threat=ThreatAssessment(0, 0, 0),
+        updated_at=current.world.time,
+        macro_posture=macro_posture,
+        bases=BaseSecurityAssessor().update(current.world),
+    )
+
+
+def map_control_proposal(now: float, *, priority: int = 40) -> MissionProposal:
+    return MissionProposal(
+        proposal_id=f"test_map_control:{now}",
+        deduplication_key="map_control:patrol",
+        planner="test_map_control",
+        kind=MissionKind.MAP_CONTROL,
+        priority=priority,
+        target_key="map_control:patrol",
+        target=MAP.center,
+        reason="test_map_control_opportunity",
+        requirement=UnitRequirement.combat(
+            unit_types=frozenset({UnitTypeId.MARINE}), desired=1, minimum=1
+        ),
+        created_at=now,
+        timeout_seconds=60.0,
+        cooldown_seconds=5.0,
+        can_preempt=True,
+        commitment_seconds=1.0,
+        mode=MissionMode.FINITE,
+    )
+
+
+def scout_proposal(now: float, *, priority: int = 65) -> MissionProposal:
+    return MissionProposal(
+        proposal_id=f"test_scout:{now}",
+        deduplication_key="scout:enemy_main",
+        planner="test_scout",
+        kind=MissionKind.SCOUT,
+        priority=priority,
+        target_key="enemy_main",
+        target=Point2((90, 90)),
+        reason="test_scout_opportunity",
+        requirement=UnitRequirement.combat(
+            unit_types=frozenset({UnitTypeId.MARINE}), desired=1, minimum=1
+        ),
+        created_at=now,
+        timeout_seconds=60.0,
+        cooldown_seconds=5.0,
+        # IntelPlanner never preempts (see intel_planner.py) -- it can only
+        # ever take a genuinely free (unleased) unit.
+        can_preempt=False,
         commitment_seconds=1.0,
         mode=MissionMode.FINITE,
     )
@@ -399,6 +479,348 @@ class StandingMissionUpdateTests(unittest.IsolatedAsyncioTestCase):
         event_names = [event["name"] for event in logger.events]
         self.assertIn("standing_mission_updated", event_names)
         self.assertNotIn("proposal_rejected", event_names)
+
+
+class ShrinkingDesiredReleasesExcessLeasesTests(unittest.IsolatedAsyncioTestCase):
+    async def test_pressure_to_balanced_releases_excess_forward_leases(self):
+        """Test F: forward desired=6 (PRESSURE) -> desired=2 (BALANCED) must
+        drop the 4 excess leases immediately, not keep holding 6."""
+
+        units = tuple(marine(tag) for tag in range(1, 9))  # 8 marines
+        controller = MissionController(
+            logger=FakeLogger(), executor_factories=DEFAULT_EXECUTOR_FACTORIES
+        )
+        commands = FakeCommands()
+        disposition = DispositionPlanner()
+
+        current = attention(10.0, units)
+        awareness = posture_awareness(current, score=0.6, confidence=0.9)
+        await controller.tick(
+            attention=current,
+            awareness=awareness,
+            proposals=disposition.propose(current, awareness),
+            commands=commands,
+        )
+        self.assertEqual(disposition.last_posture, CombatPosture.PRESSURE)
+        forward = controller.board.live_for_key("position:forward")
+        self.assertEqual(len(forward.assigned_unit_tags), 6)
+        forward_id = forward.mission_id
+
+        # Past both the standing missions' commitment window (2.0s) and the
+        # planner's own proposal cadence (5.0s).
+        current = attention(15.0, units)
+        awareness = posture_awareness(current)
+        await controller.tick(
+            attention=current,
+            awareness=awareness,
+            proposals=disposition.propose(current, awareness),
+            commands=commands,
+        )
+        self.assertEqual(disposition.last_posture, CombatPosture.BALANCED)
+
+        forward = controller.board.get(forward_id)
+        self.assertFalse(forward.status.terminal)
+        self.assertEqual(len(forward.assigned_unit_tags), 2)
+
+        # Every eligible unit still has exactly one owner -- the 4 excess
+        # were redistributed to the other standing slots (main/reserve),
+        # not lost, stuck idle, or left double-leased.
+        owners = [controller.allocator.owner_of(unit.tag) for unit in units]
+        self.assertTrue(all(owner is not None for owner in owners))
+        for mission_id in set(owners):
+            self.assertEqual(
+                controller.board.get(mission_id).proposal.kind, MissionKind.POSITION
+            )
+        total_assigned = sum(
+            len(mission.assigned_unit_tags) for mission in controller.board.live()
+        )
+        self.assertEqual(total_assigned, len(units))
+
+        release_events = [
+            command
+            for command in commands.commands
+            if command[0] == "release" and command[1] == forward_id
+        ]
+        self.assertEqual(len(release_events), 4)
+
+
+class OmittedStandingSlotIsTornDownTests(unittest.IsolatedAsyncioTestCase):
+    async def test_balanced_to_turtle_cancels_the_forward_slot_entirely(self):
+        """Test G: TURTLE proposes no `forward` slot at all -- the previously
+        live `position:forward` mission must be cancelled immediately, not
+        left running until `mission_timeout` (3600s)."""
+
+        units = tuple(marine(tag) for tag in range(1, 6))  # 5 marines
+        logger = FakeLogger()
+        controller = MissionController(
+            logger=logger, executor_factories=DEFAULT_EXECUTOR_FACTORIES
+        )
+        commands = FakeCommands()
+        disposition = DispositionPlanner()
+
+        current = attention(10.0, units)
+        awareness = posture_awareness(current)
+        await controller.tick(
+            attention=current,
+            awareness=awareness,
+            proposals=disposition.propose(current, awareness),
+            commands=commands,
+        )
+        self.assertEqual(disposition.last_posture, CombatPosture.BALANCED)
+        forward = controller.board.live_for_key("position:forward")
+        self.assertIsNotNone(forward)
+        forward_id = forward.mission_id
+
+        current = attention(16.0, units)
+        awareness = posture_awareness(current, macro_posture=MacroPosture.DEFENSE)
+        await controller.tick(
+            attention=current,
+            awareness=awareness,
+            proposals=disposition.propose(current, awareness),
+            commands=commands,
+        )
+        self.assertEqual(disposition.last_posture, CombatPosture.TURTLE)
+
+        self.assertIsNone(controller.board.live_for_key("position:forward"))
+        finished = controller.board.get(forward_id)
+        self.assertEqual(finished.status, MissionStatus.CANCELLED)
+        self.assertEqual(finished.last_reason, "standing_proposal_omitted")
+
+        event_names = [event["name"] for event in logger.events]
+        self.assertIn("mission_cancelled", event_names)
+
+        # The freed units are not orphaned -- they fall back to the reserve.
+        for unit in units:
+            self.assertIsNotNone(controller.allocator.owner_of(unit.tag))
+
+
+class OmittedStandingSlotReturnsAfterwardsTests(unittest.IsolatedAsyncioTestCase):
+    async def test_turtle_to_balanced_reinstates_the_forward_slot(self):
+        """Test H: once TURTLE ends, `forward` is proposed again and must be
+        picked up as a fresh mission (the old one stays cancelled)."""
+
+        units = tuple(marine(tag) for tag in range(1, 6))
+        controller = MissionController(
+            logger=FakeLogger(), executor_factories=DEFAULT_EXECUTOR_FACTORIES
+        )
+        commands = FakeCommands()
+        disposition = DispositionPlanner()
+
+        current = attention(10.0, units)
+        awareness = posture_awareness(current, macro_posture=MacroPosture.DEFENSE)
+        await controller.tick(
+            attention=current,
+            awareness=awareness,
+            proposals=disposition.propose(current, awareness),
+            commands=commands,
+        )
+        self.assertEqual(disposition.last_posture, CombatPosture.TURTLE)
+        self.assertIsNone(controller.board.live_for_key("position:forward"))
+
+        # Past both the planner's cadence (5.0s) and the omitted slot's
+        # cooldown (5.0s, started when it was cancelled at t=10.0).
+        current = attention(20.0, units)
+        awareness = posture_awareness(current)
+        await controller.tick(
+            attention=current,
+            awareness=awareness,
+            proposals=disposition.propose(current, awareness),
+            commands=commands,
+        )
+        self.assertEqual(disposition.last_posture, CombatPosture.BALANCED)
+
+        forward = controller.board.live_for_key("position:forward")
+        self.assertIsNotNone(forward)
+        self.assertEqual(len(forward.assigned_unit_tags), 2)
+
+
+class CrossPlannerPreemptionFromPositionTests(unittest.IsolatedAsyncioTestCase):
+    """Invariant 3: a unit merely parked in POSITION must remain visible to
+    -- and preemptable by -- higher-priority planners, exactly as governed
+    by each proposal's own priority/can_preempt (see HarassPreemptsPositioningTests
+    and DefensePreemptsStandingAndHarassTests above for the other two)."""
+
+    async def test_map_control_acquires_a_unit_previously_holding_position(self):
+        # A manually-built AwarenessSnapshot (rather than the real
+        # AwarenessService) keeps macro_posture out of DEFENSE/RECOVERY, so
+        # MapControlExecutor patrols instead of immediately retreating home
+        # and completing -- this test is only about acquiring the unit, not
+        # about MapControlExecutor's own retreat behavior.
+        units = tuple(marine(tag) for tag in range(1, 4))
+        controller = MissionController(
+            logger=FakeLogger(), executor_factories=DEFAULT_EXECUTOR_FACTORIES
+        )
+        commands = FakeCommands()
+        disposition = DispositionPlanner()
+
+        current = attention(10.0, units)
+        awareness = posture_awareness(current)
+        await controller.tick(
+            attention=current,
+            awareness=awareness,
+            proposals=disposition.propose(current, awareness),
+            commands=commands,
+        )
+        self.assertTrue(
+            all(controller.allocator.owner_of(u.tag) is not None for u in units)
+        )
+
+        # Past the standing missions' commitment window (2.0s).
+        current = attention(12.0, units)
+        awareness = posture_awareness(current)
+        await controller.tick(
+            attention=current,
+            awareness=awareness,
+            proposals=(map_control_proposal(12.0),),
+            commands=commands,
+        )
+
+        mc = next(
+            m
+            for m in controller.board.live()
+            if m.proposal.kind is MissionKind.MAP_CONTROL
+        )
+        self.assertEqual(mc.status, MissionStatus.ACTIVE)
+        self.assertEqual(len(mc.assigned_unit_tags), 1)
+        self.assertEqual(
+            controller.allocator.owner_of(mc.assigned_unit_tags[0]), mc.mission_id
+        )
+
+    async def test_scout_does_not_preempt_a_unit_committed_to_position(self):
+        """SCOUT's `can_preempt=False` (see IntelPlanner) means it must never
+        take a POSITION-held unit, however visible that unit now is."""
+
+        units = tuple(marine(tag) for tag in range(1, 4))
+        service = AwarenessService()
+        controller = MissionController(
+            logger=FakeLogger(), executor_factories=DEFAULT_EXECUTOR_FACTORIES
+        )
+        commands = FakeCommands()
+        disposition = DispositionPlanner()
+
+        current = attention(10.0, units)
+        awareness = service.update(current)
+        await controller.tick(
+            attention=current,
+            awareness=awareness,
+            proposals=disposition.propose(current, awareness),
+            commands=commands,
+        )
+        self.assertTrue(
+            all(controller.allocator.owner_of(u.tag) is not None for u in units)
+        )
+
+        current = attention(12.0, units)
+        awareness = service.update(current)
+        await controller.tick(
+            attention=current,
+            awareness=awareness,
+            proposals=(scout_proposal(12.0),),
+            commands=commands,
+        )
+
+        scout_mission = next(
+            (
+                m
+                for m in controller.board.live()
+                if m.proposal.kind is MissionKind.SCOUT
+            ),
+            None,
+        )
+        self.assertIsNotNone(scout_mission)
+        self.assertEqual(scout_mission.status, MissionStatus.BLOCKED)
+        self.assertEqual(scout_mission.assigned_unit_tags, ())
+        for unit in units:
+            owner = controller.board.get(controller.allocator.owner_of(unit.tag))
+            self.assertEqual(owner.proposal.kind, MissionKind.POSITION)
+
+
+class StandingMissionTargetChangeReachesExecutorTests(unittest.IsolatedAsyncioTestCase):
+    async def test_executor_moves_toward_the_updated_target_after_proposal_changes(
+        self,
+    ):
+        """Invariant 4: MissionController._update_standing replacing a live
+        mission's proposal must reach the running PositioningExecutor --
+        not leave it steering toward a stale target."""
+
+        unit = marine(1, Point2((10, 10)))
+        controller = MissionController(
+            logger=FakeLogger(), executor_factories=DEFAULT_EXECUTOR_FACTORIES
+        )
+        commands = FakeCommands()
+
+        def third_proposal(now: float, target: Point2) -> MissionProposal:
+            return MissionProposal(
+                proposal_id=f"disposition_planner:third:{now}",
+                deduplication_key="position:third",
+                planner="disposition_planner",
+                kind=MissionKind.POSITION,
+                priority=30,
+                target_key="position:third",
+                target=target,
+                reason="standing_disposition_third",
+                requirement=UnitRequirement.combat(
+                    unit_types=frozenset({UnitTypeId.MARINE}),
+                    desired=1,
+                    minimum=0,
+                ),
+                created_at=now,
+                timeout_seconds=3600.0,
+                cooldown_seconds=5.0,
+                can_preempt=True,
+                commitment_seconds=2.0,
+                mode=MissionMode.STANDING,
+            )
+
+        first_target = Point2((70, 70))
+        current = attention(10.0, (unit,))
+        awareness = AwarenessService().update(current)
+        await controller.tick(
+            attention=current,
+            awareness=awareness,
+            proposals=(third_proposal(10.0, first_target),),
+            commands=commands,
+        )
+        moves = [c for c in commands.commands if c[0] == "safe_path_to"]
+        self.assertTrue(moves)
+        self.assertEqual(moves[-1][3], first_target)
+
+        second_target = Point2((20, 20))
+        current = attention(13.0, (unit,))
+        awareness = AwarenessService().update(current)
+        await controller.tick(
+            attention=current,
+            awareness=awareness,
+            proposals=(third_proposal(13.0, second_target),),
+            commands=commands,
+        )
+        moves = [c for c in commands.commands if c[0] == "safe_path_to"]
+        self.assertEqual(moves[-1][3], second_target)
+
+
+class ReserveAbsorbsAllEligibleUnitsTests(unittest.IsolatedAsyncioTestCase):
+    async def test_reserve_leaves_no_eligible_unit_unassigned_beyond_the_old_cap(self):
+        """Invariant 5: the removed `reserve_capacity=60` ceiling must not
+        leave eligible units without a mission once the army exceeds it."""
+
+        units = tuple(marine(tag) for tag in range(1, 76))  # 75 marines
+        current = attention(10.0, units)
+        awareness = AwarenessService().update(current)
+        disposition = DispositionPlanner()
+        controller = MissionController(
+            logger=FakeLogger(), executor_factories=DEFAULT_EXECUTOR_FACTORIES
+        )
+        commands = FakeCommands()
+
+        await controller.tick(
+            attention=current,
+            awareness=awareness,
+            proposals=disposition.propose(current, awareness),
+            commands=commands,
+        )
+
+        for unit in units:
+            self.assertIsNotNone(controller.allocator.owner_of(unit.tag))
 
 
 if __name__ == "__main__":

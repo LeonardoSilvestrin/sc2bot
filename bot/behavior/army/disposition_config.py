@@ -86,11 +86,6 @@ class DispositionPlannerConfig:
     forward_priority: int = 25
     reserve_priority: int = 5
 
-    # Not a literal "infinite" desired count -- UnitRequirement requires a
-    # concrete int -- just a ceiling far above any plausible army size, so
-    # the reserve mission never itself becomes the bottleneck.
-    reserve_capacity: int = 60
-
     desired_by_posture: Mapping[CombatPosture, PostureDesired] = field(
         default_factory=default_posture_desired
     )
@@ -119,7 +114,5 @@ class DispositionPlannerConfig:
         )
         if any(not 0 <= priority <= 100 for priority in priorities):
             raise ValueError("priorities must be between 0 and 100")
-        if self.reserve_capacity < 1:
-            raise ValueError("reserve_capacity must be at least 1")
         if set(self.desired_by_posture) != set(CombatPosture):
             raise ValueError("desired_by_posture must cover every CombatPosture")

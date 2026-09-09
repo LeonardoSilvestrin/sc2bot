@@ -46,6 +46,7 @@ class MissionCommands(Protocol):
         target: Point2,
         success_at_distance: float,
         search_radius: float = 14.0,
+        keep_available: bool = False,
     ) -> None:
         ...
 

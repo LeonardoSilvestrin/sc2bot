@@ -90,6 +90,10 @@ class PositioningExecutorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.reason, "moving_to_position")
         self.assertEqual(len(commands.commands), 1)
         self.assertEqual(commands.commands[0][0], "safe_path_to")
+        # A standing POSITION responsibility must not look "busy" to
+        # higher-priority planners (HARASS/MAP_CONTROL/SCOUT) -- see
+        # Invariant 3 / AresMissionCommands.safe_path_to's `keep_available`.
+        self.assertEqual(commands.kept_available, {unit.tag})
 
     async def test_does_not_command_a_unit_already_within_tolerance(self):
         commands = FakeCommands()
@@ -134,6 +138,46 @@ class PositioningExecutorTests(unittest.IsolatedAsyncioTestCase):
             await step_executor.step(context(assigned_units=(unit,), commands=commands))
 
         self.assertEqual(commands.commands, [])
+
+
+class PositioningExecutorRefreshTests(unittest.TestCase):
+    def test_refresh_adopts_the_live_missions_updated_target(self):
+        """Invariant 4: a STANDING proposal update must reach the running
+        executor -- see MissionController._advance_executor's refresh call."""
+
+        from bot.engine.missions import (
+            Mission,
+            MissionKind,
+            MissionMode,
+            MissionProposal,
+            UnitRequirement,
+        )
+
+        step_executor = executor()
+        new_target = Point2((70, 70))
+        proposal = MissionProposal(
+            proposal_id="disposition_planner:third:2",
+            deduplication_key="position:third",
+            planner="disposition_planner",
+            kind=MissionKind.POSITION,
+            priority=30,
+            target_key="position:new_third",
+            target=new_target,
+            reason="standing_disposition_third",
+            requirement=UnitRequirement.combat(
+                unit_types=frozenset({UnitTypeId.MARINE}), desired=1, minimum=0
+            ),
+            created_at=13.0,
+            mode=MissionMode.STANDING,
+        )
+        mission = Mission(
+            mission_id="mission-0001", proposal=proposal, admitted_at=13.0
+        )
+
+        step_executor.refresh(mission)
+
+        self.assertEqual(step_executor.target, new_target)
+        self.assertEqual(step_executor.target_key, "position:new_third")
 
 
 if __name__ == "__main__":

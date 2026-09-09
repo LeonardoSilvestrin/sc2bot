@@ -78,6 +78,7 @@ class MissionController:
                 )
         for proposal in proposals:
             self._consider(proposal, now)
+        self._reconcile_standing_missions(proposals, now, commands)
 
         missions = sorted(
             self.board.live(),
@@ -192,6 +193,20 @@ class MissionController:
                 unit_types=self._unit_type_names(allocation.assigned_tags),
             )
 
+        if allocation.released_tags:
+            unit_types = self._unit_type_names(allocation.released_tags)
+            for tag in allocation.released_tags:
+                commands.release(mission_id=mission.mission_id, unit_tag=tag)
+            self.allocator.release_units(mission.mission_id, allocation.released_tags)
+            self._emit(
+                "units_released",
+                now,
+                "requirement_desired_reduced",
+                mission=mission,
+                unit_tags=list(allocation.released_tags),
+                unit_types=unit_types,
+            )
+
     async def _advance_executor(
         self,
         mission: Mission,
@@ -220,8 +235,15 @@ class MissionController:
         else:
             mission.status = MissionStatus.ACTIVE
 
+        executor = self._executors[mission.mission_id]
+        # Duck-typed test executors provide only `step`; `refresh` is an
+        # optional hook (see MissionExecutor.refresh) so those keep working.
+        refresh = getattr(executor, "refresh", None)
+        if refresh is not None:
+            refresh(mission)
+
         try:
-            result = await self._executors[mission.mission_id].step(
+            result = await executor.step(
                 MissionContext(
                     attention=attention,
                     awareness=awareness,
@@ -335,6 +357,44 @@ class MissionController:
                 previous_priority=previous.priority,
                 previous_desired=previous.requirement.desired,
             )
+
+    def _reconcile_standing_missions(
+        self,
+        proposals: tuple[MissionProposal, ...],
+        now: float,
+        commands: MissionCommands,
+    ) -> None:
+        """End a standing mission its planner stopped declaring this cycle.
+
+        A planner re-declares its full set of STANDING responsibilities
+        every time it proposes at all (see ``DispositionPlanner.propose``,
+        which always emits the reserve proposal alongside whichever slots
+        currently apply) -- so if a planner proposed *something* this tick
+        but omitted a key that has a live standing mission, that slot was
+        deliberately dropped (e.g. ``forward`` outside PRESSURE/BALANCED)
+        and must be torn down now, not left to time out. A planner that did
+        not propose *anything* this tick (its cadence was not ready) leaves
+        its existing standing missions alone -- silence is not omission.
+        """
+
+        proposed_keys_by_planner: dict[str, set[str]] = {}
+        for proposal in proposals:
+            if proposal.mode is MissionMode.STANDING:
+                proposed_keys_by_planner.setdefault(proposal.planner, set()).add(
+                    proposal.deduplication_key
+                )
+
+        for mission in self.board.live():
+            if mission.proposal.mode is not MissionMode.STANDING:
+                continue
+            proposed_keys = proposed_keys_by_planner.get(mission.proposal.planner)
+            if proposed_keys is None:
+                continue
+            if mission.proposal.deduplication_key not in proposed_keys:
+                self._finish(
+                    mission, MissionStatus.CANCELLED, "standing_proposal_omitted",
+                    now, commands,
+                )
 
     def _unit_type_names(self, tags: Iterable[int]) -> list[str | None]:
         return [

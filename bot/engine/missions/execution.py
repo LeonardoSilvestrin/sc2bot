@@ -40,5 +40,16 @@ class MissionExecutor(ABC):
     async def step(self, context: MissionContext) -> MissionResult:
         raise NotImplementedError
 
+    def refresh(self, mission: Mission) -> None:
+        """Pick up a changed live proposal (target, config, ...) before `step`.
+
+        A STANDING mission's proposal can be replaced in place while the
+        same executor instance keeps running (see
+        ``MissionController._update_standing``) -- most executors have
+        nothing to resync, so this defaults to a no-op.
+        """
+
+        return None
+
 
 MissionExecutorFactory = Callable[[Mission, float], MissionExecutor]

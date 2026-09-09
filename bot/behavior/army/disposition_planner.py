@@ -11,7 +11,7 @@ from bot.engine.missions.models import (
     UnitRequirement,
 )
 from bot.engine.missions.planning import ProposalCadence
-from bot.world.attention import AttentionSnapshot, MapFacts
+from bot.world.attention import AttentionSnapshot, MapFacts, WorldFacts
 from bot.world.awareness import AwarenessSnapshot
 from bot.world.awareness.bases import BaseAssessment
 
@@ -37,9 +37,9 @@ class DispositionPlanner:
     recreating missions every tick.
 
     ``position:reserve`` is the catch-all: lowest priority, ``minimum=0``,
-    a generous ``desired`` -- see ``DispositionPlannerConfig.reserve_capacity``
-    -- so any eligible unit no other mission wants ends up leased there
-    rather than left without a mission at all.
+    with ``desired`` sized to the number of currently eligible units (see
+    ``_reserve_proposal``) so it can always absorb every one of them --
+    there is no arbitrary ceiling on how large the army can grow.
     """
 
     config: DispositionPlannerConfig = field(default_factory=DispositionPlannerConfig)
@@ -68,7 +68,7 @@ class DispositionPlanner:
         proposals = list(
             self._position_proposals(world.map, awareness, profile, world.time)
         )
-        proposals.append(self._reserve_proposal(world.map, world.time))
+        proposals.append(self._reserve_proposal(world))
         return tuple(proposals)
 
     def _position_proposals(
@@ -180,8 +180,16 @@ class DispositionPlanner:
             mode=MissionMode.STANDING,
         )
 
-    def _reserve_proposal(self, map_facts: MapFacts, now: float) -> MissionProposal:
+    def _reserve_proposal(self, world: WorldFacts) -> MissionProposal:
         sequence = self._cadence.next_sequence()
+        # No arbitrary ceiling: size the catch-all to however many eligible
+        # units actually exist right now, so it can absorb all of them
+        # regardless of army size (see Invariant 5 -- the pilot's earlier
+        # fixed `reserve_capacity` was an operational cap, not a semantic
+        # limit). `max(1, ...)` only guards UnitRequirement.desired > 0.
+        eligible = sum(
+            1 for unit in world.own_units if unit.unit_type in self.config.unit_types
+        )
         return MissionProposal(
             proposal_id=f"{self.planner_id}:reserve:{sequence}",
             deduplication_key=RESERVE_KEY,
@@ -189,15 +197,15 @@ class DispositionPlanner:
             kind=MissionKind.POSITION,
             priority=self.config.reserve_priority,
             target_key=RESERVE_KEY,
-            target=map_facts.own_start,
+            target=world.map.own_start,
             reason="standing_disposition_reserve_catch_all",
             requirement=UnitRequirement.combat(
                 unit_types=self.config.unit_types,
-                desired=self.config.reserve_capacity,
+                desired=max(1, eligible),
                 minimum=0,
                 minimum_health=self.config.minimum_unit_health,
             ),
-            created_at=now,
+            created_at=world.time,
             timeout_seconds=self.config.mission_timeout,
             cooldown_seconds=self.config.cooldown_seconds,
             # The catch-all never needs to preempt anything -- it is always

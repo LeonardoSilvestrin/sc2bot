@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 from sc2.ids.unit_typeid import UnitTypeId
@@ -21,6 +22,7 @@ class AllocationResult:
     assigned_tags: tuple[int, ...]
     requirements_satisfied: bool
     transfers: tuple[UnitTransfer, ...] = ()
+    released_tags: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,14 +84,22 @@ class UnitAllocator:
         can_preempt: bool,
         commitment_seconds: float,
     ) -> AllocationResult:
-        existing = sorted(
-            (
-                unit
-                for unit in self.assigned_units(mission_id)
-                if requirement.matches_identity(unit)
-            ),
+        currently_assigned = self.assigned_units(mission_id)
+        identity_matched = sorted(
+            (unit for unit in currently_assigned if requirement.matches_identity(unit)),
             key=lambda unit: self._score(unit, objective),
-        )[: requirement.desired]
+        )
+        existing = identity_matched[: requirement.desired]
+        existing_tags = {unit.tag for unit in existing}
+        # A shrunk `desired` (or a unit that no longer matches identity) must
+        # give up its excess leases immediately -- not linger until some
+        # other mission happens to preempt them (see DispositionPlanner
+        # posture transitions, e.g. PRESSURE -> BALANCED).
+        released_tags = tuple(
+            sorted(
+                unit.tag for unit in currently_assigned if unit.tag not in existing_tags
+            )
+        )
         needed = requirement.desired - len(existing)
         free = sorted(
             (
@@ -115,8 +125,9 @@ class UnitAllocator:
 
         if len(existing) + len(free) + len(preemptible) < requirement.minimum:
             return AllocationResult(
-                assigned_tags=self.assigned_tags(mission_id),
+                assigned_tags=tuple(sorted(existing_tags)),
                 requirements_satisfied=False,
+                released_tags=released_tags,
             )
 
         selected = [*existing, *free[:needed]]
@@ -134,11 +145,12 @@ class UnitAllocator:
                     protected_until=now + commitment_seconds,
                 )
 
-        assigned = self.assigned_tags(mission_id)
+        assigned = tuple(sorted(unit.tag for unit in selected))
         return AllocationResult(
             assigned_tags=assigned,
             requirements_satisfied=len(selected) >= requirement.minimum,
             transfers=tuple(transfers),
+            released_tags=released_tags,
         )
 
     def release_mission(self, mission_id: str) -> tuple[int, ...]:
@@ -146,3 +158,16 @@ class UnitAllocator:
         for tag in tags:
             del self._leases[tag]
         return tags
+
+    def release_units(self, mission_id: str, tags: Iterable[int]) -> None:
+        """Drop specific leases still owned by ``mission_id``.
+
+        Used for leases the mission itself is giving up (e.g. a shrunk
+        ``desired``) as opposed to `release_mission`, which tears down every
+        lease when the mission ends entirely.
+        """
+
+        for tag in tags:
+            lease = self._leases.get(tag)
+            if lease is not None and lease.mission_id == mission_id:
+                del self._leases[tag]
