@@ -16,14 +16,17 @@ the mission-planner roster, then follow whichever slice is relevant:
 
 - [contracts.md](architecture/contracts.md) -- dependency rules, mission
   kinds/priorities, the full frame lifecycle, and the causal logging catalog.
+  `bot/behavior/contracts.py` is the code-level counterpart: the
+  `ASSESS -> PLAN -> EXECUTE` protocols every behavior follows.
 - [base-model.md](architecture/base-model.md) -- per-base threat/protection
   scoring behind `DefensePlanner`.
 - [harass-and-defense-planners.md](architecture/harass-and-defense-planners.md)
-  -- `IntelPlanner`/`HarassPlanner`/`BansheeHarassPlanner`/`DefensePlanner`
-  conditions and the priority/preemption arbitration between them.
-- [army-disposition.md](architecture/army-disposition.md) -- the standing
-  `DispositionPlanner`/`CombatPosture` that gives every idle combat unit a
-  fallback home.
+  -- the vertical `behavior/` layout, the `harass/reaper/` and
+  `harass/banshee/` behaviors, `DefensePlanner`, and the
+  priority/utility/preemption-cost arbitration between them.
+- [standing-behavior.md](architecture/standing-behavior.md) -- the default
+  behavior (`StandingPlanner`/`CombatPosture`) that owns every combat unit
+  no special mission has claimed.
 - [map-control.md](architecture/map-control.md) -- the safe patrol mission.
 - [macro-planner.md](architecture/macro-planner.md) -- the economic
   (`EconomicProposal`/`EconomyController`) arbitration track.

@@ -6,22 +6,37 @@ adds the second and third mission planners after
 
 ## Directory layout
 
+Behaviors are organized vertically: one folder per behavior, holding
+everything specific to it. See `bot/behavior/contracts.py` for the shared
+`ASSESS -> PLAN -> EXECUTE` vocabulary.
+
 ```text
 bot/behavior/
-  scouting/               -> IntelPlanner / ScoutExecutor / config
-  harass/                 -> HarassPlanner (options: reaper, banshee) / executors / config
+  contracts.py            -> BehaviorAssessment/Assessor/Planner/Executor + BehaviorLog
+  strategy_intent.py      -> opening -> tactical capability table
+  standing/               -> the default owner (see standing-behavior.md)
+    model.py assessment.py planner.py executor.py
+  harass/
+    banshee/              -> cloaked Banshee raid, end to end
+      model.py assessment.py planner.py executor.py
+    reaper/               -> single-Reaper worker-line raid, end to end
+      model.py assessment.py planner.py executor.py
   defense/                -> DefensePlanner / DefendBaseExecutor / config
   map_control/            -> MapControlPlanner / MapControlExecutor / config
-  army/                   -> DispositionPlanner / PositioningExecutor / config (see army-disposition.md)
+  scouting/               -> IntelPlanner / ScoutExecutor / config
   macro/                  -> MacroPlanner / economic goals and config
 
 bot/engine/missions/      -> controller, board, allocator, models, execution contracts
 bot/app/mission_registry.py -> concrete executor wiring
 ```
 
-Each executor is named after the concrete action it performs, not its planner, per
-the project's rule against generic `<Kind>Executor` classes. Each behavior package
-re-exports its public planner, executor, and configuration names.
+Inside a migrated folder the four filenames are always the same, so any
+behavior answers the same four questions in the same place:
+`assessment.py` (what is the situation), `planner.py` (what do we want and at
+what priority), `executor.py` (how do we do it now), `model.py` (the types
+those three share). `defense/`, `map_control/` and `scouting/` still use the
+older `<name>_planner.py`/`<name>_executor.py` layout and are the next
+migration candidates.
 
 `MissionKind` gained `HARASS`, `AIR_HARASS`, and `DEFENSE` in
 `bot/engine/missions/models.py`; it stays the shared vocabulary in the mission
@@ -61,8 +76,8 @@ protection window both allow it.
 `SCOUT` (65) is the only task-shaped mission with `can_preempt=False` --
 scouting never steals a unit already committed elsewhere. Every other
 task-shaped kind now can preempt (`HARASS`/`AIR_HARASS` at 60/62,
-`MAP_CONTROL` at 40, `DEFENSE` at 85/95): once `DispositionPlanner`'s standing
-`HOLD_RALLY` squad (priority 20, see [army-disposition.md](army-disposition.md))
+`MAP_CONTROL` at 40, `DEFENSE` at 85/95): once `StandingPlanner`'s standing
+`HOLD_RALLY` squad (priority 20, see [standing-behavior.md](standing-behavior.md))
 started absorbing most otherwise-idle combat units, every opportunistic
 mission needed `can_preempt=True` just to pull a unit out of standing duty --
 their own priority ordering among each other (`DEFENSE` > `SCOUT`/`AIR_HARASS`
@@ -84,55 +99,66 @@ adapter translates focused fire into `ReaperGrenade` plus aggressive
 below -- an ability cast with no positional order attached, so unlike
 `attack_move` it does not reassign a `UnitRole`.
 
-## HarassPlanner
+## The two harass behaviors
 
-A single planner now calls every configured raid: `HarassPlanner.propose`
-loops over `HarassPlannerConfig.options`, a tuple of `HarassOption` (one raid
-recipe each -- unit types, `MissionKind`, priority, thresholds), gates and
-rate-limits each independently with its own `ProposalCadence`, and can emit
-more than one live proposal per tick -- e.g. a Reaper harassing while a
-Banshee raid is also in flight, each with its own mission kind and dedup key.
-There is no more separate `BansheeHarassPlanner` class; "reaper" and
-"banshee" are just the two default `HarassOption`s
-(`default_harass_options()`), read from `HarassPlannerConfig.options`.
+Each raid is its own vertical behavior with its own assessor, planner,
+executor and config -- `harass/reaper/` and `harass/banshee/`. They share
+nothing but the folder above them, and `BotRuntime` wires both planners into
+the same proposal tuple, so a Reaper raid and a Banshee raid can be live at
+once, each with its own mission kind and dedup key.
 
 ```mermaid
 flowchart TD
-    Propose(["HarassPlanner.propose"]) --> Loc{"awareness.enemy.location(target_key)\nlast_observed_at is not None?"}
-    Loc -->|no| Empty["() -- no target known yet"]
-    Loc -->|yes| PerOption["For each HarassOption\n(reaper, banshee, ...)"]
-    PerOption --> Cadence{"option's own cadence ready?"}
-    Cadence -->|no| Skip["skip this option this tick"]
-    Cadence -->|yes| Workers{"workers >= option.minimum_workers?"}
+    Propose(["RaidHarassPlanner.propose"]) --> Cadence{"cadence ready?"}
+    Cadence -->|no| Skip["() -- nothing this tick"]
+    Cadence -->|yes| Assess["RaidHarassAssessor.assess\nunits ready/pending, cloak progress,\ncandidate targets, risk, readiness"]
+    Assess --> Loc{"a candidate target\nhas been observed?"}
+    Loc -->|no| Skip
+    Loc -->|yes| Workers{"workers >= minimum_workers?"}
     Workers -->|no| Skip
     Workers -->|yes| Intent{"required strategic intent\nallowed by selected build?"}
     Intent -->|no| Skip
-    Intent -->|yes| Launchable{"a matching unit is launchable?\n(ready+healthy+available,\nor just 'exists' if require_ready_unit=False)"}
+    Intent -->|yes| Launchable{"a matching unit exists?\n(reaper: ready+healthy+available)"}
     Launchable -->|no| Skip
-    Launchable -->|yes| Safe{"anti_air_check_radius set AND\na visible anti-air enemy sits\nwithin it of the target?"}
+    Launchable -->|yes| Safe{"first launch only:\nvisible anti-air within 15 of target?"}
     Safe -->|withhold| Skip
-    Safe -->|clear, or check disabled| Emit["Emit MissionProposal(option.mission_kind)\ndedup key = {kind}:{target_key}"]
+    Safe -->|clear| Plan["Build the raid's own Plan,\nthen one MissionProposal\ndedup key = kind:target_key"]
 ```
 
-| Option | Mission kind | Priority | min workers | ready-unit required | anti-air check |
-| --- | --- | --- | --- | --- | --- |
-| `reaper` | `HARASS` | 60 | 16 | yes (only ever 1-2 Reapers; never steal one mid-scout) | none -- tolerates local ground defenders |
-| `banshee` | `AIR_HARASS` | 62 | 12 | no (Banshees are numerous; the allocator's own requirement still filters at assignment time) | compatible build intent; initial launch withholds on visible anti-air within 15 |
+| Behavior | Mission kind | Mode | Priority | min workers | ready-unit required | anti-air check |
+| --- | --- | --- | --- | --- | --- | --- |
+| `harass/reaper` | `HARASS` | FINITE | 60 | 16 | yes (only ever 1-2 Reapers; never steal one mid-scout) | none -- tolerates local ground defenders |
+| `harass/banshee` | `AIR_HARASS` | STANDING | 62 | 12 | no (Banshees are numerous; the allocator's own requirement still filters at assignment time) | compatible build intent; initial launch withholds on visible anti-air within 15 |
 
-Both options read `awareness.enemy.location(target_key)` (default
-`"enemy_natural"`) -- harass only follows up on a location `IntelPlanner` (or
-a future scout) has already found; it never guesses a target. Both are
-`can_preempt=True` (see "Arbitration" above) with dedup keys
-`harass:<target_key>` / `air_harass:<target_key>`, so a Reaper raid and a
-Banshee raid can be live at the same time without colliding.
+Both read `awareness.enemy.location(target_key)` (default `"enemy_natural"`)
+-- harass only follows up on a location `IntelPlanner` (or a future scout)
+has already found; it never guesses a target. `target_keys` is a tuple so a
+second location can be added, but only the natural is configured today.
+Both are `can_preempt=True` (see "Arbitration" above) with dedup keys
+`harass:<target_key>` / `air_harass:<target_key>`.
 
-`WorkerLineHarassExecutor` (Reaper) attack-moves into the target, focuses the
-visible worker with the lowest health, and tolerates local defenders. At 40%
-health it latches into retreat, follows a safe path to the own main, and
-completes only after reaching within `retreat_arrival_radius` (10).
+`BansheeHarassAssessment` is the raid's whole read of the world in one
+object: Banshees alive/ready/pending, cloak researched and its research
+progress (from `EconomyFacts.upgrades`/`upgrades_in_progress`), candidate
+targets with the anti-air and workers seen near each, known anti-air, the
+remembered enemy army centroid, and a `readiness`/`risk` pair. It describes
+only -- the planner's gates stay explicit booleans rather than a threshold on
+those numbers, and the assessment never sees a mission.
 
-`CloakedBansheeHarassExecutor` (Banshee, for the `BansheeCloak` opening, see
-[opening.md](opening.md)) attack-moves into the target and casts
+`ReaperHarassExecutor` attack-moves into the target, focuses the visible
+worker with the lowest health, and tolerates local defenders. At 40% health
+it latches into retreat, follows a safe path to the own main, and completes
+only after reaching within `retreat_arrival_radius` (10).
+
+`BansheeHarassExecutor` runs an explicit tactical state machine --
+`ASSEMBLE -> APPROACH -> INFILTRATE -> STRIKE -> EVADE -> REPOSITION` -- and
+logs every phase change as `behavior.state_changed`. APPROACH, INFILTRATE and
+STRIKE issue the same cloak-and-attack-move pair: closing the last tiles onto
+a worker line changes what is at stake, not what the squad should be told to
+do. What it changes is `preemption_cost` (see below).
+
+It is written for the `BansheeCloak` opening (see
+[opening.md](opening.md)) and casts
 `AbilityId.BEHAVIOR_CLOAKON_BANSHEE` (via `MissionCommands.use_ability`,
 `AresMissionCommands` wrapping Ares's `UseAbility` behavior) every step
 rather than tracking on/off state locally: `UseAbility` no-ops once the
@@ -174,6 +200,29 @@ Its executor, `DefendBaseExecutor`, is unchanged by the base-model slice:
 attack-moves every assigned unit toward the threat closest to where the
 mission was admitted and completes with `threat_cleared_near_own_base` once
 no matching enemy remains within `engagement_radius` of that point.
+
+## Unit utility and preemption cost
+
+Global mission priority alone cannot decide *which* unit a mission should
+take. Two hooks exist for that, both inert by default:
+
+- `UnitRequirement.desirability` and `type_desirability` let the requesting
+  behavior say how useful each unit type is to it right now. `UnitAllocator`
+  ranks candidates by that utility and refuses to request a unit whose
+  utility is 0.0 -- so a Defense facing Mutalisks can ask for Thors and
+  Marines and explicitly not want the Banshees, without the allocator
+  learning a matchup table.
+- `MissionExecutor.preemption_cost()` lets the *current owner* say what
+  interrupting it costs; the value rides on `UnitLease` and is added to the
+  allocator's preemption margin. `BansheeHarassExecutor` returns
+  `strike_preemption_cost` (5) while INFILTRATE/STRIKE and 0 otherwise --
+  small enough that `DEFENSE` (85) still wins a striking Banshee, large
+  enough that a same-tier mission no longer pulls the raid apart at its most
+  valuable moment.
+
+Neither a matchup table nor a full arbitration formula is implemented. The
+point is that `mission priority + unit-specific utility + current owner +
+preemption cost` can all be expressed without reshaping the contracts.
 
 ## Deliberately not built in this slice
 

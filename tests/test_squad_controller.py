@@ -6,7 +6,7 @@ from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
 from bot.app.mission_registry import DEFAULT_EXECUTOR_FACTORIES
-from bot.behavior.army import DispositionPlanner
+from bot.behavior.standing import StandingPlanner
 from bot.engine.missions import (
     MissionController,
     MissionKind,
@@ -92,7 +92,7 @@ class SquadLifecycleTests(unittest.IsolatedAsyncioTestCase):
         controller = MissionController(
             logger=logger, executor_factories=DEFAULT_EXECUTOR_FACTORIES
         )
-        planner = DispositionPlanner()
+        planner = StandingPlanner()
         service = AwarenessService()
         commands = FakeCommands()
 

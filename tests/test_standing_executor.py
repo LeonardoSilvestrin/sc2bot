@@ -5,7 +5,7 @@ import unittest
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
-from bot.behavior.army import PositioningExecutor
+from bot.behavior.standing import StandingExecutor
 from bot.engine.missions import MissionContext, MissionOutcome
 from bot.world.attention import AttentionSnapshot, MapFacts, UnitSnapshot, WorldFacts
 from bot.world.awareness import (
@@ -67,8 +67,8 @@ def context(
     )
 
 
-def executor(arrival_radius: float = 4.0) -> PositioningExecutor:
-    return PositioningExecutor(
+def executor(arrival_radius: float = 4.0) -> StandingExecutor:
+    return StandingExecutor(
         mission_id="mission-0001",
         target_key="position:third",
         target=ANCHOR,
@@ -77,7 +77,7 @@ def executor(arrival_radius: float = 4.0) -> PositioningExecutor:
     )
 
 
-class PositioningExecutorTests(unittest.IsolatedAsyncioTestCase):
+class StandingExecutorTests(unittest.IsolatedAsyncioTestCase):
     async def test_moves_a_unit_that_is_outside_the_tolerance(self):
         commands = FakeCommands()
         unit = marine(1, Point2((10, 10)))
@@ -140,7 +140,7 @@ class PositioningExecutorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(commands.commands, [])
 
 
-class PositioningExecutorRefreshTests(unittest.TestCase):
+class StandingExecutorRefreshTests(unittest.TestCase):
     def test_refresh_adopts_the_live_missions_updated_target(self):
         """Invariant 4: a STANDING proposal update must reach the running
         executor -- see MissionController._advance_executor's refresh call."""

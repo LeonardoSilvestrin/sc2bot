@@ -6,8 +6,8 @@ from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
 from bot.app.mission_registry import DEFAULT_EXECUTOR_FACTORIES
-from bot.behavior.army import DispositionPlanner
 from bot.behavior.map_control import MapControlPlanner
+from bot.behavior.standing import StandingPlanner
 from bot.engine.missions import (
     MissionController,
     MissionKind,
@@ -206,7 +206,7 @@ def defense_proposal(
 class ImmediateCompletionExecutor:
     """Finishes on its very first step, regardless of context.
 
-    Standing-in for the real ``WorkerLineHarassExecutor``/``DefendBaseExecutor``
+    Standing-in for the real ``ReaperHarassExecutor``/``DefendBaseExecutor``
     (which need actual enemy visibility/threats to complete), so Test D can
     deterministically drive a FINITE mission to completion and observe what
     happens next, without coupling this test to unrelated executor logic.
@@ -222,7 +222,7 @@ class StandingOwnershipTests(unittest.IsolatedAsyncioTestCase):
         units = tuple(marine(tag) for tag in range(1, 6))
         current = attention(10.0, units)
         awareness = AwarenessService().update(current)
-        disposition = DispositionPlanner()
+        disposition = StandingPlanner()
         controller = MissionController(
             logger=FakeLogger(), executor_factories=DEFAULT_EXECUTOR_FACTORIES
         )
@@ -258,7 +258,7 @@ class HarassPreemptsPositioningTests(unittest.IsolatedAsyncioTestCase):
             logger=FakeLogger(), executor_factories=DEFAULT_EXECUTOR_FACTORIES
         )
         commands = FakeCommands()
-        disposition = DispositionPlanner()
+        disposition = StandingPlanner()
 
         current = attention(10.0, units)
         awareness = service.update(current)
@@ -303,7 +303,7 @@ class DefensePreemptsStandingAndHarassTests(unittest.IsolatedAsyncioTestCase):
             logger=FakeLogger(), executor_factories=DEFAULT_EXECUTOR_FACTORIES
         )
         commands = FakeCommands()
-        disposition = DispositionPlanner()
+        disposition = StandingPlanner()
 
         current = attention(10.0, units)
         awareness = service.update(current)
@@ -369,7 +369,7 @@ class ReturnToStandingAfterFiniteMissionEndsTests(unittest.IsolatedAsyncioTestCa
             logger=FakeLogger(), executor_factories=executor_factories
         )
         commands = FakeCommands()
-        disposition = DispositionPlanner()
+        disposition = StandingPlanner()
 
         current = attention(10.0, units)
         awareness = service.update(current)
@@ -506,7 +506,7 @@ class CrossPlannerPreemptionFromPositionTests(unittest.IsolatedAsyncioTestCase):
             logger=FakeLogger(), executor_factories=DEFAULT_EXECUTOR_FACTORIES
         )
         commands = FakeCommands()
-        disposition = DispositionPlanner()
+        disposition = StandingPlanner()
 
         current = attention(10.0, units)
         awareness = posture_awareness(current)
@@ -551,7 +551,7 @@ class CrossPlannerPreemptionFromPositionTests(unittest.IsolatedAsyncioTestCase):
             logger=FakeLogger(), executor_factories=DEFAULT_EXECUTOR_FACTORIES
         )
         commands = FakeCommands()
-        disposition = DispositionPlanner()
+        disposition = StandingPlanner()
 
         current = attention(10.0, units)
         awareness = service.update(current)
@@ -595,7 +595,7 @@ class StandingMissionTargetChangeReachesExecutorTests(unittest.IsolatedAsyncioTe
         self,
     ):
         """Invariant 4: MissionController._update_standing replacing a live
-        mission's proposal must reach the running PositioningExecutor --
+        mission's proposal must reach the running StandingExecutor --
         not leave it steering toward a stale target."""
 
         unit = marine(1, Point2((10, 10)))
@@ -659,7 +659,7 @@ class ProportionalStandingSquadsTests(unittest.IsolatedAsyncioTestCase):
         units = tuple(marine(tag) for tag in range(1, 76))  # 75 marines
         current = attention(10.0, units)
         awareness = AwarenessService().update(current)
-        disposition = DispositionPlanner()
+        disposition = StandingPlanner()
         map_control = MapControlPlanner()
         controller = MissionController(
             logger=FakeLogger(), executor_factories=DEFAULT_EXECUTOR_FACTORIES

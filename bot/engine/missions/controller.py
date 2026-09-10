@@ -119,6 +119,7 @@ class MissionController:
                     can_preempt=mission.proposal.can_preempt,
                     commitment_seconds=mission.proposal.commitment_seconds,
                     preferred_tags=self.squads.preferred_tags(mission.mission_id),
+                    preemption_cost=self._preemption_cost(mission),
                 )
             self._apply_allocation(mission, allocation, now, commands)
             self.squads.allocation_changed(
@@ -142,6 +143,23 @@ class MissionController:
                 continue
 
             await self._advance_executor(mission, now, attention, awareness, commands)
+
+    def _preemption_cost(self, mission: Mission) -> float:
+        """Ask the running executor what interrupting it costs right now.
+
+        Duck-typed like ``refresh`` so test executors providing only ``step``
+        keep working, and clamped to a non-negative number so a misbehaving
+        executor cannot make its units *easier* to take than priority says.
+        """
+
+        executor = self._executors.get(mission.mission_id)
+        cost = getattr(executor, "preemption_cost", None)
+        if cost is None:
+            return 0.0
+        try:
+            return max(0.0, float(cost()))
+        except Exception:
+            return 0.0
 
     def _cancellation_reason(
         self, mission: Mission, now: float, awareness: AwarenessSnapshot

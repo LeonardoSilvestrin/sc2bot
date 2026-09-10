@@ -12,16 +12,19 @@
    forever.
 3. Awareness describes the world. Controller state, leases, cooldowns, and mission
    status never enter Awareness.
-4. A planner reads Attention and Awareness and returns immutable proposals. A
-   proposal cannot claim a unit or start itself.
-5. `MissionController` alone admits/rejects proposals and changes mission status.
-6. `UnitAllocator` alone mutates the bidirectional unit-to-mission leases.
+4. A behavior assessment reads Attention and Awareness only -- never mission
+   state, leases, or `bot.engine` -- and returns a plain reading.
+5. A planner reads Attention and Awareness (through its own assessment) and
+   returns immutable proposals. A proposal cannot claim a unit or start
+   itself.
+6. `MissionController` alone admits/rejects proposals and changes mission status.
+7. `UnitAllocator` alone mutates the bidirectional unit-to-mission leases.
    `SquadController` records persistent membership and allocation preferences;
    it is not a second ownership authority and never issues commands.
-7. Executors cannot import Ares or infrastructure. They issue requests via
+8. Executors cannot import Ares or infrastructure. They issue requests via
    `MissionCommands` (`path_to`, `safe_path_to`, `attack_move`, `release`) and
    every result contains a non-empty reason.
-8. Only the Ares adapter assigns Ares roles or registers Ares behaviors. Each
+9. Only the Ares adapter assigns Ares roles or registers Ares behaviors. Each
    command port hardcodes one role regardless of the calling mission's kind:
    `path_to` assigns `UnitRole.SCOUTING`, `safe_path_to` assigns
    `UnitRole.MAP_CONTROL`, `attack_move` assigns `UnitRole.ATTACKING`, and
@@ -45,16 +48,16 @@ intended arbitration order under `UnitAllocator`'s preemption margin (10):
 | `DEFENSE` (threatened base) | 85 | yes |
 | `DEFENSE` (critical base) | 95 | yes |
 
-`HOLD_RALLY` (`DispositionPlanner`) is kept comfortably below `MAP_CONTROL` and
+`HOLD_RALLY` (`StandingPlanner`) is kept comfortably below `MAP_CONTROL` and
 `HARASS`/`AIR_HARASS`/`SCOUT` so a standing slot is always freely preemptible
 by any of them. `SCOUT` is the only proposal that cannot preempt another
 mission itself -- every other kind
-gained `can_preempt=True` once `DispositionPlanner`'s standing slots started
+gained `can_preempt=True` once `StandingPlanner`'s standing slots started
 holding most otherwise-idle units, so an opportunistic mission needs it just
 to pull a unit out of standing duty; priority order among the preemptible
 kinds still decides who wins a contested unit. Map Control is described in
-[map-control.md](map-control.md), the standing disposition slots in
-[army-disposition.md](army-disposition.md), and the opportunistic/defense
+[map-control.md](map-control.md), the standing default-owner behavior in
+[standing-behavior.md](standing-behavior.md), and the opportunistic/defense
 missions in [harass-and-defense-planners.md](harass-and-defense-planners.md).
 
 ## Frame lifecycle
@@ -63,8 +66,8 @@ missions in [harass-and-defense-planners.md](harass-and-defense-planners.md).
 observe current Ares state (AresWorldObserver)
 build AttentionSnapshot (AttentionService)
 update AwarenessSnapshot and freshness (AwarenessService)
-collect mission proposals from every planner (Intel/Harass/Defense/
-    MapControl/Disposition)
+collect mission proposals from every behavior planner (Intel/ReaperHarass/
+    BansheeHarass/Defense/MapControl/Standing)
 MissionController.tick:
     fail missions that lost their whole team
     admit/reject/update-standing each proposal (cooldown, duplicate, unsupported kind)
@@ -102,7 +105,7 @@ sequenceDiagram
     Att-->>Pln: AttentionSnapshot
     Pln->>MC: tuple[MissionProposal]
     MC->>MC: admit / reject / update-standing / cancel
-    MC->>Alloc: allocate(priority, requirement, can_preempt)
+    MC->>Alloc: allocate(priority, requirement, can_preempt, preemption_cost)
     Alloc-->>MC: assigned/preempted/released tags
     MC->>Exec: step(MissionContext)
     Exec->>Cmd: MissionCommands (path_to/attack_move/...)
@@ -171,11 +174,17 @@ where applicable (`proposal_id`, `mission_id`, `deduplication_key`, or
   `economic_action_dispatched`, `economic_action_confirmed`,
   `economic_action_failed`, `economic_action_timed_out`.
 - Invalid economic feedback: `economic_feedback_rejected`.
-- Standing disposition: `disposition.updated` (posture, standing slot
-  desired/assigned counts, per-kind allocation, unassigned eligible unit
-  count) and `disposition.unassigned_units_persisting` when eligible combat
-  units have gone without any mission for `_UNASSIGNED_WARNING_AFTER` (15s) --
-  see [army-disposition.md](army-disposition.md).
+- Standing army: `standing.updated` (posture, standing slot desired/assigned
+  counts, per-kind allocation, unassigned eligible unit count) and
+  `standing.unassigned_units_persisting` when eligible combat units have gone
+  without any mission for `_UNASSIGNED_WARNING_AFTER` (15s) -- see
+  [standing-behavior.md](standing-behavior.md).
+- Behavior lifecycle (emitted by each behavior through `BehaviorLog`, with
+  the behavior's own component name, e.g. `behavior.harass.banshee`):
+  `behavior.assessed` (the assessment's `log_fields()` plus the
+  propose/withhold decision), `behavior.proposed` (the plan), and
+  `behavior.state_changed` (an executor's tactical phase, e.g. the Banshee
+  raid entering STRIKE, or the standing army's anchor moving).
 
 Local runs opt in with `--bot-log events` and write under `_botdev/logs/`.
 Ladder runs retain `NullBotLogger` and do not open files. The standalone
@@ -183,10 +192,10 @@ Ladder runs retain `NullBotLogger` and do not open files. The standalone
 event timeline and derives its Observation, Knowledge, and Economy views
 exclusively from the structured events above. Component names mirror the current
 package layout (`app.runtime`, `world.attention`, `world.awareness`,
-`behavior.army.disposition`, `engine.missions.controller`, and
+`behavior.standing`, `behavior.harass.banshee`, `engine.missions.controller`, and
 `engine.economy.controller`); the viewer's `COMPONENT_ALIASES` table maps
 older component strings (`application.runtime`, `ego.mission_controller`,
-`economy.controller`) onto the current names -- and, for a log old enough that
+`economy.controller`, `behavior.army.disposition`) onto the current names -- and, for a log old enough that
 every event still shared the single `application.runtime` component, further
 splits it into `world.observation`/`world.knowledge` pseudo-components purely
 by event name -- so pre-restructure logs still group correctly in the

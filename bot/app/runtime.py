@@ -13,9 +13,9 @@ from bot.adapters.ares import (
     register_baseline_behaviors,
 )
 from bot.app.mission_registry import build_executor_factories
-from bot.behavior.army import DispositionPlanner, DispositionPlannerConfig
 from bot.behavior.defense import DefensePlanner, DefensePlannerConfig
-from bot.behavior.harass import HarassPlanner, HarassPlannerConfig
+from bot.behavior.harass.banshee import BansheeHarassConfig, BansheeHarassPlanner
+from bot.behavior.harass.reaper import ReaperHarassConfig, ReaperHarassPlanner
 from bot.behavior.macro import (
     MacroPlanner,
     MacroPlannerConfig,
@@ -23,6 +23,7 @@ from bot.behavior.macro import (
 )
 from bot.behavior.map_control import MapControlPlanner, MapControlPlannerConfig
 from bot.behavior.scouting import IntelPlanner, IntelPlannerConfig
+from bot.behavior.standing import StandingConfig, StandingPlanner
 from bot.engine.economy import (
     EconomicFeedback,
     EconomyController,
@@ -53,8 +54,8 @@ class BotRuntime:
     """Composition root wiring Attention/Awareness into the mission planners."""
 
     # How long an eligible combat unit may sit without any mission owning it
-    # before it is worth a distinct log line -- Invariant 1 of the
-    # disposition pilot says this should not normally happen at all.
+    # before it is worth a distinct log line -- the standing behavior is the
+    # default owner, so this should not normally happen at all.
     _UNASSIGNED_WARNING_AFTER = 15.0
     # Macro state is logged on change, plus this heartbeat so a stable but
     # wrong state (banking with nothing in demand) still shows up.
@@ -68,42 +69,52 @@ class BotRuntime:
         *,
         logger: BotLogger,
         intel_config: IntelPlannerConfig | None = None,
-        harass_config: HarassPlannerConfig | None = None,
+        banshee_harass_config: BansheeHarassConfig | None = None,
+        reaper_harass_config: ReaperHarassConfig | None = None,
         defense_config: DefensePlannerConfig | None = None,
         macro_config: MacroPlannerConfig | None = None,
         map_control_config: MapControlPlannerConfig | None = None,
-        disposition_config: DispositionPlannerConfig | None = None,
+        standing_config: StandingConfig | None = None,
         rng: random.Random | None = None,
     ) -> None:
         self.logger = logger
         self._rng = rng or random.Random()
         self.intel_config = intel_config or IntelPlannerConfig()
-        self.harass_config = harass_config or HarassPlannerConfig()
+        self.banshee_harass_config = banshee_harass_config or BansheeHarassConfig()
+        self.reaper_harass_config = reaper_harass_config or ReaperHarassConfig()
         self.defense_config = defense_config or DefensePlannerConfig()
         self.macro_config = macro_config or MacroPlannerConfig()
         self.map_control_config = map_control_config or MapControlPlannerConfig()
-        self.disposition_config = disposition_config or DispositionPlannerConfig()
+        self.standing_config = standing_config or StandingConfig()
         self.world_observer = AresWorldObserver()
         self.awareness = AwarenessService(
             location_stale_after=self.intel_config.location_stale_after
         )
         self.intel_planner = IntelPlanner(config=self.intel_config)
-        self.harass_planner = HarassPlanner(config=self.harass_config)
+        self.banshee_harass_planner = BansheeHarassPlanner(
+            config=self.banshee_harass_config, logger=logger
+        )
+        self.reaper_harass_planner = ReaperHarassPlanner(
+            config=self.reaper_harass_config, logger=logger
+        )
         self.defense_planner = DefensePlanner(config=self.defense_config)
         self.macro_planner = MacroPlanner(config=self.macro_config)
         self.map_control_planner = MapControlPlanner(config=self.map_control_config)
-        self.disposition_planner = DispositionPlanner(config=self.disposition_config)
+        self.standing_planner = StandingPlanner(
+            config=self.standing_config, logger=logger
+        )
         self._mission_planners = (
             self.intel_planner,
-            self.harass_planner,
+            self.reaper_harass_planner,
+            self.banshee_harass_planner,
             self.defense_planner,
             self.map_control_planner,
-            # Lowest-priority planner last: the standing HOLD_RALLY
-            # proposal should not shadow anything above in reasoning about
-            # this tick's proposal list, though admission order does not
-            # actually depend on list order (MissionController sorts live
-            # missions by priority every tick regardless).
-            self.disposition_planner,
+            # The default behavior last: its standing proposal should not
+            # shadow anything above in reasoning about this tick's proposal
+            # list, though admission order does not actually depend on list
+            # order (MissionController sorts live missions by priority every
+            # tick regardless).
+            self.standing_planner,
         )
         # `chosen_opening` is unknown until the Ares build runner resolves it
         # (never, if a caller pins `macro_config` explicitly, e.g. tests) --
@@ -112,7 +123,10 @@ class BotRuntime:
         self.missions = MissionController(
             logger=logger,
             executor_factories=build_executor_factories(
-                disposition_config=self.disposition_config
+                standing_config=self.standing_config,
+                banshee_config=self.banshee_harass_config,
+                reaper_config=self.reaper_harass_config,
+                logger=logger,
             ),
         )
         self.economy = EconomyController(logger=logger)
@@ -123,8 +137,8 @@ class BotRuntime:
         self._last_enemy_intel_signature: tuple | None = None
         self._last_belief_signature: tuple | None = None
         self._last_belief_log_at: float = -999.0
-        self._last_disposition_signature: tuple | None = None
-        self._last_disposition_log_at: float = -999.0
+        self._last_standing_signature: tuple | None = None
+        self._last_standing_log_at: float = -999.0
         self._unassigned_eligible_since: float | None = None
         self._last_macro_signature: tuple | None = None
         self._last_macro_log_at: float = -999.0
@@ -274,7 +288,7 @@ class BotRuntime:
         self._log_idle_producers(attention, bank, protected)
         self._log_build_order(bot, game_time=world.time)
         self._log_world_snapshots(attention, awareness)
-        self._log_disposition(attention)
+        self._log_standing(attention)
 
     def _resolve_macro_profile(self, runner) -> None:
         """Pick the post-opening `MacroGoalSet` matching the chosen opening.
@@ -643,7 +657,7 @@ class BotRuntime:
             },
         )
 
-    def _log_disposition(self, attention) -> None:
+    def _log_standing(self, attention) -> None:
         """Surface standing-army ownership so "why is this unit here?" and
         "how many units have no mission?" are answerable from the logs.
 
@@ -668,7 +682,7 @@ class BotRuntime:
                     len(mission.assigned_unit_tags),
                 )
 
-        eligible_types = self.disposition_config.unit_types
+        eligible_types = self.standing_config.unit_types
         unassigned_tags = tuple(
             unit.tag
             for unit in world.own_units
@@ -689,23 +703,23 @@ class BotRuntime:
         )
 
         signature = (
-            self.disposition_planner.last_posture.name,
+            self.standing_planner.last_posture.name,
             tuple(sorted(standing.items())),
             tuple(sorted(allocation_by_kind.items())),
             len(unassigned_tags),
         )
-        periodic = world.time - self._last_disposition_log_at >= 10.0
-        if signature == self._last_disposition_signature and not periodic:
+        periodic = world.time - self._last_standing_log_at >= 10.0
+        if signature == self._last_standing_signature and not periodic:
             return
-        self._last_disposition_signature = signature
-        self._last_disposition_log_at = world.time
+        self._last_standing_signature = signature
+        self._last_standing_log_at = world.time
 
         self.logger.event(
-            "disposition.updated",
-            component="behavior.army.disposition",
+            "standing.updated",
+            component="behavior.standing",
             game_time=world.time,
             data={
-                "combat_posture": self.disposition_planner.last_posture.name,
+                "combat_posture": self.standing_planner.last_posture.name,
                 "standing": {
                     slot: {"desired": desired, "assigned": assigned}
                     for slot, (desired, assigned) in sorted(standing.items())
@@ -727,8 +741,8 @@ class BotRuntime:
 
         if unassigned_tags and unassigned_duration >= self._UNASSIGNED_WARNING_AFTER:
             self.logger.event(
-                "disposition.unassigned_units_persisting",
-                component="behavior.army.disposition",
+                "standing.unassigned_units_persisting",
+                component="behavior.standing",
                 game_time=world.time,
                 data={
                     "unassigned_eligible_units": len(unassigned_tags),

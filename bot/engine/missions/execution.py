@@ -51,5 +51,18 @@ class MissionExecutor(ABC):
 
         return None
 
+    def preemption_cost(self) -> float:
+        """Extra priority another mission must clear to take our units now.
+
+        This is the executor's own tactical answer, not policy: only the
+        thing actually running the mission knows that its Banshees are
+        cloaked inside a worker line rather than still flying out. It is
+        added to ``UnitAllocator.preemption_margin`` for this mission's
+        leases (see ``UnitLease.preemption_cost``); returning 0.0 -- the
+        default -- leaves arbitration purely priority-based.
+        """
+
+        return 0.0
+
 
 MissionExecutorFactory = Callable[[Mission, float], MissionExecutor]

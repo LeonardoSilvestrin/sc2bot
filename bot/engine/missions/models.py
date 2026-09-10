@@ -11,7 +11,17 @@ from bot.world.attention import UnitSnapshot
 
 @dataclass(frozen=True, slots=True)
 class UnitRequirement:
-    """Unit needs declared by a proposal and enforced by the allocator."""
+    """Unit needs declared by a proposal and enforced by the allocator.
+
+    ``desirability`` (and its per-type override table) is the requesting
+    behavior's own answer to "how useful is this unit *to me, right now*",
+    which mission priority alone cannot express: a Roach push wants Tanks and
+    Banshees badly enough to interrupt a raid, while Mutalisks over the main
+    make a Banshee worth exactly nothing to the defense. The planner that
+    knows the matchup fills these in; ``UnitAllocator`` only ranks by them and
+    refuses to request a unit whose utility is zero, so it never has to learn
+    a matchup table itself.
+    """
 
     unit_types: frozenset[UnitTypeId]
     desired: int
@@ -22,6 +32,12 @@ class UnitRequirement:
     exclude_resource_carriers: bool = False
     exclude_constructors: bool = False
     require_available: bool = True
+    # Baseline utility of any matching unit, 0.0 (never request) to 1.0.
+    desirability: float = 1.0
+    # Per-unit-type overrides of `desirability`, as (type, utility) pairs --
+    # a tuple rather than a Mapping so the requirement stays hashable and
+    # comparable, which `_update_standing` relies on to detect real change.
+    type_desirability: tuple[tuple[UnitTypeId, float], ...] = ()
 
     def __post_init__(self) -> None:
         if not self.unit_types:
@@ -30,6 +46,18 @@ class UnitRequirement:
             raise ValueError("expected 0 <= minimum <= desired and desired > 0")
         if not 0.0 <= self.minimum_health <= 1.0:
             raise ValueError("minimum_health must be between 0 and 1")
+        if not 0.0 <= self.desirability <= 1.0:
+            raise ValueError("desirability must be between 0 and 1")
+        if any(not 0.0 <= value <= 1.0 for _, value in self.type_desirability):
+            raise ValueError("type_desirability values must be between 0 and 1")
+
+    def utility_for(self, unit: UnitSnapshot) -> float:
+        """How much this mission wants *this* unit, 0.0 meaning not at all."""
+
+        for unit_type, value in self.type_desirability:
+            if unit.unit_type == unit_type:
+                return value
+        return self.desirability
 
     def matches(self, unit: UnitSnapshot, *, check_availability: bool = True) -> bool:
         return (
@@ -60,6 +88,8 @@ class UnitRequirement:
         desired: int,
         minimum: int,
         minimum_health: float = 0.0,
+        desirability: float = 1.0,
+        type_desirability: tuple[tuple[UnitTypeId, float], ...] = (),
     ) -> UnitRequirement:
         """A requirement for a mobile combat/utility mission.
 
@@ -76,6 +106,8 @@ class UnitRequirement:
             minimum_health=minimum_health,
             exclude_resource_carriers=True,
             exclude_constructors=True,
+            desirability=desirability,
+            type_desirability=type_desirability,
         )
 
 
@@ -97,7 +129,7 @@ class MissionMode(Enum):
     ``deduplication_key`` while it is live is rejected as a duplicate.
 
     ``STANDING`` describes an ongoing responsibility (see
-    ``bot.behavior.army.DispositionPlanner``) that a planner re-proposes on
+    ``bot.behavior.standing.StandingPlanner``) that a planner re-proposes on
     every cadence tick. A live ``STANDING`` mission is never rejected as a
     duplicate -- its ``Mission.proposal`` is replaced in place so the same
     mission_id/lease history continues, only the requirement/priority/target

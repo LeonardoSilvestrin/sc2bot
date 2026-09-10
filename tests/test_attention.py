@@ -4,6 +4,7 @@ import unittest
 from types import SimpleNamespace
 
 from sc2.ids.unit_typeid import UnitTypeId
+from sc2.ids.upgrade_id import UpgradeId
 from sc2.position import Point2
 
 from bot.adapters.ares import AresWorldObserver
@@ -349,6 +350,50 @@ class AresWorldObserverTests(unittest.TestCase):
 
         self.assertEqual(economy.protected_minerals, 0)
         self.assertEqual(economy.protected_vespene, 0)
+
+    def test_reports_researched_and_in_progress_upgrades(self):
+        bot = SimpleNamespace(
+            time=1.0,
+            minerals=50,
+            vespene=0,
+            supply_used=12,
+            supply_cap=15,
+            worker_type=UnitTypeId.SCV,
+            units=(),
+            enemy_start_locations=(),
+            start_location=Point2((10, 10)),
+            game_info=SimpleNamespace(map_center=Point2((50, 50))),
+            state=SimpleNamespace(upgrades={UpgradeId.STIMPACK}),
+            already_pending_upgrade=lambda upgrade: (
+                0.4 if upgrade is UpgradeId.BANSHEECLOAK else 0.0
+            ),
+        )
+
+        economy = AresWorldObserver().world_facts(bot, iteration=1).economy
+
+        self.assertTrue(economy.upgrade_ready(UpgradeId.STIMPACK))
+        self.assertEqual(economy.upgrade_progress(UpgradeId.STIMPACK), 1.0)
+        self.assertFalse(economy.upgrade_ready(UpgradeId.BANSHEECLOAK))
+        self.assertAlmostEqual(economy.upgrade_progress(UpgradeId.BANSHEECLOAK), 0.4)
+
+    def test_an_unresearched_untracked_upgrade_reads_as_zero_progress(self):
+        bot = SimpleNamespace(
+            time=1.0,
+            minerals=50,
+            vespene=0,
+            supply_used=12,
+            supply_cap=15,
+            worker_type=UnitTypeId.SCV,
+            units=(),
+            enemy_start_locations=(),
+            start_location=Point2((10, 10)),
+            game_info=SimpleNamespace(map_center=Point2((50, 50))),
+        )
+
+        economy = AresWorldObserver().world_facts(bot, iteration=1).economy
+
+        self.assertEqual(economy.upgrades, frozenset())
+        self.assertEqual(economy.upgrade_progress(UpgradeId.BANSHEECLOAK), 0.0)
 
     def test_missing_ares_economy_state_uses_safe_defaults(self):
         bot = SimpleNamespace(

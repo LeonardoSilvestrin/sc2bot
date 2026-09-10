@@ -23,13 +23,14 @@ flowchart TD
     Awareness --> Planners
     Attention --> Planners
 
-    subgraph Planners["Mission planners (bot/behavior/*) -- read-only, propose only"]
+    subgraph Planners["Behavior planners (bot/behavior/*) -- read-only, propose only"]
         direction TB
-        Intel["IntelPlanner\nSCOUT"]
-        Harass["HarassPlanner\nHARASS + AIR_HARASS\n(reaper / banshee options)"]
-        Defense["DefensePlanner\nDEFENSE (per base)"]
-        MapCtl["MapControlPlanner\nMAP_CONTROL"]
-        Disposition["DispositionPlanner\nHOLD_RALLY (standing)"]
+        Intel["scouting/\nIntelPlanner -- SCOUT"]
+        Reaper["harass/reaper/\nReaperHarassPlanner -- HARASS"]
+        Banshee["harass/banshee/\nBansheeHarassPlanner -- AIR_HARASS"]
+        Defense["defense/\nDefensePlanner -- DEFENSE (per base)"]
+        MapCtl["map_control/\nMapControlPlanner -- MAP_CONTROL"]
+        Standing["standing/\nStandingPlanner -- HOLD_RALLY (default owner)"]
     end
 
     Planners -->|"MissionProposal tuple"| Ego["MissionController\n(engine/missions)\nadmit / reject / cancel"]
@@ -37,7 +38,7 @@ flowchart TD
     Ego --> Board["MissionBoard\nlive Mission objects"]
     Squads -.->|"preferred member tags only"| Allocator
     Board --> Allocator["UnitAllocator\nleases + priority preemption"]
-    Allocator --> Executors["MissionExecutor\n(bot/behavior/*/*_executor.py)"]
+    Allocator --> Executors["MissionExecutor\n(bot/behavior/<behavior>/executor.py)"]
     Executors -->|"MissionCommands port"| AresAdapter["bot/adapters/ares\nAresMissionCommands"]
     AresAdapter --> AresBehaviors["Ares behaviors\n(KeepUnitSafe, AMove, MoveToSafeTarget, ...)"]
 
@@ -89,35 +90,61 @@ only after closing the lap. Unknown information creates the initial scout after 
 economy reaches 16 workers; stale information can be revisited in the periodic
 phase. These values live in `IntelPlannerConfig`.
 
-## Mission planners
+## Behavior layout
 
-Five mission planner instances are wired into `BotRuntime` today (producing
-six mission kinds between them), each with its concrete executor under
-`bot/behavior/<kind>/`:
+`bot/behavior/` is organized vertically: one folder per behavior, holding
+everything specific to it, so understanding or changing one behavior means
+opening one directory. Every behavior follows the same shape, fixed by
+`bot/behavior/contracts.py`:
 
-| Planner | Mission kind(s) | Priority | Mode | Can preempt |
-| --- | --- | --- | --- | --- |
-| `IntelPlanner` | `SCOUT` | 65 | FINITE | no |
-| `HarassPlanner` | `HARASS` (reaper option) | 60 | FINITE | yes |
-| `HarassPlanner` | `AIR_HARASS` (banshee option) | 62 | STANDING | yes |
-| `DefensePlanner` | `DEFENSE` | 85 / 95 (threatened / critical) | FINITE | yes |
-| `MapControlPlanner` | `MAP_CONTROL` | 40 | STANDING | yes |
-| `DispositionPlanner` | `HOLD_RALLY` | 20 | STANDING | yes |
+```text
+ASSESS   assessment.py   what is the situation, through this behavior's lens?
+PLAN     planner.py      what do we want, at what priority, with which units?
+OWN      (engine)        MissionController admits, UnitAllocator leases
+EXECUTE  executor.py     how do we make it happen this frame?
+```
 
-`HarassPlanner` calls whichever configured `HarassOption` (reaper, banshee,
-...) currently has a launchable unit and a known target -- it is one planner
-instance emitting proposals of two different `MissionKind`s, not two
-planners. Banshee activation additionally requires compatible build intent.
-`SCOUT` remains unit-based and is the only proposal that cannot preempt.
+`model.py` holds the assessment/plan/state types those three share. A small
+behavior may collapse the files; it may not blur the responsibilities. An
+assessment describes and never commits; a planner proposes and never
+commands; an executor commands only the units its mission owns.
+
+Two behaviors are migrated to this layout as the reference pair:
+`behavior/standing/` (the default owner of every otherwise-idle combat unit,
+see [standing-behavior.md](standing-behavior.md)) and `behavior/harass/banshee/`
+(the cloaked raid). `behavior/harass/reaper/` followed because splitting the
+old shared `HarassPlanner` required it. `defense/`, `map_control/` and
+`scouting/` keep the older `<name>_planner.py`/`<name>_executor.py` layout
+and are the next migration candidates.
+
+## Behavior planners
+
+Six mission planner instances are wired into `BotRuntime` today, each with
+its concrete executor in the same folder:
+
+| Behavior | Planner | Mission kind | Priority | Mode | Can preempt |
+| --- | --- | --- | --- | --- | --- |
+| `scouting/` | `IntelPlanner` | `SCOUT` | 65 | FINITE | no |
+| `harass/reaper/` | `ReaperHarassPlanner` | `HARASS` | 60 | FINITE | yes |
+| `harass/banshee/` | `BansheeHarassPlanner` | `AIR_HARASS` | 62 | STANDING | yes |
+| `defense/` | `DefensePlanner` | `DEFENSE` | 85 / 95 (threatened / critical) | FINITE | yes |
+| `map_control/` | `MapControlPlanner` | `MAP_CONTROL` | 40 | STANDING | yes |
+| `standing/` | `StandingPlanner` | `HOLD_RALLY` | 20 | STANDING | yes |
+
+The two raids are now independent behaviors rather than two `HarassOption`s
+inside one planner: each has its own cadence, gates, assessment and config.
+Banshee activation additionally requires compatible build intent. `SCOUT`
+remains unit-based and is the only proposal that cannot preempt.
 
 `BotRuntime` concatenates every planner's proposals into one tuple each frame;
 `MissionController` sorts live missions by `-priority` before allocating, so
 list order does not decide arbitration -- see
 [harass-and-defense-planners.md](harass-and-defense-planners.md) for the
-opportunistic missions' conditions and the shared `attack_move` command port,
+opportunistic missions' conditions, the shared `attack_move` command port, and
+the unit-utility/preemption-cost hooks,
 [base-model.md](base-model.md) for per-base defense, and
-[army-disposition.md](army-disposition.md) for the standing 80/20 squad
-responsibilities. Persistent identity is described in [squads.md](squads.md).
+[standing-behavior.md](standing-behavior.md) for the default-owner invariant.
+Persistent identity is described in [squads.md](squads.md).
 `MacroPlanner` produces
 `EconomicProposal`s instead of `MissionProposal`s and is admitted separately by
 `bot/engine/economy`; see [macro-planner.md](macro-planner.md).

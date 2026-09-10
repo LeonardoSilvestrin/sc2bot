@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
@@ -30,6 +30,12 @@ class UnitLease:
     mission_id: str
     priority: int
     protected_until: float
+    # What the current owner says it would cost to take this unit away right
+    # now (see `MissionExecutor.preemption_cost`). Added to the preemption
+    # margin, so a mission mid-strike is harder to raid than the same mission
+    # still flying out. 0.0 -- the default for every executor that does not
+    # answer -- keeps arbitration purely priority-based.
+    preemption_cost: float = 0.0
 
 
 class UnitAllocator:
@@ -84,6 +90,7 @@ class UnitAllocator:
         can_preempt: bool,
         commitment_seconds: float,
         preferred_tags: frozenset[int] = frozenset(),
+        preemption_cost: float = 0.0,
     ) -> AllocationResult:
         currently_assigned = self.assigned_units(mission_id)
         identity_matched = sorted(
@@ -106,10 +113,15 @@ class UnitAllocator:
             (
                 unit
                 for unit in self._units.values()
-                if unit.tag not in self._leases and requirement.matches(unit)
+                if unit.tag not in self._leases
+                and requirement.matches(unit)
+                # A unit the requesting behavior assigns no utility is not a
+                # candidate at all -- never requested, never preempted for.
+                and requirement.utility_for(unit) > 0.0
             ),
             key=lambda unit: (
                 0 if unit.tag in preferred_tags else 1,
+                -requirement.utility_for(unit),
                 self._score(unit, objective),
             ),
         )
@@ -120,12 +132,15 @@ class UnitAllocator:
                 if can_preempt
                 and (lease := self._leases.get(unit.tag)) is not None
                 and lease.mission_id != mission_id
-                and priority >= lease.priority + self.preemption_margin
+                and priority
+                >= lease.priority + self.preemption_margin + lease.preemption_cost
                 and now >= lease.protected_until
                 and requirement.matches(unit, check_availability=False)
+                and requirement.utility_for(unit) > 0.0
             ),
             key=lambda unit: (
                 0 if unit.tag in preferred_tags else 1,
+                -requirement.utility_for(unit),
                 self._score(unit, objective),
             ),
         )
@@ -141,6 +156,7 @@ class UnitAllocator:
             (*free, *preemptible),
             key=lambda unit: (
                 0 if unit.tag in preferred_tags else 1,
+                -requirement.utility_for(unit),
                 0 if unit.tag not in self._leases else 1,
                 self._score(unit, objective),
             ),
@@ -160,6 +176,13 @@ class UnitAllocator:
                     mission_id=mission_id,
                     priority=priority,
                     protected_until=now + commitment_seconds,
+                    preemption_cost=preemption_cost,
+                )
+            elif self._leases[unit.tag].preemption_cost != preemption_cost:
+                # The owner's own cost changes as it progresses (ASSEMBLE ->
+                # STRIKE); refresh it without disturbing the commitment window.
+                self._leases[unit.tag] = replace(
+                    self._leases[unit.tag], preemption_cost=preemption_cost
                 )
 
         assigned = tuple(sorted(unit.tag for unit in selected))

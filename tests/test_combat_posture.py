@@ -4,7 +4,7 @@ import unittest
 
 from sc2.position import Point2
 
-from bot.behavior.army import CombatPosture, derive_combat_posture
+from bot.behavior.standing import CombatPosture, derive_combat_posture
 from bot.world.awareness import (
     AwarenessSnapshot,
     MacroPosture,

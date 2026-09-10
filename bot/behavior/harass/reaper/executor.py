@@ -1,6 +1,8 @@
+"""EXECUTE: pressure a worker line, focus weak workers, preserve the Reaper."""
+
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from sc2.position import Point2
 
@@ -11,20 +13,35 @@ from bot.engine.missions.execution import (
     MissionResult,
 )
 
+from .model import ReaperHarassConfig
+
 
 @dataclass(slots=True)
-class WorkerLineHarassExecutor(MissionExecutor):
-    """Pressure a worker line, focus weak workers, and preserve the Reaper."""
+class ReaperHarassExecutor(MissionExecutor):
+    """Attack the nearest weak worker, and run home before dying."""
 
     mission_id: str
     target_key: str
     target: Point2
     started_at: float
-    worker_search_radius: float = 16.0
-    arrival_radius: float = 3.0
-    retreat_health: float = 0.40
-    retreat_arrival_radius: float = 10.0
+    config: ReaperHarassConfig = field(default_factory=ReaperHarassConfig)
     _retreating: bool = False
+
+    @property
+    def worker_search_radius(self) -> float:
+        return self.config.worker_search_radius
+
+    @property
+    def arrival_radius(self) -> float:
+        return self.config.arrival_radius
+
+    @property
+    def retreat_health(self) -> float:
+        return self.config.retreat_health
+
+    @property
+    def retreat_arrival_radius(self) -> float:
+        return self.config.retreat_arrival_radius
 
     async def step(self, context: MissionContext) -> MissionResult:
         if not context.assigned_units:

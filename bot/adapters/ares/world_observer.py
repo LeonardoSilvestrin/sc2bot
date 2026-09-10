@@ -61,6 +61,10 @@ for _trainable_units in TRAIN_INFO.values():
             _UNIT_BY_TRAIN_ABILITY[_value] = _trained_type
 
 
+# Upgrades a behavior reads research progress for (not just the done flag).
+_TRACKED_UPGRADES: tuple[UpgradeId, ...] = (UpgradeId.BANSHEECLOAK,)
+
+
 class AresWorldObserver:
     """The sole adapter that turns mutable Ares state into immutable facts.
 
@@ -550,6 +554,7 @@ class AresWorldObserver:
         ideal_harvesters, assigned_harvesters = self._harvester_totals(
             bot, own_structures
         )
+        upgrades, upgrades_in_progress = self._upgrade_facts(bot)
         runner = self._safe_attr(bot, "build_order_runner")
         state = self._safe_attr(bot, "state")
         score = self._safe_attr(state, "score")
@@ -586,7 +591,39 @@ class AresWorldObserver:
             structure_counts=tuple(structure_counts),
             producers=tuple(producers),
             tech_ready=tech_ready,
+            upgrades=upgrades,
+            upgrades_in_progress=upgrades_in_progress,
         )
+
+    @classmethod
+    def _upgrade_facts(
+        cls, bot
+    ) -> tuple[frozenset[UpgradeId], tuple[tuple[UpgradeId, float], ...]]:
+        """Researched upgrades, plus research progress for the tracked ones.
+
+        `bot.state.upgrades` is the authoritative finished set. Progress has
+        no such global source -- `already_pending_upgrade` answers per id --
+        so only upgrades some behavior actually asks about are polled, which
+        is what `_TRACKED_UPGRADES` lists.
+        """
+
+        state = cls._safe_attr(bot, "state")
+        raw = cls._items(state, "upgrades")
+        done = frozenset(item for item in raw if isinstance(item, UpgradeId))
+        pending = cls._safe_attr(bot, "already_pending_upgrade")
+        if not callable(pending):
+            return done, ()
+        progress: list[tuple[UpgradeId, float]] = []
+        for upgrade in _TRACKED_UPGRADES:
+            if upgrade in done:
+                continue
+            try:
+                value = float(pending(upgrade))
+            except (AttributeError, KeyError, RuntimeError, TypeError, ValueError):
+                continue
+            if math.isfinite(value) and value > 0.0:
+                progress.append((upgrade, min(1.0, value)))
+        return done, tuple(progress)
 
     @staticmethod
     def _supply_cost(unit_type: UnitTypeId) -> float:

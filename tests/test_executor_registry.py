@@ -7,7 +7,7 @@ from sc2.position import Point2
 
 from bot.app.mission_registry import DEFAULT_EXECUTOR_FACTORIES
 from bot.behavior.defense import DefendBaseExecutor
-from bot.behavior.harass import CloakedBansheeHarassExecutor, WorkerLineHarassExecutor
+from bot.behavior.harass import BansheeHarassExecutor, ReaperHarassExecutor
 from bot.behavior.map_control import MapControlExecutor
 from bot.behavior.scouting import IntelPlanner, ScoutExecutor
 from bot.engine.missions import (
@@ -133,21 +133,21 @@ class DefaultExecutorFactoryCoverageTests(unittest.TestCase):
         executor = DEFAULT_EXECUTOR_FACTORIES[MissionKind.SCOUT](mission, 0.0)
         self.assertIsInstance(executor, ScoutExecutor)
 
-    def test_harass_kind_builds_a_worker_line_harass_executor(self):
+    def test_harass_kind_builds_a_reaper_harass_executor(self):
         mission = Mission(
             mission_id="m1", proposal=_proposal(MissionKind.HARASS), admitted_at=0.0
         )
         executor = DEFAULT_EXECUTOR_FACTORIES[MissionKind.HARASS](mission, 0.0)
-        self.assertIsInstance(executor, WorkerLineHarassExecutor)
+        self.assertIsInstance(executor, ReaperHarassExecutor)
 
-    def test_air_harass_kind_builds_a_cloaked_banshee_harass_executor(self):
+    def test_air_harass_kind_builds_a_banshee_harass_executor(self):
         mission = Mission(
             mission_id="m1",
             proposal=_proposal(MissionKind.AIR_HARASS),
             admitted_at=0.0,
         )
         executor = DEFAULT_EXECUTOR_FACTORIES[MissionKind.AIR_HARASS](mission, 0.0)
-        self.assertIsInstance(executor, CloakedBansheeHarassExecutor)
+        self.assertIsInstance(executor, BansheeHarassExecutor)
 
     def test_defense_kind_builds_a_defend_base_executor(self):
         mission = Mission(

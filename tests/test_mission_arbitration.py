@@ -8,7 +8,7 @@ from sc2.position import Point2
 
 from bot.app.mission_registry import DEFAULT_EXECUTOR_FACTORIES
 from bot.behavior.defense import DefensePlanner
-from bot.behavior.harass import HarassPlanner
+from bot.behavior.harass import ReaperHarassPlanner
 from bot.behavior.scouting import IntelPlanner
 from bot.engine.missions import MissionController, MissionKind, MissionStatus
 from bot.world.attention import UnitSnapshot
@@ -38,12 +38,14 @@ class HarassDeduplicationTests(unittest.IsolatedAsyncioTestCase):
         logger = FakeLogger()
         commands = FakeCommands()
         service = AwarenessService()
-        controller = MissionController(logger=logger, executor_factories=DEFAULT_EXECUTOR_FACTORIES)
+        controller = MissionController(
+            logger=logger, executor_factories=DEFAULT_EXECUTOR_FACTORIES
+        )
 
         service.update(attention(10.0, visible=True))
         current = attention(20.0, visible=False)
         awareness = service.update(current)
-        first = HarassPlanner().propose(current, awareness)[0]
+        first = ReaperHarassPlanner().propose(current, awareness)[0]
         duplicate = replace(first, proposal_id=f"{first.proposal_id}:duplicate")
 
         await controller.tick(
@@ -65,7 +67,9 @@ class DefensePreemptionTests(unittest.IsolatedAsyncioTestCase):
         self,
     ):
         service = AwarenessService()
-        controller = MissionController(logger=FakeLogger(), executor_factories=DEFAULT_EXECUTOR_FACTORIES)
+        controller = MissionController(
+            logger=FakeLogger(), executor_factories=DEFAULT_EXECUTOR_FACTORIES
+        )
         commands = FakeCommands()
 
         current = attention(10.0, visible=False)

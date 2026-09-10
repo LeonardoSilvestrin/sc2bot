@@ -6,7 +6,7 @@ from dataclasses import replace
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
-from bot.behavior.harass import HarassPlanner
+from bot.behavior.harass import BansheeHarassPlanner, ReaperHarassPlanner
 from bot.engine.missions import MissionKind
 from bot.world.attention import (
     AttentionSnapshot,
@@ -135,7 +135,7 @@ class ReaperHarassTests(unittest.TestCase):
         current = attention(10.0, natural_visible=False)
         awareness = AwarenessService().update(current)
 
-        self.assertEqual(HarassPlanner().propose(current, awareness), ())
+        self.assertEqual(ReaperHarassPlanner().propose(current, awareness), ())
 
     def test_visible_defenders_do_not_suppress_aggressive_harass(self):
         service = AwarenessService()
@@ -143,7 +143,7 @@ class ReaperHarassTests(unittest.TestCase):
         current = attention(20.0, natural_visible=False, visible_enemies=1)
         awareness = service.update(current)
 
-        proposals = HarassPlanner().propose(current, awareness)
+        proposals = ReaperHarassPlanner().propose(current, awareness)
         self.assertEqual([p.kind for p in proposals], [MissionKind.HARASS])
 
     def test_no_proposal_below_the_economic_gate(self):
@@ -152,7 +152,7 @@ class ReaperHarassTests(unittest.TestCase):
         current = attention(20.0, natural_visible=False, workers=10)
         awareness = service.update(current)
 
-        self.assertEqual(HarassPlanner().propose(current, awareness), ())
+        self.assertEqual(ReaperHarassPlanner().propose(current, awareness), ())
 
     def test_no_proposal_without_a_harass_capable_unit_alive(self):
         service = AwarenessService()
@@ -160,7 +160,7 @@ class ReaperHarassTests(unittest.TestCase):
         current = attention(20.0, natural_visible=False, reapers=0)
         awareness = service.update(current)
 
-        self.assertEqual(HarassPlanner().propose(current, awareness), ())
+        self.assertEqual(ReaperHarassPlanner().propose(current, awareness), ())
 
     def test_no_proposal_while_the_only_reaper_is_busy(self):
         service = AwarenessService()
@@ -172,7 +172,7 @@ class ReaperHarassTests(unittest.TestCase):
         )
         awareness = service.update(current)
 
-        self.assertEqual(HarassPlanner().propose(current, awareness), ())
+        self.assertEqual(ReaperHarassPlanner().propose(current, awareness), ())
 
     def test_proposes_worker_line_harass_once_target_is_known_and_undefended(self):
         service = AwarenessService()
@@ -180,7 +180,7 @@ class ReaperHarassTests(unittest.TestCase):
         current = attention(20.0, natural_visible=False)
         awareness = service.update(current)
 
-        proposals = HarassPlanner().propose(current, awareness)
+        proposals = ReaperHarassPlanner().propose(current, awareness)
 
         self.assertEqual(len(proposals), 1)
         proposal = proposals[0]
@@ -207,7 +207,7 @@ class ReaperHarassTests(unittest.TestCase):
     def test_respects_its_proposal_cadence(self):
         service = AwarenessService()
         service.update(attention(10.0, natural_visible=True))
-        planner = HarassPlanner()
+        planner = ReaperHarassPlanner()
         first = attention(20.0, natural_visible=False)
         self.assertEqual(len(planner.propose(first, service.update(first))), 1)
 
@@ -227,7 +227,7 @@ class BansheeHarassTests(unittest.TestCase):
         )
         awareness = service.update(current)
 
-        proposals = HarassPlanner().propose(current, awareness)
+        proposals = BansheeHarassPlanner().propose(current, awareness)
 
         self.assertNotIn(MissionKind.AIR_HARASS, [p.kind for p in proposals])
 
@@ -235,7 +235,7 @@ class BansheeHarassTests(unittest.TestCase):
         current = attention(10.0, natural_visible=False, reapers=0, banshees=1)
         awareness = AwarenessService().update(current)
 
-        self.assertEqual(HarassPlanner().propose(current, awareness), ())
+        self.assertEqual(BansheeHarassPlanner().propose(current, awareness), ())
 
     def test_no_proposal_while_an_anti_air_unit_is_near_the_target(self):
         service = AwarenessService()
@@ -251,7 +251,7 @@ class BansheeHarassTests(unittest.TestCase):
         )
         awareness = service.update(current)
 
-        proposals = HarassPlanner().propose(current, awareness)
+        proposals = BansheeHarassPlanner().propose(current, awareness)
         self.assertEqual([p.kind for p in proposals], [])
 
     def test_an_anti_air_unit_far_from_the_target_does_not_withhold(self):
@@ -272,7 +272,7 @@ class BansheeHarassTests(unittest.TestCase):
         )
         awareness = service.update(current)
 
-        proposals = HarassPlanner().propose(current, awareness)
+        proposals = BansheeHarassPlanner().propose(current, awareness)
         self.assertEqual([p.kind for p in proposals], [MissionKind.AIR_HARASS])
 
     def test_a_non_anti_air_enemy_near_the_target_does_not_withhold(self):
@@ -291,7 +291,7 @@ class BansheeHarassTests(unittest.TestCase):
         )
         awareness = service.update(current)
 
-        proposals = HarassPlanner().propose(current, awareness)
+        proposals = BansheeHarassPlanner().propose(current, awareness)
         self.assertEqual([p.kind for p in proposals], [MissionKind.AIR_HARASS])
 
     def test_no_proposal_below_the_economic_gate(self):
@@ -306,7 +306,7 @@ class BansheeHarassTests(unittest.TestCase):
         )
         awareness = service.update(current)
 
-        proposals = HarassPlanner().propose(current, awareness)
+        proposals = BansheeHarassPlanner().propose(current, awareness)
         self.assertEqual([p.kind for p in proposals], [])
 
     def test_no_proposal_without_a_banshee_alive(self):
@@ -315,7 +315,7 @@ class BansheeHarassTests(unittest.TestCase):
         current = attention(20.0, natural_visible=False, reapers=0, banshees=0)
         awareness = service.update(current)
 
-        proposals = HarassPlanner().propose(current, awareness)
+        proposals = BansheeHarassPlanner().propose(current, awareness)
         self.assertEqual([p.kind for p in proposals], [])
 
     def test_proposes_air_harass_once_target_is_known_and_undefended(self):
@@ -328,7 +328,7 @@ class BansheeHarassTests(unittest.TestCase):
 
         proposals = [
             p
-            for p in HarassPlanner().propose(current, awareness)
+            for p in BansheeHarassPlanner().propose(current, awareness)
             if p.kind is MissionKind.AIR_HARASS
         ]
 
@@ -355,7 +355,10 @@ class CombinedHarassTests(unittest.TestCase):
         current = attention(20.0, natural_visible=False, reapers=1, banshees=1)
         awareness = service.update(current)
 
-        proposals = HarassPlanner().propose(current, awareness)
+        proposals = (
+            *ReaperHarassPlanner().propose(current, awareness),
+            *BansheeHarassPlanner().propose(current, awareness),
+        )
 
         self.assertEqual(
             sorted(p.kind.name for p in proposals),

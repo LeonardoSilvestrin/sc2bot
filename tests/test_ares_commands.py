@@ -136,7 +136,7 @@ class AresMissionCommandsSafePathTests(unittest.TestCase):
         bot.register_behavior.assert_called_once()
 
     def test_keep_available_assigns_idle_instead_of_map_control(self):
-        """A standing POSITION/RESERVE park (see PositioningExecutor) must not
+        """A standing POSITION/RESERVE park (see StandingExecutor) must not
         look "busy" to WorldObserver.available_for_mission the way an active
         MAP_CONTROL patrol or harass retreat does."""
 

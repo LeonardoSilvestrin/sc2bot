@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from sc2.ids.unit_typeid import UnitTypeId
+from sc2.ids.upgrade_id import UpgradeId
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,9 +81,28 @@ class EconomyFacts:
     # must read as "no reason to rule anything out" -- a missing observation
     # cannot be allowed to silently stop all unit production.
     tech_ready: frozenset[UnitTypeId] | None = None
+    # Upgrades already researched, and how far along the ones still in
+    # progress are (0.0-1.0). Behaviors that only exist because of an upgrade
+    # -- cloaked Banshee harass being the obvious one -- need the progress,
+    # not just the finished flag, to know whether it is worth preparing yet.
+    upgrades: frozenset[UpgradeId] = frozenset()
+    upgrades_in_progress: tuple[tuple[UpgradeId, float], ...] = ()
 
     def tech_ready_for(self, unit_type: UnitTypeId) -> bool:
         return self.tech_ready is None or unit_type in self.tech_ready
+
+    def upgrade_ready(self, upgrade: UpgradeId) -> bool:
+        return upgrade in self.upgrades
+
+    def upgrade_progress(self, upgrade: UpgradeId) -> float:
+        """How complete this upgrade is, 1.0 once researched."""
+
+        if upgrade in self.upgrades:
+            return 1.0
+        for candidate, progress in self.upgrades_in_progress:
+            if candidate == upgrade:
+                return progress
+        return 0.0
 
     def unit_count(self, unit_type: UnitTypeId) -> UnitTypeCount:
         return next(

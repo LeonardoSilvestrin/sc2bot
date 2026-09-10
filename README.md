@@ -11,8 +11,9 @@ The bot is layered as a sense → believe → decide → arbitrate → act pipel
 - `bot/world/attention/` — raw per-tick facts (economy, map, units, bases).
 - `bot/world/awareness/` — derived beliefs from those facts: enemy sighting memory/confidence, per-base security,
   and macro posture (turtle vs. greedy expand) via `AwarenessService`.
-- `bot/behavior/` — decision logic, split by concern (`macro/`, `defense/`, `harass/`, `scouting/`, `map_control/`),
-  each following a planner (proposes actions) / executor (config) split.
+- `bot/behavior/` — decision logic, one vertical folder per behavior (`standing/`, `harass/banshee/`,
+  `harass/reaper/`, `defense/`, `scouting/`, `map_control/`, `macro/`), each following
+  assess → plan → execute (`bot/behavior/contracts.py`).
 - `bot/engine/` — arbitration: `missions/` (bidding/allocation/controller) and `economy/` commit proposals into
   concrete actions.
 - `bot/adapters/ares/` — translates between the bot's world model and the Ares/python-sc2 API.
