@@ -375,6 +375,25 @@ class TestMacroPlanner:
         assert barracks_proposal.target_count == 6
         assert barracks_proposal.reason == "resource_bank_overflowing"
 
+    def test_bank_overflow_does_not_add_producers_that_are_already_idle(self):
+        # minerals=1700 is 3 steps over threshold, same as
+        # test_bank_overflow_raises_production_targets_past_the_usual_ceiling,
+        # but here the existing Barracks are mostly idle: the pile is better
+        # spent as more units at those Barracks (see propose_army, which
+        # still reacts to this overflow) than as new, equally idle Barracks.
+        attention = economy_attention(
+            minerals=1700,
+            producers=(
+                ProducerFacts(UnitTypeId.BARRACKS, ready=3, busy=1, idle=2),
+            ),
+        )
+
+        assert not any(
+            item.kind is EconomicActionKind.BUILD_PRODUCTION
+            and item.target == UnitTypeId.BARRACKS.name
+            for item in proposals_for(attention)
+        )
+
     def test_a_bank_under_the_overflow_threshold_does_not_inflate_targets(self):
         attention = economy_attention(minerals=500)
 

@@ -14,7 +14,7 @@ BotDataEnabled: True
 ########################
 
 UseData: False  # Overwritten by `UseData:` in `[race]_builds.yml`
-Debug: False
+Debug: True  # TODO: revert to False once BansheeCloak work is done -- forces `test_123` cycle in terran_builds.yml
 GameStep: 2
 DebugGameStep: 2
 

@@ -25,14 +25,12 @@ def propose_production(
     )
     for goal in config.goals.production:
         count = economy.structure_count(goal.structure_type)
+        saturated = _production_is_saturated(goal, economy.producer(goal.structure_type))
         income_target = goal.target_for_income(
             minerals=economy.mineral_collection_rate,
             vespene=economy.vespene_collection_rate,
         )
-        if income_target > goal.minimum and not _production_is_saturated(
-            goal,
-            economy.producer(goal.structure_type),
-        ):
+        if income_target > goal.minimum and not saturated:
             income_target = goal.minimum
         reference_floor = (
             config.reference_build.target_for(goal.structure_type, now)
@@ -40,7 +38,13 @@ def propose_production(
             else 0
         )
         base_desired = max(goal.minimum, income_target, reference_floor)
-        desired = min(goal.maximum, base_desired + overflow_bonus)
+        # A bank overflow only justifies *more producers* once the existing
+        # ones are already busy -- idle producers mean the pile is better
+        # spent as more units at the same structures (see `army_proposals`,
+        # which reacts to the same overflow independent of saturation), not
+        # as new buildings sitting idle right alongside the current ones.
+        applicable_overflow_bonus = overflow_bonus if saturated else 0
+        desired = min(goal.maximum, base_desired + applicable_overflow_bonus)
         if count.total >= desired:
             continue
         if count.total < goal.minimum:

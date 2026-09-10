@@ -62,7 +62,7 @@ protection window both allow it.
 scouting never steals a unit already committed elsewhere. Every other
 task-shaped kind now can preempt (`HARASS`/`AIR_HARASS` at 60/62,
 `MAP_CONTROL` at 40, `DEFENSE` at 85/95): once `DispositionPlanner`'s standing
-`POSITION` slots (priority 5-30, see [army-disposition.md](army-disposition.md))
+`HOLD_RALLY` squad (priority 20, see [army-disposition.md](army-disposition.md))
 started absorbing most otherwise-idle combat units, every opportunistic
 mission needed `can_preempt=True` just to pull a unit out of standing duty --
 their own priority ordering among each other (`DEFENSE` > `SCOUT`/`AIR_HARASS`
