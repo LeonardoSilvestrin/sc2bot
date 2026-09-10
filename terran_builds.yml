@@ -75,6 +75,11 @@ Builds:
     # opener. Same safe Reaper-expand opening as `BioThreeOneOne`, then
     # pivots at the Factory into a Starport Tech Lab for Banshees +
     # Cloaking Field instead of Bio tech, so the harass wave lands cloaked.
+    #
+    # Barracks has nothing else to build while Factory/Starport/tech lab
+    # soak up the gas for banshee tech, so the 22/26 marine fillers below
+    # spend otherwise-idle minerals instead of letting Barracks sit empty
+    # for the whole stretch before the first banshee pops.
     BansheeCloak:
         AutoSupplyAtSupply: 30
         ConstantWorkerProductionTill: 50
@@ -91,8 +96,10 @@ Builds:
             - 20 factory @ ramp
             - 21 gas
             - 22 starport
+            - 22 marine
             - 23 starporttechlab
             - 24 banshee *2
+            - 26 marine *2
             - 27 bansheecloak
             - 28 orbital
             - 30 barracksreactor
