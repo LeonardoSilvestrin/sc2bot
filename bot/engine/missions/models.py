@@ -85,6 +85,7 @@ class MissionKind(Enum):
     AIR_HARASS = auto()
     DEFENSE = auto()
     MAP_CONTROL = auto()
+    HOLD_RALLY = auto()
     POSITION = auto()
 
 
@@ -143,6 +144,10 @@ class MissionProposal:
     can_preempt: bool = False
     commitment_seconds: float = 5.0
     mode: MissionMode = MissionMode.FINITE
+    # Optional persistent force identity. Unit-based missions leave this unset.
+    # The SquadController uses it as an allocation preference; UnitAllocator
+    # remains the sole owner of unit leases.
+    squad_id: str | None = None
 
     def __post_init__(self) -> None:
         text_fields = (
@@ -160,6 +165,8 @@ class MissionProposal:
             raise ValueError("invalid timeout or cooldown")
         if self.commitment_seconds < 0.0:
             raise ValueError("commitment_seconds must not be negative")
+        if self.squad_id is not None and not self.squad_id.strip():
+            raise ValueError("squad_id must not be blank")
 
 
 @dataclass(slots=True)
@@ -190,6 +197,7 @@ class MissionSnapshot:
     admitted_at: float
     started_at: float | None
     finished_at: float | None
+    squad_id: str | None = None
 
     @classmethod
     def from_mission(cls, mission: Mission) -> MissionSnapshot:
@@ -206,4 +214,5 @@ class MissionSnapshot:
             admitted_at=mission.admitted_at,
             started_at=mission.started_at,
             finished_at=mission.finished_at,
+            squad_id=mission.proposal.squad_id,
         )

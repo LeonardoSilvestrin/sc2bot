@@ -4,13 +4,14 @@ from dataclasses import dataclass, field
 
 from sc2.position import Point2
 
-from bot.engine.missions.models import MissionProposal, UnitRequirement
+from bot.engine.missions.models import MissionMode, MissionProposal, UnitRequirement
 from bot.engine.missions.planning import ProposalCadence
 from bot.world.attention import AttentionSnapshot, UnitSnapshot
 from bot.world.awareness import AwarenessSnapshot
 from bot.world.awareness.enemy import EnemyLocationKnowledge
 
 from .harass_config import HarassOption, HarassPlannerConfig
+from .strategy_intent import BuildStrategicIntent, StrategicIntent
 
 
 @dataclass(slots=True)
@@ -25,10 +26,12 @@ class HarassPlanner:
     """
 
     config: HarassPlannerConfig = field(default_factory=HarassPlannerConfig)
+    strategic_intent: StrategicIntent = field(default_factory=BuildStrategicIntent)
     planner_id: str = "harass_planner"
     _cadences: dict[str, ProposalCadence] = field(
         default_factory=dict, init=False, repr=False
     )
+    _activated_options: set[str] = field(default_factory=set, init=False, repr=False)
 
     def propose(
         self,
@@ -48,12 +51,22 @@ class HarassPlanner:
                 continue
             if workers < option.minimum_workers:
                 continue
+            if option.strategic_intent is not None and not self.strategic_intent.allows(
+                option.strategic_intent, world
+            ):
+                continue
             if not self._has_launchable_unit(option, world.own_units):
                 continue
-            if not self._is_target_safe(option, world.enemy_units, location.position):
+            if (
+                option.name not in self._activated_options
+                and not self._is_target_safe(
+                    option, world.enemy_units, location.position
+                )
+            ):
                 continue
 
             cadence.mark(world.time)
+            self._activated_options.add(option.name)
             sequence = cadence.next_sequence()
             proposals.append(
                 self._build_proposal(option, location, sequence, world.time)
@@ -97,6 +110,7 @@ class HarassPlanner:
         now: float,
     ) -> MissionProposal:
         prefix = option.mission_kind.name.lower()
+        persistent_banshee = option.strategic_intent == "banshee_harass"
         return MissionProposal(
             proposal_id=(
                 f"{self.planner_id}:{prefix}:{self.config.target_key}:{sequence}"
@@ -111,7 +125,7 @@ class HarassPlanner:
             requirement=UnitRequirement.combat(
                 unit_types=option.unit_types,
                 desired=1,
-                minimum=1,
+                minimum=0 if persistent_banshee else 1,
                 minimum_health=option.minimum_unit_health,
             ),
             created_at=now,
@@ -120,11 +134,12 @@ class HarassPlanner:
             evidence_stale_after=location.stale_after,
             timeout_seconds=option.mission_timeout,
             cooldown_seconds=option.failure_cooldown,
-            # Standing POSITION/RESERVE missions (see
-            # bot.behavior.army.DispositionPlanner) now hold most otherwise
-            # idle combat units, so harass must be able to preempt them --
+            # Standing squads now hold most otherwise idle combat units, so
+            # harass must be able to preempt them --
             # their low priority plus the allocator's margin means DEFENSE
             # still outranks harass for the same units either way.
             can_preempt=True,
             commitment_seconds=option.commitment_seconds,
+            mode=MissionMode.STANDING if persistent_banshee else MissionMode.FINITE,
+            squad_id="banshee_harass" if persistent_banshee else None,
         )

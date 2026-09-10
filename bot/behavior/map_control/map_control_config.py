@@ -7,7 +7,7 @@ from sc2.ids.unit_typeid import UnitTypeId
 class MapControlPlannerConfig:
     """Conservative thresholds for a persistent map-presence squad."""
 
-    start_after: float = 180.0
+    start_after: float = 0.0
     proposal_cadence: float = 15.0
     priority: int = 40
     mission_timeout: float = 3600.0
@@ -15,9 +15,10 @@ class MapControlPlannerConfig:
     unit_types: frozenset[UnitTypeId] = field(
         default_factory=lambda: frozenset({UnitTypeId.MARINE})
     )
-    desired_units: int = 3
-    minimum_units: int = 2
-    reserve_units: int = 3
+    force_ratio: float = 0.2
+    minimum_force_size: int = 6
+    # Optional fixed override retained for experiments/config compatibility.
+    desired_units: int | None = None
     minimum_unit_health: float = 0.7
     commitment_seconds: float = 1.0
 
@@ -34,10 +35,12 @@ class MapControlPlannerConfig:
             raise ValueError("failure_cooldown must not be negative")
         if not self.unit_types:
             raise ValueError("unit_types must not be empty")
-        if self.minimum_units < 1 or self.minimum_units > self.desired_units:
-            raise ValueError("expected 1 <= minimum_units <= desired_units")
-        if self.reserve_units < 0:
-            raise ValueError("reserve_units must not be negative")
+        if not 0.0 < self.force_ratio < 1.0:
+            raise ValueError("force_ratio must be between 0 and 1")
+        if self.minimum_force_size < 1:
+            raise ValueError("minimum_force_size must be positive")
+        if self.desired_units is not None and self.desired_units < 1:
+            raise ValueError("desired_units must be positive when provided")
         if not 0.0 <= self.minimum_unit_health <= 1.0:
             raise ValueError("minimum_unit_health must be between 0 and 1")
         if self.commitment_seconds < 0.0:

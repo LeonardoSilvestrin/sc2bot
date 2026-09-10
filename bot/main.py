@@ -1,4 +1,3 @@
-
 from ares import AresBot
 from sc2.data import Result
 

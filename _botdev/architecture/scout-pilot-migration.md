@@ -36,6 +36,31 @@ The pilot reimplemented these useful ideas rather than copying their code:
 - Scans, rush-specific cadence, and probabilistic inference remain outside this
   slice.
 
+## `IntelPlanner` decision
+
+```mermaid
+flowchart TD
+    Propose(["IntelPlanner.propose"]) --> Loc["location = awareness.enemy.location('enemy_main')"]
+    Loc --> NoRoute{"target is enemy_main AND\n(location unknown OR no map route for it)?"}
+    NoRoute -->|yes| Fallback["fall back to target_key = 'enemy_natural'\nre-lookup location"]
+    NoRoute -->|no| Fresh
+    Fallback --> Fresh{"location is None\nOR NOT location.is_stale?"}
+    Fresh -->|not stale| Empty1["() -- information is fresh, nothing to do"]
+    Fresh -->|stale/unknown| Workers{"own workers >= minimum_workers (16)?"}
+    Workers -->|no| Empty2["() -- too early to spare a scout"]
+    Workers -->|yes| Repeat{"already observed once AND\nworld.time < repeat_scouts_after (240s)?"}
+    Repeat -->|yes| Empty3["() -- too soon to re-scout"]
+    Repeat -->|no| Cadence{"proposal_cadence (65s) ready?"}
+    Cadence -->|no| Empty4["() -- rate limited"]
+    Cadence -->|yes| Unit["select unit: configured type (Reaper)\nif alive, else fallback (SCV)"]
+    Unit --> Emit["MissionProposal(SCOUT)\npriority 65, can_preempt=False\ndedup key scout:<target_key>\nreason = ..._information_unknown / ..._information_stale"]
+```
+
+`location.is_stale` (`bot/world/awareness/service.py`) is `True` when the
+location was never observed (`age is None`) or its age has crossed
+`location_stale_after` (90s) -- "unknown" and "stale" are the same branch in
+code, distinguished only in the proposal's `reason` string for readability.
+
 ## End-to-end behavior
 
 1. Attention selects the enemy main and natural, then derives an enemy-main

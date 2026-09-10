@@ -19,6 +19,7 @@ from bot.engine.missions.models import (
     MissionSnapshot,
     MissionStatus,
 )
+from bot.engine.squads import SquadController
 from bot.ports.logging import BotLogger
 from bot.ports.mission_commands import MissionCommands
 from bot.world.attention import AttentionSnapshot
@@ -35,10 +36,12 @@ class MissionController:
         allocator: UnitAllocator | None = None,
         board: MissionBoard | None = None,
         executor_factories: Mapping[MissionKind, MissionExecutorFactory],
+        squad_controller: SquadController | None = None,
     ) -> None:
         self.logger = logger
         self.allocator = allocator or UnitAllocator()
         self.board = board or MissionBoard()
+        self.squads = squad_controller or SquadController(logger=logger)
         self._executor_factories = executor_factories
         self._executors: dict[str, MissionExecutor] = {}
         self._processed_proposals: set[str] = set()
@@ -58,13 +61,14 @@ class MissionController:
     ) -> None:
         now = attention.world.time
         self.allocator.sync(attention.world.own_units)
+        self.squads.sync(attention.world.own_units, now=now)
         # Check losses before allocation can silently replace the entire team.
         for mission in self.board.live():
             if (
                 mission.started_at is not None
                 and mission.assigned_unit_tags
                 and not self.allocator.assigned_tags(mission.mission_id)
-                # A requirement with minimum=0 (standing POSITION/RESERVE
+                # A requirement with minimum=0 (squad-backed standing
                 # missions) explicitly tolerates holding zero units -- that
                 # is not a failure, just an idle standing responsibility.
                 and mission.proposal.requirement.minimum > 0
@@ -94,16 +98,35 @@ class MissionController:
                 )
                 continue
 
-            allocation = self.allocator.allocate(
-                mission_id=mission.mission_id,
-                priority=mission.proposal.priority,
-                requirement=mission.proposal.requirement,
-                objective=mission.proposal.target,
+            self.squads.bind_compatible_squad(
+                mission,
+                units=attention.world.own_units,
                 now=now,
-                can_preempt=mission.proposal.can_preempt,
-                commitment_seconds=mission.proposal.commitment_seconds,
             )
+            requirement = self.squads.effective_requirement(mission, self.allocator)
+            if requirement is None:
+                allocation = AllocationResult(
+                    assigned_tags=self.allocator.assigned_tags(mission.mission_id),
+                    requirements_satisfied=True,
+                )
+            else:
+                allocation = self.allocator.allocate(
+                    mission_id=mission.mission_id,
+                    priority=mission.proposal.priority,
+                    requirement=requirement,
+                    objective=mission.proposal.target,
+                    now=now,
+                    can_preempt=mission.proposal.can_preempt,
+                    commitment_seconds=mission.proposal.commitment_seconds,
+                    preferred_tags=self.squads.preferred_tags(mission.mission_id),
+                )
             self._apply_allocation(mission, allocation, now, commands)
+            self.squads.allocation_changed(
+                mission,
+                assigned_tags=allocation.assigned_tags,
+                allocator=self.allocator,
+                now=now,
+            )
 
             if not allocation.requirements_satisfied:
                 if mission.started_at is not None and not allocation.assigned_tags:
@@ -132,6 +155,8 @@ class MissionController:
         ):
             return "objective_satisfied_before_mission_started"
         if now - mission.admitted_at >= mission.proposal.timeout_seconds:
+            if mission.proposal.mode is MissionMode.STANDING:
+                return None
             return "mission_timeout"
         return None
 
@@ -317,6 +342,7 @@ class MissionController:
             admitted_at=now,
         )
         self.board.add(mission)
+        self.squads.register_home_mission(mission, now=now)
         self._emit(
             "proposal_admitted",
             now,
@@ -437,6 +463,7 @@ class MissionController:
         mission.finished_at = now
         mission.last_reason = reason
         self._executors.pop(mission.mission_id, None)
+        self.squads.mission_finished(mission, now=now)
         self._cooldown_until[mission.proposal.deduplication_key] = (
             now + mission.proposal.cooldown_seconds
         )
@@ -472,6 +499,7 @@ class MissionController:
                 last_observed_at=proposal.evidence_last_observed_at,
                 observation_age=proposal.evidence_age,
                 stale_after=proposal.evidence_stale_after,
+                squad_id=proposal.squad_id,
             )
         if mission is not None:
             data.update(

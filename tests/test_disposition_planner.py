@@ -1,19 +1,15 @@
 from __future__ import annotations
 
 import unittest
+from dataclasses import replace
 
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
-from bot.behavior.army import CombatPosture, DispositionPlanner
+from bot.behavior.army import DispositionPlanner
 from bot.engine.missions import MissionKind, MissionMode
 from bot.world.attention import AttentionSnapshot, MapFacts, UnitSnapshot, WorldFacts
-from bot.world.awareness import (
-    AwarenessSnapshot,
-    MacroPosture,
-    RelativeStrength,
-    ThreatAssessment,
-)
+from bot.world.awareness import AwarenessSnapshot, RelativeStrength, ThreatAssessment
 from bot.world.awareness.bases import BaseSecurityAssessor
 from bot.world.awareness.enemy import EnemyAwareness
 
@@ -22,6 +18,19 @@ MAP = MapFacts(
     own_start=Point2((10, 10)),
     enemy_starts=(Point2((90, 90)),),
 )
+
+
+def unit(tag: int, unit_type: UnitTypeId = UnitTypeId.MARINE) -> UnitSnapshot:
+    return UnitSnapshot(
+        tag=tag,
+        unit_type=unit_type,
+        position=MAP.own_start,
+        health_percentage=1.0,
+        is_flying=unit_type is UnitTypeId.BANSHEE,
+        is_worker=False,
+        can_attack_air=True,
+        can_attack_ground=True,
+    )
 
 
 def townhall(tag: int, position: Point2) -> UnitSnapshot:
@@ -38,166 +47,87 @@ def townhall(tag: int, position: Point2) -> UnitSnapshot:
     )
 
 
-def attention(
-    now: float, own_structures: tuple[UnitSnapshot, ...]
-) -> AttentionSnapshot:
-    return AttentionSnapshot(
+def current(
+    now: float,
+    *,
+    count: int = 10,
+    bases: tuple[UnitSnapshot, ...] = (),
+) -> tuple[AttentionSnapshot, AwarenessSnapshot]:
+    attention = AttentionSnapshot(
         WorldFacts(
             iteration=int(now),
             time=now,
             minerals=0,
             vespene=0,
-            supply_used=0.0,
-            supply_cap=0.0,
-            own_units=(),
+            supply_used=float(count),
+            supply_cap=200,
+            own_units=tuple(unit(tag) for tag in range(1, count + 1)),
             enemy_units=(),
             map=MAP,
-            own_structures=own_structures,
+            own_structures=bases,
         )
     )
-
-
-def awareness_for(
-    current: AttentionSnapshot,
-    *,
-    macro_posture: MacroPosture = MacroPosture.BALANCED,
-    score: float = 0.0,
-    confidence: float = 0.0,
-) -> AwarenessSnapshot:
-    """Real base assessments, hand-picked posture-driving signals.
-
-    Mirrors how ``derive_combat_posture`` reads Awareness: base security
-    comes from the real ``BaseSecurityAssessor`` (so held-base ranking is
-    exercised faithfully); the strength/macro signals are set directly so
-    each test can pin down a specific ``CombatPosture`` deterministically.
-    """
-
-    return AwarenessSnapshot(
+    awareness = AwarenessSnapshot(
         enemy=EnemyAwareness(sightings=(), locations=()),
-        relative_strength=RelativeStrength(
-            score=score, confidence=confidence, own_combat_units=0,
-            known_enemy_combat_units=0,
-        ),
+        relative_strength=RelativeStrength(0.0, 0.0, count, 0),
         threat=ThreatAssessment(0, 0, 0),
-        updated_at=current.world.time,
-        macro_posture=macro_posture,
-        bases=BaseSecurityAssessor().update(current.world),
+        updated_at=now,
+        bases=BaseSecurityAssessor().update(attention.world),
     )
+    return attention, awareness
 
 
-class DispositionPlannerSlotTests(unittest.TestCase):
-    def test_no_natural_or_third_slot_when_only_main_is_held(self):
-        # BALANCED (the default posture with no strong signal) also wants a
-        # small central/staging presence, so main + forward + reserve is the
-        # full set with a single base -- natural/third simply have no base
-        # to anchor to yet.
-        current = attention(10.0, (townhall(1, MAP.own_start),))
-        awareness = awareness_for(current)
+class MainArmyDispositionTests(unittest.TestCase):
+    def test_declares_one_persistent_main_army_at_eighty_percent(self):
+        attention, awareness = current(10.0, count=10)
 
-        proposals = DispositionPlanner().propose(current, awareness)
+        proposals = DispositionPlanner().propose(attention, awareness)
 
-        keys = {p.deduplication_key for p in proposals}
+        self.assertEqual(len(proposals), 1)
+        proposal = proposals[0]
+        self.assertEqual(proposal.kind, MissionKind.HOLD_RALLY)
+        self.assertEqual(proposal.mode, MissionMode.STANDING)
+        self.assertEqual(proposal.squad_id, "main_army")
+        self.assertEqual(proposal.deduplication_key, "hold_rally:main_army")
+        self.assertEqual(proposal.requirement.desired, 8)
+        self.assertEqual(proposal.requirement.minimum, 0)
+
+    def test_rally_is_seventy_two_percent_from_previous_to_newest_base(self):
+        main = townhall(100, MAP.own_start)
+        natural = townhall(101, Point2((20, 20)))
+        newest = townhall(102, Point2((40, 40)))
+        attention, awareness = current(10.0, bases=(newest, main, natural))
+
+        proposal = DispositionPlanner().propose(attention, awareness)[0]
+
+        self.assertEqual(proposal.target, Point2((34.4, 34.4)))
+
+    def test_banshees_are_left_for_the_specialized_persistent_squad(self):
+        attention, awareness = current(10.0, count=5)
+        attention = AttentionSnapshot(
+            replace(
+                attention.world,
+                own_units=(*attention.world.own_units, unit(99, UnitTypeId.BANSHEE)),
+            )
+        )
+
+        proposal = DispositionPlanner().propose(attention, awareness)[0]
+
+        self.assertNotIn(UnitTypeId.BANSHEE, proposal.requirement.unit_types)
+        self.assertEqual(proposal.requirement.desired, 4)
+
+    def test_keeps_the_same_dedup_key_across_cadence_ticks(self):
+        planner = DispositionPlanner()
+        first, awareness = current(10.0)
+        first_proposal = planner.propose(first, awareness)[0]
+        second, awareness = current(16.0)
+        second_proposal = planner.propose(second, awareness)[0]
+
         self.assertEqual(
-            keys, {"position:main", "position:forward", "position:reserve"}
+            first_proposal.deduplication_key,
+            second_proposal.deduplication_key,
         )
-
-    def test_natural_and_third_are_ranked_by_distance_from_own_start(self):
-        far = Point2((70, 70))
-        near = Point2((25, 25))
-        current = attention(
-            10.0,
-            (
-                townhall(1, MAP.own_start),
-                townhall(2, far),
-                townhall(3, near),
-            ),
-        )
-        awareness = awareness_for(current)
-
-        proposals = DispositionPlanner().propose(current, awareness)
-        by_key = {p.deduplication_key: p for p in proposals}
-
-        self.assertEqual(
-            set(by_key),
-            {
-                "position:main",
-                "position:natural",
-                "position:third",
-                "position:forward",
-                "position:reserve",
-            },
-        )
-        self.assertEqual(by_key["position:natural"].target, near)
-        self.assertEqual(by_key["position:third"].target, far)
-
-    def test_every_proposal_is_standing_with_zero_minimum(self):
-        current = attention(10.0, (townhall(1, MAP.own_start),))
-        awareness = awareness_for(current)
-
-        for proposal in DispositionPlanner().propose(current, awareness):
-            self.assertEqual(proposal.mode, MissionMode.STANDING)
-            self.assertEqual(proposal.requirement.minimum, 0)
-            self.assertEqual(proposal.kind, MissionKind.POSITION)
-
-    def test_reserve_is_lowest_priority_and_never_preempts(self):
-        current = attention(10.0, (townhall(1, MAP.own_start),))
-        awareness = awareness_for(current)
-        proposals = {
-            p.deduplication_key: p
-            for p in DispositionPlanner().propose(current, awareness)
-        }
-
-        reserve = proposals["position:reserve"]
-        main = proposals["position:main"]
-        self.assertFalse(reserve.can_preempt)
-        self.assertTrue(main.can_preempt)
-        self.assertLess(reserve.priority, main.priority)
-
-    def test_respects_its_proposal_cadence(self):
-        planner = DispositionPlanner()
-        first = attention(10.0, (townhall(1, MAP.own_start),))
-        self.assertTrue(planner.propose(first, awareness_for(first)))
-
-        second = attention(11.0, (townhall(1, MAP.own_start),))
-        self.assertEqual(planner.propose(second, awareness_for(second)), ())
-
-
-class DispositionPlannerPostureTests(unittest.TestCase):
-    def test_turtle_prioritizes_the_most_exposed_expansion(self):
-        structures = (
-            townhall(1, MAP.own_start),
-            townhall(2, Point2((25, 25))),
-            townhall(3, Point2((70, 70))),
-        )
-        current = attention(10.0, structures)
-        awareness = awareness_for(
-            current, macro_posture=MacroPosture.DEFENSE
-        )
-        planner = DispositionPlanner()
-        proposals = planner.propose(current, awareness)
-
-        self.assertEqual(planner.last_posture, CombatPosture.TURTLE)
-        desired = {
-            p.deduplication_key.removeprefix("position:"): p.requirement.desired
-            for p in proposals
-        }
-        self.assertGreater(desired["third"], desired["natural"])
-        self.assertGreater(desired["natural"], desired["main"])
-
-    def test_pressure_favors_a_forward_staging_slot_over_defensive_ones(self):
-        current = attention(10.0, (townhall(1, MAP.own_start),))
-        awareness = awareness_for(current, score=0.6, confidence=0.9)
-        planner = DispositionPlanner()
-
-        proposals = planner.propose(current, awareness)
-
-        self.assertEqual(planner.last_posture, CombatPosture.PRESSURE)
-        by_key = {p.deduplication_key: p for p in proposals}
-        self.assertIn("position:forward", by_key)
-        self.assertGreater(
-            by_key["position:forward"].requirement.desired,
-            by_key["position:main"].requirement.desired,
-        )
+        self.assertEqual(planner.propose(second, awareness), ())
 
 
 if __name__ == "__main__":

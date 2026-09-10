@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from dataclasses import replace
 
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
@@ -9,6 +10,7 @@ from bot.behavior.harass import HarassPlanner
 from bot.engine.missions import MissionKind
 from bot.world.attention import (
     AttentionSnapshot,
+    EconomyFacts,
     MapFacts,
     MapObservation,
     UnitSnapshot,
@@ -123,6 +125,7 @@ def attention(
             enemy_starts=(Point2((90, 90)),),
             observations=(MapObservation("enemy_natural", TARGET, natural_visible),),
         ),
+        economy=EconomyFacts(opening_name="BansheeCloak"),
     )
     return AttentionSnapshot(world)
 
@@ -213,6 +216,21 @@ class ReaperHarassTests(unittest.TestCase):
 
 
 class BansheeHarassTests(unittest.TestCase):
+    def test_incompatible_build_does_not_activate_banshee_squad(self):
+        service = AwarenessService()
+        current = attention(20.0, natural_visible=True, reapers=0, banshees=1)
+        current = AttentionSnapshot(
+            replace(
+                current.world,
+                economy=EconomyFacts(opening_name="BioThreeOneOne"),
+            )
+        )
+        awareness = service.update(current)
+
+        proposals = HarassPlanner().propose(current, awareness)
+
+        self.assertNotIn(MissionKind.AIR_HARASS, [p.kind for p in proposals])
+
     def test_no_proposal_when_target_was_never_observed(self):
         current = attention(10.0, natural_visible=False, reapers=0, banshees=1)
         awareness = AwarenessService().update(current)

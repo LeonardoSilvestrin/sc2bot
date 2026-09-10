@@ -19,7 +19,7 @@ class PositioningExecutor(MissionExecutor):
 
     A unit already within ``arrival_radius`` of the anchor is left alone --
     it may sit physically idle, which is the correct state for a standing
-    POSITION/RESERVE responsibility (see DispositionPlanner). Only units
+    HOLD_RALLY responsibility (see DispositionPlanner). Only units
     that have drifted out of tolerance (freshly assigned, pushed off by
     combat, ...) get a movement command this step.
 
@@ -53,7 +53,7 @@ class PositioningExecutor(MissionExecutor):
                 unit_tag=unit.tag,
                 target=self.target,
                 success_at_distance=self.arrival_radius,
-                # A standing POSITION/RESERVE responsibility is always the
+                # A standing HOLD_RALLY responsibility is always the
                 # lowest-priority claim on a unit (see DispositionPlanner) --
                 # it must never look "busy" to other planners the way an
                 # active MAP_CONTROL patrol or DEFENSE engagement does.

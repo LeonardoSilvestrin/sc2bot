@@ -29,11 +29,13 @@ flowchart TD
         Harass["HarassPlanner\nHARASS + AIR_HARASS\n(reaper / banshee options)"]
         Defense["DefensePlanner\nDEFENSE (per base)"]
         MapCtl["MapControlPlanner\nMAP_CONTROL"]
-        Disposition["DispositionPlanner\nPOSITION (standing)"]
+        Disposition["DispositionPlanner\nHOLD_RALLY (standing)"]
     end
 
     Planners -->|"MissionProposal tuple"| Ego["MissionController\n(engine/missions)\nadmit / reject / cancel"]
+    Ego --> Squads["SquadController\npersistent identity + membership"]
     Ego --> Board["MissionBoard\nlive Mission objects"]
+    Squads -.->|"preferred member tags only"| Allocator
     Board --> Allocator["UnitAllocator\nleases + priority preemption"]
     Allocator --> Executors["MissionExecutor\n(bot/behavior/*/*_executor.py)"]
     Executors -->|"MissionCommands port"| AresAdapter["bot/adapters/ares\nAresMissionCommands"]
@@ -97,16 +99,16 @@ six mission kinds between them), each with its concrete executor under
 | --- | --- | --- | --- | --- |
 | `IntelPlanner` | `SCOUT` | 65 | FINITE | no |
 | `HarassPlanner` | `HARASS` (reaper option) | 60 | FINITE | yes |
-| `HarassPlanner` | `AIR_HARASS` (banshee option) | 62 | FINITE | yes |
+| `HarassPlanner` | `AIR_HARASS` (banshee option) | 62 | STANDING | yes |
 | `DefensePlanner` | `DEFENSE` | 85 / 95 (threatened / critical) | FINITE | yes |
-| `MapControlPlanner` | `MAP_CONTROL` | 40 | FINITE | yes |
-| `DispositionPlanner` | `POSITION` | 5-30 by slot (see below) | STANDING | yes (no for the `reserve` slot) |
+| `MapControlPlanner` | `MAP_CONTROL` | 40 | STANDING | yes |
+| `DispositionPlanner` | `HOLD_RALLY` | 20 | STANDING | yes |
 
 `HarassPlanner` calls whichever configured `HarassOption` (reaper, banshee,
 ...) currently has a launchable unit and a known target -- it is one planner
 instance emitting proposals of two different `MissionKind`s, not two
-planners. `SCOUT` and `position:reserve` are the only two proposals in the
-whole pilot that cannot preempt another mission.
+planners. Banshee activation additionally requires compatible build intent.
+`SCOUT` remains unit-based and is the only proposal that cannot preempt.
 
 `BotRuntime` concatenates every planner's proposals into one tuple each frame;
 `MissionController` sorts live missions by `-priority` before allocating, so
@@ -114,18 +116,19 @@ list order does not decide arbitration -- see
 [harass-and-defense-planners.md](harass-and-defense-planners.md) for the
 opportunistic missions' conditions and the shared `attack_move` command port,
 [base-model.md](base-model.md) for per-base defense, and
-[army-disposition.md](army-disposition.md) for the standing `POSITION` slots
-that give every otherwise-idle combat unit a home. `MacroPlanner` produces
+[army-disposition.md](army-disposition.md) for the standing 80/20 squad
+responsibilities. Persistent identity is described in [squads.md](squads.md).
+`MacroPlanner` produces
 `EconomicProposal`s instead of `MissionProposal`s and is admitted separately by
 `bot/engine/economy`; see [macro-planner.md](macro-planner.md).
 
 ## Two lifecycle modes
 
-`MissionMode.FINITE` (`SCOUT`, `HARASS`, `AIR_HARASS`, `DEFENSE`,
-`MAP_CONTROL` above) is admitted once, runs to completion/failure/cancellation,
+`MissionMode.FINITE` (`SCOUT`, `HARASS`, `DEFENSE`) is admitted once, runs to
+completion/failure/cancellation,
 and rejects a second proposal for the same `deduplication_key` while live.
 `MissionMode.STANDING`
-(`DispositionPlanner` only) is re-declared every cadence tick: a live standing
+(`HOLD_RALLY`, `MAP_CONTROL`, and Banshee `AIR_HARASS`) is re-declared every cadence tick: a live standing
 mission has its `Mission.proposal` replaced in place (same `mission_id`, same
 lease history) instead of being rejected as a duplicate, and is torn down only
 when its planner stops declaring that key at all

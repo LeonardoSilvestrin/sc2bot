@@ -36,6 +36,7 @@ class HarassOption:
     commitment_seconds: float = 5.0
     require_ready_unit: bool = True
     anti_air_check_radius: float | None = None
+    strategic_intent: str | None = None
 
     def __post_init__(self) -> None:
         if not self.name.strip():
@@ -58,6 +59,8 @@ class HarassOption:
             raise ValueError("commitment_seconds must not be negative")
         if self.anti_air_check_radius is not None and self.anti_air_check_radius <= 0.0:
             raise ValueError("anti_air_check_radius must be positive")
+        if self.strategic_intent is not None and not self.strategic_intent.strip():
+            raise ValueError("strategic_intent must not be blank")
 
 
 def default_harass_options() -> tuple[HarassOption, ...]:
@@ -86,6 +89,7 @@ def default_harass_options() -> tuple[HarassOption, ...]:
             # target -- see `CloakedBansheeHarassExecutor.disengage_radius`
             # for the matching in-flight check.
             anti_air_check_radius=15.0,
+            strategic_intent="banshee_harass",
         ),
     )
 

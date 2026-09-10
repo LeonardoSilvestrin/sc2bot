@@ -67,8 +67,8 @@ started absorbing most otherwise-idle combat units, every opportunistic
 mission needed `can_preempt=True` just to pull a unit out of standing duty --
 their own priority ordering among each other (`DEFENSE` > `SCOUT`/`AIR_HARASS`
 /`HARASS` > `MAP_CONTROL`) still decides who wins when two of them want the
-same unit at the same time. Only `position:reserve` (priority 5) keeps
-`can_preempt=False` -- it is the catch-all floor, never a competitor. See
+same unit at the same time. `SCOUT` keeps `can_preempt=False`; it remains a
+unit-based request and never steals a committed squad member. See
 [contracts.md](contracts.md) for the full priority table and
 `tests/test_mission_arbitration.py` for the concrete preemption sequence.
 
@@ -105,7 +105,9 @@ flowchart TD
     Cadence -->|no| Skip["skip this option this tick"]
     Cadence -->|yes| Workers{"workers >= option.minimum_workers?"}
     Workers -->|no| Skip
-    Workers -->|yes| Launchable{"a matching unit is launchable?\n(ready+healthy+available,\nor just 'exists' if require_ready_unit=False)"}
+    Workers -->|yes| Intent{"required strategic intent\nallowed by selected build?"}
+    Intent -->|no| Skip
+    Intent -->|yes| Launchable{"a matching unit is launchable?\n(ready+healthy+available,\nor just 'exists' if require_ready_unit=False)"}
     Launchable -->|no| Skip
     Launchable -->|yes| Safe{"anti_air_check_radius set AND\na visible anti-air enemy sits\nwithin it of the target?"}
     Safe -->|withhold| Skip
@@ -115,7 +117,7 @@ flowchart TD
 | Option | Mission kind | Priority | min workers | ready-unit required | anti-air check |
 | --- | --- | --- | --- | --- | --- |
 | `reaper` | `HARASS` | 60 | 16 | yes (only ever 1-2 Reapers; never steal one mid-scout) | none -- tolerates local ground defenders |
-| `banshee` | `AIR_HARASS` | 62 | 12 | no (Banshees are numerous; the allocator's own requirement still filters at assignment time) | withholds only if a visible anti-air unit sits within 15 of the target |
+| `banshee` | `AIR_HARASS` | 62 | 12 | no (Banshees are numerous; the allocator's own requirement still filters at assignment time) | compatible build intent; initial launch withholds on visible anti-air within 15 |
 
 Both options read `awareness.enemy.location(target_key)` (default
 `"enemy_natural"`) -- harass only follows up on a location `IntelPlanner` (or
@@ -135,14 +137,12 @@ completes only after reaching within `retreat_arrival_radius` (10).
 `AresMissionCommands` wrapping Ares's `UseAbility` behavior) every step
 rather than tracking on/off state locally: `UseAbility` no-ops once the
 ability is not in `unit.abilities`, which is true both before Cloaking Field
-research finishes and once already cloaked, so re-issuing it is always safe
-and needs no bookkeeping. It never checks cloak research directly for the
-same reason. It completes with `harass_target_defended` the moment a
-non-worker, **anti-air-capable** enemy unit is observed within
-`disengage_radius` (12) -- checking
-`unit.is_visible_combat_threat(against_ground=False)` instead of
-`WorkerLineHarassExecutor`'s ground-focused targeting, since that is the only
-kind of defender that can actually hit it.
+research finishes and once already cloaked, so re-issuing it is always safe.
+Build compatibility is kept outside the planner behind the small
+`StrategicIntent` interface. The mission is standing and squad-backed:
+visible anti-air or low health latches a retreat to a safe base, recovery
+returns to the same mission, and defense preemption leaves the executor
+waiting for the same members instead of failing.
 
 Deliberately not built here either: no detector-awareness (a defender that
 can only detect, not attack air -- e.g. a lone Observer -- does not trigger

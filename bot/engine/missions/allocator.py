@@ -83,6 +83,7 @@ class UnitAllocator:
         now: float,
         can_preempt: bool,
         commitment_seconds: float,
+        preferred_tags: frozenset[int] = frozenset(),
     ) -> AllocationResult:
         currently_assigned = self.assigned_units(mission_id)
         identity_matched = sorted(
@@ -107,7 +108,10 @@ class UnitAllocator:
                 for unit in self._units.values()
                 if unit.tag not in self._leases and requirement.matches(unit)
             ),
-            key=lambda unit: self._score(unit, objective),
+            key=lambda unit: (
+                0 if unit.tag in preferred_tags else 1,
+                self._score(unit, objective),
+            ),
         )
         preemptible = sorted(
             (
@@ -120,7 +124,10 @@ class UnitAllocator:
                 and now >= lease.protected_until
                 and requirement.matches(unit, check_availability=False)
             ),
-            key=lambda unit: self._score(unit, objective),
+            key=lambda unit: (
+                0 if unit.tag in preferred_tags else 1,
+                self._score(unit, objective),
+            ),
         )
 
         if len(existing) + len(free) + len(preemptible) < requirement.minimum:
@@ -130,12 +137,22 @@ class UnitAllocator:
                 released_tags=released_tags,
             )
 
-        selected = [*existing, *free[:needed]]
+        candidates = sorted(
+            (*free, *preemptible),
+            key=lambda unit: (
+                0 if unit.tag in preferred_tags else 1,
+                0 if unit.tag not in self._leases else 1,
+                self._score(unit, objective),
+            ),
+        )
+        selected = [*existing, *candidates[:needed]]
         transfers: list[UnitTransfer] = []
-        for unit in preemptible[: requirement.desired - len(selected)]:
-            previous = self._leases[unit.tag]
-            transfers.append(UnitTransfer(unit.tag, previous.mission_id, mission_id))
-            selected.append(unit)
+        for unit in selected[len(existing) :]:
+            previous = self._leases.get(unit.tag)
+            if previous is not None:
+                transfers.append(
+                    UnitTransfer(unit.tag, previous.mission_id, mission_id)
+                )
 
         for unit in selected:
             if self.owner_of(unit.tag) != mission_id:

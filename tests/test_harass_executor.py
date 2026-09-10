@@ -362,9 +362,9 @@ class CloakedBansheeHarassExecutorTests(unittest.IsolatedAsyncioTestCase):
             )
         )
 
-        self.assertEqual(result.outcome, MissionOutcome.COMPLETED)
-        self.assertEqual(result.reason, "harass_target_defended")
-        self.assertEqual(commands.commands, [])
+        self.assertEqual(result.outcome, MissionOutcome.ACTIVE)
+        self.assertEqual(result.reason, "banshee_squad_retreating_or_recovering")
+        self.assertEqual(commands.commands[0][0], "safe_path_to")
 
     async def test_fails_when_the_assigned_unit_is_missing(self):
         commands = FakeCommands()
@@ -377,8 +377,8 @@ class CloakedBansheeHarassExecutorTests(unittest.IsolatedAsyncioTestCase):
 
         result = await executor.step(context(assigned_units=(), commands=commands))
 
-        self.assertEqual(result.outcome, MissionOutcome.FAILED)
-        self.assertEqual(result.reason, "assigned_unit_missing")
+        self.assertEqual(result.outcome, MissionOutcome.ACTIVE)
+        self.assertEqual(result.reason, "waiting_for_banshee_squad")
 
 
 if __name__ == "__main__":

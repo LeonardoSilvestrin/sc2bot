@@ -85,35 +85,33 @@ def awareness(
 
 
 class MapControlPlannerConfigTests(unittest.TestCase):
-    def test_rejects_a_minimum_larger_than_the_desired_squad(self):
+    def test_rejects_an_invalid_force_ratio(self):
         with self.assertRaises(ValueError):
-            MapControlPlannerConfig(desired_units=1, minimum_units=2)
+            MapControlPlannerConfig(force_ratio=1.0)
 
 
 class MapControlPlannerTests(unittest.TestCase):
-    def test_waits_for_start_time_and_reserve(self):
+    def test_waits_for_minimum_force_size(self):
         planner = MapControlPlanner()
 
-        self.assertEqual(planner.propose(attention(179.0), awareness(179.0)), ())
         self.assertEqual(
-            planner.propose(attention(180.0, marines=5), awareness(180.0)), ()
+            planner.propose(attention(0.0, marines=5), awareness(0.0)), ()
         )
 
-    def test_does_not_start_during_danger_or_with_a_visible_enemy(self):
+    def test_persistent_responsibility_is_declared_during_danger(self):
         planner = MapControlPlanner()
 
         self.assertEqual(
-            planner.propose(
-                attention(180.0),
-                awareness(180.0, posture=MacroPosture.DEFENSE),
+            len(
+                planner.propose(
+                    attention(180.0),
+                    awareness(180.0, posture=MacroPosture.DEFENSE),
+                )
             ),
-            (),
-        )
-        self.assertEqual(
-            planner.propose(attention(180.0, enemies=1), awareness(180.0)), ()
+            1,
         )
 
-    def test_proposes_a_low_priority_three_marine_patrol(self):
+    def test_proposes_a_persistent_twenty_percent_patrol(self):
         planner = MapControlPlanner()
 
         proposals = planner.propose(attention(180.0), awareness(180.0))
@@ -123,8 +121,8 @@ class MapControlPlannerTests(unittest.TestCase):
         self.assertEqual(proposal.kind, MissionKind.MAP_CONTROL)
         self.assertEqual(proposal.target, MAP.center)
         self.assertEqual(proposal.deduplication_key, "map_control:patrol")
-        self.assertEqual(proposal.requirement.desired, 3)
-        self.assertEqual(proposal.requirement.minimum, 2)
+        self.assertEqual(proposal.requirement.desired, 2)
+        self.assertEqual(proposal.requirement.minimum, 0)
         self.assertEqual(
             proposal.requirement.unit_types,
             frozenset({UnitTypeId.MARINE}),
@@ -133,6 +131,8 @@ class MapControlPlannerTests(unittest.TestCase):
         # Standing POSITION/RESERVE missions hold most idle units now, so
         # map control must be able to preempt them to get its squad at all.
         self.assertTrue(proposal.can_preempt)
+        self.assertEqual(proposal.mode.name, "STANDING")
+        self.assertEqual(proposal.squad_id, "map_control")
 
     def test_respects_proposal_cadence(self):
         planner = MapControlPlanner()

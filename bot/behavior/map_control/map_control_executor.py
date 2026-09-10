@@ -33,7 +33,7 @@ class MapControlExecutor(MissionExecutor):
     async def step(self, context: MissionContext) -> MissionResult:
         units = context.assigned_units
         if not units:
-            return MissionResult(MissionOutcome.FAILED, "assigned_unit_missing")
+            return MissionResult(MissionOutcome.ACTIVE, "waiting_for_squad_members")
 
         retreat_reason = self._retreat_reason(context, units)
         if retreat_reason is not None:
@@ -44,8 +44,8 @@ class MapControlExecutor(MissionExecutor):
                 for unit in units
             ):
                 return MissionResult(
-                    MissionOutcome.COMPLETED,
-                    f"{retreat_reason}_returned_home",
+                    MissionOutcome.ACTIVE,
+                    f"{retreat_reason}_holding_home",
                 )
             self._move_safely(context, units, retreat_target)
             return MissionResult(

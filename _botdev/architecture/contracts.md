@@ -16,6 +16,8 @@
    proposal cannot claim a unit or start itself.
 5. `MissionController` alone admits/rejects proposals and changes mission status.
 6. `UnitAllocator` alone mutates the bidirectional unit-to-mission leases.
+   `SquadController` records persistent membership and allocation preferences;
+   it is not a second ownership authority and never issues commands.
 7. Executors cannot import Ares or infrastructure. They issue requests via
    `MissionCommands` (`path_to`, `safe_path_to`, `attack_move`, `release`) and
    every result contains a non-empty reason.
@@ -28,16 +30,14 @@
 ## Mission kinds and priorities
 
 `MissionKind` (`SCOUT`, `HARASS`, `AIR_HARASS`, `DEFENSE`, `MAP_CONTROL`,
-`POSITION`) is the shared mission vocabulary. Default priorities set the
+`HOLD_RALLY`, `POSITION`) is the shared mission vocabulary. `POSITION` remains
+available for compatible unit-based callers; the squad pilot uses
+`HOLD_RALLY`. Default priorities set the
 intended arbitration order under `UnitAllocator`'s preemption margin (10):
 
 | Kind | Priority | `can_preempt` |
 | --- | --- | --- |
-| `POSITION` (reserve slot) | 5 | no |
-| `POSITION` (main slot) | 12 | yes |
-| `POSITION` (natural slot) | 18 | yes |
-| `POSITION` (forward slot) | 25 | yes |
-| `POSITION` (third slot) | 30 | yes |
+| `HOLD_RALLY` (`main_army`) | 20 | yes |
 | `MAP_CONTROL` | 40 | yes |
 | `HARASS` | 60 | yes |
 | `AIR_HARASS` | 62 | yes |
@@ -45,10 +45,10 @@ intended arbitration order under `UnitAllocator`'s preemption margin (10):
 | `DEFENSE` (threatened base) | 85 | yes |
 | `DEFENSE` (critical base) | 95 | yes |
 
-`POSITION` (`DispositionPlanner`) is kept comfortably below `MAP_CONTROL` and
+`HOLD_RALLY` (`DispositionPlanner`) is kept comfortably below `MAP_CONTROL` and
 `HARASS`/`AIR_HARASS`/`SCOUT` so a standing slot is always freely preemptible
-by any of them. `SCOUT` and the `position:reserve` catch-all are the only two
-proposals that cannot preempt another mission themselves -- every other kind
+by any of them. `SCOUT` is the only proposal that cannot preempt another
+mission itself -- every other kind
 gained `can_preempt=True` once `DispositionPlanner`'s standing slots started
 holding most otherwise-idle units, so an opportunistic mission needs it just
 to pull a unit out of standing duty; priority order among the preemptible
@@ -63,12 +63,13 @@ missions in [harass-and-defense-planners.md](harass-and-defense-planners.md).
 observe current Ares state (AresWorldObserver)
 build AttentionSnapshot (AttentionService)
 update AwarenessSnapshot and freshness (AwarenessService)
-collect mission proposals from every planner (Intel/Harass/BansheeHarass/
-    Defense/MapControl/Disposition)
+collect mission proposals from every planner (Intel/Harass/Defense/
+    MapControl/Disposition)
 MissionController.tick:
     fail missions that lost their whole team
     admit/reject/update-standing each proposal (cooldown, duplicate, unsupported kind)
     reconcile standing missions a planner stopped declaring this tick
+    bind capability-only temporary requests to a compatible squad when possible
     sort live missions by priority, allocate or preempt after the commitment window
     step each active mission's executor through the Ares command port
 if build_order_runner.build_completed:
@@ -116,6 +117,31 @@ sequenceDiagram
         Cmd->>Ares: register macro behavior
     end
 ```
+
+### `MissionController._consider`: admitting one proposal
+
+The "admit / reject / update-standing" step above is, per proposal, this
+decision (run once per proposal per frame, before any allocation happens):
+
+```mermaid
+flowchart TD
+    In(["proposal from a planner"]) --> Seen{"proposal_id already\nprocessed before?"}
+    Seen -->|yes| Ignore["ignore -- already handled\n(pure idempotency guard)"]
+    Seen -->|no| Live{"a live mission already holds\nthis deduplication_key?"}
+    Live -->|no| Cooldown{"now < cooldown_until\nfor this key?"}
+    Live -->|yes, both STANDING| UpdateStanding["_update_standing:\nreplace live.proposal in place\n(same mission_id, lease history)"]
+    Live -->|yes, otherwise| RejectLive["proposal_rejected:\nmatching_mission_already_live"]
+    Cooldown -->|yes| RejectCooldown["proposal_rejected:\nmission_cooldown_active"]
+    Cooldown -->|no| Supported{"proposal.kind has a\nregistered executor factory?"}
+    Supported -->|no| RejectKind["proposal_rejected:\nunsupported_mission_kind"]
+    Supported -->|yes| Admit["proposal_admitted:\nnew Mission, status QUEUED\n(unit allocation happens later this tick)"]
+```
+
+A rejected or ignored proposal is simply not created as a `Mission` -- the
+planner will just propose again (subject to its own cadence) next tick if the
+condition that produced it still holds. `cooldown_until` is only set when a
+mission *finishes* (`_finish`, using `proposal.cooldown_seconds`), so a
+freshly rejected duplicate does not itself start a new cooldown.
 
 ## Causal logging
 

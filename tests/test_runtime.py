@@ -111,7 +111,7 @@ class RuntimePilotTests(unittest.IsolatedAsyncioTestCase):
         # eligible unit (there are none here) a home -- only POSITION
         # missions (main/reserve) come up, never a FINITE one.
         self.assertTrue(
-            all(m.kind is MissionKind.POSITION for m in runtime.missions.snapshots())
+            all(m.kind is MissionKind.HOLD_RALLY for m in runtime.missions.snapshots())
         )
         self.assertTrue(
             any(event["name"] == "game.started" for event in runtime.logger.events)
@@ -222,7 +222,7 @@ class RuntimePilotTests(unittest.IsolatedAsyncioTestCase):
                 # setup (RECOVERY macro posture maps to CombatPosture.TURTLE,
                 # see derive_combat_posture), even though nothing else
                 # (scout/harass/defense) is active.
-                "active_missions": 2,
+                "active_missions": 1,
             },
         )
         self.assertEqual(

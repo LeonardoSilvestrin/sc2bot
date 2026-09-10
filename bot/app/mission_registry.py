@@ -92,6 +92,15 @@ def build_executor_factories(
         MissionKind.AIR_HARASS: _build_cloaked_banshee_harass_executor,
         MissionKind.DEFENSE: _build_defend_base_executor,
         MissionKind.MAP_CONTROL: _build_map_control_executor,
+        MissionKind.HOLD_RALLY: (
+            lambda mission, now: PositioningExecutor(
+                mission_id=mission.mission_id,
+                target_key=mission.proposal.target_key,
+                target=mission.proposal.target,
+                started_at=now,
+                arrival_radius=config.arrival_radius,
+            )
+        ),
         MissionKind.POSITION: (
             lambda mission, now: _build_positioning_executor(
                 mission, now, arrival_radius=arrival_radius

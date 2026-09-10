@@ -160,8 +160,8 @@ class MapControlExecutorTests(unittest.IsolatedAsyncioTestCase):
             context(assigned_units=damaged, commands=commands)
         )
 
-        self.assertEqual(result.outcome, MissionOutcome.COMPLETED)
-        self.assertEqual(result.reason, "squad_health_low_returned_home")
+        self.assertEqual(result.outcome, MissionOutcome.ACTIVE)
+        self.assertEqual(result.reason, "squad_health_low_holding_home")
         self.assertEqual(commands.commands, [])
 
     async def test_strategic_defense_posture_sends_the_squad_home(self):
@@ -186,8 +186,8 @@ class MapControlExecutorTests(unittest.IsolatedAsyncioTestCase):
             context(assigned_units=(), commands=commands)
         )
 
-        self.assertEqual(result.outcome, MissionOutcome.FAILED)
-        self.assertEqual(result.reason, "assigned_unit_missing")
+        self.assertEqual(result.outcome, MissionOutcome.ACTIVE)
+        self.assertEqual(result.reason, "waiting_for_squad_members")
 
 
 if __name__ == "__main__":

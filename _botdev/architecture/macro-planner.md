@@ -126,6 +126,29 @@ counts, and `RelativeStrength`, with hysteresis (`defense_release_after`,
 them or entering `GREED` requires holding the new candidate for
 `posture_min_hold` first.
 
+```mermaid
+flowchart TD
+    Start(["derive_macro_posture\n(every AwarenessService.update)"]) --> Nearby{"an enemy combat unit\nis near a held base right now?"}
+    Nearby -->|yes| CandD["candidate = DEFENSE\n(remember now as last_base_threat_at)"]
+    Nearby -->|no| Recent{"now - last_base_threat_at\n< defense_release_after (10s)?"}
+    Recent -->|yes| CandD2["candidate = DEFENSE\n(still inside the release window)"]
+    Recent -->|no| NoBase{"townhalls == 0\nOR (time >= 90s AND workers < 8)?"}
+    NoBase -->|yes| CandR["candidate = RECOVERY"]
+    NoBase -->|no| Safe{"time since last threat >= greed_safe_after (20s)\nAND strength.confidence >= 0.5\nAND own combat units >= 6\nAND strength.score >= 0.25?"}
+    Safe -->|yes| CandG["candidate = GREED"]
+    Safe -->|no| CandB["candidate = BALANCED"]
+
+    CandD & CandD2 & CandR & CandG & CandB --> Hold{"candidate == DEFENSE/RECOVERY\n(immediate)\nOR held >= posture_min_hold (8s)?"}
+    Hold -->|yes| Switch["macro_posture = candidate\n(reset posture_changed_at)"]
+    Hold -->|no| Keep["macro_posture unchanged\n(candidate not held long enough yet)"]
+```
+
+Danger (`DEFENSE`/`RECOVERY`) always wins immediately; recovering from it, or
+upgrading to `GREED`, both require the safer candidate to keep winning for
+`posture_min_hold` straight frames first -- this is what stops the posture
+(and therefore every priority in the table above) from flapping every time a
+single scouting unit wanders past a base.
+
 ## Deliberately not built in this slice
 
 - `RESEARCH_UPGRADE` proposals: `MacroGoalSet.upgrades` and `UpgradeGoal`
@@ -163,20 +186,37 @@ unit commitments -- no unit lease or executor lifecycle is needed.
   raising. This is the only place the build order and dynamic macro actually
   talk to each other -- see [opening.md](opening.md) for the `BansheeCloak`
   opening this exists for.
-- `EconomyController.tick(...)` processes proposals by priority (with
-  `created_at`/`deduplication_key`/`proposal_id` as deterministic tiebreakers),
-  reserving minerals/vespene/supply against a running virtual `ResourceBank`
-  seeded from the current tick's real bank, so two proposals admitted in the
-  same frame cannot both spend the same resources; an unaffordable proposal
-  instead *holds* its cost against the virtual bank (`hold_towards`) so a
-  lower-priority proposal cannot jump the queue by being cheaper. Proposal
-  outcomes use `economic_proposal_deferred` and `economic_proposal_rejected`
-  (duplicate id/key in the same tick, a live action already covers that key,
-  or insufficient virtual bank); actions move from
-  `economic_action_admitted`/`economic_action_pending` through dispatched,
-  confirmed, failed, or timed out (`dispatch_timeout_seconds` /
-  `confirmation_timeout_seconds` on the proposal). Repeated identical
-  proposal outcomes are suppressed until their lifecycle state changes.
+```mermaid
+flowchart TD
+    Tick(["EconomyController.tick\n(after applying dispatch/confirm/fail feedback\nand expiring timed-out actions)"]) --> Seed["available = today's real ResourceBank,\nheld down by every still-PENDING\ncommitment's reserved cost"]
+    Seed --> ForEach["For each proposal,\nsorted by (-priority, created_at,\ndedup_key, proposal_id)"]
+    ForEach --> DupId{"this proposal_id already\nconsidered this tick?"}
+    DupId -->|yes| RejDup["economic_proposal_rejected:\nduplicate_proposal_id_in_tick"]
+    DupId -->|no| DupKey{"this deduplication_key already\nconsidered this tick\n(a higher-priority proposal won it)?"}
+    DupKey -->|yes| RejKey["economic_proposal_rejected:\nlower_ranked_duplicate_in_tick"]
+    DupKey -->|no| LiveAction{"a live (non-terminal) action\nalready covers this key?"}
+    LiveAction -->|yes| RejLive["economic_proposal_rejected:\nmatching_economic_action_already_live"]
+    LiveAction -->|no| Expired{"this key's action\njust timed out this tick?"}
+    Expired -->|yes| RejExpired["economic_proposal_rejected:\nmatching_economic_action_timed_out_this_tick"]
+    Expired -->|no| Afford{"virtual bank can afford\nproposal.cost right now?"}
+    Afford -->|no| Hold["hold_towards(cost) on the virtual bank\n(protects progress toward it)\neconomic_proposal_deferred:\ninsufficient_virtual_bank"]
+    Afford -->|yes| Admit["reserve(cost) on the virtual bank\neconomic_action_admitted -> PENDING"]
+```
+
+Deferring still *holds* the proposal's cost against the virtual bank even
+though nothing was admitted -- this stops a cheap, lower-priority proposal
+later in the same pass from spending minerals a more important, still-unmet
+proposal is saving toward. A `PENDING` action is later dispatched/confirmed
+through `AresEconomyCommands` feedback (see `EconomicActionStatus`); it can
+also simply time out (`dispatch_timeout_seconds` before dispatch,
+`confirmation_timeout_seconds` after) if Ares never reports it.
+
+- `EconomyController.tick(...)` runs the admission decision above once per
+  frame, in priority order, against one shared virtual `ResourceBank` for the
+  whole tick (see the flowchart above). Repeated identical proposal outcomes
+  are suppressed until their lifecycle state changes, so a proposal stuck
+  `economic_proposal_deferred` for the same reason every frame does not spam
+  the log.
 - Execution is implemented by `AresEconomyCommands`
   (`bot/adapters/ares/economy_commands.py`), which registers Ares's own macro
   behaviors: `BuildWorkers` for `PRODUCE_WORKER`, `AutoSupply` for

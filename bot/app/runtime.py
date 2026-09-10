@@ -28,7 +28,7 @@ from bot.engine.economy import (
     merge_economic_feedback,
     observe_economic_confirmations,
 )
-from bot.engine.missions import MissionController, MissionKind
+from bot.engine.missions import MissionController
 from bot.ports.logging import BotLogger
 from bot.world.attention import AttentionService
 from bot.world.awareness import AwarenessService, AwarenessSnapshot
@@ -88,8 +88,8 @@ class BotRuntime:
             self.harass_planner,
             self.defense_planner,
             self.map_control_planner,
-            # Lowest-priority planner last: standing POSITION/RESERVE
-            # proposals should not shadow anything above in reasoning about
+            # Lowest-priority planner last: the standing HOLD_RALLY
+            # proposal should not shadow anything above in reasoning about
             # this tick's proposal list, though admission order does not
             # actually depend on list order (MissionController sorts live
             # missions by priority every tick regardless).
@@ -394,8 +394,8 @@ class BotRuntime:
             allocation_by_kind[kind_name] = allocation_by_kind.get(
                 kind_name, 0
             ) + len(mission.assigned_unit_tags)
-            if mission.proposal.kind is MissionKind.POSITION:
-                slot = mission.proposal.deduplication_key.removeprefix("position:")
+            if mission.proposal.squad_id is not None:
+                slot = mission.proposal.squad_id
                 standing[slot] = (
                     mission.proposal.requirement.desired,
                     len(mission.assigned_unit_tags),
@@ -444,6 +444,16 @@ class BotRuntime:
                     for slot, (desired, assigned) in sorted(standing.items())
                 },
                 "mission_allocation": allocation_by_kind,
+                "squads": [
+                    {
+                        "squad_id": squad.squad_id,
+                        "role": squad.role.name,
+                        "members": list(squad.member_tags),
+                        "current_mission_id": squad.current_mission_id,
+                        "home_mission_id": squad.home_mission_id,
+                    }
+                    for squad in self.missions.squads.snapshots()
+                ],
                 "unassigned_eligible_units": len(unassigned_tags),
             },
         )
