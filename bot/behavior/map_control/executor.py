@@ -1,3 +1,5 @@
+"""EXECUTE: walk the safe patrol loop, and go home from anything scary."""
+
 from __future__ import annotations
 
 import math
@@ -5,15 +7,21 @@ from dataclasses import dataclass, field
 
 from sc2.position import Point2
 
+from bot.behavior.contracts import BehaviorLog
 from bot.engine.missions.execution import (
     MissionContext,
     MissionExecutor,
     MissionOutcome,
     MissionResult,
 )
+from bot.ports.logging import BotLogger
 from bot.world.attention import MapFacts, UnitSnapshot
 from bot.world.awareness import MacroPosture
 from bot.world.awareness.bases import BaseSecurityLevel
+
+from .model import MapControlConfig, PatrolPhase
+
+COMPONENT = "behavior.map_control"
 
 
 @dataclass(slots=True)
@@ -24,15 +32,35 @@ class MapControlExecutor(MissionExecutor):
     target_key: str
     target: Point2
     started_at: float
-    danger_radius: float = 20.0
-    arrival_radius: float = 5.0
-    retreat_arrival_radius: float = 7.0
-    retreat_health: float = 0.6
+    config: MapControlConfig = field(default_factory=MapControlConfig)
+    logger: BotLogger | None = None
+    phase: PatrolPhase = field(default=PatrolPhase.WAITING, init=False, repr=False)
+    _log: BehaviorLog = field(init=False, repr=False)
     _waypoint_index: int = field(default=0, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self._log = BehaviorLog(component=COMPONENT, logger=self.logger)
+
+    @property
+    def danger_radius(self) -> float:
+        return self.config.danger_radius
+
+    @property
+    def arrival_radius(self) -> float:
+        return self.config.arrival_radius
+
+    @property
+    def retreat_arrival_radius(self) -> float:
+        return self.config.retreat_arrival_radius
+
+    @property
+    def retreat_health(self) -> float:
+        return self.config.retreat_health
 
     async def step(self, context: MissionContext) -> MissionResult:
         units = context.assigned_units
         if not units:
+            self._enter(PatrolPhase.WAITING, "no_units_assigned", context)
             return MissionResult(MissionOutcome.ACTIVE, "waiting_for_squad_members")
 
         retreat_reason = self._retreat_reason(context, units)
@@ -43,16 +71,19 @@ class MapControlExecutor(MissionExecutor):
                 <= self.retreat_arrival_radius
                 for unit in units
             ):
+                self._enter(PatrolPhase.HOLDING_HOME, retreat_reason, context)
                 return MissionResult(
                     MissionOutcome.ACTIVE,
                     f"{retreat_reason}_holding_home",
                 )
+            self._enter(PatrolPhase.RETREAT, retreat_reason, context)
             self._move_safely(context, units, retreat_target)
             return MissionResult(
                 MissionOutcome.ACTIVE,
                 f"{retreat_reason}_retreating",
             )
 
+        self._enter(PatrolPhase.PATROL, "map_is_clear_enough", context)
         waypoints = self._patrol_points(context.attention.world.map)
         waypoint = waypoints[self._waypoint_index % len(waypoints)]
         if all(
@@ -64,6 +95,19 @@ class MapControlExecutor(MissionExecutor):
 
         self._move_safely(context, units, waypoint)
         return MissionResult(MissionOutcome.ACTIVE, "patrolling_safe_map_route")
+
+    def _enter(
+        self, phase: PatrolPhase, reason: str, context: MissionContext
+    ) -> None:
+        if self.phase is phase:
+            return
+        self.phase = phase
+        self._log.state_changed(
+            now=context.attention.world.time,
+            state=phase.name,
+            reason=reason,
+            mission_id=self.mission_id,
+        )
 
     def _retreat_reason(
         self,

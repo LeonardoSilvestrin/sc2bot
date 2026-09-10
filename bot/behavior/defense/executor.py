@@ -1,6 +1,8 @@
+"""EXECUTE: engage whatever is attacking the base, until nothing is left."""
+
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from sc2.position import Point2
 
@@ -10,6 +12,8 @@ from bot.engine.missions.execution import (
     MissionOutcome,
     MissionResult,
 )
+
+from .model import DefenseConfig
 
 
 @dataclass(slots=True)
@@ -21,8 +25,15 @@ class DefendBaseExecutor(MissionExecutor):
     target_key: str
     target: Point2
     started_at: float
-    engagement_radius: float = 25.0
-    arrival_radius: float = 2.0
+    config: DefenseConfig = field(default_factory=DefenseConfig)
+
+    @property
+    def engagement_radius(self) -> float:
+        return self.config.engagement_radius
+
+    @property
+    def arrival_radius(self) -> float:
+        return self.config.arrival_radius
 
     async def step(self, context: MissionContext) -> MissionResult:
         threats = tuple(

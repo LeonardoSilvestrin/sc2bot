@@ -1,6 +1,14 @@
+"""EXECUTE: walk the scout around the target and report back.
+
+A Reaper on a real map follows the map-derived perimeter route waypoint by
+waypoint and completes only after closing the lap. Anything else -- a worker,
+or a map with no extractable route -- just walks to the location and
+completes as soon as Awareness records having seen it.
+"""
+
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
@@ -12,6 +20,8 @@ from bot.engine.missions.execution import (
     MissionResult,
 )
 
+from .model import IntelConfig
+
 
 @dataclass(slots=True)
 class ScoutExecutor(MissionExecutor):
@@ -19,9 +29,16 @@ class ScoutExecutor(MissionExecutor):
     target_key: str
     target: Point2
     started_at: float
-    arrival_radius: float = 4.0
-    observation_radius: float = 10.0
+    config: IntelConfig = field(default_factory=IntelConfig)
     _waypoint_index: int = 0
+
+    @property
+    def arrival_radius(self) -> float:
+        return self.config.arrival_radius
+
+    @property
+    def observation_radius(self) -> float:
+        return self.config.observation_radius
 
     async def step(self, context: MissionContext) -> MissionResult:
         if not context.assigned_units:

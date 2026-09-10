@@ -23,7 +23,7 @@ argument to keep in sync. `base_id` is `f"base:{townhall.tag}"`.
 Before any townhall is observed (the first frame or two of a real game, or a
 sparse test fixture) `bases` returns a single placeholder,
 `base_id="own_base"` at `map.own_start`, `is_main=True`, `townhall=None` --
-this is what `DefensePlannerConfig`'s old fixed `target_key="own_base"` used
+this is what `DefenseConfig`'s old fixed `target_key="own_base"` used
 to hardcode, now just the natural empty case of the general rule.
 
 ## `BaseAssessment` / `BaseAwareness` (awareness, `bot/world/awareness/bases/`)
@@ -36,7 +36,7 @@ where the scoring logic is expected to grow.
 `BaseSnapshot`, stateless for now (recomputed every frame, no memory):
 
 - `threat_score`: count of visible, non-worker, attack-capable enemy units
-  within `proximity_radius` (25, matching the old `DefensePlannerConfig.
+  within `proximity_radius` (25, matching the old `DefenseConfig.
   detection_radius` default) of the base position.
 - `protection_score`: count of own non-worker attack-capable units within the
   same radius, plus own static defense (`BUNKER`, `MISSILETURRET`,
@@ -94,7 +94,7 @@ Iterates `awareness.bases.threatened` (every `BaseAssessment` with
   `"defense:own_base"`; now one live defense mission per base, so a two-front
   attack gets two independent missions instead of one mission reacting to
   whichever threat is geometrically closest to any structure.
-- `priority`: `DefensePlannerConfig.critical_priority` (95, was the old fixed
+- `priority`: `DefenseConfig.critical_priority` (95, was the old fixed
   `priority`) for `CRITICAL`, `threatened_priority` (85) otherwise -- an
   undefended base preempts harder than one that already has some defenders.
 - `requirement.desired`: `clamp(minimum_units, max_desired_units, ceil(threat_score
@@ -121,7 +121,11 @@ base*, not combat micro -- see the "not built" list below and
   `THREATENED` as a scout unit wanders in and out of `proximity_radius`).
   `MacroPosture` already has this pattern (`defense_release_after`,
   `posture_min_hold`) if it's needed later.
-- Air vs ground defender selection. `DefensePlannerConfig.unit_types` is
+- Air vs ground defender selection. `DefenseAssessor` now reports the
+  split (`ThreatenedBase.air_threats`/`ground_threats`) and
+  `UnitRequirement.type_desirability` can express the preference, but the
+  planner still asks for every defender type equally.
+  `DefenseConfig.unit_types` is
   still one flat set for all bases regardless of whether the threat is
   ground or air.
 - Combat-sim-based scoring (`mediator.can_win_fight`) instead of raw unit

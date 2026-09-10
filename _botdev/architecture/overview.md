@@ -88,7 +88,7 @@ main using a map-derived perimeter route and Ares' climber grid. It stays safe v
 `KeepUnitSafe`, records structures and the known enemy base count, and completes
 only after closing the lap. Unknown information creates the initial scout after the
 economy reaches 16 workers; stale information can be revisited in the periodic
-phase. These values live in `IntelPlannerConfig`.
+phase. These values live in `IntelConfig`.
 
 ## Behavior layout
 
@@ -109,13 +109,17 @@ behavior may collapse the files; it may not blur the responsibilities. An
 assessment describes and never commits; a planner proposes and never
 commands; an executor commands only the units its mission owns.
 
-Two behaviors are migrated to this layout as the reference pair:
-`behavior/standing/` (the default owner of every otherwise-idle combat unit,
-see [standing-behavior.md](standing-behavior.md)) and `behavior/harass/banshee/`
-(the cloaked raid). `behavior/harass/reaper/` followed because splitting the
-old shared `HarassPlanner` required it. `defense/`, `map_control/` and
-`scouting/` keep the older `<name>_planner.py`/`<name>_executor.py` layout
-and are the next migration candidates.
+All six mission behaviors use this layout: `standing/` (the default owner of
+every otherwise-idle combat unit, see
+[standing-behavior.md](standing-behavior.md)), `harass/banshee/`,
+`harass/reaper/`, `defense/`, `map_control/` and `scouting/`. A test in
+`tests/test_behavior_architecture.py` fails if one of them grows a fifth
+file or loses one of the four.
+
+`macro/` is the deliberate exception. It produces `EconomicProposal`s on the
+other arbitration track: it claims no unit, holds no mission, and has no
+executor, so the four-file shape would describe nothing real. Its own split
+is by spend domain -- see [macro-planner.md](macro-planner.md).
 
 ## Behavior planners
 

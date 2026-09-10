@@ -12,7 +12,6 @@ from bot.behavior.macro import (
     bio_three_one_one,
 )
 from bot.behavior.macro.planner.army_demand import army_demand
-from bot.behavior.posture import MacroPosture
 from bot.engine.economy.models import EconomicActionKind, ResourceCost
 from bot.world.attention import (
     AttentionSnapshot,
@@ -23,7 +22,7 @@ from bot.world.attention import (
     UnitTypeCount,
     WorldFacts,
 )
-from bot.world.awareness import AwarenessService
+from bot.world.awareness import AwarenessService, MacroPosture
 
 MAP = MapFacts(
     center=Point2((50, 50)),

@@ -1,5 +1,27 @@
-from .defend_base_executor import DefendBaseExecutor
-from .defense_config import DefensePlannerConfig
-from .defense_planner import DefensePlanner
+"""Per-base defense, end to end.
 
-__all__ = ["DefensePlanner", "DefensePlannerConfig", "DefendBaseExecutor"]
+    assessment.py   which bases are threatened, and by air or by ground
+    planner.py      one proposal per threatened base, sized to the gap
+    executor.py     engaging the nearest threat until the base is clear
+    model.py        the config/assessment/plan types all three share
+"""
+
+from .assessment import DefenseAssessor
+from .executor import DefendBaseExecutor
+from .model import (
+    DefenseAssessment,
+    DefenseConfig,
+    DefensePlan,
+    ThreatenedBase,
+)
+from .planner import DefensePlanner
+
+__all__ = [
+    "DefendBaseExecutor",
+    "DefenseAssessment",
+    "DefenseAssessor",
+    "DefenseConfig",
+    "DefensePlan",
+    "DefensePlanner",
+    "ThreatenedBase",
+]

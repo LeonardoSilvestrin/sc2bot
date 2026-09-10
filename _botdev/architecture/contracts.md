@@ -192,7 +192,8 @@ Ladder runs retain `NullBotLogger` and do not open files. The standalone
 event timeline and derives its Observation, Knowledge, and Economy views
 exclusively from the structured events above. Component names mirror the current
 package layout (`app.runtime`, `world.attention`, `world.awareness`,
-`behavior.standing`, `behavior.harass.banshee`, `engine.missions.controller`, and
+`behavior.standing`, `behavior.harass.banshee`, `behavior.defense`,
+`behavior.map_control`, `behavior.scouting`, `engine.missions.controller`, and
 `engine.economy.controller`); the viewer's `COMPONENT_ALIASES` table maps
 older component strings (`application.runtime`, `ego.mission_controller`,
 `economy.controller`, `behavior.army.disposition`) onto the current names -- and, for a log old enough that

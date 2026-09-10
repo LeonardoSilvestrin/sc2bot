@@ -15,28 +15,31 @@ bot/behavior/
   contracts.py            -> BehaviorAssessment/Assessor/Planner/Executor + BehaviorLog
   strategy_intent.py      -> opening -> tactical capability table
   standing/               -> the default owner (see standing-behavior.md)
-    model.py assessment.py planner.py executor.py
-  harass/
-    banshee/              -> cloaked Banshee raid, end to end
-      model.py assessment.py planner.py executor.py
-    reaper/               -> single-Reaper worker-line raid, end to end
-      model.py assessment.py planner.py executor.py
-  defense/                -> DefensePlanner / DefendBaseExecutor / config
-  map_control/            -> MapControlPlanner / MapControlExecutor / config
-  scouting/               -> IntelPlanner / ScoutExecutor / config
-  macro/                  -> MacroPlanner / economic goals and config
+  harass/banshee/         -> cloaked Banshee raid
+  harass/reaper/          -> single-Reaper worker-line raid
+  defense/                -> per-base defense
+  map_control/            -> the roaming patrol share
+  scouting/               -> information missions
+      each of the six holding exactly:
+      model.py  assessment.py  planner.py  executor.py
+  macro/                  -> the economic track (see below)
 
 bot/engine/missions/      -> controller, board, allocator, models, execution contracts
 bot/app/mission_registry.py -> concrete executor wiring
 ```
 
-Inside a migrated folder the four filenames are always the same, so any
-behavior answers the same four questions in the same place:
-`assessment.py` (what is the situation), `planner.py` (what do we want and at
-what priority), `executor.py` (how do we do it now), `model.py` (the types
-those three share). `defense/`, `map_control/` and `scouting/` still use the
-older `<name>_planner.py`/`<name>_executor.py` layout and are the next
-migration candidates.
+Every mission behavior uses the same four filenames, so any behavior answers
+the same four questions in the same place: `assessment.py` (what is the
+situation), `planner.py` (what do we want and at what priority),
+`executor.py` (how do we do it now), `model.py` (the types those three
+share). A test enforces the shape.
+
+`macro/` is deliberately outside that contract: it produces
+`EconomicProposal`s admitted against a virtual bank, claims no unit, holds no
+mission and has no executor, so the four-file shape would be a costume
+rather than a structure. Its own split is by spend domain --
+`planner/army_demand.py` plays the assessment role and `macro_planner.py`
+composes one builder per concern. See [macro-planner.md](macro-planner.md).
 
 `MissionKind` gained `HARASS`, `AIR_HARASS`, and `DEFENSE` in
 `bot/engine/missions/models.py`; it stays the shared vocabulary in the mission
@@ -195,6 +198,13 @@ so it can preempt a live Intel or Harass mission for the same unit once the
 `UnitAllocator`'s preemption margin (10) and the donor's commitment window
 allow it (see `tests/test_mission_arbitration.py` for the full preemption
 sequence).
+
+`DefenseAssessor` turns `awareness.bases.threatened` into one
+`ThreatenedBase` per base and adds what the global assessment does not
+carry: whether the attackers are air or ground (`air_threats` /
+`ground_threats`). Nothing chooses defenders from that yet -- it is the
+reading a future `UnitRequirement.type_desirability` will be derived from,
+and it has to be assessed before a planner can state it.
 
 Its executor, `DefendBaseExecutor`, is unchanged by the base-model slice:
 attack-moves every assigned unit toward the threat closest to where the

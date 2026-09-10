@@ -6,7 +6,7 @@ from dataclasses import replace
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
-from bot.behavior.defense import DefensePlanner
+from bot.behavior.defense import DefenseAssessor, DefensePlanner
 from bot.engine.missions import MissionKind
 from bot.world.attention import (
     AttentionSnapshot,
@@ -15,6 +15,7 @@ from bot.world.attention import (
     WorldFacts,
 )
 from bot.world.awareness import AwarenessService
+from tests.fakes import FakeLogger
 
 MAP = MapFacts(
     center=Point2((50, 50)),
@@ -263,6 +264,90 @@ class DefensePlannerTests(unittest.TestCase):
 
         second = attention(11.0, enemy_units=(enemy_marine(1, Point2((12, 10))),))
         self.assertEqual(planner.propose(second, AwarenessService().update(second)), ())
+
+
+def enemy_mutalisk(tag: int, position: Point2) -> UnitSnapshot:
+    return UnitSnapshot(
+        tag=tag,
+        unit_type=UnitTypeId.MUTALISK,
+        position=position,
+        health_percentage=1.0,
+        is_flying=True,
+        is_worker=False,
+        can_attack_air=True,
+        can_attack_ground=True,
+        visible_now=True,
+    )
+
+
+class DefenseAssessmentTests(unittest.TestCase):
+    def test_reports_nothing_threatened_when_the_map_is_quiet(self):
+        current = attention(10.0)
+        awareness = AwarenessService().update(current)
+
+        assessment = DefenseAssessor().assess(current, awareness)
+
+        self.assertFalse(assessment.under_attack)
+        self.assertEqual(assessment.threatened, ())
+        self.assertEqual(assessment.log_fields()["threatened_bases"], [])
+
+    def test_separates_air_from_ground_attackers(self):
+        """The composition, not just the size, of what is hitting the base.
+
+        Nothing chooses defenders from this yet -- it is what a future
+        `type_desirability` will be derived from.
+        """
+
+        current = attention(
+            10.0,
+            enemy_units=(
+                enemy_marine(1, Point2((12, 10))),
+                enemy_mutalisk(2, Point2((12, 11))),
+                enemy_mutalisk(3, Point2((13, 11))),
+            ),
+        )
+        awareness = AwarenessService().update(current)
+
+        assessment = DefenseAssessor().assess(current, awareness)
+
+        self.assertTrue(assessment.under_attack)
+        base = assessment.threatened[0]
+        self.assertEqual(base.ground_threats, 1)
+        self.assertEqual(base.air_threats, 2)
+        self.assertEqual(assessment.log_fields()["air_threats"], 2)
+
+    def test_the_plan_sizes_the_request_to_the_gap(self):
+        current = attention(
+            10.0,
+            enemy_units=tuple(
+                enemy_marine(tag, Point2((12, 10 + tag * 0.1)))
+                for tag in range(1, 4)
+            ),
+        )
+        awareness = AwarenessService().update(current)
+        planner = DefensePlanner(logger=FakeLogger())
+
+        proposals = planner.propose(current, awareness)
+
+        self.assertEqual(len(proposals), 1)
+        plan = planner.last_plans[0]
+        self.assertEqual(plan.desired_units, proposals[0].requirement.desired)
+        self.assertTrue(plan.base.is_critical)
+        self.assertEqual(plan.priority, 95)
+
+    def test_logs_the_assessment_and_every_plan(self):
+        logger = FakeLogger()
+        current = attention(10.0, enemy_units=(enemy_marine(1, Point2((12, 10))),))
+        awareness = AwarenessService().update(current)
+
+        DefensePlanner(logger=logger).propose(current, awareness)
+
+        names = [event["name"] for event in logger.events]
+        self.assertIn("behavior.assessed", names)
+        self.assertIn("behavior.proposed", names)
+        self.assertEqual(
+            {event["component"] for event in logger.events}, {"behavior.defense"}
+        )
 
 
 if __name__ == "__main__":

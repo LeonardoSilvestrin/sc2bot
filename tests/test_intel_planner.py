@@ -4,7 +4,7 @@ import unittest
 
 from sc2.ids.unit_typeid import UnitTypeId
 
-from bot.behavior.scouting import IntelPlanner
+from bot.behavior.scouting import IntelAssessor, IntelPlanner
 from bot.world.awareness import AwarenessService
 from tests.test_scout_slice import attention
 
@@ -57,3 +57,49 @@ class IntelPlannerTests(unittest.TestCase):
         self.assertEqual(
             proposals[0].requirement.unit_types, frozenset({UnitTypeId.REAPER})
         )
+
+
+class IntelAssessmentTests(unittest.TestCase):
+    def test_falls_back_to_the_natural_when_the_main_has_no_route(self):
+        """Synthetic maps expose no main perimeter; the natural still works.
+
+        Resolving that belongs to assessment, so planner and executor both
+        see one already-decided target.
+        """
+
+        observed = attention(10.0, visible=False)
+        awareness = AwarenessService().update(observed)
+
+        assessment = IntelAssessor().assess(observed, awareness)
+
+        self.assertEqual(assessment.target.key, "enemy_natural")
+        self.assertFalse(assessment.target.has_route)
+        self.assertTrue(assessment.target.is_stale)
+
+    def test_reports_which_unit_would_be_spent(self):
+        with_reaper = attention(10.0, visible=False, reapers=1)
+        without = attention(10.0, visible=False, reapers=0)
+        service = AwarenessService()
+
+        alive = IntelAssessor().assess(with_reaper, service.update(with_reaper))
+        gone = IntelAssessor().assess(without, service.update(without))
+
+        self.assertTrue(alive.preferred_scout_alive)
+        self.assertEqual(alive.scout_unit_types, frozenset({UnitTypeId.REAPER}))
+        self.assertFalse(gone.preferred_scout_alive)
+        self.assertEqual(gone.scout_unit_types, frozenset({UnitTypeId.SCV}))
+
+    def test_the_plan_carries_the_reason_the_proposal_reports(self):
+        observed = attention(10.0, visible=False)
+        awareness = AwarenessService().update(observed)
+        planner = IntelPlanner()
+
+        proposals = planner.propose(observed, awareness)
+
+        self.assertEqual(len(proposals), 1)
+        self.assertEqual(planner.last_plan.reason, proposals[0].reason)
+        self.assertEqual(planner.last_plan.target.key, proposals[0].target_key)
+
+
+if __name__ == "__main__":
+    unittest.main()

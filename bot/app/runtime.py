@@ -13,7 +13,7 @@ from bot.adapters.ares import (
     register_baseline_behaviors,
 )
 from bot.app.mission_registry import build_executor_factories
-from bot.behavior.defense import DefensePlanner, DefensePlannerConfig
+from bot.behavior.defense import DefenseConfig, DefensePlanner
 from bot.behavior.harass.banshee import BansheeHarassConfig, BansheeHarassPlanner
 from bot.behavior.harass.reaper import ReaperHarassConfig, ReaperHarassPlanner
 from bot.behavior.macro import (
@@ -21,8 +21,8 @@ from bot.behavior.macro import (
     MacroPlannerConfig,
     macro_config_for_opening,
 )
-from bot.behavior.map_control import MapControlPlanner, MapControlPlannerConfig
-from bot.behavior.scouting import IntelPlanner, IntelPlannerConfig
+from bot.behavior.map_control import MapControlConfig, MapControlPlanner
+from bot.behavior.scouting import IntelConfig, IntelPlanner
 from bot.behavior.standing import StandingConfig, StandingPlanner
 from bot.engine.economy import (
     EconomicFeedback,
@@ -68,38 +68,40 @@ class BotRuntime:
         self,
         *,
         logger: BotLogger,
-        intel_config: IntelPlannerConfig | None = None,
+        intel_config: IntelConfig | None = None,
         banshee_harass_config: BansheeHarassConfig | None = None,
         reaper_harass_config: ReaperHarassConfig | None = None,
-        defense_config: DefensePlannerConfig | None = None,
+        defense_config: DefenseConfig | None = None,
         macro_config: MacroPlannerConfig | None = None,
-        map_control_config: MapControlPlannerConfig | None = None,
+        map_control_config: MapControlConfig | None = None,
         standing_config: StandingConfig | None = None,
         rng: random.Random | None = None,
     ) -> None:
         self.logger = logger
         self._rng = rng or random.Random()
-        self.intel_config = intel_config or IntelPlannerConfig()
+        self.intel_config = intel_config or IntelConfig()
         self.banshee_harass_config = banshee_harass_config or BansheeHarassConfig()
         self.reaper_harass_config = reaper_harass_config or ReaperHarassConfig()
-        self.defense_config = defense_config or DefensePlannerConfig()
+        self.defense_config = defense_config or DefenseConfig()
         self.macro_config = macro_config or MacroPlannerConfig()
-        self.map_control_config = map_control_config or MapControlPlannerConfig()
+        self.map_control_config = map_control_config or MapControlConfig()
         self.standing_config = standing_config or StandingConfig()
         self.world_observer = AresWorldObserver()
         self.awareness = AwarenessService(
             location_stale_after=self.intel_config.location_stale_after
         )
-        self.intel_planner = IntelPlanner(config=self.intel_config)
+        self.intel_planner = IntelPlanner(config=self.intel_config, logger=logger)
         self.banshee_harass_planner = BansheeHarassPlanner(
             config=self.banshee_harass_config, logger=logger
         )
         self.reaper_harass_planner = ReaperHarassPlanner(
             config=self.reaper_harass_config, logger=logger
         )
-        self.defense_planner = DefensePlanner(config=self.defense_config)
+        self.defense_planner = DefensePlanner(config=self.defense_config, logger=logger)
         self.macro_planner = MacroPlanner(config=self.macro_config)
-        self.map_control_planner = MapControlPlanner(config=self.map_control_config)
+        self.map_control_planner = MapControlPlanner(
+            config=self.map_control_config, logger=logger
+        )
         self.standing_planner = StandingPlanner(
             config=self.standing_config, logger=logger
         )
@@ -126,6 +128,9 @@ class BotRuntime:
                 standing_config=self.standing_config,
                 banshee_config=self.banshee_harass_config,
                 reaper_config=self.reaper_harass_config,
+                defense_config=self.defense_config,
+                map_control_config=self.map_control_config,
+                intel_config=self.intel_config,
                 logger=logger,
             ),
         )

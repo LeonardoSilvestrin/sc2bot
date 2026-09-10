@@ -6,7 +6,11 @@ from dataclasses import replace
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
-from bot.behavior.map_control import MapControlPlanner, MapControlPlannerConfig
+from bot.behavior.map_control import (
+    MapControlAssessor,
+    MapControlConfig,
+    MapControlPlanner,
+)
 from bot.engine.missions import MissionKind
 from bot.world.attention import (
     AttentionSnapshot,
@@ -84,10 +88,10 @@ def awareness(
     )
 
 
-class MapControlPlannerConfigTests(unittest.TestCase):
+class MapControlConfigTests(unittest.TestCase):
     def test_rejects_an_invalid_force_ratio(self):
         with self.assertRaises(ValueError):
-            MapControlPlannerConfig(force_ratio=1.0)
+            MapControlConfig(force_ratio=1.0)
 
 
 class MapControlPlannerTests(unittest.TestCase):
@@ -139,6 +143,37 @@ class MapControlPlannerTests(unittest.TestCase):
 
         self.assertEqual(len(planner.propose(attention(180.0), awareness(180.0))), 1)
         self.assertEqual(planner.propose(attention(181.0), awareness(181.0)), ())
+
+
+class MapControlAssessmentTests(unittest.TestCase):
+    def test_counts_only_units_healthy_enough_to_roam(self):
+        current, state = attention(30.0, marines=8), awareness(30.0)
+
+        assessment = MapControlAssessor().assess(current, state)
+
+        self.assertEqual(assessment.eligible_units, 8)
+        self.assertTrue(assessment.started)
+        self.assertTrue(assessment.force_available)
+
+    def test_the_plan_claims_the_configured_share(self):
+        current, state = attention(30.0, marines=10), awareness(30.0)
+        planner = MapControlPlanner()
+
+        proposals = planner.propose(current, state)
+
+        self.assertEqual(len(proposals), 1)
+        self.assertEqual(planner.last_plan.desired_units, 2)
+        self.assertEqual(
+            proposals[0].requirement.desired, planner.last_plan.desired_units
+        )
+
+    def test_a_too_small_army_produces_no_plan(self):
+        current, state = attention(30.0, marines=3), awareness(30.0)
+        planner = MapControlPlanner()
+
+        self.assertEqual(planner.propose(current, state), ())
+        self.assertIsNone(planner.last_plan)
+        self.assertEqual(planner.last_assessment.eligible_units, 3)
 
 
 if __name__ == "__main__":

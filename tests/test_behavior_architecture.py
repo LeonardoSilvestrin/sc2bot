@@ -20,8 +20,11 @@ from bot.behavior.contracts import (
     BehaviorAssessor,
     BehaviorPlanner,
 )
+from bot.behavior.defense import DefenseAssessor, DefensePlanner
 from bot.behavior.harass.banshee import BansheeHarassAssessor, BansheeHarassPlanner
 from bot.behavior.harass.reaper import ReaperHarassAssessor, ReaperHarassPlanner
+from bot.behavior.map_control import MapControlAssessor, MapControlPlanner
+from bot.behavior.scouting import IntelAssessor, IntelPlanner
 from bot.behavior.standing import StandingAssessor, StandingPlanner
 from bot.engine.missions import MissionKind, UnitRequirement
 from bot.world.attention import (
@@ -57,8 +60,34 @@ def world_snapshot(now: float) -> AttentionSnapshot:
         )
     )
 
-ASSESSORS = (BansheeHarassAssessor(), ReaperHarassAssessor(), StandingAssessor())
-PLANNERS = (BansheeHarassPlanner(), ReaperHarassPlanner(), StandingPlanner())
+ASSESSORS = (
+    BansheeHarassAssessor(),
+    ReaperHarassAssessor(),
+    StandingAssessor(),
+    DefenseAssessor(),
+    MapControlAssessor(),
+    IntelAssessor(),
+)
+PLANNERS = (
+    BansheeHarassPlanner(),
+    ReaperHarassPlanner(),
+    StandingPlanner(),
+    DefensePlanner(),
+    MapControlPlanner(),
+    IntelPlanner(),
+)
+
+# Every mission behavior is now a vertical folder. `macro/` deliberately is
+# not: it produces EconomicProposals, owns no unit and has no executor, so
+# the four-file shape would be a costume rather than a structure.
+VERTICAL_BEHAVIORS = (
+    ("harass", "banshee"),
+    ("harass", "reaper"),
+    ("standing",),
+    ("defense",),
+    ("map_control",),
+    ("scouting",),
+)
 
 
 def imported_modules(path: Path) -> set[str]:
@@ -107,11 +136,8 @@ class BehaviorShapeTests(unittest.TestCase):
             self.assertTrue(planner.planner_id.strip())
 
     def test_a_vertical_behavior_folder_holds_its_whole_pipeline(self):
-        for folder in (
-            BOT / "behavior" / "harass" / "banshee",
-            BOT / "behavior" / "harass" / "reaper",
-            BOT / "behavior" / "standing",
-        ):
+        for parts in VERTICAL_BEHAVIORS:
+            folder = BOT.joinpath("behavior", *parts)
             present = {path.name for path in folder.glob("*.py")}
             self.assertEqual(
                 present,
@@ -122,7 +148,7 @@ class BehaviorShapeTests(unittest.TestCase):
                     "planner.py",
                     "executor.py",
                 },
-                folder.name,
+                "/".join(parts),
             )
 
 
