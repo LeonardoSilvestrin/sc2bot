@@ -68,6 +68,23 @@ def reaper(tag: int):
     )
 
 
+def enemy_worker(tag: int, position: Point2):
+    return SimpleNamespace(
+        tag=tag,
+        type_id=UnitTypeId.SCV,
+        position=position,
+        health_percentage=1.0,
+        is_flying=False,
+        can_attack_air=False,
+        can_attack_ground=False,
+        is_ready=True,
+        is_carrying_resource=False,
+        is_constructing_scv=False,
+        is_structure=False,
+        is_memory=False,
+    )
+
+
 def enemy_marine(tag: int, position: Point2):
     return SimpleNamespace(
         tag=tag,
@@ -252,6 +269,60 @@ class RuntimePilotTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(observation_events[1]["data"]["minerals"], 400)
         self.assertEqual(observation_events[0]["component"], "world.attention")
         self.assertEqual(knowledge_events[0]["component"], "world.awareness")
+
+    async def test_runtime_announces_an_awareness_belief_change_in_chat(self):
+        # Directly observed enemy workers outnumbering our own is hard proof
+        # (see RelativeBeliefConfig.observed_certainty_floor) -- ECONOMY
+        # should flip UNKNOWN -> BEHIND on the very first tick and be
+        # announced in chat, with a matching structured log event.
+        commands = FakeCommands()
+        chat = FakeChat()
+        bot = SimpleNamespace(
+            time=10.0,
+            minerals=50,
+            vespene=0,
+            supply_used=5,
+            supply_cap=15,
+            units=tuple(worker(tag) for tag in range(1, 6)),
+            structures=(),
+            enemy_units=tuple(
+                enemy_worker(tag, Point2((80, 80))) for tag in range(50, 60)
+            ),
+            enemy_structures=(),
+            worker_type=UnitTypeId.SCV,
+            start_location=Point2((10, 10)),
+            enemy_start_locations=[Point2((90, 90))],
+            game_info=SimpleNamespace(map_center=Point2((50, 50)), map_name="PilotMap"),
+            chat_send=chat,
+        )
+        runtime = BotRuntime(logger=FakeLogger())
+
+        with (
+            patch(
+                "bot.app.runtime.AresMissionCommands",
+                return_value=commands,
+            ),
+            patch("bot.app.runtime.register_baseline_behaviors"),
+        ):
+            await runtime.on_step(bot, iteration=1)
+
+        self.assertEqual(len(chat.messages), 1)
+        self.assertIn("ECONOMY", chat.messages[0])
+        self.assertIn("UNKNOWN -> BEHIND", chat.messages[0])
+
+        belief_events = [
+            event
+            for event in runtime.logger.events
+            if event["name"] == "awareness.belief_changed"
+        ]
+        self.assertEqual(len(belief_events), 1)
+        self.assertEqual(belief_events[0]["data"]["message"], chat.messages[0])
+        self.assertTrue(
+            any(
+                event["name"] == "awareness.world_belief"
+                for event in runtime.logger.events
+            )
+        )
 
     async def test_runtime_wires_unknown_to_scout_and_new_vision_to_completion(self):
         target = Point2((80, 80))

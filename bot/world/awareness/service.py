@@ -3,10 +3,21 @@ from __future__ import annotations
 from bot.world.attention import TOWNHALL_TYPES, AttentionSnapshot
 
 from .bases import BaseSecurityAssessor
+from .belief import (
+    ArmyBeliefConfig,
+    EconomyBeliefConfig,
+    HysteresisState,
+    RelativeAssessment,
+    RelativePosition,
+    assess_army,
+    assess_economy,
+)
 from .enemy import (
     EnemyAwareness,
+    EnemyBaseMemory,
     EnemyKnowledge,
     EnemyLocationKnowledge,
+    scouting_coverage,
 )
 from .posture import PostureState, derive_macro_posture
 from .snapshot import (
@@ -27,6 +38,9 @@ class AwarenessService:
         defense_release_after: float = 10.0,
         posture_min_hold: float = 8.0,
         greed_safe_after: float = 20.0,
+        enemy_base_stale_after: float = 120.0,
+        economy_belief_config: EconomyBeliefConfig | None = None,
+        army_belief_config: ArmyBeliefConfig | None = None,
     ) -> None:
         if location_stale_after <= 0.0:
             raise ValueError("location_stale_after must be positive")
@@ -39,10 +53,15 @@ class AwarenessService:
         self.defense_release_after = float(defense_release_after)
         self.posture_min_hold = float(posture_min_hold)
         self.greed_safe_after = float(greed_safe_after)
+        self.economy_belief_config = economy_belief_config or EconomyBeliefConfig()
+        self.army_belief_config = army_belief_config or ArmyBeliefConfig()
         self.enemy_knowledge = EnemyKnowledge()
         self._base_assessor = BaseSecurityAssessor()
+        self._enemy_base_memory = EnemyBaseMemory(stale_after=enemy_base_stale_after)
         self._location_last_observed: dict[str, float] = {}
         self._posture_state = PostureState()
+        self._economy_hysteresis = HysteresisState()
+        self._army_hysteresis = HysteresisState()
 
     def update(self, attention: AttentionSnapshot) -> AwarenessSnapshot:
         world = attention.world
@@ -134,6 +153,40 @@ class AwarenessService:
             posture_min_hold=self.posture_min_hold,
         )
 
+        previous_economy_stable = self._economy_hysteresis.stable
+        previous_army_stable = self._army_hysteresis.stable
+        base_observations = self._enemy_base_memory.update(world)
+        coverage = scouting_coverage(base_observations)
+        economy_belief, self._economy_hysteresis = assess_economy(
+            world=world,
+            sightings=sightings,
+            base_observations=base_observations,
+            coverage=coverage,
+            now=world.time,
+            state=self._economy_hysteresis,
+            config=self.economy_belief_config,
+        )
+        army_belief, self._army_hysteresis = assess_army(
+            world=world,
+            sightings=sightings,
+            coverage=coverage,
+            now=world.time,
+            state=self._army_hysteresis,
+            config=self.army_belief_config,
+        )
+        chat_messages = tuple(
+            message
+            for message in (
+                _belief_chat_message(
+                    "ECONOMY", previous_economy_stable, economy_belief.relative
+                ),
+                _belief_chat_message(
+                    "ARMY", previous_army_stable, army_belief.relative
+                ),
+            )
+            if message is not None
+        )
+
         return AwarenessSnapshot(
             enemy=EnemyAwareness(
                 sightings=sightings,
@@ -158,4 +211,24 @@ class AwarenessService:
             updated_at=world.time,
             macro_posture=self._posture_state.posture,
             bases=self._base_assessor.update(world),
+            economy=economy_belief,
+            army=army_belief,
+            chat_messages=chat_messages,
         )
+
+
+def _belief_chat_message(
+    label: str, previous: RelativePosition, assessment: RelativeAssessment
+) -> str | None:
+    """Render one ``[Awareness] LABEL: OLD -> NEW`` line, or ``None`` if the
+    stable state did not actually change this tick (never announced)."""
+
+    if assessment.stable_state is previous:
+        return None
+    text = (
+        f"[Awareness] {label}: {previous.name} -> {assessment.stable_state.name} "
+        f"(confidence={assessment.confidence:.2f})"
+    )
+    if assessment.reason:
+        text = f"{text} | {assessment.reason}"
+    return text

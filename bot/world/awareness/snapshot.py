@@ -3,8 +3,50 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from .bases import BaseAwareness
+from .belief import (
+    ArmyBelief,
+    ArmySupplyEstimate,
+    BaseEstimate,
+    EconomyBelief,
+    EnemyArmyKnowledge,
+    EnemyEconomyKnowledge,
+    RelativeAssessment,
+    RelativePosition,
+    WorkerEstimate,
+)
 from .enemy import EnemyAwareness
 from .posture import MacroPosture
+
+
+def _unknown_relative() -> RelativeAssessment:
+    return RelativeAssessment(
+        raw_state=RelativePosition.UNKNOWN,
+        stable_state=RelativePosition.UNKNOWN,
+        confidence=0.0,
+    )
+
+
+def _default_economy_belief() -> EconomyBelief:
+    return EconomyBelief(
+        own_workers=0,
+        own_bases=0,
+        enemy=EnemyEconomyKnowledge(
+            workers=WorkerEstimate(observed=0, estimated=0, confidence=0.0),
+            bases=BaseEstimate(confirmed=0, estimated=0, confidence=0.0),
+        ),
+        relative=_unknown_relative(),
+    )
+
+
+def _default_army_belief() -> ArmyBelief:
+    return ArmyBelief(
+        own_supply=0.0,
+        enemy=EnemyArmyKnowledge(
+            supply=ArmySupplyEstimate(observed=0.0, estimated=0.0, confidence=0.0),
+            composition=(),
+        ),
+        relative=_unknown_relative(),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,3 +77,9 @@ class AwarenessSnapshot:
     updated_at: float
     macro_posture: MacroPosture = MacroPosture.BALANCED
     bases: BaseAwareness = field(default_factory=BaseAwareness)
+    economy: EconomyBelief = field(default_factory=_default_economy_belief)
+    army: ArmyBelief = field(default_factory=_default_army_belief)
+    # Populated only on the tick a stable economy/army belief actually
+    # changes -- see ``AwarenessService``. ``BotRuntime`` is what turns
+    # these into real `chat_send` calls; Awareness itself performs no I/O.
+    chat_messages: tuple[str, ...] = ()

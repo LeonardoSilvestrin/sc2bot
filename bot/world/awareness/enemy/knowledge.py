@@ -19,6 +19,8 @@ class EnemySighting:
     can_attack_air: bool
     can_attack_ground: bool
     is_structure: bool
+    is_worker: bool = False
+    supply_cost: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)

@@ -111,6 +111,8 @@ class BotRuntime:
         self._last_world_signature: tuple | None = None
         self._last_world_snapshot_at: float = -999.0
         self._last_enemy_intel_signature: tuple | None = None
+        self._last_belief_signature: tuple | None = None
+        self._last_belief_log_at: float = -999.0
         self._last_disposition_signature: tuple | None = None
         self._last_disposition_log_at: float = -999.0
         self._unassigned_eligible_since: float | None = None
@@ -150,6 +152,29 @@ class BotRuntime:
             message = _OPENING_ANNOUNCEMENTS.get(opening, f"Plan: {opening}.")
             await chat_send(message)
 
+    async def _announce_awareness_changes(
+        self, bot, awareness: AwarenessSnapshot
+    ) -> None:
+        """Speak a stable economy/army belief change in game chat.
+
+        ``AwarenessService`` decides *whether* a change happened (and
+        debounces it against flapping) -- this only performs the I/O, same
+        division as ``_choose_and_announce_opening``.
+        """
+
+        if not awareness.chat_messages:
+            return
+        chat_send = getattr(bot, "chat_send", None)
+        for message in awareness.chat_messages:
+            self.logger.event(
+                "awareness.belief_changed",
+                component="world.awareness.belief",
+                game_time=awareness.updated_at,
+                data={"message": message},
+            )
+            if callable(chat_send):
+                await chat_send(message)
+
     @staticmethod
     def _opening_choices(bot, runner) -> tuple[str, ...]:
         config = getattr(runner, "config", None)
@@ -175,6 +200,7 @@ class BotRuntime:
         world = self.world_observer.world_facts(bot, iteration=iteration)
         attention = AttentionService.build(world=world)
         awareness = self.awareness.update(attention)
+        await self._announce_awareness_changes(bot, awareness)
         proposals = tuple(
             proposal
             for planner in self._mission_planners
@@ -279,6 +305,7 @@ class BotRuntime:
     def _log_world_snapshots(self, attention, awareness: AwarenessSnapshot) -> None:
         world = attention.world
         self._log_enemy_intel(awareness, game_time=world.time)
+        self._log_world_belief(awareness, game_time=world.time)
         economy = world.economy
         strength = awareness.relative_strength
         threat = awareness.threat
@@ -373,6 +400,56 @@ class BotRuntime:
                 "visible_enemy_unit_count": sum(
                     unit.visible_now for unit in world.enemy_units
                 ),
+            },
+        )
+
+    def _log_world_belief(
+        self, awareness: AwarenessSnapshot, *, game_time: float
+    ) -> None:
+        """Dump the full economy/army belief, including *why it has not
+        changed yet* (raw vs stable, confidence) -- not just the final
+        stable state, which the chat announcements already cover."""
+
+        economy = awareness.economy
+        army = awareness.army
+        signature = (
+            economy.relative.raw_state,
+            economy.relative.stable_state,
+            round(economy.relative.confidence, 3),
+            army.relative.raw_state,
+            army.relative.stable_state,
+            round(army.relative.confidence, 3),
+        )
+        changed = signature != self._last_belief_signature
+        periodic = game_time - self._last_belief_log_at >= 10.0
+        if not changed and not periodic:
+            return
+        self._last_belief_signature = signature
+        self._last_belief_log_at = game_time
+        self.logger.event(
+            "awareness.world_belief",
+            component="world.awareness.belief",
+            game_time=game_time,
+            data={
+                "economy": {
+                    "own_workers": economy.own_workers,
+                    "own_bases": economy.own_bases,
+                    "enemy_observed_workers": economy.enemy.workers.observed,
+                    "enemy_estimated_workers": economy.enemy.workers.estimated,
+                    "enemy_confirmed_bases": economy.enemy.bases.confirmed,
+                    "enemy_estimated_bases": economy.enemy.bases.estimated,
+                    "raw": economy.relative.raw_state.name,
+                    "stable": economy.relative.stable_state.name,
+                    "confidence": round(economy.relative.confidence, 3),
+                },
+                "army": {
+                    "own_supply": round(army.own_supply, 1),
+                    "enemy_observed_supply": round(army.enemy.supply.observed, 1),
+                    "enemy_estimated_supply": round(army.enemy.supply.estimated, 1),
+                    "raw": army.relative.raw_state.name,
+                    "stable": army.relative.stable_state.name,
+                    "confidence": round(army.relative.confidence, 3),
+                },
             },
         )
 

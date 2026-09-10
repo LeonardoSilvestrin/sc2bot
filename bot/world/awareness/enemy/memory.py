@@ -42,6 +42,8 @@ class EnemyKnowledge:
                 can_attack_air=unit.can_attack_air,
                 can_attack_ground=unit.can_attack_ground,
                 is_structure=unit.is_structure,
+                is_worker=unit.is_worker,
+                supply_cost=unit.supply_cost,
             )
 
         for tag in tuple(self._sightings):

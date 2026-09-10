@@ -22,6 +22,7 @@ class UnitSnapshot:
     is_structure: bool = False
     is_constructing: bool = False
     available_for_mission: bool = True
+    supply_cost: float = 0.0
 
     def is_visible_combat_threat(
         self, *, against_ground: bool = True, against_air: bool = True

@@ -122,11 +122,12 @@ def banshee_cloak() -> MacroGoalSet:
 
     Cloak itself is already researched during the opening (see
     ``terran_builds.yml``); this only keeps Banshees flowing out of the
-    Starport afterward and backs them with a Marine/Marauder floor so the
-    army is not entirely grounded-air. Lower ``army_supply_target`` and
-    ``composition_lookahead`` than ``bio_three_one_one`` -- Banshees are
-    expensive per supply and this profile leans on harass pressure rather
-    than a large standing army.
+    Starport afterward and backs them with a Marine/Marauder/Siege Tank
+    floor so the army is not entirely grounded-air and the Factory (idle
+    after the opening, which only builds one) has a reason to keep
+    producing. Lower ``army_supply_target`` and ``composition_lookahead`` than
+    ``bio_three_one_one`` -- Banshees are expensive per supply and this
+    profile leans on harass pressure rather than a large standing army.
     """
 
     return MacroGoalSet(
@@ -157,6 +158,12 @@ def banshee_cloak() -> MacroGoalSet:
                 weight=2,
                 minimum=2,
                 cost=ResourceCost(minerals=100, vespene=25, supply=2.0),
+            ),
+            ArmyUnitGoal(
+                UnitTypeId.SIEGETANK,
+                weight=2,
+                minimum=2,
+                cost=ResourceCost(minerals=150, vespene=125, supply=3.0),
             ),
         ),
         production=(

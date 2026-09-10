@@ -37,6 +37,11 @@ class MapFacts:
     enemy_starts: tuple[Point2, ...]
     observations: tuple[MapObservation, ...] = ()
     routes: tuple[MapRoute, ...] = ()
+    # All expansion slots on the map (ours, the enemy's, and neutral), each
+    # tagged with whether it is in vision this frame -- lets Awareness track
+    # which slots it has actually looked at, not just the two named
+    # ``observations`` above (enemy_main/enemy_natural).
+    expansions: tuple[MapObservation, ...] = ()
 
     def observation(self, key: str) -> MapObservation | None:
         return next((item for item in self.observations if item.key == key), None)

@@ -5,6 +5,7 @@ from collections import Counter
 from collections.abc import Mapping
 
 from ares.consts import ALL_STRUCTURES, WORKER_TYPES
+from ares.dicts.unit_data import UNIT_DATA
 from sc2.dicts.unit_train_build_abilities import TRAIN_INFO
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
@@ -466,8 +467,15 @@ class AresWorldObserver:
         )
 
     @staticmethod
+    def _supply_cost(unit_type: UnitTypeId) -> float:
+        # `UNIT_DATA` is Ares' static mineral/gas/supply table -- cheaper and
+        # simpler than reaching into `bot.game_data` per unit, and it is
+        # already available with no live game state.
+        return float(UNIT_DATA.get(unit_type, {}).get("supply", 0.0) or 0.0)
+
+    @classmethod
     def _unit_snapshot(
-        unit, *, visible_now: bool, available_for_mission: bool = True
+        cls, unit, *, visible_now: bool, available_for_mission: bool = True
     ) -> UnitSnapshot:
         return UnitSnapshot(
             tag=int(unit.tag),
@@ -484,6 +492,7 @@ class AresWorldObserver:
             is_structure=bool(getattr(unit, "is_structure", False)),
             is_constructing=bool(getattr(unit, "is_constructing_scv", False)),
             available_for_mission=available_for_mission,
+            supply_cost=cls._supply_cost(unit.type_id),
         )
 
     @staticmethod
@@ -522,6 +531,31 @@ class AresWorldObserver:
                 else False,
             )
             for key, position in selected
+        )
+
+    @classmethod
+    def _expansions(cls, bot) -> tuple[MapObservation, ...]:
+        """Every expansion slot on the map, each tagged with current vision.
+
+        Backs Awareness's enemy base memory (confirmed/empty/unknown per
+        slot) -- unlike ``_map_observations`` this is not limited to the
+        enemy's main/natural, so thirds and beyond can be tracked too.
+        """
+
+        try:
+            locations = tuple(getattr(bot, "expansion_locations_list", ()) or ())
+        except (AssertionError, AttributeError, KeyError, RuntimeError, TypeError):
+            locations = ()
+        is_visible = cls._safe_attr(bot, "is_visible")
+        return tuple(
+            MapObservation(
+                key=f"expansion:{index}",
+                position=position,
+                visible_now=(
+                    bool(is_visible(position)) if callable(is_visible) else False
+                ),
+            )
+            for index, position in enumerate(locations)
         )
 
     @classmethod
@@ -677,6 +711,7 @@ class AresWorldObserver:
                 enemy_starts=tuple(bot.enemy_start_locations),
                 observations=self._map_observations(bot),
                 routes=self._map_routes(bot),
+                expansions=self._expansions(bot),
             ),
             own_structures=own_structures,
             enemy_structures=enemy_structures,

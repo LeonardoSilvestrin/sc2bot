@@ -27,7 +27,6 @@ class CloakedBansheeHarassExecutor(MissionExecutor):
     disengage_radius: float = 12.0
     arrival_radius: float = 3.0
     retreat_health: float = 0.45
-    recover_health: float = 0.8
     _retreating: bool = False
 
     def refresh(self, mission: Mission) -> None:
@@ -50,13 +49,14 @@ class CloakedBansheeHarassExecutor(MissionExecutor):
             self._retreating = True
         if self._retreating:
             home = self._home_anchor(context, self._centroid(harassers))
-            recovered = (
-                not defenders
-                and weakest_health >= self.recover_health
-                and all(
-                    unit.position.distance_to(home) <= self.arrival_radius
-                    for unit in harassers
-                )
+            # Banshees are mechanical and have no passive regen, and this bot
+            # has no repair behavior -- gating recovery on health rising back
+            # above `retreat_health` would leave the squad stuck at home
+            # forever after a single point of damage. Recovery only needs
+            # the threat gone and the squad clear of it.
+            recovered = not defenders and all(
+                unit.position.distance_to(home) <= self.arrival_radius
+                for unit in harassers
             )
             if not recovered:
                 for harasser in harassers:
