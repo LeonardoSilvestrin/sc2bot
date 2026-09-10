@@ -7,7 +7,9 @@ from collections.abc import Mapping
 from ares.consts import ALL_STRUCTURES, WORKER_TYPES
 from ares.dicts.unit_data import UNIT_DATA
 from sc2.dicts.unit_train_build_abilities import TRAIN_INFO
+from sc2.ids.ability_id import AbilityId
 from sc2.ids.unit_typeid import UnitTypeId
+from sc2.ids.upgrade_id import UpgradeId
 from sc2.position import Point2
 
 from bot.world.attention.facts import (
@@ -60,7 +62,27 @@ for _trainable_units in TRAIN_INFO.values():
 
 
 class AresWorldObserver:
-    """The sole adapter that turns mutable Ares state into immutable facts."""
+    """The sole adapter that turns mutable Ares state into immutable facts.
+
+    Almost everything here is a straight translation of one frame. The one
+    exception is producer utilization, which no single frame can answer: it
+    is smoothed across frames in ``_producer_utilization``.
+    """
+
+    # Time constant of the producer-utilization average. Long enough that
+    # the pause between two units does not read as spare capacity, short
+    # enough to notice a structure that stopped working.
+    _UTILIZATION_WINDOW_SECONDS = 20.0
+    # How many upcoming build-order steps count as protected commitments.
+    # Deliberately shallow: this is the next timing being saved for, not a
+    # forecast of the whole opening.
+    _PROTECTED_STEP_LOOKAHEAD = 2
+    _PROTECTED_MINERAL_CAP = 600
+    _PROTECTED_VESPENE_CAP = 400
+
+    def __init__(self) -> None:
+        self._utilization: dict[UnitTypeId, float] = {}
+        self._utilization_at: float | None = None
 
     @staticmethod
     def _safe_attr(obj, name: str, default=None):
@@ -228,42 +250,128 @@ class AresWorldObserver:
             assigned = cls._count(direct_assigned)
         return ideal, assigned
 
+    def _producer_utilization(
+        self, unit_type: UnitTypeId, *, busy: int, ready: int, now: float
+    ) -> float:
+        """Blend this frame's busy fraction into a time-weighted average.
+
+        Weighted by elapsed game time rather than frames, so the window means
+        the same thing however often the bot steps. A type with no finished
+        structure has no evidence either way and reports nothing.
+        """
+
+        if ready <= 0:
+            self._utilization.pop(unit_type, None)
+            return 0.0
+        instant = min(1.0, busy / ready)
+        previous = self._utilization.get(unit_type)
+        if previous is None or self._utilization_at is None:
+            self._utilization[unit_type] = instant
+            return instant
+        elapsed = max(0.0, now - self._utilization_at)
+        weight = min(1.0, elapsed / self._UTILIZATION_WINDOW_SECONDS)
+        value = previous + (instant - previous) * weight
+        self._utilization[unit_type] = value
+        return value
+
     @classmethod
+    def _tech_ready(
+        cls, bot, unit_types: set[UnitTypeId]
+    ) -> frozenset[UnitTypeId] | None:
+        """Ask Ares which units the current tech allows.
+
+        Its answer already accounts for structures, add-ons and equivalents,
+        and is the same check its ``SpawnController`` makes before training --
+        so a unit missing here is one no amount of banked minerals could buy.
+        A type Ares cannot answer for is left in, since a silent "no" here
+        would stop that unit being produced at all.
+        """
+
+        check = cls._safe_attr(bot, "tech_ready_for_unit")
+        if not callable(check):
+            return None
+        ready: set[UnitTypeId] = set()
+        for unit_type in unit_types:
+            try:
+                allowed = bool(check(unit_type))
+            except (AttributeError, KeyError, RuntimeError, TypeError, ValueError):
+                allowed = True
+            if allowed:
+                ready.add(unit_type)
+        return frozenset(ready)
+
+    @classmethod
+    def _protected_commitment_cost(cls, bot, runner) -> tuple[int, int]:
+        """What the opening's next steps cost, so macro cannot spend it.
+
+        Ares' build runner owns those steps and its own timing; this only
+        prices them, using the bot's own cost lookup rather than a duplicated
+        cost table. It already resolves ``expand``/``gas``/``supply`` steps to
+        the race's actual structure types, so a 400 mineral natural is priced
+        like anything else; the steps that direct rather than buy (scouting,
+        add-on swaps) have no price and contribute nothing.
+        """
+
+        if runner is None or bool(cls._safe_attr(runner, "build_completed", False)):
+            return 0, 0
+        build_order = cls._items(runner, "build_order")
+        step_index = cls._count(cls._safe_attr(runner, "build_step", 0))
+        upcoming = build_order[step_index : step_index + cls._PROTECTED_STEP_LOOKAHEAD]
+        calculate_cost = cls._safe_attr(bot, "calculate_cost")
+        if not callable(calculate_cost):
+            return 0, 0
+        minerals = 0
+        vespene = 0
+        for step in upcoming:
+            command = cls._safe_attr(step, "command")
+            if not isinstance(command, AbilityId | UnitTypeId | UpgradeId):
+                continue
+            try:
+                cost = calculate_cost(command)
+            except (AttributeError, KeyError, RuntimeError, TypeError, ValueError):
+                continue
+            minerals += cls._count(cls._safe_attr(cost, "minerals", 0))
+            vespene += cls._count(cls._safe_attr(cost, "vespene", 0))
+        return (
+            min(minerals, cls._PROTECTED_MINERAL_CAP),
+            min(vespene, cls._PROTECTED_VESPENE_CAP),
+        )
+
     def _economy_facts(
-        cls,
+        self,
         bot,
         *,
         own_units: tuple,
         own_structures: tuple,
     ) -> EconomyFacts:
         unit_existing = Counter(
-            cls._safe_attr(unit, "type_id") for unit in own_units
+            self._safe_attr(unit, "type_id") for unit in own_units
         )
         unit_ready = Counter(
-            cls._safe_attr(unit, "type_id")
+            self._safe_attr(unit, "type_id")
             for unit in own_units
-            if bool(cls._safe_attr(unit, "is_ready", True))
+            if bool(self._safe_attr(unit, "is_ready", True))
         )
         structure_existing = Counter(
-            cls._safe_attr(structure, "type_id") for structure in own_structures
+            self._safe_attr(structure, "type_id") for structure in own_structures
         )
         structure_ready = Counter(
-            cls._safe_attr(structure, "type_id")
+            self._safe_attr(structure, "type_id")
             for structure in own_structures
-            if bool(cls._safe_attr(structure, "is_ready", True))
+            if bool(self._safe_attr(structure, "is_ready", True))
         )
         unit_existing.pop(None, None)
         unit_ready.pop(None, None)
         structure_existing.pop(None, None)
         structure_ready.pop(None, None)
 
-        order_pending = cls._order_pending_counts((*own_units, *own_structures))
-        mediator = cls._safe_attr(bot, "mediator")
-        building_counter = cls._mapping(mediator, "get_building_counter")
-        explicit_unit_pending = cls._mapping(
+        order_pending = self._order_pending_counts((*own_units, *own_structures))
+        mediator = self._safe_attr(bot, "mediator")
+        building_counter = self._mapping(mediator, "get_building_counter")
+        explicit_unit_pending = self._mapping(
             bot, "pending_units", "unit_pending_counts"
         )
-        explicit_structure_pending = cls._mapping(
+        explicit_structure_pending = self._mapping(
             bot, "pending_structures", "structure_pending_counts"
         )
 
@@ -276,35 +384,37 @@ class AresWorldObserver:
         )
         for attribute in ("base_townhall_type", "supply_type", "gas_type"):
             if (
-                isinstance(value := cls._safe_attr(bot, attribute), UnitTypeId)
+                isinstance(value := self._safe_attr(bot, attribute), UnitTypeId)
                 and value != UnitTypeId.OVERLORD
             ):
                 structure_types.add(value)
 
         known_structure_types = set(structure_types)
-        build_order_types = cls._build_order_types(bot)
+        build_order_types = self._build_order_types(bot)
         for unit_type in (*build_order_types, *order_pending):
-            if cls._looks_like_structure(bot, unit_type, known_structure_types):
+            if self._looks_like_structure(bot, unit_type, known_structure_types):
                 structure_types.add(unit_type)
 
         unit_types = set(unit_existing)
         unit_types.update(
             key for key in explicit_unit_pending if isinstance(key, UnitTypeId)
         )
-        worker_type = cls._safe_attr(bot, "worker_type")
+        worker_type = self._safe_attr(bot, "worker_type")
         if isinstance(worker_type, UnitTypeId):
             unit_types.add(worker_type)
         for structure_type in structure_existing:
             unit_types.update(TRAIN_INFO.get(structure_type, ()))
         for unit_type in (*build_order_types, *order_pending):
-            if not cls._looks_like_structure(bot, unit_type, structure_types):
+            if not self._looks_like_structure(bot, unit_type, structure_types):
                 unit_types.add(unit_type)
+
+        tech_ready = self._tech_ready(bot, unit_types)
 
         unit_counts: list[UnitTypeCount] = []
         for unit_type in sorted(unit_types, key=lambda item: item.value):
             existing = unit_existing[unit_type]
             ready = unit_ready[unit_type]
-            pending = cls._pending_count(
+            pending = self._pending_count(
                 bot,
                 unit_type,
                 structure=False,
@@ -325,7 +435,7 @@ class AresWorldObserver:
         for unit_type in sorted(structure_types, key=lambda item: item.value):
             existing = structure_existing[unit_type]
             ready = structure_ready[unit_type]
-            pending = cls._pending_count(
+            pending = self._pending_count(
                 bot,
                 unit_type,
                 structure=True,
@@ -333,7 +443,7 @@ class AresWorldObserver:
                 fallback=max(
                     existing - ready,
                     order_pending[unit_type],
-                    cls._count(building_counter.get(unit_type, 0)),
+                    self._count(building_counter.get(unit_type, 0)),
                 ),
             )
             if existing or ready or pending:
@@ -363,7 +473,7 @@ class AresWorldObserver:
         )
 
         townhall_types = set(TOWNHALL_TYPES)
-        base_type = cls._safe_attr(bot, "base_townhall_type")
+        base_type = self._safe_attr(bot, "base_townhall_type")
         if isinstance(base_type, UnitTypeId):
             townhall_types.add(base_type)
         townhalls = CountFacts(
@@ -384,6 +494,7 @@ class AresWorldObserver:
             ),
         )
 
+        now = float(self._safe_attr(bot, "time", 0.0) or 0.0)
         producers: list[ProducerFacts] = []
         for unit_type, count in structure_count_by_type.items():
             if unit_type not in TRAIN_INFO:
@@ -391,33 +502,38 @@ class AresWorldObserver:
             ready_producers = tuple(
                 structure
                 for structure in own_structures
-                if cls._safe_attr(structure, "type_id") == unit_type
-                and bool(cls._safe_attr(structure, "is_ready", True))
+                if self._safe_attr(structure, "type_id") == unit_type
+                and bool(self._safe_attr(structure, "is_ready", True))
             )
             idle = 0
             for producer in ready_producers:
-                is_idle = cls._safe_attr(producer, "is_idle")
+                is_idle = self._safe_attr(producer, "is_idle")
                 if is_idle is None:
-                    orders = cls._safe_attr(producer, "orders", ())
+                    orders = self._safe_attr(producer, "orders", ())
                     try:
                         is_idle = not bool(tuple(orders or ()))
                     except (RuntimeError, TypeError):
                         is_idle = False
                 idle += bool(is_idle)
+            busy = max(0, count.ready - idle)
             producers.append(
                 ProducerFacts(
                     unit_type=unit_type,
                     ready=count.ready,
                     idle=idle,
-                    busy=max(0, count.ready - idle),
+                    busy=busy,
                     pending=count.pending,
+                    utilization_20s=self._producer_utilization(
+                        unit_type, busy=busy, ready=count.ready, now=now
+                    ),
                 )
             )
         producers.sort(key=lambda item: item.unit_type.value)
+        self._utilization_at = now
 
-        supply_pending_value = cls._safe_attr(bot, "supply_pending")
+        supply_pending_value = self._safe_attr(bot, "supply_pending")
         if supply_pending_value is None:
-            supply_type = cls._safe_attr(bot, "supply_type")
+            supply_type = self._safe_attr(bot, "supply_type")
             supply_pending = 0
             if isinstance(supply_type, UnitTypeId):
                 supply_pending = max(
@@ -429,31 +545,36 @@ class AresWorldObserver:
                     ).pending,
                 )
         else:
-            supply_pending = cls._count(supply_pending_value)
+            supply_pending = self._count(supply_pending_value)
 
-        ideal_harvesters, assigned_harvesters = cls._harvester_totals(
+        ideal_harvesters, assigned_harvesters = self._harvester_totals(
             bot, own_structures
         )
-        runner = cls._safe_attr(bot, "build_order_runner")
-        state = cls._safe_attr(bot, "state")
-        score = cls._safe_attr(state, "score")
+        runner = self._safe_attr(bot, "build_order_runner")
+        state = self._safe_attr(bot, "state")
+        score = self._safe_attr(state, "score")
+        protected_minerals, protected_vespene = self._protected_commitment_cost(
+            bot, runner
+        )
         return EconomyFacts(
-            opening_name=str(cls._safe_attr(runner, "chosen_opening", "") or ""),
+            opening_name=str(self._safe_attr(runner, "chosen_opening", "") or ""),
             opening_completed=bool(
-                cls._safe_attr(runner, "build_completed", False)
+                self._safe_attr(runner, "build_completed", False)
             ),
-            mineral_collection_rate=cls._rate(
-                cls._safe_attr(
+            protected_minerals=protected_minerals,
+            protected_vespene=protected_vespene,
+            mineral_collection_rate=self._rate(
+                self._safe_attr(
                     score,
                     "collection_rate_minerals",
-                    cls._safe_attr(bot, "collection_rate_minerals", 0.0),
+                    self._safe_attr(bot, "collection_rate_minerals", 0.0),
                 )
             ),
-            vespene_collection_rate=cls._rate(
-                cls._safe_attr(
+            vespene_collection_rate=self._rate(
+                self._safe_attr(
                     score,
                     "collection_rate_vespene",
-                    cls._safe_attr(bot, "collection_rate_vespene", 0.0),
+                    self._safe_attr(bot, "collection_rate_vespene", 0.0),
                 )
             ),
             workers=workers,
@@ -464,6 +585,7 @@ class AresWorldObserver:
             unit_counts=tuple(unit_counts),
             structure_counts=tuple(structure_counts),
             producers=tuple(producers),
+            tech_ready=tech_ready,
         )
 
     @staticmethod

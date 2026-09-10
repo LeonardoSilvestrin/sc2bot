@@ -76,6 +76,26 @@ class EconomyObserverTests(unittest.TestCase):
             1,
         )
 
+    def test_one_more_unit_finishes_the_action_it_paid_for(self):
+        # The action bought one Marine, so it is done once a fifth Marine
+        # exists -- it must not stay live (and keep spending) until some
+        # strategic Marine goal is reached.
+        action = snapshot(
+            EconomicActionKind.PRODUCE_UNIT,
+            target="MARINE",
+            target_count=5,
+        )
+        economy = EconomyFacts(
+            unit_counts=(
+                UnitTypeCount(UnitTypeId.MARINE, existing=5, ready=4, pending=1),
+            )
+        )
+
+        feedback = observe_economic_confirmations((action,), economy)
+
+        self.assertEqual(len(feedback), 1)
+        self.assertEqual(feedback[0].kind, EconomicFeedbackKind.CONFIRMED)
+
     def test_observed_confirmation_wins_over_dispatch_feedback(self):
         observed = EconomicFeedback(
             "action",

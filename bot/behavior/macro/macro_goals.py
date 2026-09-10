@@ -12,9 +12,10 @@ from bot.engine.economy.models import ResourceCost
 class ArmyUnitGoal:
     """One member of a desired army composition.
 
-    ``weight`` is a count ratio, rather than a hard terminal count.  The
-    planner continually looks a small distance ahead and fills the largest
-    composition deficits until ``army_supply_target`` is reached.
+    ``weight`` is a count ratio, not a terminal count: the composition is
+    scaled up until it would reach ``MacroGoalSet.army_supply_target``, so a
+    member's ``minimum`` is a floor for early-game usefulness and never a
+    reason to stop producing (see ``planner.army_demand``).
     """
 
     unit_type: UnitTypeId
@@ -125,7 +126,6 @@ class MacroGoalSet:
     refineries_per_townhall: int
     max_refineries: int
     army_supply_target: float
-    composition_lookahead: int
     army: tuple[ArmyUnitGoal, ...]
     production: tuple[ProductionGoal, ...]
     addons: tuple[tuple[UnitTypeId, int, ResourceCost], ...] = ()
@@ -140,8 +140,8 @@ class MacroGoalSet:
             raise ValueError("workers_per_townhall must be positive")
         if self.refineries_per_townhall < 0 or self.max_refineries < 0:
             raise ValueError("refinery goals must not be negative")
-        if self.army_supply_target <= 0.0 or self.composition_lookahead <= 0:
-            raise ValueError("army horizon settings must be positive")
+        if self.army_supply_target <= 0.0:
+            raise ValueError("army_supply_target must be positive")
         army_types = tuple(goal.unit_type for goal in self.army)
         if len(set(army_types)) != len(army_types):
             raise ValueError("army unit goals must be unique")

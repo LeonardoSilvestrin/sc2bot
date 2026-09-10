@@ -246,6 +246,110 @@ class AresWorldObserverTests(unittest.TestCase):
         )
         self.assertEqual(economy.producer(UnitTypeId.FACTORY).pending, 1)
 
+    def test_producer_utilization_averages_across_frames(self):
+        # One Barracks, busy at first and then idle for a long stretch. A
+        # single frame cannot tell those apart from the gap between two
+        # Marines, so the observer carries the average across frames.
+        observer = AresWorldObserver()
+        barracks = unit(30, UnitTypeId.BARRACKS, structure=True, idle=False)
+        bot = SimpleNamespace(
+            time=100.0,
+            minerals=0,
+            vespene=0,
+            supply_used=10,
+            supply_cap=20,
+            worker_type=UnitTypeId.SCV,
+            units=(),
+            structures=(barracks,),
+            enemy_units=(),
+            enemy_structures=(),
+            enemy_start_locations=(),
+            start_location=Point2((10, 10)),
+            game_info=SimpleNamespace(map_center=Point2((50, 50))),
+        )
+
+        busy = observer.world_facts(bot, iteration=1).economy
+        self.assertEqual(busy.producer(UnitTypeId.BARRACKS).utilization_20s, 1.0)
+
+        barracks.is_idle = True
+        bot.time = 105.0
+        after_five_seconds = observer.world_facts(bot, iteration=2).economy
+        bot.time = 125.0
+        after_a_long_pause = observer.world_facts(bot, iteration=3).economy
+
+        # Five seconds of quiet is a gap between units, not spare capacity.
+        self.assertGreater(
+            after_five_seconds.producer(UnitTypeId.BARRACKS).utilization_20s, 0.7
+        )
+        self.assertLess(
+            after_a_long_pause.producer(UnitTypeId.BARRACKS).utilization_20s, 0.1
+        )
+
+    def test_upcoming_build_steps_are_priced_as_protected_commitments(self):
+        bot = SimpleNamespace(
+            time=60.0,
+            minerals=500,
+            vespene=0,
+            supply_used=10,
+            supply_cap=20,
+            worker_type=UnitTypeId.SCV,
+            units=(),
+            structures=(),
+            enemy_units=(),
+            enemy_structures=(),
+            enemy_start_locations=(),
+            start_location=Point2((10, 10)),
+            game_info=SimpleNamespace(map_center=Point2((50, 50))),
+            calculate_cost=lambda item: SimpleNamespace(minerals=150, vespene=100),
+            build_order_runner=SimpleNamespace(
+                chosen_opening="BansheeCloak",
+                build_completed=False,
+                build_step=1,
+                build_order=(
+                    SimpleNamespace(command=UnitTypeId.BARRACKS),
+                    SimpleNamespace(command=UnitTypeId.FACTORY),
+                    SimpleNamespace(command=UnitTypeId.STARPORT),
+                    SimpleNamespace(command=UnitTypeId.BANSHEE),
+                ),
+            ),
+        )
+
+        economy = AresWorldObserver().world_facts(bot, iteration=1).economy
+
+        # Two steps ahead of the current one, and the step already taken is
+        # not paid for twice.
+        self.assertEqual(economy.protected_minerals, 300)
+        self.assertEqual(economy.protected_vespene, 200)
+
+    def test_a_finished_opening_protects_nothing(self):
+        bot = SimpleNamespace(
+            time=400.0,
+            minerals=500,
+            vespene=0,
+            supply_used=10,
+            supply_cap=20,
+            worker_type=UnitTypeId.SCV,
+            units=(),
+            structures=(),
+            enemy_units=(),
+            enemy_structures=(),
+            enemy_start_locations=(),
+            start_location=Point2((10, 10)),
+            game_info=SimpleNamespace(map_center=Point2((50, 50))),
+            calculate_cost=lambda item: SimpleNamespace(minerals=150, vespene=100),
+            build_order_runner=SimpleNamespace(
+                chosen_opening="BansheeCloak",
+                build_completed=True,
+                build_step=0,
+                build_order=(SimpleNamespace(command=UnitTypeId.FACTORY),),
+            ),
+        )
+
+        economy = AresWorldObserver().world_facts(bot, iteration=1).economy
+
+        self.assertEqual(economy.protected_minerals, 0)
+        self.assertEqual(economy.protected_vespene, 0)
+
     def test_missing_ares_economy_state_uses_safe_defaults(self):
         bot = SimpleNamespace(
             time=1.0,

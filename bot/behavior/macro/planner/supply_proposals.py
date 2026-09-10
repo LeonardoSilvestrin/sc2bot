@@ -24,12 +24,17 @@ def propose_supply(
     effective_remaining = supply_cap + economy.supply_pending - supply_used
     if effective_remaining > config.supply_buffer:
         return None
+    # Counting depots (rather than leaving the count open) lets the observer
+    # confirm this action the moment the next one is under way, instead of
+    # holding the supply slot until its confirmation timeout expires.
+    current = economy.structure_count(UnitTypeId.SUPPLYDEPOT).total
     return build_proposal(
         planner_id=planner_id,
         kind=EconomicActionKind.PRODUCE_SUPPLY,
         category="supply",
         target=UnitTypeId.SUPPLYDEPOT.name,
-        target_count=None,
+        current_count=current,
+        desired_count=current + 1,
         priority=config.priority_for("supply", posture),
         reason="effective_supply_capacity_near_limit",
         cost=config.supply_cost,

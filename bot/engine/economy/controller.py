@@ -18,6 +18,8 @@ from bot.engine.economy.models import (
 )
 from bot.ports.logging import BotLogger
 
+_NOTHING_PROTECTED = ResourceCost()
+
 
 @dataclass(slots=True)
 class _Commitment:
@@ -38,11 +40,14 @@ class _Commitment:
 
 
 class EconomyController:
-    """Arbitrate planner proposals and own economic action commitments.
+    """Arbitrate spending: prioritize, protect, admit or reject.
 
-    The controller has no knowledge of Ares or python-sc2. It returns funded
-    ``EconomicAction`` values; an infrastructure adapter reports dispatch,
-    completion, or failure as ``EconomicFeedback`` on a later tick.
+    What the bot *should* have is decided upstream (army/capacity demand);
+    this only answers "can we afford this one purchase, and does something
+    more important want the money first?". It has no knowledge of Ares or
+    python-sc2, of unit composition, or of production capacity. It returns
+    funded ``EconomicAction`` values; an infrastructure adapter reports
+    dispatch, completion, or failure as ``EconomicFeedback`` on a later tick.
     """
 
     def __init__(self, *, logger: BotLogger) -> None:
@@ -72,8 +77,16 @@ class EconomyController:
         bank: ResourceBank,
         proposals: Iterable[EconomicProposal] = (),
         feedback: Iterable[EconomicFeedback] = (),
+        protected: ResourceCost = _NOTHING_PROTECTED,
     ) -> EconomyTickResult:
-        """Advance lifecycle and admit the highest-priority affordable work."""
+        """Advance lifecycle and admit the highest-priority affordable work.
+
+        ``protected`` is spoken for by commitments this controller does not
+        own -- the opening's next build steps, executed by Ares' build
+        runner. It is withheld before any proposal is considered, so dynamic
+        macro can spend the surplus during an opening without starving the
+        timing the opening was chosen for.
+        """
 
         self._validate_time(now)
         feedback_items = tuple(feedback)
@@ -81,7 +94,8 @@ class EconomyController:
         self._apply_feedback(feedback_items, now)
         expired_keys = self._expire(now)
 
-        available = bank
+        spendable = bank.hold_towards(protected)
+        available = spendable
         for commitment in self._live_commitments(
             status=EconomicActionStatus.PENDING
         ):
@@ -92,6 +106,7 @@ class EconomyController:
         admitted: list[EconomicAction] = []
         considered_proposal_ids: set[str] = set()
         considered_keys: set[str] = set()
+        saving_for_a_purchase = False
         for proposal in sorted(proposal_items, key=self._proposal_order):
             self._log_proposal_once(proposal, now)
 
@@ -138,12 +153,20 @@ class EconomyController:
 
             bank_before = available
             if not available.can_afford(proposal.cost):
-                available = available.hold_towards(proposal.cost)
+                # Save for the most important thing we cannot buy yet, and
+                # for that alone. Holding minerals for every unaffordable
+                # proposal at once -- an expensive gas unit while gas income
+                # is zero, say -- would bank the whole pile against purchases
+                # that are nowhere near possible, and starve the cheap useful
+                # work below of resources that are genuinely free.
+                if not saving_for_a_purchase:
+                    saving_for_a_purchase = True
+                    available = available.hold_towards(proposal.cost)
                 held = available.consumed_from(bank_before)
                 self._emit_proposal_outcome(
                     "economic_proposal_deferred",
                     now,
-                    "insufficient_virtual_bank",
+                    self._deferral_reason(proposal, bank, spendable),
                     proposal=proposal,
                     available_bank=self._bank_data(bank_before),
                     held_cost=self._cost_data(held),
@@ -158,7 +181,8 @@ class EconomyController:
         return EconomyTickResult(
             admitted_actions=tuple(admitted),
             available_bank=available,
-            reserved_cost=available.consumed_from(bank),
+            reserved_cost=available.consumed_from(spendable),
+            protected_cost=spendable.consumed_from(bank),
         )
 
     def _validate_time(self, now: float) -> None:
@@ -166,6 +190,20 @@ class EconomyController:
             raise ValueError("now must be finite and non-negative")
         if now < self._last_tick_at:
             raise ValueError("economy controller time must not move backwards")
+
+    @staticmethod
+    def _deferral_reason(
+        proposal: EconomicProposal,
+        bank: ResourceBank,
+        spendable: ResourceBank,
+    ) -> str:
+        """Name what is actually withholding the resources, for the log."""
+
+        if not bank.can_afford(proposal.cost):
+            return "insufficient_bank"
+        if not spendable.can_afford(proposal.cost):
+            return "protected_commitment_holds_resources"
+        return "higher_priority_reservations_hold_resources"
 
     @staticmethod
     def _proposal_order(proposal: EconomicProposal) -> tuple[Any, ...]:

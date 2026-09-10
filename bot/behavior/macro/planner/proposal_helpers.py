@@ -23,12 +23,22 @@ def build_proposal(
     kind: EconomicActionKind,
     category: str,
     target: str,
-    target_count: int | None,
+    current_count: int,
+    desired_count: int,
     priority: int,
     reason: str,
     cost: ResourceCost,
     now: float,
 ) -> EconomicProposal:
+    """Argue for *one* step from ``current_count`` towards ``desired_count``.
+
+    A goal ("we want five Barracks") is not a purchase. Callers pass both
+    numbers and get an action worth exactly one item, so the ``cost`` the
+    economy controller reserves is the cost of what the action will really
+    do. Whether the remaining gap is still worth closing is re-decided next
+    tick, against the world as it is by then.
+    """
+
     deduplication_key = f"{planner_id}:{category}:{target.lower()}"
     return EconomicProposal(
         proposal_id=deduplication_key,
@@ -40,5 +50,5 @@ def build_proposal(
         created_at=now,
         deduplication_key=deduplication_key,
         target=target,
-        target_count=target_count,
+        target_count=min(desired_count, max(0, current_count) + 1),
     )

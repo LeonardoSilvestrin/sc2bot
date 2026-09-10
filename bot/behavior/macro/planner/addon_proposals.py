@@ -17,7 +17,8 @@ def propose_addons(
 ) -> tuple[EconomicProposal, ...]:
     proposals: list[EconomicProposal] = []
     for addon, desired, cost in config.goals.addons:
-        if desired <= 0 or economy.structure_count(addon).total >= desired:
+        current = economy.structure_count(addon).total
+        if desired <= 0 or current >= desired:
             continue
         proposals.append(
             build_proposal(
@@ -25,7 +26,8 @@ def propose_addons(
                 kind=EconomicActionKind.BUILD_ADDON,
                 category="addon",
                 target=addon.name,
-                target_count=desired,
+                current_count=current,
+                desired_count=desired,
                 priority=config.priority_for("addon", posture),
                 reason="addon_count_below_strategy_target",
                 cost=cost,

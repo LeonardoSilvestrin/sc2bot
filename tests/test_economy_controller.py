@@ -172,6 +172,109 @@ class EconomyControllerTests(unittest.TestCase):
             ["worker"],
         )
 
+    def test_protected_resources_are_out_of_reach_of_low_priority_spending(self):
+        # 300 in the bank, 250 spoken for by a timing the build runner owns:
+        # a 50 mineral Marine is fine, a 150 mineral Barracks is not, however
+        # affordable it looks against the raw bank.
+        marine = proposal(
+            "marine",
+            key="army:marine",
+            priority=70,
+            minerals=50,
+            kind=EconomicActionKind.PRODUCE_UNIT,
+            target="MARINE",
+        )
+        barracks = proposal(
+            "barracks",
+            key="production:barracks",
+            priority=64,
+            minerals=150,
+            kind=EconomicActionKind.BUILD_PRODUCTION,
+            target="BARRACKS",
+        )
+
+        result = self.controller.tick(
+            now=1.0,
+            bank=ResourceBank(300, 0, 10.0),
+            proposals=(marine, barracks),
+            protected=ResourceCost(minerals=250),
+        )
+
+        self.assertEqual(
+            [action.proposal.proposal_id for action in result.admitted_actions],
+            ["marine"],
+        )
+        self.assertEqual(result.protected_cost, ResourceCost(minerals=250))
+        self.assertEqual(result.reserved_cost, ResourceCost(minerals=50))
+        deferred = [
+            event
+            for event in self.logger.events
+            if event["name"] == "economic_proposal_deferred"
+        ]
+        self.assertEqual(deferred[-1]["data"]["proposal_id"], "barracks")
+        self.assertEqual(
+            deferred[-1]["data"]["reason"],
+            "protected_commitment_holds_resources",
+        )
+
+    def test_protection_is_capped_by_what_the_bank_actually_holds(self):
+        worker = proposal("worker", key="worker:17", minerals=50)
+
+        result = self.controller.tick(
+            now=1.0,
+            bank=ResourceBank(30, 0, 10.0),
+            proposals=(worker,),
+            protected=ResourceCost(minerals=400),
+        )
+
+        self.assertEqual(result.admitted_actions, ())
+        self.assertEqual(result.protected_cost, ResourceCost(minerals=30))
+
+    def test_only_the_next_purchase_is_saved_for(self):
+        # Two proposals we cannot buy yet, both gated on gas we do not have.
+        # Saving minerals for each of them in turn would bank the whole pile
+        # against purchases that are nowhere near possible and leave nothing
+        # for the Marine, which is exactly how a bot ends up rich and idle.
+        tank = proposal(
+            "tank",
+            key="army:tank",
+            priority=72,
+            minerals=150,
+            vespene=125,
+            kind=EconomicActionKind.PRODUCE_UNIT,
+            target="SIEGETANK",
+        )
+        medivac = proposal(
+            "medivac",
+            key="army:medivac",
+            priority=71,
+            minerals=100,
+            vespene=100,
+            kind=EconomicActionKind.PRODUCE_UNIT,
+            target="MEDIVAC",
+        )
+        marine = proposal(
+            "marine",
+            key="army:marine",
+            priority=70,
+            minerals=50,
+            kind=EconomicActionKind.PRODUCE_UNIT,
+            target="MARINE",
+        )
+
+        result = self.controller.tick(
+            now=1.0,
+            bank=ResourceBank(200, 0, 10.0),
+            proposals=(tank, medivac, marine),
+        )
+
+        self.assertEqual(
+            [action.proposal.proposal_id for action in result.admitted_actions],
+            ["marine"],
+        )
+        # 150 saved for the Tank, 50 spent on the Marine, nothing left over.
+        self.assertEqual(result.reserved_cost, ResourceCost(minerals=200))
+
     def test_live_action_deduplicates_a_new_proposal_id_by_stable_key(self):
         first = proposal("worker-frame-1", key="worker:17")
         first_result = self.controller.tick(

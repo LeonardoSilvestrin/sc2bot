@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
+import yaml
+from ares.consts import ADD_ONS
+from ares.dicts.unit_tech_requirement import UNIT_TECH_REQUIREMENT
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.ids.upgrade_id import UpgradeId
 
@@ -48,6 +52,52 @@ def test_bio_three_one_one_declares_full_post_opening_convergence():
     }
 
 
+def opening_structures(opening_name: str) -> set[UnitTypeId]:
+    """Structure and add-on types the opening itself builds."""
+
+    builds = yaml.safe_load(Path("terran_builds.yml").read_text())["Builds"]
+    steps = builds[opening_name]["OpeningBuildOrder"]
+    names = {
+        token.upper()
+        for step in steps
+        for token in str(step).replace("@", " ").replace("*", " ").split()
+    }
+    return {
+        unit_type
+        for unit_type in UnitTypeId
+        if unit_type.name in names
+    }
+
+
+@pytest.mark.parametrize("profile", [bio_three_one_one, banshee_cloak])
+def test_every_composition_member_has_the_add_ons_it_needs(profile):
+    """A unit whose tech never arrives is worse than a unit not wanted.
+
+    It reads as permanent army debt that no amount of banked minerals can
+    pay off, and the structure that would have built it stands idle for the
+    rest of the game. The tech can come from the opening or from the
+    profile's own add-on goals; checked against Ares' tech table so a
+    composition change cannot quietly reintroduce the gap.
+    """
+
+    goals = profile()
+    planned = {addon for addon, target, _cost in goals.addons if target > 0}
+    planned.update(goal.structure_type for goal in goals.production)
+    planned.update(opening_structures(goals.opening_name))
+
+    for goal in goals.army:
+        required = UNIT_TECH_REQUIREMENT.get(goal.unit_type, set())
+        missing = {
+            requirement
+            for requirement in required
+            if requirement in ADD_ONS and requirement not in planned
+        }
+        assert not missing, (
+            f"{goals.name} wants {goal.unit_type.name} but never builds "
+            f"{ {item.name for item in missing} }"
+        )
+
+
 def test_profile_is_configurable_as_an_immutable_value():
     original = bio_three_one_one()
     greedy_four_base = replace(original, max_workers=76, max_townhalls=5)
@@ -87,7 +137,6 @@ def test_goal_set_rejects_duplicate_army_targets():
             refineries_per_townhall=original.refineries_per_townhall,
             max_refineries=original.max_refineries,
             army_supply_target=original.army_supply_target,
-            composition_lookahead=original.composition_lookahead,
             army=(original.army[0], original.army[0]),
             production=original.production,
         )

@@ -13,14 +13,15 @@ from .strategy_goal_profiles import bio_three_one_one
 
 @dataclass(frozen=True, slots=True)
 class ResourceOverflowConfig:
-    """Bank-size pressure that overrides normal production/army targets.
+    """Bank-size pressure that raises what we want to *own*.
 
-    A standard build's timings or income-rate scaling can both under-shoot
-    when the bot is simply banking resources faster than it converts them
-    into buildings and units. Sitting on a pile above ``*_threshold`` is
-    itself the evidence that more producers are needed, so this bypasses the
-    usual "producers must already be busy" gate -- see
-    ``MacroPlanner._propose_production`` and ``_propose_army``.
+    A pile above ``*_threshold`` means we are failing to convert income into
+    value; it is evidence of a problem, not a diagnosis of too little
+    production. So it raises the army we want (``army_supply_bonus``) and is
+    only allowed to raise the number of producers (``production_bonus``)
+    once the existing ones are demonstrably saturated -- adding buildings
+    next to idle buildings would convert nothing. See ``army_demand`` and
+    ``production_proposals.assess_capacity``.
     """
 
     mineral_threshold: float = 800.0
@@ -90,7 +91,6 @@ class MacroPlannerConfig:
     production_priority: int = 64
     addon_priority: int = 67
     upgrade_priority: int = 63
-    require_opening_completed: bool = True
 
     def __post_init__(self) -> None:
         if self.supply_buffer < 0.0 or self.max_supply_cap <= 0.0:

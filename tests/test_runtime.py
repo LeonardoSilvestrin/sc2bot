@@ -373,22 +373,15 @@ class RuntimePilotTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("path_to", [command[0] for command in commands.commands])
         self.assertIn("release", [command[0] for command in commands.commands])
 
-    async def test_runtime_stays_economically_idle_before_build_completes(self):
+    async def test_macro_spends_the_surplus_during_an_opening(self):
+        # Before this refactor an unfinished opening meant the economy
+        # controller never ran at all, so a bank could pile up untouched. Now
+        # macro keeps workers and units coming, and the price of the opening's
+        # next two steps (Factory + Starport = 300/200) is withheld instead.
+        logger = FakeLogger()
         economy_commands = FakeEconomyCommands()
-        bot = SimpleNamespace(
-            time=200.0,
-            minerals=500,
-            vespene=0,
-            supply_used=10,
-            supply_cap=30,
-            units=(),
-            enemy_units=(),
-            worker_type=UnitTypeId.SCV,
-            start_location=Point2((10, 10)),
-            enemy_start_locations=[Point2((90, 90))],
-            game_info=SimpleNamespace(map_center=Point2((50, 50)), map_name="PilotMap"),
-        )
-        runtime = BotRuntime(logger=FakeLogger())
+        bot = self._opening_bot(minerals=500)
+        runtime = BotRuntime(logger=logger)
 
         with (
             patch(
@@ -399,7 +392,139 @@ class RuntimePilotTests(unittest.IsolatedAsyncioTestCase):
         ):
             await runtime.on_step(bot, iteration=1)
 
-        self.assertEqual(economy_commands.commands, [])
+        dispatched = [command[0] for command in economy_commands.commands]
+        self.assertIn("produce_unit", dispatched)
+        self.assertIn("produce_worker", dispatched)
+        status = next(
+            event for event in logger.events if event["name"] == "macro.status"
+        )
+        # Both steps' 300 minerals are withheld; their 200 gas cannot be,
+        # since protection can only hold resources that exist.
+        self.assertEqual(status["data"]["resources"]["protected"], [300, 0])
+        self.assertFalse(status["data"]["opening"]["completed"])
+
+    async def test_structural_macro_resumes_when_the_opening_ends(self):
+        # Same bank and the same world as
+        # test_macro_spends_the_surplus_during_an_opening: with no steps left
+        # to own the build, production capacity becomes macro's decision and
+        # nothing is protected any more.
+        logger = FakeLogger()
+        economy_commands = FakeEconomyCommands()
+        bot = self._opening_bot(minerals=500)
+        bot.build_order_runner.build_completed = True
+        runtime = BotRuntime(logger=logger)
+
+        with (
+            patch(
+                "bot.app.runtime.AresEconomyCommands",
+                return_value=economy_commands,
+            ),
+            patch("bot.app.runtime.register_baseline_behaviors"),
+        ):
+            await runtime.on_step(bot, iteration=1)
+
+        dispatched = [command[0] for command in economy_commands.commands]
+        self.assertIn("build_production", dispatched)
+        status = next(
+            event for event in logger.events if event["name"] == "macro.status"
+        )
+        self.assertEqual(status["data"]["resources"]["protected"], [0, 0])
+
+    async def test_a_producer_idle_with_money_and_demand_is_reported(self):
+        # Idle production is allowed to have a reason (saving for a protected
+        # timing, nothing it builds being wanted). Idle with Marines owed and
+        # minerals free is not one, and must not pass quietly.
+        logger = FakeLogger()
+        economy_commands = FakeEconomyCommands()
+        bot = self._opening_bot(minerals=900)
+        bot.build_order_runner.build_completed = True
+        bot.structures = (
+            *bot.structures,
+            *(
+                SimpleNamespace(
+                    tag=tag,
+                    type_id=UnitTypeId.BARRACKS,
+                    position=Point2((20, 20)),
+                    health_percentage=1.0,
+                    is_flying=False,
+                    can_attack_air=False,
+                    can_attack_ground=False,
+                    is_ready=True,
+                    is_idle=True,
+                    is_structure=True,
+                )
+                for tag in (101, 102, 103)
+            ),
+        )
+        runtime = BotRuntime(logger=logger)
+
+        with (
+            patch(
+                "bot.app.runtime.AresEconomyCommands",
+                return_value=economy_commands,
+            ),
+            patch("bot.app.runtime.register_baseline_behaviors"),
+        ):
+            await runtime.on_step(bot, iteration=1)
+            names = [event["name"] for event in logger.events]
+            self.assertNotIn("macro.idle_producer_unexplained", names)
+
+            bot.time = 220.0
+            await runtime.on_step(bot, iteration=2)
+
+        reported = [
+            event
+            for event in logger.events
+            if event["name"] == "macro.idle_producer_unexplained"
+        ]
+        self.assertEqual(len(reported), 1)
+        self.assertEqual(reported[0]["data"]["producer"], UnitTypeId.BARRACKS.name)
+        self.assertIn(UnitTypeId.MARINE.name, reported[0]["data"]["owed_units"])
+
+    @staticmethod
+    def _opening_bot(*, minerals: int):
+        costs = {
+            UnitTypeId.FACTORY: SimpleNamespace(minerals=150, vespene=100),
+            UnitTypeId.STARPORT: SimpleNamespace(minerals=150, vespene=100),
+        }
+        base_townhall = SimpleNamespace(
+            tag=999,
+            type_id=UnitTypeId.COMMANDCENTER,
+            position=Point2((10, 10)),
+            health_percentage=1.0,
+            is_flying=False,
+            can_attack_air=False,
+            can_attack_ground=False,
+            is_ready=True,
+            is_structure=True,
+        )
+        return SimpleNamespace(
+            time=200.0,
+            minerals=minerals,
+            vespene=0,
+            supply_used=10,
+            supply_cap=30,
+            units=tuple(worker(tag) for tag in range(1, 11)),
+            structures=(base_townhall,),
+            enemy_units=(),
+            enemy_structures=(),
+            worker_type=UnitTypeId.SCV,
+            start_location=Point2((10, 10)),
+            enemy_start_locations=[Point2((90, 90))],
+            game_info=SimpleNamespace(map_center=Point2((50, 50)), map_name="PilotMap"),
+            calculate_cost=lambda item: costs.get(
+                item, SimpleNamespace(minerals=0, vespene=0)
+            ),
+            build_order_runner=SimpleNamespace(
+                build_completed=False,
+                build_step=0,
+                build_order=(
+                    SimpleNamespace(command=UnitTypeId.FACTORY),
+                    SimpleNamespace(command=UnitTypeId.STARPORT),
+                ),
+                chosen_opening="BioThreeOneOne",
+            ),
+        )
 
     async def test_runtime_drives_economy_once_build_completes(self):
         economy_commands = FakeEconomyCommands()

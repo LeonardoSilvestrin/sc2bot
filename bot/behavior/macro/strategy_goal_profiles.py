@@ -29,7 +29,6 @@ def bio_three_one_one() -> MacroGoalSet:
         refineries_per_townhall=2,
         max_refineries=8,
         army_supply_target=115.0,
-        composition_lookahead=8,
         army=(
             ArmyUnitGoal(
                 UnitTypeId.MARINE,
@@ -125,7 +124,7 @@ def banshee_cloak() -> MacroGoalSet:
     Starport afterward and backs them with a Marine/Marauder/Siege Tank
     floor so the army is not entirely grounded-air and the Factory (idle
     after the opening, which only builds one) has a reason to keep
-    producing. Lower ``army_supply_target`` and ``composition_lookahead`` than
+    producing. Lower ``army_supply_target`` than
     ``bio_three_one_one`` -- Banshees are expensive per supply and this
     profile leans on harass pressure rather than a large standing army.
     """
@@ -139,7 +138,6 @@ def banshee_cloak() -> MacroGoalSet:
         refineries_per_townhall=2,
         max_refineries=8,
         army_supply_target=100.0,
-        composition_lookahead=6,
         army=(
             ArmyUnitGoal(
                 UnitTypeId.BANSHEE,
@@ -198,6 +196,15 @@ def banshee_cloak() -> MacroGoalSet:
             ),
             (
                 UnitTypeId.BARRACKSTECHLAB,
+                1,
+                ResourceCost(minerals=50, vespene=25),
+            ),
+            # Without this the Siege Tanks above can never be built, so the
+            # Factory has nothing to do for the rest of the game while the
+            # bank grows -- see the add-on coverage test in
+            # `tests/test_macro_strategy.py`.
+            (
+                UnitTypeId.FACTORYTECHLAB,
                 1,
                 ResourceCost(minerals=50, vespene=25),
             ),

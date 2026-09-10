@@ -133,6 +133,14 @@ class EconomicProposal:
 
     Distinct from ``MissionProposal``: it carries no unit requirement or map
     target because it does not move or command anything by itself.
+
+    An admitted action must represent approximately one real purchase, so
+    ``cost`` is the price of a single item and ``target_count`` is the total
+    the world should reach once *this* action lands -- observed total plus
+    one, never the strategy's convergence goal. Strategic goals live in the
+    planner (``MacroGoalSet``); one proposal is one increment toward them,
+    and the next increment is only argued for on a later tick, against a
+    freshly observed world.
     """
 
     proposal_id: str
@@ -240,8 +248,15 @@ class EconomicActionSnapshot:
 
 @dataclass(frozen=True, slots=True)
 class EconomyTickResult:
-    """New work and the virtual bank remaining after one arbitration pass."""
+    """New work and the virtual bank remaining after one arbitration pass.
+
+    The four quantities a spending decision is made against: the observed
+    ``bank``, the ``protected_cost`` no proposal may touch, the
+    ``reserved_cost`` this controller's own live commitments hold, and
+    ``available_bank`` -- what is genuinely free afterwards.
+    """
 
     admitted_actions: tuple[EconomicAction, ...]
     available_bank: ResourceBank
     reserved_cost: ResourceCost
+    protected_cost: ResourceCost = ResourceCost()
