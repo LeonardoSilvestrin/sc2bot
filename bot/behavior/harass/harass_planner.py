@@ -69,7 +69,9 @@ class HarassPlanner:
             self._activated_options.add(option.name)
             sequence = cadence.next_sequence()
             proposals.append(
-                self._build_proposal(option, location, sequence, world.time)
+                self._build_proposal(
+                    option, location, sequence, world.time, world.own_units
+                )
             )
         return tuple(proposals)
 
@@ -108,9 +110,19 @@ class HarassPlanner:
         location: EnemyLocationKnowledge,
         sequence: int,
         now: float,
+        own_units: tuple[UnitSnapshot, ...],
     ) -> MissionProposal:
         prefix = option.mission_kind.name.lower()
         persistent_banshee = option.strategic_intent == "banshee_harass"
+        # A standing squad must keep pulling in every Banshee produced, not
+        # just the one that triggered the first proposal -- otherwise freshly
+        # warped-in Banshees sit idle instead of joining the raid.
+        desired = 1
+        if persistent_banshee:
+            desired = max(
+                1,
+                sum(1 for unit in own_units if unit.unit_type in option.unit_types),
+            )
         return MissionProposal(
             proposal_id=(
                 f"{self.planner_id}:{prefix}:{self.config.target_key}:{sequence}"
@@ -124,7 +136,7 @@ class HarassPlanner:
             reason=option.reason,
             requirement=UnitRequirement.combat(
                 unit_types=option.unit_types,
-                desired=1,
+                desired=desired,
                 minimum=0 if persistent_banshee else 1,
                 minimum_health=option.minimum_unit_health,
             ),

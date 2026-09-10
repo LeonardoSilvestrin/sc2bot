@@ -200,5 +200,9 @@ def banshee_cloak() -> MacroGoalSet:
                 UpgradeId.STIMPACK,
                 ResourceCost(minerals=100, vespene=100),
             ),
+            UpgradeGoal(
+                UpgradeId.BANSHEESPEED,
+                ResourceCost(minerals=150, vespene=150),
+            ),
         ),
     )

@@ -81,6 +81,10 @@ def default_harass_options() -> tuple[HarassOption, ...]:
             reason="enemy_worker_line_known_and_no_visible_anti_air",
             unit_types=frozenset({UnitTypeId.BANSHEE}),
             minimum_workers=12,
+            # Reproposing frequently keeps the standing squad's desired
+            # count current, so a freshly produced Banshee joins the raid
+            # within a few seconds instead of waiting out a long cadence.
+            proposal_cadence=8.0,
             priority=62,
             mission_timeout=70.0,
             require_ready_unit=False,

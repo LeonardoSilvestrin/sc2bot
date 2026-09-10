@@ -12,6 +12,7 @@ from bot.engine.missions.execution import (
     MissionResult,
 )
 from bot.engine.missions.models import Mission
+from bot.world.attention import UnitSnapshot
 from bot.world.awareness.bases import BaseSecurityLevel
 
 
@@ -40,45 +41,57 @@ class CloakedBansheeHarassExecutor(MissionExecutor):
             if unit.is_visible_combat_threat(against_ground=False)
             and unit.position.distance_to(self.target) <= self.disengage_radius
         )
-        if not context.assigned_units:
+        harassers = context.assigned_units
+        if not harassers:
             return MissionResult(MissionOutcome.ACTIVE, "waiting_for_banshee_squad")
 
-        harasser = context.assigned_units[0]
-        if defenders or harasser.health_percentage <= self.retreat_health:
+        weakest_health = min(unit.health_percentage for unit in harassers)
+        if defenders or weakest_health <= self.retreat_health:
             self._retreating = True
         if self._retreating:
-            home = self._home_anchor(context, harasser.position)
+            home = self._home_anchor(context, self._centroid(harassers))
             recovered = (
                 not defenders
-                and harasser.health_percentage >= self.recover_health
-                and harasser.position.distance_to(home) <= self.arrival_radius
+                and weakest_health >= self.recover_health
+                and all(
+                    unit.position.distance_to(home) <= self.arrival_radius
+                    for unit in harassers
+                )
             )
             if not recovered:
-                context.commands.safe_path_to(
-                    mission_id=self.mission_id,
-                    unit_tag=harasser.tag,
-                    target=home,
-                    success_at_distance=self.arrival_radius,
-                )
+                for harasser in harassers:
+                    context.commands.safe_path_to(
+                        mission_id=self.mission_id,
+                        unit_tag=harasser.tag,
+                        target=home,
+                        success_at_distance=self.arrival_radius,
+                    )
                 return MissionResult(
                     MissionOutcome.ACTIVE, "banshee_squad_retreating_or_recovering"
                 )
             self._retreating = False
 
-        context.commands.use_ability(
-            mission_id=self.mission_id,
-            unit_tag=harasser.tag,
-            ability=AbilityId.BEHAVIOR_CLOAKON_BANSHEE,
-        )
-        context.commands.attack_move(
-            mission_id=self.mission_id,
-            unit_tag=harasser.tag,
-            target=self.target,
-            success_at_distance=self.arrival_radius,
-        )
+        for harasser in harassers:
+            context.commands.use_ability(
+                mission_id=self.mission_id,
+                unit_tag=harasser.tag,
+                ability=AbilityId.BEHAVIOR_CLOAKON_BANSHEE,
+            )
+            context.commands.attack_move(
+                mission_id=self.mission_id,
+                unit_tag=harasser.tag,
+                target=self.target,
+                success_at_distance=self.arrival_radius,
+            )
         return MissionResult(
             MissionOutcome.ACTIVE, "harassing_enemy_worker_line_cloaked"
         )
+
+    @staticmethod
+    def _centroid(units: tuple[UnitSnapshot, ...]) -> Point2:
+        x = sum(unit.position.x for unit in units) / len(units)
+        y = sum(unit.position.y for unit in units) / len(units)
+        return Point2((x, y))
 
     @staticmethod
     def _home_anchor(context: MissionContext, position: Point2) -> Point2:
