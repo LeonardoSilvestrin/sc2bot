@@ -6,6 +6,10 @@ com o que bot/ realmente importa e usa. Objetivo: virar contexto para puxar
 melhorias incrementais rumo a um bot competitivo, sem reescrever a arquitetura
 de missions/planners que ja existe.
 
+Revisado em 2026-09-11: caminhos, numeros de linha e secoes GAP conferidos
+contra o codigo atual (behaviors verticais, bot/world/awareness, squads,
+vision). A arquitetura em si esta em _botdev/architecture/.
+
 Arquivos deste diretorio:
   01_combat_micro.txt        - behaviors individuais de combate (kiting, safety)
   02_squads_and_groups.txt   - UnitSquad / group behaviors

@@ -17,16 +17,27 @@ ONDE FICA
   ares-sc2/src/ares/behaviors/combat/group/
 
 GAP NO BOT
-  DefendBaseExecutor.step (bot/behavior/defense/executor.py) itera
-  `context.assigned_units` e manda attack_move individual pra cada unidade.
-  Nao ha nocao de squad: se a defesa tiver 4 unidades vindo de pontos
-  diferentes do mapa, elas nao se agrupam antes de engajar, e cada uma pode
-  chegar e morder sozinha.
+  O bot ja tem squads proprios em bot/engine/squads/ (SquadController): main_army,
+  map_control e banshee_harass guardam identidade e membership persistentes e
+  viram preferencia de alocacao (ver _botdev/architecture/squads.md). Isso e so
+  "quem anda junto": nao usa o UnitSquad do ares e nao move o grupo como grupo.
+
+  Todos os executors ainda iteram context.assigned_units e mandam um comando por
+  unidade:
+    - bot/behavior/defense/executor.py (DefendBaseExecutor.step): se a defesa
+      tiver 4 unidades vindo de pontos diferentes do mapa, elas nao se agrupam
+      antes de engajar, e cada uma pode chegar e morder sozinha.
+    - bot/behavior/map_control/executor.py (_move_safely): so espera todos
+      chegarem no waypoint antes de trocar de ponto; nao reagrupa pra lutar
+      (a patrulha foge de qualquer luta de qualquer jeito).
+    - bot/behavior/harass/banshee/executor.py: cada Banshee recebe o proprio
+      attack_move / safe_path_to; a fase e decidida pelo centroide do squad.
 
 IDEIA DE USO
   Quando o time de defesa/ataque tiver mais de ~3 unidades, usar
   mediator.get_squads(...) pra saber se ja estao agrupadas e, se nao, mandar
   PathGroupToTarget ate convergirem antes de trocar pra AMoveGroup /
-  StutterGroupBack. Isso e mais relevante depois que o item de combat micro
-  (01) estiver resolvido pra unidades soltas -- squads importam mais quando o
-  exercito comeca a ter tamanho (mid-game pra frente).
+  StutterGroupBack. O squad_id do bot (MissionProposal.squad_id) e o lugar
+  natural pra ligar as duas nocoes. Isso e mais relevante depois que o item de
+  combat micro (01) estiver resolvido pra unidades soltas -- squads importam
+  mais quando o exercito comeca a ter tamanho (mid-game pra frente).

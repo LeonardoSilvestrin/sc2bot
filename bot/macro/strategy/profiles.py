@@ -119,9 +119,9 @@ def bio_three_one_one() -> MacroGoalSet:
 def banshee_cloak() -> MacroGoalSet:
     """Post-opening convergence for the ``BansheeCloak`` opener.
 
-    Cloak itself is already researched during the opening (see
-    ``terran_builds.yml``); this only keeps Banshees flowing out of the
-    Starport afterward and backs them with a Marine/Marauder/Siege Tank
+    Cloak and Hyperflight Rotors are already researched during the opening
+    (see ``terran_builds.yml``); this keeps Banshees flowing out of both
+    Tech Lab Starports afterward and backs them with a Marine/Marauder/Siege Tank
     floor so the army is not entirely grounded-air and the Factory (idle
     after the opening, which only builds one) has a reason to keep
     producing. Lower ``army_supply_target`` than
@@ -175,7 +175,7 @@ def banshee_cloak() -> MacroGoalSet:
             ),
             ProductionGoal(
                 UnitTypeId.STARPORT,
-                minimum=1,
+                minimum=2,
                 maximum=3,
                 cost=ResourceCost(minerals=150, vespene=100),
                 vespene_rate_for_first_extra=500.0,
@@ -190,9 +190,9 @@ def banshee_cloak() -> MacroGoalSet:
         ),
         addons=(
             (
-                UnitTypeId.STARPORTREACTOR,
-                1,
-                ResourceCost(minerals=50, vespene=50),
+                UnitTypeId.STARPORTTECHLAB,
+                2,
+                ResourceCost(minerals=50, vespene=25),
             ),
             (
                 UnitTypeId.BARRACKSTECHLAB,

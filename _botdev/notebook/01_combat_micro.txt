@@ -11,6 +11,7 @@ O QUE E
       (dano de area, unidades inimigas, etc.), sem precisar de raio fixo.
     - MoveToSafeTarget, WorkerKiteBack: variantes para fuga e kiting de
       trabalhador.
+    - SiegeTankDecision: decide sozinho quando o tank da siege/unsiege.
   Essas behaviors se compoem com CombatManeuver: voce empilha em ordem de
   prioridade ("atira se puder, senao kita, senao foge, senao a-move") e chama
   uma unica vez por unidade por frame.
@@ -23,22 +24,38 @@ ONDE FICA
     keep_unit_safe.py
     move_to_safe_target.py
     worker_kite_back.py
+    siege_tank_decision.py
   ares-sc2/src/ares/behaviors/combat/combat_maneuver.py (CombatManeuver)
 
 GAP NO BOT
-  bot/behavior/defense/executor.py (DefendBaseExecutor.step) e
-  bot/behavior/harass/executor.py (WorkerLineHarassExecutor.step) so chamam
-  context.commands.attack_move, que no fundo e so a behavior AMove (ver
-  bot/adapters/ares/mission_commands.py:attack_move). Isso e attack-move puro:
-  sem stutter-step, sem fugir de dano de area, sem decidir "recuar porque
-  estou perdendo essa troca".
+  O unico lugar que ja usa micro do ares e o foco do Reaper:
+  bot/adapters/ares/mission_commands.py:attack_unit monta um CombatManeuver
+  com ReaperGrenade + StutterUnitForward (chamado por
+  bot/behavior/harass/reaper/executor.py).
+
+  O resto ainda e attack_move cru, que no adapter e so a behavior AMove
+  (mission_commands.py:attack_move):
+    - bot/behavior/defense/executor.py (DefendBaseExecutor._screen): todo
+      defensor que nao e Tank (papel SCREEN) so recebe attack_move na ameaca
+      mais proxima do alvo da missao.
+    - bot/behavior/defense/executor.py (_hold_siege_anchor): o Tank anda ate a
+      ancora e da siege/unsiege via use_ability com regra propria
+      (siege_arrival_radius, siege_reposition_distance) -- SiegeTankDecision
+      nao e usado.
+    - bot/behavior/harass/banshee/executor.py (_strike): cloak + attack_move;
+      o recuo e so safe_path_to (MoveToSafeTarget) ate a base segura.
+  Resultado: bio na defesa segue sem stutter-step, sem fugir de dano de area,
+  sem decidir "recuar porque estou perdendo essa troca".
 
 IDEIA DE USO
-  Trocar o attack_move cru por uma nova operacao no MissionCommands (ex.:
-  `fight` ou `engage`) que monta um CombatManeuver por unidade:
+  Seguir o padrao que attack_unit ja usa: uma nova operacao no MissionCommands
+  (ex.: `fight` ou `engage`) que monta um CombatManeuver por unidade dentro do
+  adapter:
     1. ShootTargetInRange (se alvo no alcance, atira)
     2. StutterUnitBack (se on cooldown e sob risco, kita)
     3. AMove (fallback: avanca ate o alvo)
-  Isso melhora DefendBaseExecutor e WorkerLineHarassExecutor ao mesmo tempo,
-  sem tocar em planners/allocator -- so o novo metodo no command port + os
-  executors chamando ele em vez de attack_move.
+  Trocar attack_move por ela em DefendBaseExecutor._screen e
+  BansheeHarassExecutor._strike, sem tocar em planners/allocator -- so o novo
+  metodo no command port + os executors chamando ele. Para os Tanks, avaliar
+  SiegeTankDecision no lugar da maquina de estados manual, mantendo a ancora
+  como destino.

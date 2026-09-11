@@ -4,7 +4,8 @@ Macro controllers do ares ainda nao usados
 O QUE E
   bot/adapters/ares/economy_commands.py ja usa boa parte dos macro
   controllers do ares (SpawnController, BuildStructure, ExpansionController,
-  GasBuildingController, UpgradeController). Faltam:
+  GasBuildingController, UpgradeController com auto_tech_up_enabled=True), e
+  bot/adapters/ares/frame.py registra Mining todo frame. Faltam:
     - AutoSupply: constroi supply (depot/pylon/overlord conforme raca)
       automaticamente quando necessario.
     - AddonSwap: troca/gerencia addons (reactor/techlab) sem logica manual.
@@ -21,16 +22,24 @@ ONDE FICA
 
 GAP NO BOT
   bot/adapters/ares/economy_commands.py:_execute, caso
-  EconomicActionKind.PRODUCE_SUPPLY (linha ~85), chama BuildStructure na mao
-  em vez de AutoSupply.
+  EconomicActionKind.PRODUCE_SUPPLY (linhas 95-105), chama BuildStructure na
+  mao em vez de AutoSupply. Ao mesmo tempo o terran_builds.yml tem
+  AutoSupplyAtSupply: 30 no BuildOrderRunner, e o propose_supply do macro tambem
+  roda durante a abertura -- vale conferir se as duas fontes nao dobram depot.
 
-  bot/adapters/ares/economy_commands.py:_build_addon (linhas 141-168)
+  bot/adapters/ares/economy_commands.py:_build_addon (linhas 151-178)
   reimplementa manualmente "acha uma estrutura pronta e idle do tipo pai,
   sem addon, e manda construir" -- e exatamente o que AddonSwap/BuildStructure
   com addon ja resolvem.
+
+  Pre-requisito de unidade ja tem uma resposta parcial: EconomyFacts.tech_ready
+  (preenchido pelo AresWorldObserver) faz o macro nao pedir unidade sem
+  tech, e MacroDiagnostics loga isso como tech_blocked -- mas nada pede o
+  pre-requisito que falta (TechUp faria isso).
 
 IDEIA DE USO
   Baixa prioridade frente aos outros arquivos deste notebook (isso ja
   funciona hoje, so nao e a forma mais idiomatica). Vale revisitar quando
   terran_builds.yml crescer para builds mais dinamicas e TechUp/AutoSupply
-  comecarem a evitar bugs sutis de pre-requisito esquecido.
+  comecarem a evitar bugs sutis de pre-requisito esquecido. Se AutoSupply
+  entrar, remover construction/supply.py do macro em vez de manter os dois.

@@ -71,10 +71,10 @@ Builds:
             - 32 marine *4
             - 36 medivac *2
 
-    # Reaper expand into a 1 Factory / 1 Starport cloaked Banshee harass
+    # Reaper expand into a 1 Factory / 2 Starport cloaked Banshee harass
     # opener. Same safe Reaper-expand opening as `BioThreeOneOne`, then
-    # pivots at the Factory into a Starport Tech Lab for Banshees +
-    # Cloaking Field instead of Bio tech, so the harass wave lands cloaked.
+    # pivots at the Factory into two Starports with Tech Labs for Banshees,
+    # Cloaking Field and Hyperflight Rotors instead of Bio tech.
     #
     # Barracks has nothing else to build while Factory/Starport/tech lab
     # soak up the gas for banshee tech, so the 22/26 marine fillers below
@@ -95,12 +95,13 @@ Builds:
             - 20 supply @ ramp
             - 20 factory @ ramp
             - 21 gas
-            - 22 starport
+            - 22 starport *2
             - 22 marine
-            - 23 starporttechlab
+            - 23 starporttechlab *2
             - 24 banshee *2
             - 26 marine *2
             - 27 bansheecloak
+            - 27 bansheespeed
             - 28 orbital
             - 30 barracksreactor
             - 32 marine *2

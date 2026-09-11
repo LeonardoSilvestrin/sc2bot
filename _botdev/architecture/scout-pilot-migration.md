@@ -33,8 +33,8 @@ The pilot reimplemented these useful ideas rather than copying their code:
   runtime.
 - Generic task factories, pick-policy protocols, event buses, service locators, and
   lease heartbeats: each adds machinery without helping this single mission.
-- Scans, rush-specific cadence, and probabilistic inference remain outside this
-  slice.
+- Scans, rush-specific cadence, and probabilistic inference remained outside this
+  slice. Scans later arrived as a shared service; see [vision.md](vision.md).
 
 ## `IntelPlanner` decision
 
@@ -60,6 +60,8 @@ flowchart TD
 location was never observed (`age is None`) or its age has crossed
 `location_stale_after` (90s) -- "unknown" and "stale" are the same branch in
 code, distinguished only in the proposal's `reason` string for readability.
+The cadence is checked only once a plan exists, so a withheld scout does not
+consume it.
 
 ## End-to-end behavior
 
@@ -71,7 +73,9 @@ code, distinguished only in the proposal's `reason` string for readability.
    runtime logs them through `knowledge.enemy_intel`.
 3. `IntelPlanner` emits a reasoned `MissionProposal` when it is unknown or stale.
 4. `MissionController` logs the proposal, rejects duplicates/cooldown conflicts, or
-   admits it as a distinct `Mission`.
+   admits it as a distinct `Mission`. An admitted scout whose location gets
+   observed before any unit starts it is cancelled with
+   `objective_satisfied_before_mission_started`.
 5. `UnitAllocator` leases one eligible Reaper (with SCV fallback when none is
    alive); maps without a specialized main route use the natural objective. The
    allocator supports priority-based preemption without allowing missions to
@@ -88,10 +92,15 @@ code, distinguished only in the proposal's `reason` string for readability.
 The opening's independent `worker_scout` step was removed so this flow has one
 authority and one causal record.
 
+Separately from the mission, `ScoutingVisionRequester` asks the vision service
+for a scan once the enemy main has gone 120 seconds without vision; it never
+claims a unit (see [vision.md](vision.md)).
+
 ## Deferred decisions
 
 - Whether a scout should return home before completion or release immediately to
   Ares mining.
 - How emergency priority 100 should bypass or shorten commitment protection.
-- The future economy contract: `SpendProposal`, real resource reservations, and an
-  `EconomyController` remain intentionally unimplemented.
+- The future economy contract was deferred here; it has since been built as
+  `EconomicProposal`, reservations against a virtual bank, and
+  `EconomyController` -- see [macro-planner.md](macro-planner.md).

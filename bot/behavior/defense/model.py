@@ -123,14 +123,11 @@ class DefenseConfig:
             raise ValueError("minimum_unit_health must be between 0 and 1")
         if self.commitment_seconds < 0.0:
             raise ValueError("commitment_seconds must not be negative")
-<<<<<<< HEAD
         if self.remembered_threat_max_age <= 0.0 or self.vision_request_ttl <= 0.0:
             raise ValueError("defense vision timings must be positive")
-=======
         for name in ("ground_threat_desirability", "air_only_threat_desirability"):
             if any(not 0.0 <= value <= 1.0 for _, value in getattr(self, name)):
                 raise ValueError(f"{name} values must be between 0 and 1")
->>>>>>> agents/claude
         if self.engagement_radius <= 0.0 or self.arrival_radius <= 0.0:
             raise ValueError("engagement and arrival radii must be positive")
         if not 0.0 <= self.siege_anchor_offset < self.screen_anchor_offset:

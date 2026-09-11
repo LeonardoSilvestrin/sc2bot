@@ -16,31 +16,47 @@ behavior/standing/
 | `main_army` | 80% (`StandingConfig.core_fraction`) | `HOLD_RALLY` | 20 |
 | `map_control` | the remaining roaming share | `MAP_CONTROL` | 40 |
 
-`StandingPlanner` emits one `MissionMode.STANDING` proposal for `main_army`;
-`MapControlPlanner` emits the matching standing proposal for `map_control`.
-Both carry a stable `squad_id`; neither planner allocates units or sends Ares
-commands. There is no `position:reserve` catch-all.
+`StandingPlanner` emits one `MissionMode.STANDING` proposal for `main_army`
+every 5 s (key `hold_rally:main_army`, `minimum=0`, `can_preempt=True`);
+`MapControlPlanner` emits the matching standing proposal for `map_control`
+(see [map-control.md](map-control.md)). Both carry a stable `squad_id`; neither
+planner allocates units or sends Ares commands. There is no `position:reserve`
+catch-all. The two shares are sized independently: the core counts every
+eligible combat type, the patrol only Marines, and the patrol preempts its
+share from the core.
 
 ## Assess -> plan -> execute
 
 `StandingAssessor` reads held bases (ordered by distance from
 `map.own_start`, the current lightweight proxy for expansion order),
 threatened bases, pressure near our bases, and how many eligible combat units
-exist. `derive_combat_posture` maps Awareness' `bases.threatened`,
-the stabilized army belief and `macro_posture` onto TURTLE / BALANCED / PRESSURE --
-a different axis from `MacroPosture`, which is about spending risk rather
-than where the army sits.
+exist (ready units of `StandingConfig.unit_types`). `derive_combat_posture`
+maps Awareness' `bases.threatened`, the stabilized army belief and
+`macro_posture` onto a `CombatPosture` -- a different axis from `MacroPosture`,
+which is about spending risk rather than where the army sits:
+
+| Posture | When |
+| --- | --- |
+| `TURTLE` | a base is threatened, macro posture is `DEFENSE`/`RECOVERY`, or the army belief is stably `BEHIND` with confidence >= 0.35 |
+| `PRESSURE` | the army belief is stably `AHEAD` with confidence >= 0.60 and no enemy combat unit is near our bases |
+| `BALANCED` | otherwise |
 
 `StandingPlanner` turns that assessment into a `StandingPlan`: the anchor,
-its reason, and `core_count`. With at least two bases the anchor is 72% of
-the segment from the previous base to the newest/farthest expansion
-(`anchor_fraction_to_newest_base`); with one base it is that base; with no
-observed town hall it falls back to `own_start`. Posture does not move the
+its reason, and `core_count = max(1, floor(eligible * core_fraction))`. With at
+least two bases the anchor is 72% of the segment from the previous base to the
+newest/farthest expansion (`anchor_fraction_to_newest_base`); with one base it
+is that base; with no observed town hall it falls back to `own_start`. Posture
+is computed and logged (`StandingPlanner.last_posture`) but does not move the
 anchor yet -- that is the obvious next step, and the plan shape is what makes
-it a small change rather than a restructure.
+it a small change rather than a restructure. The planner logs
+`behavior.assessed`/`behavior.proposed` only when the anchor, the core count or
+the posture changes.
 
-`StandingExecutor` moves only units outside `arrival_radius`, and always with
-`keep_available=True` so a parked unit never looks busy to another planner.
+`StandingExecutor` moves only units outside `arrival_radius` (4), and always
+through `safe_path_to` with `keep_available=True`, so a parked unit keeps the
+`IDLE` role and never looks busy to another planner. It never completes or
+fails; with zero units it simply waits. Each anchor change is logged as
+`behavior.state_changed` (`ANCHORED`).
 
 ## Ownership invariant
 
@@ -63,7 +79,8 @@ fires when an eligible unit has had no owner for 15 seconds.
 `MissionController` registers squad-backed home missions with
 `SquadController`. `UnitAllocator` still owns every unit lease. The squad
 layer only records membership and supplies preferred tags when the allocator
-fills a mission.
+fills a mission. As a `STANDING` mission, the home mission never times out and
+its proposal is updated in place every cadence tick.
 
 A defense proposal declares a normal `UnitRequirement`. It does not name a
 squad or unit. `SquadController` selects a compatible, currently unpreempted
@@ -72,7 +89,7 @@ utility and commitment-window checks. While members are away, the home
 mission reduces its effective request instead of filling their seats with
 unrelated replacements. When the temporary mission finishes, its leases are
 released and the standing home mission preferentially reacquires the same
-members.
+members. Details in [squads.md](squads.md).
 
 Squad membership is durable identity, not a second lease table:
 
@@ -82,7 +99,7 @@ Squad membership is durable identity, not a second lease table:
 - Unit-based missions such as SCV scouting keep `squad_id=None`.
 
 The relevant structured events are `standing.updated`,
-`standing.unassigned_units_persisting`, `behavior.assessed`,
-`behavior.proposed`, `behavior.state_changed`, `squad_created`,
-`squad_membership_changed`, `squad_mission_changed`, `squad_preempted`, and
-`squad_returned_home`.
+`standing.unassigned_units_persisting`, `standing_mission_updated`,
+`behavior.assessed`, `behavior.proposed`, `behavior.state_changed`,
+`squad_created`, `squad_membership_changed`, `squad_mission_changed`,
+`squad_preempted`, and `squad_returned_home`.

@@ -48,6 +48,12 @@ class TerranBuildConfigTests(unittest.TestCase):
 
     def test_banshee_cloak_build_is_available_for_every_matchup_and_test(self):
         for matchup in ("Protoss", "Terran", "Zerg", "Random", "test_123"):
-            self.assertIn(
-                "BansheeCloak", self.config["BuildChoices"][matchup]["Cycle"]
-            )
+            self.assertIn("BansheeCloak", self.config["BuildChoices"][matchup]["Cycle"])
+
+    def test_banshee_cloak_uses_two_tech_lab_starports_and_banshee_speed(self):
+        commands = self.config["Builds"]["BansheeCloak"]["OpeningBuildOrder"]
+
+        self.assertTrue(any("starport *2" in step.lower() for step in commands))
+        self.assertTrue(any("starporttechlab *2" in step.lower() for step in commands))
+        self.assertTrue(any("bansheecloak" in step.lower() for step in commands))
+        self.assertTrue(any("bansheespeed" in step.lower() for step in commands))

@@ -14,11 +14,13 @@ BaseSnapshot(base_id, position, is_main, townhall: UnitSnapshot | None)
 ```
 
 One entry per owned townhall (`TOWNHALL_TYPES` lives beside the snapshot in
-`base_facts.py`). Exposed as `WorldFacts.bases`, a computed property rather
-than a stored field: it is a pure, lossless transform of `own_structures` plus
-`map.own_start`, so it stays correct whether `WorldFacts` was built by
-`AttentionBuilder` or constructed by hand in a test, with no extra constructor
-argument to keep in sync. `base_id` is `f"base:{townhall.tag}"`.
+`base_facts.py`, sourced from Ares so a lifted Command Center still counts).
+Exposed as `WorldFacts.bases`, a computed property rather than a stored field:
+it is a pure, lossless transform of `own_structures` plus `map.own_start`, so
+it stays correct whether `WorldFacts` was built by `AresWorldObserver` or
+constructed by hand in a test, with no extra constructor argument to keep in
+sync. `base_id` is `f"base:{townhall.tag}"`; `is_main` is true for the townhall
+within 3 of `map.own_start`.
 
 Before any townhall is observed (the first frame or two of a real game, or a
 sparse test fixture) `bases` returns a single placeholder,
@@ -48,7 +50,9 @@ where the scoring logic is expected to grow.
   `DefensePlanner._closest_threat`).
 
 `AwarenessSnapshot.bases: BaseAwareness` is populated by `AwarenessService.
-update` alongside `enemy`/`relative_strength`/`threat`/`macro_posture`.
+update` alongside `enemy`/`relative_strength`/`threat`/`macro_posture`/
+`economy`/`army`. `BaseAwareness.get(base_id)` looks one base up, and
+`threatened` lists every base that is not `SAFE`.
 
 ```mermaid
 flowchart TD
@@ -88,7 +92,8 @@ picks `CRITICAL` vs `THREATENED` (priority) and sizes `desired_units`.
 ## `DefensePlanner`
 
 Iterates `awareness.bases.threatened` (every `BaseAssessment` with
-`needs_defense`) and emits one `MissionProposal` per base:
+`needs_defense`, read through `DefenseAssessor`) and emits one
+`MissionProposal` per base:
 
 - `deduplication_key = f"defense:{base.base_id}"` -- was the fixed
   `"defense:own_base"`; now one live defense mission per base, so a two-front
@@ -97,15 +102,24 @@ Iterates `awareness.bases.threatened` (every `BaseAssessment` with
 - `priority`: `DefenseConfig.critical_priority` (95, was the old fixed
   `priority`) for `CRITICAL`, `threatened_priority` (85) otherwise -- an
   undefended base preempts harder than one that already has some defenders.
-- `requirement.desired`: `clamp(minimum_units, max_desired_units, ceil(threat_score
-  - protection_score))` -- scales with how outnumbered the base is, instead
-  of the old fixed `desired_units=2`.
+- `requirement.desired`:
+  `clamp(minimum_units, max_desired_units, ceil(threat_score - protection_score))`
+  -- scales with how outnumbered the base is, instead of the old fixed
+  `desired_units=2`.
+- `requirement.type_desirability`: which defenders this attack makes worth
+  pulling, from its air/ground composition -- see
+  [harass-and-defense-planners.md](harass-and-defense-planners.md#defenseplanner).
 - `target`: `base.nearest_threat_position`, falling back to `base.position`.
 
 The proposal cadence gate (`proposal_cadence`, default 5s) stays a single
 scalar on the planner, not per-base -- all overdue bases get their proposals
 in the same tick, so this only throttles how often the planner re-evaluates,
-not fairness between bases.
+not fairness between bases. The cadence is only consumed when some base is
+actually threatened, so the first frame of a new attack is never throttled.
+
+Before that gate, every frame, the planner also asks the shared vision service
+to look where a recently seen attacker disappeared near one of our bases -- see
+[vision.md](vision.md).
 
 `DefendBaseExecutor` was not changed by this slice: it attack-moved the
 assigned team at the mission's `target` and completed when no matching threat
@@ -133,6 +147,8 @@ pilot gave Tanks their own siege-anchor behavior; see
   counts for `threat_score`/`protection_score`.
 - Worker-rush detection -- still excluded from `threat_score` by the
   `not enemy.is_worker` filter, same as before this slice.
+- Enemy structures: only `enemy_units` are scored, so a proxy Photon Cannon or
+  Bunker next to a base is not a threat to it.
 
 ## Deferred decisions
 

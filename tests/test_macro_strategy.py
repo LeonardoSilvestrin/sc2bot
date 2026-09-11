@@ -25,9 +25,16 @@ def test_banshee_cloak_declares_a_banshee_led_composition():
     assert UnitTypeId.BANSHEE in {goal.unit_type for goal in goals.army}
     assert {goal.structure_type: goal.minimum for goal in goals.production} == {
         UnitTypeId.BARRACKS: 2,
-        UnitTypeId.STARPORT: 1,
+        UnitTypeId.STARPORT: 2,
         UnitTypeId.FACTORY: 1,
     }
+    assert {addon: target for addon, target, _cost in goals.addons}[
+        UnitTypeId.STARPORTTECHLAB
+    ] == 2
+    assert UnitTypeId.STARPORTREACTOR not in {
+        addon for addon, _target, _cost in goals.addons
+    }
+    assert UpgradeId.BANSHEESPEED in {goal.upgrade_id for goal in goals.upgrades}
 
 
 def test_bio_three_one_one_declares_full_post_opening_convergence():
@@ -62,11 +69,7 @@ def opening_structures(opening_name: str) -> set[UnitTypeId]:
         for step in steps
         for token in str(step).replace("@", " ").replace("*", " ").split()
     }
-    return {
-        unit_type
-        for unit_type in UnitTypeId
-        if unit_type.name in names
-    }
+    return {unit_type for unit_type in UnitTypeId if unit_type.name in names}
 
 
 @pytest.mark.parametrize("profile", [bio_three_one_one, banshee_cloak])
