@@ -107,11 +107,13 @@ scalar on the planner, not per-base -- all overdue bases get their proposals
 in the same tick, so this only throttles how often the planner re-evaluates,
 not fairness between bases.
 
-`DefendBaseExecutor` is unchanged: it still attack-moves the assigned team at
-the mission's `target` and completes when no matching threat remains within
-`engagement_radius`. This slice is about *positioning defenders at the right
-base*, not combat micro -- see the "not built" list below and
-`_botdev/notebook/01_combat_micro.txt`.
+`DefendBaseExecutor` was not changed by this slice: it attack-moved the
+assigned team at the mission's `target` and completed when no matching threat
+remained within `engagement_radius`. This slice is about *positioning
+defenders at the right base*, not combat micro -- see the "not built" list
+below and `_botdev/notebook/01_combat_micro.txt`. The later defense roles
+pilot gave Tanks their own siege-anchor behavior; see
+[harass-and-defense-planners.md](harass-and-defense-planners.md#defense-roles-pilot).
 
 ## Deliberately not built in this slice
 
@@ -121,13 +123,12 @@ base*, not combat micro -- see the "not built" list below and
   `THREATENED` as a scout unit wanders in and out of `proximity_radius`).
   `MacroPosture` already has this pattern (`defense_release_after`,
   `posture_min_hold`) if it's needed later.
-- Air vs ground defender selection. `DefenseAssessor` now reports the
-  split (`ThreatenedBase.air_threats`/`ground_threats`) and
-  `UnitRequirement.type_desirability` can express the preference, but the
-  planner still asks for every defender type equally.
-  `DefenseConfig.unit_types` is
-  still one flat set for all bases regardless of whether the threat is
-  ground or air.
+- Air vs ground defender selection -- since added by the defense roles
+  pilot: the planner derives `type_desirability` from
+  `ThreatenedBase.air_threats`/`ground_threats` (see
+  [harass-and-defense-planners.md](harass-and-defense-planners.md#defenseplanner)).
+  `DefenseConfig.unit_types` is still one flat eligibility set for every
+  base.
 - Combat-sim-based scoring (`mediator.can_win_fight`) instead of raw unit
   counts for `threat_score`/`protection_score`.
 - Worker-rush detection -- still excluded from `threat_score` by the

@@ -65,6 +65,7 @@ def build_executor_factories(
             target=mission.proposal.target,
             started_at=now,
             config=defense,
+            logger=logger,
         )
 
     def build_map_control(mission: Mission, now: float) -> MissionExecutor:

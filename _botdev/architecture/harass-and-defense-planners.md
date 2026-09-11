@@ -202,14 +202,70 @@ sequence).
 `DefenseAssessor` turns `awareness.bases.threatened` into one
 `ThreatenedBase` per base and adds what the global assessment does not
 carry: whether the attackers are air or ground (`air_threats` /
-`ground_threats`). Nothing chooses defenders from that yet -- it is the
-reading a future `UnitRequirement.type_desirability` will be derived from,
-and it has to be assessed before a planner can state it.
+`ground_threats`). The planner turns that composition into
+`UnitRequirement.type_desirability`, using two explicit tables on
+`DefenseConfig`:
 
-Its executor, `DefendBaseExecutor`, is unchanged by the base-model slice:
-attack-moves every assigned unit toward the threat closest to where the
-mission was admitted and completes with `threat_cleared_near_own_base` once
-no matching enemy remains within `engagement_radius` of that point.
+| Attack | Siege Tank | Marauder | Marine | Reaper | Banshee |
+| --- | --- | --- | --- | --- | --- |
+| anything on the ground (`ground_threat_desirability`) | 1.0 | 0.7 | 0.6 | 0.4 | 0.4 |
+| air only (`air_only_threat_desirability`) | 0.0 | 0.2 | 1.0 | 0.2 | 0.0 |
+
+`UnitAllocator` only ranks candidates by those numbers and never requests a
+0.0, so the matchup knowledge stays in Defense. A defense mission is FINITE
+and keeps the requirement it was admitted with: an attack that turns from
+ground to air mid-mission does not shed the Tanks already leased.
+
+### Defense roles (pilot)
+
+A unit does not only belong to a defense mission; its type decides what it
+does inside it. `DefendBaseExecutor` resolves a `DefenseRole` for each unit
+it is handed -- `MissionProposal`, `MissionController` and `UnitAllocator`
+carry no roles:
+
+- `SIEGE_ANCHOR` (`SIEGETANK`/`SIEGETANKSIEGED`) attack-moves to a siege
+  anchor, sieges there and holds. It is never attack-moved at the enemy.
+- `SCREEN` (every other defender) attack-moves the threat nearest to where
+  the mission was admitted, which is what every defender used to do.
+
+`DefenseAnchors` is plain geometry. From the defended base
+(`awareness.bases.get(target_key)`, or the main if that base is gone) toward
+the centroid of the ground threats, it puts the siege anchor at
+`siege_anchor_offset` (6) and the screen anchor at `screen_anchor_offset`
+(12). When the enemy is already inside the screen line, both scale back
+proportionally, so the Tank always stands behind where the bio fights. The
+screen anchor is only logged for now.
+
+```mermaid
+stateDiagram-v2
+    [*] --> MOVING_TO_ANCHOR: farther than siege_arrival_radius (2.5)
+    MOVING_TO_ANCHOR --> SIEGING: reached the anchor
+    SIEGING --> SIEGED: reported SIEGETANKSIEGED
+    SIEGED --> REPOSITIONING: anchor moved beyond siege_reposition_distance (7)
+    REPOSITIONING --> MOVING_TO_ANCHOR: unsieged
+    SIEGED --> UNSIEGING: threat cleared
+    UNSIEGING --> [*]: unsieged, mission completes
+```
+
+`MissionController` releases every unit the moment an executor reports
+COMPLETED. So once no threat remains, the executor first unsieges its Tanks,
+and waits for any Tank still mid-siege to land. After `unsiege_timeout` (6s)
+it completes anyway, with `threat_cleared_unsiege_timed_out`.
+
+Role resolution and every Tank phase change are logged as
+`behavior.state_changed`, once per transition. A role event carries `state`
+`SIEGE_ANCHOR` or `SCREEN` with reason `role_resolved_from_unit_type`. A
+phase event carries the anchors and the Tank's distance to its anchor.
+
+Deliberately left out of the pilot:
+
+- roles as an engine contract (role slots on `MissionProposal`, role-aware
+  allocation);
+- unsieging a Tank whose mission is cancelled by timeout or loses it to
+  preemption;
+- choke or high-ground placement;
+- unsieging when the enemy is inside a sieged Tank's minimum range;
+- using the screen anchor to steer the bio.
 
 ## Unit utility and preemption cost
 
