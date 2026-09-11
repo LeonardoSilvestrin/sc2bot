@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from sc2.dicts.unit_trained_from import UNIT_TRAINED_FROM
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.ids.upgrade_id import UpgradeId
 
@@ -25,11 +26,12 @@ class AresEconomyCommands:
     are built to be invoked every frame until their goal is met -- one call
     only ever produces one unit of progress (one train order, one worker sent
     to build). ``EconomyController.step`` therefore calls ``dispatch`` again
-    on every tick for as long as an action stays pending or in flight,
-    so a ``False`` return here just means "nothing to do this frame"
-    (producer busy, no placement free yet) -- not a failure. Only an
-    exception is a real failure worth ending the commitment for; everything
-    else is bounded by the proposal's own dispatch/confirmation timeouts.
+    on every tick while an action is pending. Once the adapter accepts a
+    command the action becomes in-flight and is not issued again. A ``False``
+    return here means "nothing to do this frame". It is
+    acknowledged as ``WAITING`` with the most useful operational reason we
+    can observe; silence is reserved for an adapter that genuinely supplied
+    no feedback, and is what the controller's dispatch timeout watches.
     """
 
     def __init__(self, bot) -> None:
@@ -46,7 +48,11 @@ class AresEconomyCommands:
             )
 
         if not dispatched:
-            return None
+            return EconomicFeedback(
+                action_id=action.action_id,
+                kind=EconomicFeedbackKind.WAITING,
+                reason=self._waiting_reason(action),
+            )
 
         return EconomicFeedback(
             action_id=action.action_id,
@@ -148,18 +154,89 @@ class AresEconomyCommands:
 
         raise ValueError(f"unsupported economic action: {proposal.kind.name}")
 
+    def _waiting_reason(self, action: EconomicAction) -> str:
+        """Explain a quiet Ares behavior without duplicating its policy.
+
+        These are execution facts only. Whether to keep reserving, expire or
+        abandon the action remains an ``EconomyController`` decision.
+        Classification is deliberately defensive because this method is
+        diagnostic: failure to inspect an Ares detail must not turn an
+        ordinary retry into a failed economic action.
+        """
+
+        proposal = action.proposal
+        bot = self._bot
+
+        try:
+            if bot.minerals < proposal.cost.minerals:
+                return "minerals_unavailable_at_dispatch"
+            if bot.vespene < proposal.cost.vespene:
+                return "vespene_unavailable_at_dispatch"
+            if bot.supply_left < proposal.cost.supply:
+                return "supply_unavailable_at_dispatch"
+
+            if proposal.kind in {
+                EconomicActionKind.PRODUCE_WORKER,
+                EconomicActionKind.PRODUCE_UNIT,
+            }:
+                unit_type = (
+                    bot.worker_type
+                    if proposal.kind is EconomicActionKind.PRODUCE_WORKER
+                    else self._unit_type(proposal.target)
+                )
+                if not bot.tech_ready_for_unit(unit_type):
+                    return "unit_tech_not_ready"
+                trained_from = UNIT_TRAINED_FROM.get(unit_type, set())
+                if not self._has_ready_producer(trained_from):
+                    return "compatible_producer_not_ready"
+                return "compatible_producer_busy"
+
+            if proposal.kind in {
+                EconomicActionKind.PRODUCE_SUPPLY,
+                EconomicActionKind.BUILD_PRODUCTION,
+            }:
+                structure_type = self._unit_type(proposal.target)
+                if bot.tech_requirement_progress(structure_type) < 0.85:
+                    return "structure_tech_not_ready"
+                return "worker_or_placement_unavailable"
+
+            if proposal.kind is EconomicActionKind.EXPAND:
+                return "safe_expansion_location_or_worker_unavailable"
+            if proposal.kind is EconomicActionKind.BUILD_GAS:
+                return "geyser_or_worker_unavailable"
+            if proposal.kind is EconomicActionKind.BUILD_ADDON:
+                return self._addon_waiting_reason(
+                    self._unit_type(proposal.target)
+                )
+            if proposal.kind is EconomicActionKind.RESEARCH_UPGRADE:
+                return "upgrade_prerequisite_or_researcher_unavailable"
+        except (AttributeError, KeyError, RuntimeError, TypeError, ValueError):
+            pass
+        return "ares_no_progress_this_frame"
+
+    def _has_ready_producer(self, producer_types: set[UnitTypeId]) -> bool:
+        structures = self._bot.mediator.get_own_structures_dict
+        return any(
+            structure.is_ready
+            for producer_type in producer_types
+            for structure in structures[producer_type]
+        )
+
+    def _addon_waiting_reason(self, addon_type: UnitTypeId) -> str:
+        parent_type = self._addon_parent_type(addon_type)
+        structures = self._bot.mediator.get_own_structures_dict[parent_type]
+        available = tuple(
+            structure
+            for structure in structures
+            if structure.is_ready
+            and not bool(getattr(structure, "has_add_on", False))
+        )
+        if not available:
+            return "addon_parent_unavailable"
+        return "addon_parent_busy"
+
     def _build_addon(self, addon_type: UnitTypeId) -> bool:
-        parent_by_addon = {
-            UnitTypeId.BARRACKSREACTOR: UnitTypeId.BARRACKS,
-            UnitTypeId.BARRACKSTECHLAB: UnitTypeId.BARRACKS,
-            UnitTypeId.FACTORYREACTOR: UnitTypeId.FACTORY,
-            UnitTypeId.FACTORYTECHLAB: UnitTypeId.FACTORY,
-            UnitTypeId.STARPORTREACTOR: UnitTypeId.STARPORT,
-            UnitTypeId.STARPORTTECHLAB: UnitTypeId.STARPORT,
-        }
-        parent_type = parent_by_addon.get(addon_type)
-        if parent_type is None:
-            raise ValueError(f"unsupported addon target: {addon_type.name}")
+        parent_type = self._addon_parent_type(addon_type)
 
         structures = self._bot.mediator.get_own_structures_dict[parent_type]
         parent = next(
@@ -176,6 +253,21 @@ class AresEconomyCommands:
             return False
         parent.build(addon_type)
         return True
+
+    @staticmethod
+    def _addon_parent_type(addon_type: UnitTypeId) -> UnitTypeId:
+        parent_by_addon = {
+            UnitTypeId.BARRACKSREACTOR: UnitTypeId.BARRACKS,
+            UnitTypeId.BARRACKSTECHLAB: UnitTypeId.BARRACKS,
+            UnitTypeId.FACTORYREACTOR: UnitTypeId.FACTORY,
+            UnitTypeId.FACTORYTECHLAB: UnitTypeId.FACTORY,
+            UnitTypeId.STARPORTREACTOR: UnitTypeId.STARPORT,
+            UnitTypeId.STARPORTTECHLAB: UnitTypeId.STARPORT,
+        }
+        parent_type = parent_by_addon.get(addon_type)
+        if parent_type is None:
+            raise ValueError(f"unsupported addon target: {addon_type.name}")
+        return parent_type
 
     @staticmethod
     def _unit_type(target: str | None) -> UnitTypeId:

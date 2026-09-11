@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 import unittest
+from collections import defaultdict
+from types import SimpleNamespace
 from unittest.mock import patch
+
+from sc2.dicts.unit_trained_from import UNIT_TRAINED_FROM
+from sc2.ids.unit_typeid import UnitTypeId
 
 from bot.adapters.ares.economy_commands import AresEconomyCommands
 from bot.engine.economy.models import (
@@ -35,11 +40,14 @@ class AresEconomyCommandsDispatchTests(unittest.TestCase):
     commitment on its very first quiet frame.
     """
 
-    def test_no_progress_this_frame_returns_none_not_a_failure(self):
+    def test_no_progress_this_frame_is_acknowledged_as_waiting(self):
         commands = AresEconomyCommands(bot=object())
 
         with patch.object(AresEconomyCommands, "_execute", return_value=False):
-            self.assertIsNone(commands.dispatch(make_action()))
+            feedback = commands.dispatch(make_action())
+
+        self.assertEqual(feedback.kind, EconomicFeedbackKind.WAITING)
+        self.assertEqual(feedback.reason, "ares_no_progress_this_frame")
 
     def test_progress_this_frame_returns_dispatched(self):
         commands = AresEconomyCommands(bot=object())
@@ -49,6 +57,36 @@ class AresEconomyCommandsDispatchTests(unittest.TestCase):
 
         self.assertEqual(feedback.kind, EconomicFeedbackKind.DISPATCHED)
         self.assertEqual(feedback.reason, "ares_command_accepted")
+
+    def test_quiet_spawn_explains_that_its_producer_is_busy(self):
+        structures = defaultdict(tuple)
+        for producer_type in UNIT_TRAINED_FROM[UnitTypeId.SCV]:
+            structures[producer_type] = (SimpleNamespace(is_ready=True),)
+        bot = SimpleNamespace(
+            minerals=50,
+            vespene=0,
+            supply_left=10.0,
+            worker_type=UnitTypeId.SCV,
+            tech_ready_for_unit=lambda _unit_type: True,
+            mediator=SimpleNamespace(get_own_structures_dict=structures),
+        )
+        commands = AresEconomyCommands(bot=bot)
+
+        with patch.object(AresEconomyCommands, "_execute", return_value=False):
+            feedback = commands.dispatch(make_action())
+
+        self.assertEqual(feedback.kind, EconomicFeedbackKind.WAITING)
+        self.assertEqual(feedback.reason, "compatible_producer_busy")
+
+    def test_quiet_dispatch_explains_when_reserved_minerals_are_gone(self):
+        bot = SimpleNamespace(minerals=0, vespene=0, supply_left=10.0)
+        commands = AresEconomyCommands(bot=bot)
+
+        with patch.object(AresEconomyCommands, "_execute", return_value=False):
+            feedback = commands.dispatch(make_action())
+
+        self.assertEqual(feedback.kind, EconomicFeedbackKind.WAITING)
+        self.assertEqual(feedback.reason, "minerals_unavailable_at_dispatch")
 
     def test_an_exception_is_a_real_failure(self):
         commands = AresEconomyCommands(bot=object())

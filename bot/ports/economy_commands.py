@@ -15,7 +15,11 @@ class EconomyCommands(Protocol):
     there is no unit tag to authorize, because an economic action commands
     no unit a mission owns. Which SCV lays a structure, or which Barracks
     trains the Marine, is the adapter's operational choice. ``None`` means
-    no progress was possible this frame, not failure.
+    no feedback was available. A healthy adapter should normally report
+    ``WAITING`` when it was reached but an operational prerequisite (such as
+    an idle producer) was unavailable this frame; that distinction lets the
+    controller keep a valid commitment without mistaking ordinary queueing
+    for a dispatch transport timeout.
     """
 
     def dispatch(self, action: EconomicAction) -> EconomicFeedback | None:

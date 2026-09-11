@@ -34,6 +34,9 @@ class _Commitment:
     action: EconomicAction
     status: EconomicActionStatus = EconomicActionStatus.PENDING
     reason: str = "waiting_for_dispatch"
+    dispatch_attempts: int = 0
+    last_dispatch_attempt_at: float | None = None
+    last_dispatch_feedback_at: float | None = None
     dispatched_at: float | None = None
     finished_at: float | None = None
 
@@ -93,10 +96,10 @@ class EconomyController:
         The economy counterpart of ``MissionController.tick``. Live actions
         are confirmed from what Attention shows (preferred over whatever the
         port reported last frame), ``tick`` admits against the observed bank
-        minus what the opening protects, and then every live action is
-        dispatched again: Ares' macro behaviors make one unit of progress per
-        call, so a pending or in-flight action is re-issued each frame until
-        it is confirmed, fails or times out.
+        minus what the opening protects, and then every pending action is
+        offered to the adapter again. Once the adapter reports ``DISPATCHED``
+        the command is never re-issued; only observed confirmation, failure or
+        the confirmation timeout may finish it.
         """
 
         world = attention.world
@@ -111,16 +114,20 @@ class EconomyController:
             feedback=feedback,
             protected=observe_protected_cost(world.economy),
         )
-        live_actions = tuple(
+        pending_actions = tuple(
             snapshot.action
             for snapshot in self.snapshots()
-            if not snapshot.status.terminal
+            if snapshot.status is EconomicActionStatus.PENDING
         )
-        self._dispatch_feedback = tuple(
-            dispatched
-            for action in live_actions
-            if (dispatched := commands.dispatch(action)) is not None
-        )
+        dispatch_feedback: list[EconomicFeedback] = []
+        for action in pending_actions:
+            commitment = self._commitments[action.action_id]
+            commitment.dispatch_attempts += 1
+            commitment.last_dispatch_attempt_at = world.time
+            dispatched = commands.dispatch(action)
+            if dispatched is not None:
+                dispatch_feedback.append(dispatched)
+        self._dispatch_feedback = tuple(dispatch_feedback)
         return result
 
     def tick(
@@ -128,7 +135,7 @@ class EconomyController:
         *,
         now: float,
         bank: ResourceBank,
-        proposals: Iterable[EconomicProposal] = (),
+        proposals: Iterable[EconomicProposal] | None = None,
         feedback: Iterable[EconomicFeedback] = (),
         protected: ResourceCost = _NOTHING_PROTECTED,
     ) -> EconomyTickResult:
@@ -143,8 +150,10 @@ class EconomyController:
 
         self._validate_time(now)
         feedback_items = tuple(feedback)
-        proposal_items = tuple(proposals)
+        proposal_items = tuple(proposals or ())
         self._apply_feedback(feedback_items, now)
+        if proposals is not None:
+            self._withdraw_stale_pending(proposal_items, now)
         expired_keys = self._expire(now)
 
         spendable = bank.hold_towards(protected)
@@ -333,11 +342,29 @@ class EconomyController:
                 )
                 continue
 
-            if item.kind is EconomicFeedbackKind.DISPATCHED:
+            if item.kind is EconomicFeedbackKind.WAITING:
+                previous_reason = commitment.reason
+                commitment.reason = item.reason
+                commitment.last_dispatch_feedback_at = now
+                if item.reason != previous_reason:
+                    self._emit(
+                        "economic_action_pending",
+                        now,
+                        item.reason,
+                        action=commitment.action,
+                        status=commitment.status.name,
+                        waiting_seconds=round(
+                            now - commitment.action.admitted_at, 3
+                        ),
+                        previous_reason=previous_reason,
+                        dispatch_attempts=commitment.dispatch_attempts,
+                    )
+            elif item.kind is EconomicFeedbackKind.DISPATCHED:
                 if commitment.status is EconomicActionStatus.IN_FLIGHT:
                     continue
                 commitment.status = EconomicActionStatus.IN_FLIGHT
                 commitment.reason = item.reason
+                commitment.last_dispatch_feedback_at = now
                 commitment.dispatched_at = now
                 self._emit(
                     "economic_action_dispatched",
@@ -345,6 +372,7 @@ class EconomyController:
                     item.reason,
                     action=commitment.action,
                     status=commitment.status.name,
+                    dispatch_attempts=commitment.dispatch_attempts,
                 )
             elif item.kind is EconomicFeedbackKind.CONFIRMED:
                 self._finish(
@@ -366,13 +394,20 @@ class EconomyController:
         for commitment in self._live_commitments():
             proposal = commitment.action.proposal
             if commitment.status is EconomicActionStatus.PENDING:
+                waiting_started_at = commitment.action.admitted_at
+                dispatch_watchdog_started_at = (
+                    commitment.last_dispatch_feedback_at
+                    if commitment.last_dispatch_feedback_at is not None
+                    else commitment.action.admitted_at
+                )
                 expired = (
-                    now - commitment.action.admitted_at
+                    now - dispatch_watchdog_started_at
                     >= proposal.dispatch_timeout_seconds
                 )
                 reason = "dispatch_timeout"
             else:
                 assert commitment.dispatched_at is not None
+                waiting_started_at = commitment.dispatched_at
                 expired = (
                     now - commitment.dispatched_at
                     >= proposal.confirmation_timeout_seconds
@@ -386,8 +421,41 @@ class EconomyController:
                 EconomicActionStatus.TIMED_OUT,
                 reason,
                 now,
+                waiting_seconds=round(now - waiting_started_at, 3),
+                dispatch_attempts=commitment.dispatch_attempts,
+                last_dispatch_attempt_at=commitment.last_dispatch_attempt_at,
+                last_dispatch_feedback_at=commitment.last_dispatch_feedback_at,
+                last_dispatch_reason=commitment.reason,
             )
         return expired_keys
+
+    def _withdraw_stale_pending(
+        self,
+        proposals: tuple[EconomicProposal, ...],
+        now: float,
+    ) -> None:
+        """Release admitted work whose planner no longer argues for it.
+
+        The proposal list passed by ``step`` is the planner's complete view
+        for this frame. An action which has not been dispatched yet must not
+        keep resources reserved after its reason disappeared (posture changed,
+        the goal was met elsewhere, or the target became invalid). In-flight
+        work is intentionally left alone: once a command was accepted, game
+        observation owns its completion.
+        """
+
+        active_keys = {proposal.deduplication_key for proposal in proposals}
+        for commitment in self._live_commitments(
+            status=EconomicActionStatus.PENDING
+        ):
+            if commitment.action.proposal.deduplication_key in active_keys:
+                continue
+            self._finish(
+                commitment,
+                EconomicActionStatus.FAILED,
+                "proposal_withdrawn_before_dispatch",
+                now,
+            )
 
     def _finish(
         self,
@@ -395,6 +463,7 @@ class EconomyController:
         status: EconomicActionStatus,
         reason: str,
         now: float,
+        **extra: Any,
     ) -> None:
         commitment.status = status
         commitment.reason = reason
@@ -410,6 +479,7 @@ class EconomyController:
             reason,
             action=commitment.action,
             status=status.name,
+            **extra,
         )
 
     def _live_commitments(

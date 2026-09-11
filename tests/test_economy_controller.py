@@ -483,6 +483,60 @@ class EconomyControllerTests(unittest.TestCase):
         self.assertEqual(self.controller.snapshots()[0].reason, "dispatch_timeout")
         self.assertEqual(len(retry.admitted_actions), 1)
 
+    def test_acknowledged_dispatch_wait_does_not_time_out(self):
+        worker = proposal(
+            "worker", key="worker:17", dispatch_timeout=2.0
+        )
+        action = self.controller.tick(
+            now=1.0,
+            bank=ResourceBank(50, 0, 10.0),
+            proposals=(worker,),
+        ).admitted_actions[0]
+
+        for now in (2.0, 3.0, 4.0):
+            self.controller.tick(
+                now=now,
+                bank=ResourceBank(50, 0, 10.0),
+                proposals=(worker,),
+                feedback=(
+                    EconomicFeedback(
+                        action.action_id,
+                        EconomicFeedbackKind.WAITING,
+                        "compatible_producer_busy",
+                    ),
+                ),
+            )
+
+        snapshot = self.controller.snapshots()[0]
+        self.assertEqual(snapshot.status, EconomicActionStatus.PENDING)
+        self.assertEqual(snapshot.reason, "compatible_producer_busy")
+        waiting = [
+            event
+            for event in self.logger.events
+            if event["name"] == "economic_action_pending"
+            and event["data"]["reason"] == "compatible_producer_busy"
+        ]
+        self.assertEqual(len(waiting), 1)
+
+    def test_withdrawn_pending_proposal_is_released_as_stale(self):
+        worker = proposal("worker", key="worker:17")
+        self.controller.tick(
+            now=1.0,
+            bank=ResourceBank(50, 0, 10.0),
+            proposals=(worker,),
+        )
+
+        result = self.controller.tick(
+            now=2.0,
+            bank=ResourceBank(50, 0, 10.0),
+            proposals=(),
+        )
+
+        snapshot = self.controller.snapshots()[0]
+        self.assertEqual(snapshot.status, EconomicActionStatus.FAILED)
+        self.assertEqual(snapshot.reason, "proposal_withdrawn_before_dispatch")
+        self.assertEqual(result.reserved_cost, ResourceCost())
+
     def test_in_flight_action_uses_confirmation_timeout(self):
         upgrade = proposal(
             "stim",
@@ -665,7 +719,7 @@ class EconomyControllerStepTests(unittest.TestCase):
         self.controller = EconomyController(logger=FakeLogger())
         self.commands = FakeEconomyCommands()
 
-    def test_a_live_action_is_dispatched_again_every_frame(self):
+    def test_a_dispatched_action_is_not_sent_again_while_awaiting_confirmation(self):
         worker = proposal("worker", key="worker:13")
 
         for now in (1.0, 2.0):
@@ -675,10 +729,38 @@ class EconomyControllerStepTests(unittest.TestCase):
                 commands=self.commands,
             )
 
-        self.assertEqual(len(self.commands.commands), 2)
+        self.assertEqual(len(self.commands.commands), 1)
         # The port's report from frame one is applied on frame two.
         self.assertEqual(
             self.controller.snapshots()[0].status, EconomicActionStatus.IN_FLIGHT
+        )
+
+    def test_an_acknowledged_waiting_action_is_retried_every_frame(self):
+        class WaitingCommands:
+            def __init__(self) -> None:
+                self.commands: list[str] = []
+
+            def dispatch(self, action):
+                self.commands.append(action.action_id)
+                return EconomicFeedback(
+                    action.action_id,
+                    EconomicFeedbackKind.WAITING,
+                    "compatible_producer_busy",
+                )
+
+        commands = WaitingCommands()
+        worker = proposal("worker", key="worker:13")
+
+        for now in (1.0, 2.0):
+            self.controller.step(
+                attention=economy_attention(time=now),
+                proposals=(worker,),
+                commands=commands,
+            )
+
+        self.assertEqual(len(commands.commands), 2)
+        self.assertEqual(
+            self.controller.snapshots()[0].status, EconomicActionStatus.PENDING
         )
 
     def test_attention_confirms_an_action_and_ends_its_dispatch(self):
