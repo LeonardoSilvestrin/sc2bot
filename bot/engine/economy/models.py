@@ -213,6 +213,7 @@ class EconomicAction:
 class EconomicFeedbackKind(Enum):
     """Facts reported by the execution adapter or pending-state observer."""
 
+    WAITING = auto()
     DISPATCHED = auto()
     CONFIRMED = auto()
     FAILED = auto()

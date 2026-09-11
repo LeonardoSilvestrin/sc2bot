@@ -596,18 +596,13 @@ class RuntimePilotTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(economy_commands.commands)
 
-    async def test_runtime_redispatches_a_still_pending_economic_action_every_tick(
+    async def test_runtime_does_not_redispatch_an_accepted_economic_action(
         self,
     ):
-        # Regression test: Ares macro behaviors (SpawnController,
-        # BuildStructure, ...) only make one unit of progress per call and
-        # must be re-invoked every frame to keep working toward a proposal's
-        # target_count. Before the fix, the runtime only ever dispatched
-        # `result.admitted_actions` -- the single tick an action was first
-        # admitted -- then left it dispatched-and-forgotten until a 60s
-        # confirmation timeout, stalling all further production in that
-        # category. It must now dispatch every live (pending/in-flight)
-        # commitment on every tick.
+        # FakeEconomyCommands accepts every command immediately. The
+        # controller may retry a WAITING action, but must never issue an
+        # accepted IN_FLIGHT purchase a second time while Attention catches
+        # up with the command.
         economy_commands = FakeEconomyCommands()
         base_townhall = SimpleNamespace(
             tag=999,
@@ -653,11 +648,7 @@ class RuntimePilotTests(unittest.IsolatedAsyncioTestCase):
             second_tick_commands = len(economy_commands.commands)
 
         self.assertGreater(first_tick_commands, 0)
-        # The worker count and bank did not change between ticks, so the
-        # macro planner proposes the exact same worker deficit again; it
-        # must still be dispatched again while its action stays pending or
-        # in flight, not silently dropped because the key is already live.
-        self.assertGreater(second_tick_commands, first_tick_commands)
+        self.assertEqual(second_tick_commands, first_tick_commands)
 
     async def test_runtime_tolerates_ares_driving_the_bank_negative(self):
         # Ares behaviors (eg. SpawnController) decrement bot.minerals/vespene
