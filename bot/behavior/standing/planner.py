@@ -12,7 +12,6 @@ leases.
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass, field
 
 from sc2.position import Point2
@@ -83,24 +82,30 @@ class StandingPlanner:
         return (self._proposal_for(plan, now),)
 
     def _plan(self, assessment: StandingAssessment) -> StandingPlan:
-        """Choose the anchor and how much of the army holds it.
+        """Choose the anchor; the core army asks for every eligible unit.
 
-        Deliberately unsophisticated for now: the army sits most of the way
-        from the previous base toward the newest one, which is where an
-        attack arrives first. Posture does not move the anchor yet -- that
-        is the obvious next step, and this shape is what makes it a one-line
-        change instead of a restructure.
+        Asking for all of them, rather than a share, is what makes this the
+        fallback owner. Every mission allowed to preempt (map control,
+        defense, harass) outranks this one by at least the allocator's
+        preemption margin, so each still takes what it needs and this can
+        never take those units back -- it only holds whatever nobody else
+        does. A fixed share left the remainder ownerless whenever map control
+        was not running to claim it.
+
+        The anchor is deliberately unsophisticated for now: the army sits
+        most of the way from the previous base toward the newest one, which
+        is where an attack arrives first. Posture does not move the anchor
+        yet -- that is the obvious next step, and this shape is what makes it
+        a one-line change instead of a restructure.
         """
 
         anchor, reason = self._anchor(assessment)
         return StandingPlan(
             anchor=anchor,
             anchor_reason=reason,
-            core_count=max(
-                1, math.floor(assessment.eligible_units * self.config.core_fraction)
-            ),
-            core_fraction=self.config.core_fraction,
-            roaming_fraction=self.config.roaming_fraction,
+            # `UnitRequirement` needs desired > 0; with no army yet the claim
+            # simply idles (minimum=0).
+            core_count=max(1, assessment.eligible_units),
             priority=self.config.priority,
         )
 

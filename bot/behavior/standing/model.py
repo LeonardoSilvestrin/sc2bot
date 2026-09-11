@@ -51,8 +51,8 @@ class StandingConfig:
 
     The core army's priority stays below ``MAP_CONTROL`` (40) and every
     active tactical mission, so a standing slot is always freely
-    preemptible. Ratios and the anchor fraction are deliberately small,
-    deterministic policy knobs rather than a composition system.
+    preemptible. The anchor fraction is a deliberately small, deterministic
+    policy knob rather than a composition system.
     """
 
     proposal_cadence: float = 5.0
@@ -64,10 +64,6 @@ class StandingConfig:
     cooldown_seconds: float = 5.0
     commitment_seconds: float = 2.0
     arrival_radius: float = 4.0
-    # Share of eligible combat units the core army holds. The remainder is
-    # the roaming share, which `MapControlPlanner` claims -- this behavior
-    # does not command it, it only leaves room for it.
-    core_fraction: float = 0.8
     anchor_fraction_to_newest_base: float = 0.72
 
     priority: int = 20
@@ -87,16 +83,10 @@ class StandingConfig:
             raise ValueError("commitment_seconds must not be negative")
         if self.arrival_radius <= 0.0:
             raise ValueError("arrival_radius must be positive")
-        if not 0.0 < self.core_fraction <= 1.0:
-            raise ValueError("core_fraction must be between 0 and 1")
         if not 0.0 <= self.anchor_fraction_to_newest_base <= 1.0:
             raise ValueError("anchor_fraction_to_newest_base must be between 0 and 1")
         if not 0 <= self.priority <= 100:
             raise ValueError("priority must be between 0 and 100")
-
-    @property
-    def roaming_fraction(self) -> float:
-        return round(1.0 - self.core_fraction, 4)
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,9 +127,9 @@ class StandingPlan:
 
     anchor: Point2
     anchor_reason: str
+    # Every eligible combat unit, not a share of them: this is the fallback
+    # owner, so whatever no higher-priority mission holds belongs here.
     core_count: int
-    core_fraction: float
-    roaming_fraction: float
     priority: int
 
     def log_fields(self) -> dict[str, Any]:
@@ -147,8 +137,6 @@ class StandingPlan:
             "anchor": [round(float(self.anchor.x), 1), round(float(self.anchor.y), 1)],
             "anchor_reason": self.anchor_reason,
             "core_count": self.core_count,
-            "core_fraction": self.core_fraction,
-            "roaming_fraction": self.roaming_fraction,
             "priority": self.priority,
         }
 

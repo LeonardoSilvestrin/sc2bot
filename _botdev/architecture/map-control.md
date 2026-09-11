@@ -2,7 +2,8 @@
 
 `bot/behavior/map_control/` keeps a small, timid share of the army on the map.
 It is the roaming counterpart to [standing-behavior.md](standing-behavior.md):
-the core army holds its anchor, this claims the rest.
+the core army claims every eligible unit by default, and this preempts its
+share from it.
 
 ## Plan
 
@@ -15,7 +16,8 @@ count is `max(1, ceil(eligible * force_ratio))`, 20% by default;
 The proposal uses `MissionKind.MAP_CONTROL`, priority 40,
 `MissionMode.STANDING`, dedup key `map_control:patrol`,
 `squad_id="map_control"`, `minimum=0` and `can_preempt=True` -- the core army
-holds most combat units, so the patrol has to take its share from it. It is
+holds every combat unit nothing else does, so the patrol has to take its share
+from it. It is
 declared even during danger because this is a persistent responsibility, not a
 one-shot opportunity; the assessment only reports `strategically_safe`.
 

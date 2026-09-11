@@ -11,19 +11,19 @@ behavior/standing/
   executor.py     StandingExecutor -- keeps the core army on the anchor
 ```
 
-| Squad | Approximate share | Home mission | Priority |
-| --- | ---: | --- | ---: |
-| `main_army` | 80% (`StandingConfig.core_fraction`) | `HOLD_RALLY` | 20 |
-| `map_control` | the remaining roaming share | `MAP_CONTROL` | 40 |
+| Squad | Share | Home mission | Priority |
+| --- | --- | --- | ---: |
+| `main_army` | every eligible unit no higher-priority mission holds | `HOLD_RALLY` | 20 |
+| `map_control` | 20% of healthy Marines, preempted from `main_army` | `MAP_CONTROL` | 40 |
 
 `StandingPlanner` emits one `MissionMode.STANDING` proposal for `main_army`
 every 5 s (key `hold_rally:main_army`, `minimum=0`, `can_preempt=True`);
 `MapControlPlanner` emits the matching standing proposal for `map_control`
 (see [map-control.md](map-control.md)). Both carry a stable `squad_id`; neither
 planner allocates units or sends Ares commands. There is no `position:reserve`
-catch-all. The two shares are sized independently: the core counts every
-eligible combat type, the patrol only Marines, and the patrol preempts its
-share from the core.
+catch-all. The two are sized independently: the core asks for every eligible
+combat unit, the patrol for a share of the Marines, which it preempts from the
+core.
 
 ## Assess -> plan -> execute
 
@@ -42,7 +42,8 @@ which is about spending risk rather than where the army sits:
 | `BALANCED` | otherwise |
 
 `StandingPlanner` turns that assessment into a `StandingPlan`: the anchor,
-its reason, and `core_count = max(1, floor(eligible * core_fraction))`. With at
+its reason, and `core_count = max(1, eligible)` -- every eligible unit, not a
+share (see the ownership invariant below). With at
 least two bases the anchor is 72% of the segment from the previous base to the
 newest/farthest expansion (`anchor_fraction_to_newest_base`); with one base it
 is that base; with no observed town hall it falls back to `own_start`. Posture
@@ -67,12 +68,21 @@ needs it, `MissionController` transfers the lease; when that mission ends the
 unit is released and Standing reacquires it. This is what keeps two behaviors
 from commanding the same unit.
 
-Two gaps remain between the invariant and the code, both deliberate:
-`core_fraction` is 0.8 rather than 1.0 (the remainder is left free for
-`MapControlPlanner` to claim rather than preempt), and Banshees are absent
-from `StandingConfig.unit_types` so the harass squad does not have to preempt
-Standing for every Banshee produced. `standing.unassigned_units_persisting`
-fires when an eligible unit has had no owner for 15 seconds.
+Standing asks for every eligible unit rather than a share, which is what makes
+it the fallback: whatever no higher-priority mission holds -- before
+`MapControlPlanner` has enough Marines to start, or once a temporary mission
+releases its units -- is picked up on the next allocation pass. Anything
+allowed to preempt (map control, defense, harass) outranks Standing by at least
+the allocator's margin, so it takes its share exactly as before, and Standing
+can never take it back. A unit produced between two Standing proposals waits at
+most one 5 s cadence for the updated count.
+
+Two gaps remain. Banshees are deliberately absent from
+`StandingConfig.unit_types`, so the harass squad does not have to preempt
+Standing for every Banshee produced. And scouting never preempts, so a scout
+proposed while every Reaper sits in Standing stays blocked rather than taking
+one. `standing.unassigned_units_persisting` fires when an eligible unit has had
+no owner for 15 seconds.
 
 ## Persistence and preemption
 
