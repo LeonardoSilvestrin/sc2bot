@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import unittest
+from dataclasses import replace
 
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
 from bot.app.mission_registry import DEFAULT_EXECUTOR_FACTORIES
-from bot.behavior.map_control import MapControlPlanner
+from bot.behavior.map_control import MapControlConfig, MapControlPlanner
 from bot.behavior.standing import StandingPlanner
 from bot.engine.missions import (
     MissionController,
@@ -216,6 +217,22 @@ class ImmediateCompletionExecutor:
         return MissionResult(MissionOutcome.COMPLETED, "test_mission_done")
 
 
+class RunsUntilFinishedExecutor:
+    """Stays ACTIVE until the test sets ``finished``, then completes.
+
+    Lets a temporary mission hold its units across ticks and end exactly when
+    the test decides, without depending on a real executor's own exit logic.
+    """
+
+    def __init__(self) -> None:
+        self.finished = False
+
+    async def step(self, context) -> MissionResult:
+        if self.finished:
+            return MissionResult(MissionOutcome.COMPLETED, "test_mission_done")
+        return MissionResult(MissionOutcome.ACTIVE, "test_mission_running")
+
+
 class StandingOwnershipTests(unittest.IsolatedAsyncioTestCase):
     async def test_main_share_is_leased_to_the_persistent_main_squad(self):
 
@@ -245,7 +262,7 @@ class StandingOwnershipTests(unittest.IsolatedAsyncioTestCase):
             owner = controller.board.get(owner_id)
             self.assertEqual(owner.proposal.kind, MissionKind.HOLD_RALLY)
             self.assertEqual(owner.proposal.squad_id, "main_army")
-        self.assertEqual(owned, 4)
+        self.assertEqual(owned, 5)
 
 
 class HarassPreemptsPositioningTests(unittest.IsolatedAsyncioTestCase):
@@ -411,7 +428,7 @@ class ReturnToStandingAfterFiniteMissionEndsTests(unittest.IsolatedAsyncioTestCa
         owners = tuple(
             controller.allocator.owner_of(unit.tag) for unit in units
         )
-        self.assertEqual(sum(owner is not None for owner in owners), 2)
+        self.assertEqual(sum(owner is not None for owner in owners), 3)
         for owner_id in (owner for owner in owners if owner is not None):
             owner = controller.board.get(owner_id)
             self.assertEqual(owner.proposal.kind, MissionKind.HOLD_RALLY)
@@ -683,6 +700,148 @@ class ProportionalStandingSquadsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(main.assigned_unit_tags), 60)
         self.assertEqual(len(patrol.assigned_unit_tags), 15)
         self.assertIsNone(controller.board.live_for_key("position:reserve"))
+
+
+class StandingFallbackOwnershipTests(unittest.IsolatedAsyncioTestCase):
+    """An eligible unit no higher-priority mission wants belongs to main_army."""
+
+    async def advance(
+        self,
+        controller: MissionController,
+        now: float,
+        units: tuple[UnitSnapshot, ...],
+        *,
+        planners: tuple = (),
+        proposals: tuple[MissionProposal, ...] = (),
+    ) -> None:
+        current = attention(now, units)
+        awareness = posture_awareness(current)
+        planned = tuple(
+            proposal
+            for planner in planners
+            for proposal in planner.propose(current, awareness)
+        )
+        await controller.tick(
+            attention=current,
+            awareness=awareness,
+            proposals=(*proposals, *planned),
+            commands=FakeCommands(),
+        )
+
+    def assert_owned_by(
+        self,
+        controller: MissionController,
+        units: tuple[UnitSnapshot, ...],
+        *mission_ids: str,
+    ) -> None:
+        for unit in units:
+            self.assertIn(controller.allocator.owner_of(unit.tag), mission_ids)
+
+    async def test_every_eligible_unit_is_owned_before_map_control_is_active(self):
+        # Four Marines is below map control's minimum force size, so it stays
+        # silent; the Marauder and the Tank are standing-eligible as well.
+        units = (
+            *(marine(tag) for tag in range(1, 5)),
+            replace(marine(5), unit_type=UnitTypeId.MARAUDER),
+            replace(marine(6), unit_type=UnitTypeId.SIEGETANK),
+        )
+        controller = MissionController(
+            logger=FakeLogger(), executor_factories=DEFAULT_EXECUTOR_FACTORIES
+        )
+        planners = (MapControlPlanner(), StandingPlanner())
+
+        await self.advance(controller, 10.0, units, planners=planners)
+
+        self.assertIsNone(controller.board.live_for_key("map_control:patrol"))
+        main = controller.board.live_for_key("hold_rally:main_army")
+        self.assert_owned_by(controller, units, main.mission_id)
+
+        # A unit produced later is picked up on standing's next cadence.
+        units = (*units, replace(marine(7), unit_type=UnitTypeId.MARAUDER))
+        await self.advance(controller, 15.0, units, planners=planners)
+
+        self.assertIsNone(controller.board.live_for_key("map_control:patrol"))
+        self.assert_owned_by(controller, units, main.mission_id)
+        self.assertEqual(
+            controller.squads.get("main_army").member_tags,
+            {unit.tag for unit in units},
+        )
+
+    async def test_map_control_preempts_its_share_and_main_army_keeps_the_rest(self):
+        units = tuple(marine(tag) for tag in range(1, 11))
+        logger = FakeLogger()
+        controller = MissionController(
+            logger=logger, executor_factories=DEFAULT_EXECUTOR_FACTORIES
+        )
+        # Inactive on the first tick, so standing starts out owning everything.
+        map_control = MapControlPlanner(config=MapControlConfig(start_after=12.0))
+        planners = (map_control, StandingPlanner())
+
+        await self.advance(controller, 10.0, units, planners=planners)
+        self.assertIsNone(controller.board.live_for_key("map_control:patrol"))
+        main = controller.board.live_for_key("hold_rally:main_army")
+        self.assertEqual(len(main.assigned_unit_tags), 10)
+
+        # Past standing's commitment window (2.0s): map control takes its 20%
+        # from main_army through ordinary priority preemption.
+        await self.advance(controller, 12.0, units, planners=planners)
+        patrol = controller.board.live_for_key("map_control:patrol")
+        self.assertEqual(len(patrol.assigned_unit_tags), 2)
+        self.assertEqual(len(main.assigned_unit_tags), 8)
+        reassigned = [
+            event["data"]
+            for event in logger.events
+            if event["name"] == "units_reassigned"
+        ]
+        self.assertEqual(
+            sorted(tag for data in reassigned for tag in data["unit_tags"]),
+            list(patrol.assigned_unit_tags),
+        )
+        for data in reassigned:
+            self.assertEqual(data["from_mission_id"], main.mission_id)
+
+        # Standing re-proposes for every eligible unit but cannot take the
+        # patrol's share back, and no unit is left without an owner.
+        await self.advance(controller, 15.0, units, planners=planners)
+        self.assertEqual(main.proposal.requirement.desired, 10)
+        self.assertEqual(len(main.assigned_unit_tags), 8)
+        self.assertEqual(len(patrol.assigned_unit_tags), 2)
+        self.assert_owned_by(controller, units, main.mission_id, patrol.mission_id)
+
+    async def test_units_fall_back_to_main_army_when_a_temporary_mission_ends(self):
+        units = tuple(marine(tag) for tag in range(1, 6))
+        defense_executor = RunsUntilFinishedExecutor()
+        executor_factories = dict(DEFAULT_EXECUTOR_FACTORIES)
+        executor_factories[MissionKind.DEFENSE] = (
+            lambda mission, now: defense_executor
+        )
+        controller = MissionController(
+            logger=FakeLogger(), executor_factories=executor_factories
+        )
+
+        await self.advance(controller, 10.0, units, planners=(StandingPlanner(),))
+        main = controller.board.live_for_key("hold_rally:main_army")
+        self.assert_owned_by(controller, units, main.mission_id)
+
+        # Past standing's commitment window: a defense pulls two members away.
+        await self.advance(
+            controller, 12.0, units, proposals=(defense_proposal(12.0, desired=2),)
+        )
+        defense = controller.board.live_for_key("defense:own_base")
+        self.assertEqual(len(defense.assigned_unit_tags), 2)
+        self.assertEqual(len(main.assigned_unit_tags), 3)
+        self.assert_owned_by(controller, units, main.mission_id, defense.mission_id)
+
+        # The defense ends on a tick where standing does not re-propose at all:
+        # its members fall straight back to main_army.
+        defense_executor.finished = True
+        await self.advance(controller, 13.0, units)
+
+        self.assertEqual(defense.status, MissionStatus.COMPLETED)
+        self.assert_owned_by(controller, units, main.mission_id)
+        squad = controller.squads.get("main_army")
+        self.assertEqual(squad.current_mission_id, main.mission_id)
+        self.assertEqual(squad.member_tags, {unit.tag for unit in units})
 
 
 if __name__ == "__main__":

@@ -79,7 +79,7 @@ def current(
 
 
 class CoreArmyStandingTests(unittest.TestCase):
-    def test_declares_one_persistent_main_army_at_eighty_percent(self):
+    def test_declares_one_persistent_main_army_claiming_every_eligible_unit(self):
         attention, awareness = current(10.0, count=10)
 
         proposals = StandingPlanner().propose(attention, awareness)
@@ -90,7 +90,7 @@ class CoreArmyStandingTests(unittest.TestCase):
         self.assertEqual(proposal.mode, MissionMode.STANDING)
         self.assertEqual(proposal.squad_id, "main_army")
         self.assertEqual(proposal.deduplication_key, "hold_rally:main_army")
-        self.assertEqual(proposal.requirement.desired, 8)
+        self.assertEqual(proposal.requirement.desired, 10)
         self.assertEqual(proposal.requirement.minimum, 0)
 
     def test_rally_is_seventy_two_percent_from_previous_to_newest_base(self):
@@ -115,7 +115,7 @@ class CoreArmyStandingTests(unittest.TestCase):
         proposal = StandingPlanner().propose(attention, awareness)[0]
 
         self.assertNotIn(UnitTypeId.BANSHEE, proposal.requirement.unit_types)
-        self.assertEqual(proposal.requirement.desired, 4)
+        self.assertEqual(proposal.requirement.desired, 5)
 
     def test_assessment_reports_what_the_plan_was_decided_from(self):
         attention, awareness = current(10.0, count=10)
@@ -127,9 +127,7 @@ class CoreArmyStandingTests(unittest.TestCase):
         plan = planner.last_plan
         self.assertEqual(assessment.eligible_units, 10)
         self.assertEqual(assessment.posture, planner.last_posture)
-        self.assertEqual(plan.core_count, 8)
-        self.assertEqual(plan.core_fraction, 0.8)
-        self.assertAlmostEqual(plan.roaming_fraction, 0.2)
+        self.assertEqual(plan.core_count, 10)
         self.assertTrue(plan.anchor_reason.strip())
 
     def test_a_moved_anchor_is_logged_with_its_reason(self):

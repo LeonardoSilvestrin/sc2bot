@@ -107,7 +107,7 @@ class SquadLifecycleTests(unittest.IsolatedAsyncioTestCase):
         home = controller.board.live_for_key("hold_rally:main_army")
         self.assertIsNotNone(home)
         original_members = controller.squads.get("main_army").member_tags.copy()
-        self.assertEqual(len(original_members), 4)
+        self.assertEqual(len(original_members), 5)
 
         current = attention(12.0, threatened=True)
         aware = service.update(current)
