@@ -103,9 +103,47 @@ class AwarenessService:
             and not unit.is_worker
             and (unit.can_attack_air or unit.can_attack_ground)
         )
-        known_total = own_combat + enemy_combat
-        score = 0.0 if known_total == 0 else (own_combat - enemy_combat) / known_total
-        strength_confidence = min(1.0, len(sightings) / 12.0) if sightings else 0.0
+
+        previous_economy_stable = self._economy_hysteresis.stable
+        previous_army_stable = self._army_hysteresis.stable
+        base_observations = self._enemy_base_memory.update(world)
+        coverage = scouting_coverage(base_observations)
+        economy_belief, self._economy_hysteresis = assess_economy(
+            world=world,
+            sightings=sightings,
+            base_observations=base_observations,
+            coverage=coverage,
+            now=world.time,
+            state=self._economy_hysteresis,
+            config=self.economy_belief_config,
+        )
+        army_belief, self._army_hysteresis = assess_army(
+            world=world,
+            sightings=sightings,
+            coverage=coverage,
+            now=world.time,
+            state=self._army_hysteresis,
+            config=self.army_belief_config,
+        )
+
+        # Relative force is a supply comparison over the remembered army,
+        # not a head count of whatever happens to be on screen this frame.
+        # Unit counts remain on the snapshot as current tactical telemetry.
+        own_strength = army_belief.own_supply
+        enemy_strength = army_belief.enemy.supply.estimated
+        strength_total = own_strength + enemy_strength
+        if strength_total > 0.0:
+            score = (own_strength - enemy_strength) / strength_total
+        else:
+            # Some synthetic/test observers do not provide supply costs.
+            # Preserve a useful fallback without weakening live-game logic.
+            count_total = own_combat + enemy_combat
+            score = (
+                0.0
+                if count_total == 0
+                else (own_combat - enemy_combat) / count_total
+            )
+        strength_confidence = army_belief.relative.confidence
 
         anchors = tuple(
             structure.position
@@ -146,6 +184,9 @@ class AwarenessService:
             own_combat=own_combat,
             strength_score=score,
             strength_confidence=strength_confidence,
+            strength_is_stably_ahead=(
+                army_belief.relative.stable_state is RelativePosition.AHEAD
+            ),
             nearby_enemy_combat=len(nearby_combat),
             state=self._posture_state,
             defense_release_after=self.defense_release_after,
@@ -153,27 +194,6 @@ class AwarenessService:
             posture_min_hold=self.posture_min_hold,
         )
 
-        previous_economy_stable = self._economy_hysteresis.stable
-        previous_army_stable = self._army_hysteresis.stable
-        base_observations = self._enemy_base_memory.update(world)
-        coverage = scouting_coverage(base_observations)
-        economy_belief, self._economy_hysteresis = assess_economy(
-            world=world,
-            sightings=sightings,
-            base_observations=base_observations,
-            coverage=coverage,
-            now=world.time,
-            state=self._economy_hysteresis,
-            config=self.economy_belief_config,
-        )
-        army_belief, self._army_hysteresis = assess_army(
-            world=world,
-            sightings=sightings,
-            coverage=coverage,
-            now=world.time,
-            state=self._army_hysteresis,
-            config=self.army_belief_config,
-        )
         chat_messages = tuple(
             message
             for message in (

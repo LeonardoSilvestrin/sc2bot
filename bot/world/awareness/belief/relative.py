@@ -19,15 +19,17 @@ class RelativeBeliefConfig:
 
     ``ahead_ratio``/``strong_ratio`` are read against
     ``(own - estimated) / max(own, estimated, 1)``: e.g. 0.15 means roughly a
-    15% material edge before even considering AHEAD/BEHIND, and
-    ``strong_ratio`` a large enough edge to skip the persistence window in
-    ``advance`` entirely (see ``classify``). Directly observed evidence that
-    already proves BEHIND bypasses both ratios -- see ``classify``.
+    15% material edge before even considering AHEAD/BEHIND. AHEAD additionally
+    needs ``ahead_min_confidence`` because unseen enemy material can always
+    erase an apparent advantage. ``strong_ratio`` only lets a large defensive
+    (BEHIND) estimate skip the persistence window. Directly observed evidence
+    that already proves BEHIND bypasses both ratios -- see ``classify``.
     """
 
     ahead_ratio: float = 0.15
     strong_ratio: float = 0.45
     min_confidence: float = 0.35
+    ahead_min_confidence: float = 0.60
     observed_certainty_floor: float = 0.75
     persist_seconds: float = 12.0
 
@@ -36,6 +38,10 @@ class RelativeBeliefConfig:
             raise ValueError("ahead_ratio must be positive and below strong_ratio")
         if not 0.0 <= self.min_confidence <= 1.0:
             raise ValueError("min_confidence must be within [0, 1]")
+        if not self.min_confidence <= self.ahead_min_confidence <= 1.0:
+            raise ValueError(
+                "ahead_min_confidence must be within [min_confidence, 1]"
+            )
         if not 0.0 <= self.observed_certainty_floor <= 1.0:
             raise ValueError("observed_certainty_floor must be within [0, 1]")
         if self.persist_seconds < 0.0:
@@ -47,9 +53,10 @@ class RelativeAssessment:
     """One stabilized belief: how we compare to the enemy on one axis.
 
     ``raw_state`` is this tick's instantaneous read of the evidence;
-    ``stable_state`` is the hysteresis-debounced belief that should actually
-    be trusted (and is what gets announced in chat). ``reason`` is only
-    populated on the tick ``stable_state`` actually changes.
+    ``stable_state`` is the last hysteresis-debounced, evidence-backed belief
+    (and is what gets announced in chat). An UNKNOWN raw read leaves that
+    belief in place while ``confidence`` exposes that it has gone stale.
+    ``reason`` is only populated on the tick ``stable_state`` actually changes.
     """
 
     raw_state: RelativePosition
@@ -103,7 +110,7 @@ def classify(
     coverage and is always treated as strong evidence.
     """
 
-    if own > 0.0 and observed >= own:
+    if observed > 0.0 and observed >= own:
         return (
             RelativePosition.BEHIND,
             max(confidence, config.observed_certainty_floor),
@@ -115,11 +122,19 @@ def classify(
 
     denom = max(own, estimated, 1.0)
     ratio = (own - estimated) / denom
-    strong = abs(ratio) >= config.strong_ratio
     if ratio >= config.ahead_ratio:
-        return RelativePosition.AHEAD, confidence, strong
+        if confidence < config.ahead_min_confidence:
+            return RelativePosition.UNKNOWN, confidence, False
+        # An apparent large advantage is never proof: it can just mean the
+        # rest of the enemy army has not been seen. Require persistence even
+        # when the numerical gap is very large.
+        return RelativePosition.AHEAD, confidence, False
     if ratio <= -config.ahead_ratio:
-        return RelativePosition.BEHIND, confidence, strong
+        return (
+            RelativePosition.BEHIND,
+            confidence,
+            abs(ratio) >= config.strong_ratio,
+        )
     return RelativePosition.EVEN, confidence, False
 
 
@@ -133,13 +148,21 @@ def advance(
 ) -> HysteresisState:
     """Debounce a raw-state stream into a persistent, non-flappy belief.
 
-    A candidate that differs from the current stable state must either be
-    strong evidence (applied immediately) or persist for
-    ``config.persist_seconds`` before it is accepted -- see the module
-    docstring on ``RelativeBeliefConfig`` for what "strong" means.
+    A known candidate that differs from the current stable state must either
+    be strong defensive evidence (applied immediately) or persist for
+    ``config.persist_seconds`` before it is accepted. UNKNOWN is not a new
+    claim about relative strength and therefore only lowers the separately
+    reported confidence; it never replaces the stable state.
     """
 
     if raw_state is state.stable:
+        return HysteresisState(stable=state.stable, changed_at=state.changed_at)
+
+    # UNKNOWN means that this observation cannot support a comparison, not
+    # that the previous comparison became false. Keep the last stable belief
+    # and let its separately reported confidence decay. This prevents every
+    # scout pass from producing AHEAD -> UNKNOWN -> AHEAD chatter.
+    if raw_state is RelativePosition.UNKNOWN:
         return HysteresisState(stable=state.stable, changed_at=state.changed_at)
 
     if strong:

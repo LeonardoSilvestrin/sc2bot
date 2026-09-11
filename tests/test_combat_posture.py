@@ -6,8 +6,13 @@ from sc2.position import Point2
 
 from bot.behavior.standing import CombatPosture, derive_combat_posture
 from bot.world.awareness import (
+    ArmyBelief,
+    ArmySupplyEstimate,
     AwarenessSnapshot,
+    EnemyArmyKnowledge,
     MacroPosture,
+    RelativeAssessment,
+    RelativePosition,
     RelativeStrength,
     ThreatAssessment,
 )
@@ -23,6 +28,13 @@ def snapshot(
     threatened: bool = False,
     near_own_base_enemy_combat_units: int = 0,
 ) -> AwarenessSnapshot:
+    position = (
+        RelativePosition.AHEAD
+        if score >= 0.15
+        else RelativePosition.BEHIND
+        if score <= -0.15
+        else RelativePosition.EVEN
+    )
     base = BaseAssessment(
         base_id="base:1",
         position=Point2((10, 10)),
@@ -50,6 +62,14 @@ def snapshot(
         updated_at=0.0,
         macro_posture=macro_posture,
         bases=BaseAwareness((base,)),
+        army=ArmyBelief(
+            own_supply=0.0,
+            enemy=EnemyArmyKnowledge(
+                supply=ArmySupplyEstimate(0.0, 0.0, confidence),
+                composition=(),
+            ),
+            relative=RelativeAssessment(position, position, confidence),
+        ),
     )
 
 
