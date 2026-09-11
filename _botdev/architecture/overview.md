@@ -111,6 +111,15 @@ only after closing the lap. Unknown information creates the initial scout after 
 economy reaches 16 workers; stale information can be revisited in the periodic
 phase. These values live in `IntelConfig`.
 
+Active vision is a shared service rather than a scouting implementation detail.
+Scouting requests normal-urgency vision when the enemy main has been unseen for
+120 seconds; Defense requests high-urgency vision when a recent nearby threat
+disappears. `VisionService` persists, deduplicates and arbitrates those needs, while
+its current `ScanProvider` selects the fullest ready Orbital with at least 100
+energy, preserving 50 after Scanner Sweep. Consumers know neither Orbitals nor the
+provider. Mission executors receive the same capability as
+`context.services.vision` for future tactical consumers.
+
 ## Behavior layout
 
 `bot/behavior/` is organized vertically: one folder per behavior, holding

@@ -9,6 +9,7 @@ from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
 from bot.engine.missions.models import MissionKind
+from bot.engine.services import VisionRequestResult, VisionUrgency
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,3 +117,63 @@ class ScoutPlan:
             "priority": self.priority,
             "reason": self.reason,
         }
+
+
+@dataclass(frozen=True, slots=True)
+class ScoutingVisionConfig:
+    """When stale scouting information becomes an active-vision need."""
+
+    target_key: str = "enemy_main"
+    max_without_vision: float = 120.0
+    request_cadence: float = 5.0
+    request_ttl: float = 12.0
+    urgency: VisionUrgency = VisionUrgency.NORMAL
+
+    def __post_init__(self) -> None:
+        if not self.target_key.strip():
+            raise ValueError("target_key must not be empty")
+        if min(
+            self.max_without_vision, self.request_cadence, self.request_ttl
+        ) <= 0.0:
+            raise ValueError("vision age, cadence and ttl must be positive")
+
+
+@dataclass(frozen=True, slots=True)
+class ScoutingVisionAssessment:
+    now: float
+    target: Point2 | None
+    visible_now: bool
+    last_observed_at: float | None
+    seconds_without_vision: float
+
+    def log_fields(self) -> dict[str, Any]:
+        return {
+            "target": None if self.target is None else [self.target.x, self.target.y],
+            "visible_now": self.visible_now,
+            "last_observed_at": self.last_observed_at,
+            "seconds_without_vision": self.seconds_without_vision,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ScoutingVisionPlan:
+    target: Point2
+    urgency: VisionUrgency
+    requester: str
+    reason: str
+    ttl: float
+
+    def log_fields(self) -> dict[str, Any]:
+        return {
+            "target": [self.target.x, self.target.y],
+            "urgency": self.urgency.name,
+            "requester": self.requester,
+            "reason": self.reason,
+            "ttl": self.ttl,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ScoutingVisionDecision:
+    plan: ScoutingVisionPlan
+    result: VisionRequestResult

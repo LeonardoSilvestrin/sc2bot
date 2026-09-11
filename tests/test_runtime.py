@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from ares.consts import BUILD_CHOICES, CYCLE
 from sc2.ids.unit_typeid import UnitTypeId
@@ -524,6 +524,34 @@ class RuntimePilotTests(unittest.IsolatedAsyncioTestCase):
                 ),
                 chosen_opening="BioThreeOneOne",
             ),
+        )
+
+    async def test_runtime_wires_stale_main_vision_to_scanner_sweep(self):
+        bot = self._opening_bot(minerals=500)
+        orbital = bot.structures[0]
+        orbital.type_id = UnitTypeId.ORBITALCOMMAND
+        orbital.energy = 100.0
+        vision_commands = SimpleNamespace(
+            has_vision=Mock(return_value=False),
+            scan=Mock(return_value=True),
+        )
+
+        runtime = BotRuntime(logger=FakeLogger())
+        with (
+            patch(
+                "bot.app.runtime.AresVisionCommands",
+                return_value=vision_commands,
+            ),
+            patch(
+                "bot.app.runtime.AresEconomyCommands",
+                return_value=FakeEconomyCommands(),
+            ),
+            patch("bot.app.runtime.register_baseline_behaviors"),
+        ):
+            await runtime.on_step(bot, iteration=1)
+
+        vision_commands.scan.assert_called_once_with(
+            orbital_tag=999, target=Point2((90, 90))
         )
 
     async def test_runtime_drives_economy_once_build_completes(self):

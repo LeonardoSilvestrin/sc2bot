@@ -9,7 +9,13 @@ from sc2.ids.unit_typeid import UnitTypeId
 from bot.world.attention import AttentionSnapshot, WorldFacts
 from bot.world.awareness import AwarenessSnapshot
 
-from .model import IntelAssessment, IntelConfig, ScoutTarget
+from .model import (
+    IntelAssessment,
+    IntelConfig,
+    ScoutingVisionAssessment,
+    ScoutingVisionConfig,
+    ScoutTarget,
+)
 
 
 @dataclass(slots=True)
@@ -65,3 +71,30 @@ class IntelAssessor:
         if preferred_alive:
             return self.config.unit_types
         return self.config.fallback_unit_types
+
+
+@dataclass(slots=True)
+class ScoutingVisionAssessor:
+    """Measure whether a selected scouting region needs active vision."""
+
+    config: ScoutingVisionConfig = field(default_factory=ScoutingVisionConfig)
+
+    def assess(
+        self, attention: AttentionSnapshot, awareness: AwarenessSnapshot
+    ) -> ScoutingVisionAssessment:
+        world = attention.world
+        observation = world.map.observation(self.config.target_key)
+        knowledge = awareness.enemy.location(self.config.target_key)
+        last_observed_at = None if knowledge is None else knowledge.last_observed_at
+        seconds_without_vision = (
+            world.time
+            if last_observed_at is None
+            else max(0.0, world.time - last_observed_at)
+        )
+        return ScoutingVisionAssessment(
+            now=world.time,
+            target=None if observation is None else observation.position,
+            visible_now=False if observation is None else observation.visible_now,
+            last_observed_at=last_observed_at,
+            seconds_without_vision=seconds_without_vision,
+        )

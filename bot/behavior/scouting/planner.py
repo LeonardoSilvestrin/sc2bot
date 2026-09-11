@@ -12,12 +12,21 @@ from dataclasses import dataclass, field
 from bot.behavior.contracts import BehaviorLog
 from bot.engine.missions.models import MissionProposal, UnitRequirement
 from bot.engine.missions.planning import ProposalCadence
+from bot.engine.services import BehaviorServices, VisionRequestResult
 from bot.ports.logging import BotLogger
 from bot.world.attention import AttentionSnapshot
 from bot.world.awareness import AwarenessSnapshot
 
-from .assessment import IntelAssessor
-from .model import IntelAssessment, IntelConfig, ScoutPlan
+from .assessment import IntelAssessor, ScoutingVisionAssessor
+from .model import (
+    IntelAssessment,
+    IntelConfig,
+    ScoutingVisionAssessment,
+    ScoutingVisionConfig,
+    ScoutingVisionDecision,
+    ScoutingVisionPlan,
+    ScoutPlan,
+)
 
 COMPONENT = "behavior.scouting"
 
@@ -118,3 +127,72 @@ class IntelPlanner:
             can_preempt=False,
             commitment_seconds=5.0,
         )
+
+
+@dataclass(slots=True)
+class ScoutingVisionRequester:
+    """Turn stale scouting information into a provider-agnostic vision request."""
+
+    services: BehaviorServices
+    config: ScoutingVisionConfig = field(default_factory=ScoutingVisionConfig)
+    logger: BotLogger | None = None
+    requester_id: str = "scouting"
+    _assessor: ScoutingVisionAssessor = field(init=False, repr=False)
+    _cadence: ProposalCadence = field(
+        default_factory=ProposalCadence, init=False, repr=False
+    )
+    _log: BehaviorLog = field(init=False, repr=False)
+    last_assessment: ScoutingVisionAssessment | None = field(
+        default=None, init=False
+    )
+    last_decision: ScoutingVisionDecision | None = field(default=None, init=False)
+
+    def __post_init__(self) -> None:
+        self._assessor = ScoutingVisionAssessor(config=self.config)
+        self._log = BehaviorLog(
+            component="behavior.scouting.vision", logger=self.logger
+        )
+
+    def _plan(
+        self, assessment: ScoutingVisionAssessment
+    ) -> ScoutingVisionPlan | None:
+        if assessment.target is None or assessment.visible_now:
+            return None
+        if assessment.seconds_without_vision < self.config.max_without_vision:
+            return None
+        return ScoutingVisionPlan(
+            target=assessment.target,
+            urgency=self.config.urgency,
+            requester=self.requester_id,
+            reason=f"{self.config.target_key}_vision_stale",
+            ttl=self.config.request_ttl,
+        )
+
+    def tick(
+        self, attention: AttentionSnapshot, awareness: AwarenessSnapshot
+    ) -> VisionRequestResult | None:
+        assessment = self._assessor.assess(attention, awareness)
+        self.last_assessment = assessment
+        plan = self._plan(assessment)
+        if plan is None or not self._cadence.ready(
+            assessment.now, self.config.request_cadence
+        ):
+            self.last_decision = None
+            return None
+        self._cadence.mark(assessment.now)
+        result = self.services.vision.request(
+            position=plan.target,
+            urgency=plan.urgency,
+            requester=plan.requester,
+            reason=plan.reason,
+            ttl=plan.ttl,
+        )
+        self.last_decision = ScoutingVisionDecision(plan=plan, result=result)
+        self._log.assessed(assessment, now=assessment.now, decision="request_vision")
+        self._log.proposed(
+            plan,
+            now=assessment.now,
+            request_id=result.request_id,
+            request_status=result.status.name,
+        )
+        return result

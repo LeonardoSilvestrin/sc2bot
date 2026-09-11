@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from enum import Enum, auto
 
 from bot.engine.missions.models import Mission
+from bot.engine.services import BehaviorServices
 from bot.ports.mission_commands import MissionCommands
 from bot.world.attention import AttentionSnapshot, UnitSnapshot
 from bot.world.awareness import AwarenessSnapshot
@@ -33,6 +34,7 @@ class MissionContext:
     awareness: AwarenessSnapshot
     assigned_units: tuple[UnitSnapshot, ...]
     commands: MissionCommands
+    services: BehaviorServices | None = None
 
 
 class MissionExecutor(ABC):

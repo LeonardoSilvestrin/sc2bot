@@ -19,6 +19,7 @@ from bot.engine.missions.models import (
     MissionSnapshot,
     MissionStatus,
 )
+from bot.engine.services import BehaviorServices
 from bot.engine.squads import SquadController
 from bot.ports.logging import BotLogger
 from bot.ports.mission_commands import MissionCommands
@@ -58,6 +59,7 @@ class MissionController:
         awareness: AwarenessSnapshot,
         proposals: tuple[MissionProposal, ...],
         commands: MissionCommands,
+        services: BehaviorServices | None = None,
     ) -> None:
         now = attention.world.time
         self.allocator.sync(attention.world.own_units)
@@ -142,7 +144,9 @@ class MissionController:
                     self._block(mission, "unit_requirements_not_satisfied", now)
                 continue
 
-            await self._advance_executor(mission, now, attention, awareness, commands)
+            await self._advance_executor(
+                mission, now, attention, awareness, commands, services
+            )
 
     def _preemption_cost(self, mission: Mission) -> float:
         """Ask the running executor what interrupting it costs right now.
@@ -257,6 +261,7 @@ class MissionController:
         attention: AttentionSnapshot,
         awareness: AwarenessSnapshot,
         commands: MissionCommands,
+        services: BehaviorServices | None,
     ) -> None:
         if mission.started_at is None:
             try:
@@ -292,6 +297,7 @@ class MissionController:
                     awareness=awareness,
                     assigned_units=self.allocator.assigned_units(mission.mission_id),
                     commands=commands,
+                    services=services,
                 )
             )
         except Exception as error:
