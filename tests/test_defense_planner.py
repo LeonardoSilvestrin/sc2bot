@@ -7,7 +7,8 @@ from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
 from bot.behavior.defense import DefenseAssessor, DefensePlanner
-from bot.engine.missions import MissionKind
+from bot.engine.missions import MissionKind, UnitRequirement
+from bot.engine.missions.allocator import UnitAllocator
 from bot.world.attention import (
     AttentionSnapshot,
     MapFacts,
@@ -63,6 +64,21 @@ def enemy_worker(tag: int, position: Point2) -> UnitSnapshot:
         can_attack_air=False,
         can_attack_ground=True,
         visible_now=True,
+    )
+
+
+def own_unit(
+    tag: int, unit_type: UnitTypeId, position: Point2, *, flying: bool = False
+) -> UnitSnapshot:
+    return UnitSnapshot(
+        tag=tag,
+        unit_type=unit_type,
+        position=position,
+        health_percentage=1.0,
+        is_flying=flying,
+        is_worker=False,
+        can_attack_air=False,
+        can_attack_ground=True,
     )
 
 
@@ -294,8 +310,8 @@ class DefenseAssessmentTests(unittest.TestCase):
     def test_separates_air_from_ground_attackers(self):
         """The composition, not just the size, of what is hitting the base.
 
-        Nothing chooses defenders from this yet -- it is what a future
-        `type_desirability` will be derived from.
+        The planner derives `type_desirability` from this split; see
+        `DefenderPreferenceTests`.
         """
 
         current = attention(
@@ -348,6 +364,87 @@ class DefenseAssessmentTests(unittest.TestCase):
         self.assertEqual(
             {event["component"] for event in logger.events}, {"behavior.defense"}
         )
+
+
+class DefenderPreferenceTests(unittest.TestCase):
+    """Which of the available units are actually worth pulling for this attack."""
+
+    TANK = own_unit(20, UnitTypeId.SIEGETANK, Point2((40, 40)))
+    SIEGED_TANK = own_unit(21, UnitTypeId.SIEGETANKSIEGED, Point2((40, 40)))
+    MARINE = own_unit(22, UnitTypeId.MARINE, Point2((12, 12)))
+    MARAUDER = own_unit(23, UnitTypeId.MARAUDER, Point2((12, 12)))
+    BANSHEE = own_unit(24, UnitTypeId.BANSHEE, Point2((40, 40)), flying=True)
+
+    def requirement_against(self, *enemies: UnitSnapshot) -> UnitRequirement:
+        current = attention(10.0, enemy_units=enemies)
+        proposals = DefensePlanner().propose(
+            current, AwarenessService().update(current)
+        )
+        self.assertEqual(len(proposals), 1)
+        return proposals[0].requirement
+
+    def test_a_ground_attack_makes_tanks_the_most_wanted_defender(self):
+        requirement = self.requirement_against(enemy_marine(1, Point2((12, 10))))
+
+        self.assertEqual(requirement.utility_for(self.TANK), 1.0)
+        self.assertEqual(requirement.utility_for(self.SIEGED_TANK), 1.0)
+        for bio in (self.MARINE, self.MARAUDER):
+            self.assertGreater(requirement.utility_for(bio), 0.0)
+            self.assertLess(requirement.utility_for(bio), 1.0)
+
+    def test_an_air_only_attack_never_requests_tanks_or_banshees(self):
+        requirement = self.requirement_against(enemy_mutalisk(1, Point2((12, 10))))
+
+        for useless in (self.TANK, self.SIEGED_TANK, self.BANSHEE):
+            self.assertEqual(requirement.utility_for(useless), 0.0)
+        self.assertEqual(requirement.utility_for(self.MARINE), 1.0)
+
+    def test_a_mixed_attack_still_wants_tanks_for_its_ground_part(self):
+        requirement = self.requirement_against(
+            enemy_marine(1, Point2((12, 10))), enemy_mutalisk(2, Point2((12, 11)))
+        )
+
+        self.assertEqual(requirement.utility_for(self.TANK), 1.0)
+
+    def test_the_allocator_pulls_a_distant_tank_only_against_the_ground(self):
+        """The planner's answer, not the allocator, decides who is pulled."""
+
+        cases = (
+            (enemy_marine(1, Point2((12, 10))), (self.TANK.tag,)),
+            (enemy_mutalisk(1, Point2((12, 10))), (self.MARINE.tag,)),
+        )
+        for enemy, expected in cases:
+            with self.subTest(enemy=enemy.unit_type.name):
+                allocator = UnitAllocator()
+                allocator.sync((self.TANK, self.MARINE))
+                result = allocator.allocate(
+                    mission_id="defense",
+                    priority=95,
+                    requirement=replace(
+                        self.requirement_against(enemy), desired=1, minimum=1
+                    ),
+                    objective=Point2((12, 10)),
+                    now=10.0,
+                    can_preempt=True,
+                    commitment_seconds=3.0,
+                )
+                self.assertEqual(result.assigned_tags, expected)
+
+    def test_the_plan_logs_which_defenders_it_wants(self):
+        logger = FakeLogger()
+        current = attention(
+            10.0, enemy_units=(enemy_mutalisk(1, Point2((12, 10))),)
+        )
+
+        DefensePlanner(logger=logger).propose(
+            current, AwarenessService().update(current)
+        )
+
+        proposed = next(
+            event for event in logger.events if event["name"] == "behavior.proposed"
+        )
+        self.assertEqual(proposed["data"]["air_threats"], 1)
+        self.assertEqual(proposed["data"]["type_desirability"]["SIEGETANK"], 0.0)
 
 
 if __name__ == "__main__":

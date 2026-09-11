@@ -5,13 +5,16 @@ CRITICAL, so several bases under attack at the same time get independent
 missions instead of competing for a single global "own_base" slot, and a
 base that already has enough defenders nearby does not pull reinforcements
 it does not need. Requested unit count grows with how outnumbered the base's
-current defenders are.
+current defenders are; which defenders are asked for first depends on what
+is attacking.
 """
 
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+
+from sc2.ids.unit_typeid import UnitTypeId
 
 from bot.behavior.contracts import BehaviorLog
 from bot.engine.missions.models import MissionProposal, UnitRequirement
@@ -142,7 +145,25 @@ class DefensePlanner:
                 if base.is_critical
                 else "base_outnumbered_by_observed_threat"
             ),
+            type_desirability=self._type_desirability(base),
         )
+
+    def _type_desirability(
+        self, base: ThreatenedBase
+    ) -> tuple[tuple[UnitTypeId, float], ...]:
+        """Which of the available defenders are worth pulling for this attack.
+
+        Two explicit rules, and they stay here in Defense: anything on the
+        ground makes Tanks the most wanted defender; an attack only in the
+        air makes Tanks and Banshees worth nothing. `UnitAllocator` only
+        ranks candidates by the answer and never requests a 0.0.
+        """
+
+        if base.ground_threats > 0:
+            return self.config.ground_threat_desirability
+        if base.air_threats > 0:
+            return self.config.air_only_threat_desirability
+        return ()
 
     def _proposal_for(self, plan: DefensePlan, now: float) -> MissionProposal:
         sequence = self._cadence.next_sequence()
@@ -161,11 +182,7 @@ class DefensePlanner:
                 desired=plan.desired_units,
                 minimum=self.config.minimum_units,
                 minimum_health=self.config.minimum_unit_health,
-                # Every defender type is equally wanted for now. This is the
-                # seam where "Thors and Marines against Mutalisks, and leave
-                # the Banshees on their raid" will be expressed -- see
-                # `ThreatenedBase.air_threats`/`ground_threats`, which the
-                # assessment already carries.
+                type_desirability=plan.type_desirability,
             ),
             created_at=now,
             timeout_seconds=self.config.mission_timeout,
