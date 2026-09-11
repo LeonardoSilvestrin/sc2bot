@@ -22,10 +22,10 @@ bot/behavior/
   scouting/               -> information missions
       each of the six holding exactly:
       model.py  assessment.py  planner.py  executor.py
-  macro/                  -> the economic track (see below)
 
 bot/engine/missions/      -> controller, board, allocator, models, execution contracts
 bot/app/mission_registry.py -> concrete executor wiring
+bot/macro/                -> not a behavior: what to buy (see below)
 ```
 
 Every mission behavior uses the same four filenames, so any behavior answers
@@ -34,12 +34,12 @@ situation), `planner.py` (what do we want and at what priority),
 `executor.py` (how do we do it now), `model.py` (the types those three
 share). A test enforces the shape.
 
-`macro/` is deliberately outside that contract: it produces
-`EconomicProposal`s admitted against a virtual bank, claims no unit, holds no
-mission and has no executor, so the four-file shape would be a costume
-rather than a structure. Its own split is by spend domain --
-`planner/army_demand.py` plays the assessment role and `macro_planner.py`
-composes one builder per concern. See [macro-planner.md](macro-planner.md).
+What to *buy* is not a behavior at all. Production, construction, tech and
+expansion live in `bot/macro/`, beside `bot/behavior/` rather than inside
+it, and are admitted by `bot/engine/economy` against the bank -- no unit,
+mission or squad involved. The Banshee raid reads how many Banshees exist;
+producing them is the `BansheeCloak` macro profile's decision. See
+[macro-planner.md](macro-planner.md).
 
 `MissionKind` gained `HARASS`, `AIR_HARASS`, and `DEFENSE` in
 `bot/engine/missions/models.py`; it stays the shared vocabulary in the mission

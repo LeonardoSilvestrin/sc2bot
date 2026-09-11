@@ -16,8 +16,9 @@ the mission-planner roster, then follow whichever slice is relevant:
 
 - [contracts.md](architecture/contracts.md) -- dependency rules, mission
   kinds/priorities, the full frame lifecycle, and the causal logging catalog.
-  `bot/behavior/contracts.py` is the code-level counterpart: the
-  `ASSESS -> PLAN -> EXECUTE` protocols every behavior follows.
+  `bot/behavior/contracts.py` is the code-level counterpart for behaviors
+  (the `ASSESS -> PLAN -> EXECUTE` protocols every behavior follows), and
+  `bot/macro/contracts.py` for macro (`SpendPlanner`).
 - [base-model.md](architecture/base-model.md) -- per-base threat/protection
   scoring behind `DefensePlanner`.
 - [harass-and-defense-planners.md](architecture/harass-and-defense-planners.md)
@@ -28,8 +29,8 @@ the mission-planner roster, then follow whichever slice is relevant:
   behavior (`StandingPlanner`/`CombatPosture`) that owns every combat unit
   no special mission has claimed.
 - [map-control.md](architecture/map-control.md) -- the safe patrol mission.
-- [macro-planner.md](architecture/macro-planner.md) -- the economic
-  (`EconomicProposal`/`EconomyController`) arbitration track.
+- [macro-planner.md](architecture/macro-planner.md) -- `bot/macro`, the
+  spend domain beside `bot/behavior` (`EconomicProposal`/`EconomyController`).
 - [opening.md](architecture/opening.md) -- the Ares build-order openings and
   how they hand off to `MacroPlanner`.
 - [scout-pilot-migration.md](architecture/scout-pilot-migration.md) -- the

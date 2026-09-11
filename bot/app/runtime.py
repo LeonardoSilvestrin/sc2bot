@@ -3,8 +3,6 @@ from __future__ import annotations
 import random
 
 from ares.consts import BUILD_CHOICES, CYCLE, DEBUG, TEST_OPPONENT_ID
-from sc2.dicts.unit_trained_from import UNIT_TRAINED_FROM
-from sc2.ids.unit_typeid import UnitTypeId
 
 from bot.adapters.ares import (
     AresEconomyCommands,
@@ -16,24 +14,12 @@ from bot.app.mission_registry import build_executor_factories
 from bot.behavior.defense import DefenseConfig, DefensePlanner
 from bot.behavior.harass.banshee import BansheeHarassConfig, BansheeHarassPlanner
 from bot.behavior.harass.reaper import ReaperHarassConfig, ReaperHarassPlanner
-from bot.behavior.macro import (
-    MacroPlanner,
-    MacroPlannerConfig,
-    macro_config_for_opening,
-)
 from bot.behavior.map_control import MapControlConfig, MapControlPlanner
 from bot.behavior.scouting import IntelConfig, IntelPlanner
 from bot.behavior.standing import StandingConfig, StandingPlanner
-from bot.engine.economy import (
-    EconomicFeedback,
-    EconomyController,
-    EconomyTickResult,
-    ResourceBank,
-    ResourceCost,
-    merge_economic_feedback,
-    observe_economic_confirmations,
-)
+from bot.engine.economy import EconomyController
 from bot.engine.missions import MissionController
+from bot.macro import MacroDiagnostics, MacroPlanner, MacroPlannerConfig
 from bot.ports.logging import BotLogger
 from bot.world.attention import AttentionService
 from bot.world.awareness import AwarenessService, AwarenessSnapshot
@@ -51,18 +37,18 @@ _OPENING_ANNOUNCEMENTS: dict[str, str] = {
 
 
 class BotRuntime:
-    """Composition root wiring Attention/Awareness into the mission planners."""
+    """Composition root: one read side, two domains.
+
+    Attention and Awareness feed the behavior planners, whose missions
+    `MissionController` admits and runs on units, and `MacroPlanner`, whose
+    purchases `EconomyController` admits against the bank and dispatches.
+    Neither domain knows the other exists; this class only wires them.
+    """
 
     # How long an eligible combat unit may sit without any mission owning it
     # before it is worth a distinct log line -- the standing behavior is the
     # default owner, so this should not normally happen at all.
     _UNASSIGNED_WARNING_AFTER = 15.0
-    # Macro state is logged on change, plus this heartbeat so a stable but
-    # wrong state (banking with nothing in demand) still shows up.
-    _MACRO_LOG_INTERVAL = 10.0
-    # A producer can legitimately be idle for a moment; this long with a unit
-    # owed and the money free is a bug in some layer above.
-    _IDLE_PRODUCER_WARNING_AFTER = 15.0
 
     def __init__(
         self,
@@ -83,13 +69,13 @@ class BotRuntime:
         self.banshee_harass_config = banshee_harass_config or BansheeHarassConfig()
         self.reaper_harass_config = reaper_harass_config or ReaperHarassConfig()
         self.defense_config = defense_config or DefenseConfig()
-        self.macro_config = macro_config or MacroPlannerConfig()
         self.map_control_config = map_control_config or MapControlConfig()
         self.standing_config = standing_config or StandingConfig()
         self.world_observer = AresWorldObserver()
         self.awareness = AwarenessService(
             location_stale_after=self.intel_config.location_stale_after
         )
+        # Behavior domain: planners propose missions for units on the map.
         self.intel_planner = IntelPlanner(config=self.intel_config, logger=logger)
         self.banshee_harass_planner = BansheeHarassPlanner(
             config=self.banshee_harass_config, logger=logger
@@ -98,7 +84,6 @@ class BotRuntime:
             config=self.reaper_harass_config, logger=logger
         )
         self.defense_planner = DefensePlanner(config=self.defense_config, logger=logger)
-        self.macro_planner = MacroPlanner(config=self.macro_config)
         self.map_control_planner = MapControlPlanner(
             config=self.map_control_config, logger=logger
         )
@@ -118,10 +103,6 @@ class BotRuntime:
             # tick regardless).
             self.standing_planner,
         )
-        # `chosen_opening` is unknown until the Ares build runner resolves it
-        # (never, if a caller pins `macro_config` explicitly, e.g. tests) --
-        # see `_resolve_macro_profile`.
-        self._macro_profile_resolved = macro_config is not None
         self.missions = MissionController(
             logger=logger,
             executor_factories=build_executor_factories(
@@ -134,8 +115,15 @@ class BotRuntime:
                 logger=logger,
             ),
         )
+        # Macro domain: what to spend on, admitted against the bank. The
+        # opening is unknown until the Ares build runner resolves it, so the
+        # planner follows it -- unless a caller pins `macro_config` (tests).
+        self.macro_planner = MacroPlanner(
+            config=macro_config or MacroPlannerConfig(),
+            follow_opening=macro_config is None,
+        )
         self.economy = EconomyController(logger=logger)
-        self._pending_economic_feedback: tuple[EconomicFeedback, ...] = ()
+        self.macro_diagnostics = MacroDiagnostics(logger=logger)
         self._last_build_signature: tuple | None = None
         self._last_world_signature: tuple | None = None
         self._last_world_snapshot_at: float = -999.0
@@ -145,9 +133,6 @@ class BotRuntime:
         self._last_standing_signature: tuple | None = None
         self._last_standing_log_at: float = -999.0
         self._unassigned_eligible_since: float | None = None
-        self._last_macro_signature: tuple | None = None
-        self._last_macro_log_at: float = -999.0
-        self._idle_producer_since: dict[UnitTypeId, float] = {}
 
     async def on_start(self, bot) -> None:
         await self._choose_and_announce_opening(bot)
@@ -233,12 +218,13 @@ class BotRuntime:
         attention = AttentionService.build(world=world)
         awareness = self.awareness.update(attention)
         await self._announce_awareness_changes(bot, awareness)
+
+        # Behavior: units already on the map, owned through missions.
         proposals = tuple(
             proposal
             for planner in self._mission_planners
             for proposal in planner.propose(attention, awareness)
         )
-
         register_baseline_behaviors(bot)
         commands = AresMissionCommands(bot, self.missions.allocator)
         await self.missions.tick(
@@ -248,240 +234,24 @@ class BotRuntime:
             commands=commands,
         )
 
-        runner = getattr(bot, "build_order_runner", None)
-        self._resolve_macro_profile(runner)
-        # Macro runs during the opening too. The build runner keeps executing
-        # its own steps (Ares drives that from its own `on_step`); what we owe
-        # it is the money for the next ones, which `protected` withholds. An
-        # unfinished opening is a set of commitments, not a freeze on macro.
-        economic_proposals = self.macro_planner.propose(attention, awareness)
-        observed_feedback = observe_economic_confirmations(
-            self.economy.snapshots(), world.economy
+        # Macro: what to spend on, admitted against the bank -- no unit, no
+        # mission. It runs during the opening too. The build runner keeps
+        # executing its own steps (Ares drives that from its own `on_step`);
+        # what we owe it is the money for the next ones, which the economy
+        # controller withholds as protected. An unfinished opening is a set
+        # of commitments, not a freeze on macro.
+        economy_result = self.economy.step(
+            attention=attention,
+            proposals=self.macro_planner.propose(attention, awareness),
+            commands=AresEconomyCommands(bot),
         )
-        feedback = merge_economic_feedback(
-            observed_feedback, self._pending_economic_feedback
-        )
-        bank = ResourceBank(
-            minerals=max(0, world.minerals),
-            vespene=max(0, world.vespene),
-            supply_available=max(0.0, world.supply_cap - world.supply_used),
-        )
-        protected = ResourceCost(
-            minerals=world.economy.protected_minerals,
-            vespene=world.economy.protected_vespene,
-        )
-        economy_result = self.economy.tick(
-            now=world.time,
-            bank=bank,
-            proposals=economic_proposals,
-            feedback=feedback,
-            protected=protected,
-        )
-        economy_commands = AresEconomyCommands(bot)
-        live_actions = tuple(
-            snapshot.action
-            for snapshot in self.economy.snapshots()
-            if not snapshot.status.terminal
-        )
-        self._pending_economic_feedback = tuple(
-            dispatched
-            for action in live_actions
-            if (dispatched := economy_commands.dispatch(action)) is not None
+        self.macro_diagnostics.report(
+            attention, self.macro_planner.last_status, economy_result
         )
 
-        self._log_macro(attention, bank, economy_result)
-        self._log_idle_producers(attention, bank, protected)
         self._log_build_order(bot, game_time=world.time)
         self._log_world_snapshots(attention, awareness)
         self._log_standing(attention)
-
-    def _resolve_macro_profile(self, runner) -> None:
-        """Pick the post-opening `MacroGoalSet` matching the chosen opening.
-
-        The Ares build runner only knows `chosen_opening` once it selects a
-        build from `terran_builds.yml`, which is not yet resolved at
-        `BotRuntime.__init__`. Resolved once and then locked in: an opening
-        does not change mid-game, and re-resolving every frame would just
-        rebuild an identical `MacroPlanner` for no reason.
-        """
-
-        if self._macro_profile_resolved:
-            return
-        opening = str(getattr(runner, "chosen_opening", "") or "")
-        if not opening:
-            return
-        self.macro_config = macro_config_for_opening(opening)
-        self.macro_planner = MacroPlanner(config=self.macro_config)
-        self._macro_profile_resolved = True
-
-    def _log_macro(
-        self,
-        attention,
-        bank: ResourceBank,
-        result: EconomyTickResult,
-    ) -> None:
-        """Make "why is it not spending?" answerable from the log.
-
-        One line carrying the four resource quantities, the army debt, the
-        per-producer utilization and each capacity verdict -- the reasons the
-        economy controller emits per proposal explain the rest.
-        """
-
-        status = self.macro_planner.last_status
-        if status is None:
-            return
-        world = attention.world
-        demand = status.demand
-        unit_demand = {
-            unit.unit_type.name: unit.missing
-            for unit in demand.units
-            if unit.buildable_shortfall > 0
-        }
-        # Owed, but the game will not allow it yet: the reason a producer for
-        # it is standing still, and a reason not to reserve minerals for it.
-        tech_blocked = {
-            unit.unit_type.name: unit.missing
-            for unit in demand.units
-            if unit.missing > 0 and not unit.tech_ready
-        }
-        capacity = {
-            assessment.structure_type.name: {
-                "demanded": assessment.demanded,
-                "current": assessment.current,
-                "desired": assessment.desired,
-                "reason": assessment.reason,
-            }
-            for assessment in status.capacity
-        }
-        signature = (
-            round(demand.desired_supply, 1),
-            round(demand.current_supply, 1),
-            tuple(sorted(unit_demand.items())),
-            tuple(sorted(tech_blocked.items())),
-            tuple(sorted((name, str(value)) for name, value in capacity.items())),
-            tuple(sorted(proposal.deduplication_key for proposal in status.proposals)),
-        )
-        periodic = world.time - self._last_macro_log_at >= self._MACRO_LOG_INTERVAL
-        if signature == self._last_macro_signature and not periodic:
-            return
-        self._last_macro_signature = signature
-        self._last_macro_log_at = world.time
-
-        self.logger.event(
-            "macro.status",
-            component="behavior.macro.planner",
-            game_time=world.time,
-            data={
-                "opening": {
-                    "name": world.economy.opening_name,
-                    "completed": world.economy.opening_completed,
-                },
-                "resources": {
-                    "bank": [bank.minerals, bank.vespene],
-                    "protected": [
-                        result.protected_cost.minerals,
-                        result.protected_cost.vespene,
-                    ],
-                    "reserved": [
-                        result.reserved_cost.minerals,
-                        result.reserved_cost.vespene,
-                    ],
-                    "free": [
-                        result.available_bank.minerals,
-                        result.available_bank.vespene,
-                    ],
-                },
-                "army": {
-                    "desired_supply": round(demand.desired_supply, 1),
-                    "ready_supply": round(demand.ready_supply, 1),
-                    "pending_supply": round(demand.pending_supply, 1),
-                    "supply_debt": round(demand.supply_debt, 1),
-                },
-                "unit_demand": unit_demand,
-                "tech_blocked": tech_blocked,
-                "production": [
-                    {
-                        "type": producer.unit_type.name,
-                        "ready": producer.ready,
-                        "idle": producer.idle,
-                        "pending": producer.pending,
-                        "utilization_20s": round(producer.utilization_20s, 2),
-                    }
-                    for producer in world.economy.producers
-                ],
-                "capacity": capacity,
-                "proposals": [
-                    {
-                        "key": proposal.deduplication_key,
-                        "priority": proposal.priority,
-                        "reason": proposal.reason,
-                    }
-                    for proposal in status.proposals
-                ],
-            },
-        )
-
-    def _log_idle_producers(
-        self,
-        attention,
-        bank: ResourceBank,
-        protected: ResourceCost,
-    ) -> None:
-        """Flag production that is idle with no reason to be.
-
-        Idle is often correct: saving for a protected timing, nothing this
-        structure makes being wanted, or the owed unit needing an add-on this
-        particular building may not have -- ``macro.status`` carries all
-        three. This warning is deliberately narrow so that it stays worth
-        reading: something a bare structure of this type could build is owed,
-        the money for it is free, and it still has not been built.
-        """
-
-        status = self.macro_planner.last_status
-        if status is None:
-            return
-        world = attention.world
-        spendable = bank.hold_towards(protected)
-        buildable_here = status.demand.producer_types_in_demand
-        for producer in world.economy.producers:
-            owed = tuple(
-                unit
-                for unit in status.demand.units
-                if unit.buildable_shortfall > 0
-                and producer.unit_type
-                in UNIT_TRAINED_FROM.get(unit.unit_type, ())
-            )
-            unexplained = (
-                producer.idle > 0
-                and producer.unit_type in buildable_here
-                and any(spendable.can_afford(unit.cost) for unit in owed)
-            )
-            if not unexplained:
-                self._idle_producer_since.pop(producer.unit_type, None)
-                continue
-            since = self._idle_producer_since.setdefault(
-                producer.unit_type, world.time
-            )
-            if world.time - since < self._IDLE_PRODUCER_WARNING_AFTER:
-                continue
-            self._idle_producer_since[producer.unit_type] = world.time
-            self.logger.event(
-                "macro.idle_producer_unexplained",
-                component="behavior.macro.planner",
-                game_time=world.time,
-                data={
-                    "producer": producer.unit_type.name,
-                    "idle": producer.idle,
-                    "ready": producer.ready,
-                    "utilization_20s": round(producer.utilization_20s, 2),
-                    "owed_units": {unit.unit_type.name: unit.missing for unit in owed},
-                    "spendable": [spendable.minerals, spendable.vespene],
-                    "protected": [protected.minerals, protected.vespene],
-                    "duration_seconds": round(
-                        world.time - since, 1
-                    ),
-                },
-            )
 
     def _log_build_order(self, bot, *, game_time: float) -> None:
         runner = getattr(bot, "build_order_runner", None)

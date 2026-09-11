@@ -14,6 +14,9 @@ A behavior small enough not to need four files may collapse them; what it
 may not do is blur the responsibilities. In particular an assessment only
 *describes* -- it never takes ownership of a unit or creates a mission --
 and a planner only *proposes* -- `MissionController` alone admits.
+
+Everything here is about units already on the map. Deciding what to buy is
+a different contract with a different controller: see `bot.macro.contracts`.
 """
 
 from __future__ import annotations

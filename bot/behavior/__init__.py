@@ -1,4 +1,10 @@
-"""Gameplay behaviors, one vertical slice per behavior.
+"""Gameplay behaviors: what units already on the map do.
+
+A behavior works with missions, squads and unit leases -- who goes where and
+does what, with which units. What the bot *buys* is not a behavior: units,
+structures, tech and bases are `bot.macro`'s decision, arbitrated against the
+bank by `bot.engine.economy`. A behavior may read what exists (Banshees
+alive, cloak progress); it never proposes spend.
 
 Each behavior owns a folder, and everything specific to it lives there --
 the same four filenames every time, so any behavior answers the same four
@@ -20,7 +26,4 @@ See `contracts.py` for the protocols that fix that vocabulary.
 `bot.engine.missions` -- generic, and deliberately ignorant of what any
 behavior means -- sits between PLAN and EXECUTE: it admits proposals, owns
 units, and arbitrates conflicts.
-
-`macro/` is the exception and says why in its own docstring: it is the
-economic track, owns no unit and has no executor.
 """

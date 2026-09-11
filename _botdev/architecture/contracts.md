@@ -29,6 +29,16 @@
    `path_to` assigns `UnitRole.SCOUTING`, `safe_path_to` assigns
    `UnitRole.MAP_CONTROL`, `attack_move` assigns `UnitRole.ATTACKING`, and
    `release` restores `GATHERING`/`IDLE`.
+10. `bot.behavior` and `bot.macro` never import each other. A behavior may
+    read what exists (unit counts, upgrade progress) through Attention but
+    never proposes spend; macro never names a unit tag, mission, squad or
+    lease. Neither engine (`bot.engine.missions`, `bot.engine.economy`)
+    imports either domain. `tests/test_macro_architecture.py` enforces this.
+11. `EconomyController` alone admits, reserves and dispatches economic
+    actions, through the `EconomyCommands` port. The SCV that lays a
+    structure is chosen by the Ares behavior the adapter invokes; Ares marks
+    it `UnitRole.BUILDING`, which Attention reports as unavailable for
+    missions. That is builder selection, never a mission lease.
 
 ## Mission kinds and priorities
 
@@ -75,9 +85,12 @@ MissionController.tick:
     bind capability-only temporary requests to a compatible squad when possible
     sort live missions by priority, allocate or preempt after the commitment window
     step each active mission's executor through the Ares command port
-if build_order_runner.build_completed:
-    MacroPlanner.propose -> EconomyController.tick against a virtual bank
-    dispatch admitted economic actions through AresEconomyCommands
+MacroPlanner.propose (during the opening too; it only ever spends a surplus)
+EconomyController.step:
+    confirm live actions from Attention, apply last frame's dispatch feedback
+    admit against the observed bank minus the opening's protected cost
+    dispatch every live action through the EconomyCommands port
+MacroDiagnostics.report (macro.status, macro.idle_producer_unexplained)
 log build order progress, world/knowledge snapshots, and disposition state
 ```
 
@@ -111,14 +124,12 @@ sequenceDiagram
     Exec->>Cmd: MissionCommands (path_to/attack_move/...)
     Cmd->>Ares: register Ares behavior
 
-    alt build_order_runner.build_completed
-        Awa-->>Mac: AwarenessSnapshot
-        Att-->>Mac: AttentionSnapshot
-        Mac->>EC: tuple[EconomicProposal]
-        EC->>EC: admit against virtual ResourceBank
-        EC->>Cmd: AresEconomyCommands.dispatch(action)
-        Cmd->>Ares: register macro behavior
-    end
+    Awa-->>Mac: AwarenessSnapshot
+    Att-->>Mac: AttentionSnapshot
+    Mac->>EC: tuple[EconomicProposal]
+    EC->>EC: confirm from Attention, admit against bank minus protected
+    EC->>Cmd: EconomyCommands.dispatch(action), every live action
+    Cmd->>Ares: invoke Ares macro behavior
 ```
 
 ### `MissionController._consider`: admitting one proposal
@@ -174,6 +185,10 @@ where applicable (`proposal_id`, `mission_id`, `deduplication_key`, or
   `economic_action_dispatched`, `economic_action_confirmed`,
   `economic_action_failed`, `economic_action_timed_out`.
 - Invalid economic feedback: `economic_feedback_rejected`.
+- Macro diagnostics (component `macro.planner`, emitted by
+  `bot.macro.MacroDiagnostics` once the economy controller has run):
+  `macro.status` on change plus a ten-second heartbeat, and
+  `macro.idle_producer_unexplained`.
 - Standing army: `standing.updated` (posture, standing slot desired/assigned
   counts, per-kind allocation, unassigned eligible unit count) and
   `standing.unassigned_units_persisting` when eligible combat units have gone
@@ -193,10 +208,11 @@ event timeline and derives its Observation, Knowledge, and Economy views
 exclusively from the structured events above. Component names mirror the current
 package layout (`app.runtime`, `world.attention`, `world.awareness`,
 `behavior.standing`, `behavior.harass.banshee`, `behavior.defense`,
-`behavior.map_control`, `behavior.scouting`, `engine.missions.controller`, and
-`engine.economy.controller`); the viewer's `COMPONENT_ALIASES` table maps
-older component strings (`application.runtime`, `ego.mission_controller`,
-`economy.controller`, `behavior.army.disposition`) onto the current names -- and, for a log old enough that
+`behavior.map_control`, `behavior.scouting`, `macro.planner`,
+`engine.missions.controller`, and `engine.economy.controller`); the viewer's
+`COMPONENT_ALIASES` table maps older component strings
+(`application.runtime`, `ego.mission_controller`, `economy.controller`,
+`behavior.army.disposition`, `behavior.macro.planner`) onto the current names -- and, for a log old enough that
 every event still shared the single `application.runtime` component, further
 splits it into `world.observation`/`world.knowledge` pseudo-components purely
 by event name -- so pre-restructure logs still group correctly in the

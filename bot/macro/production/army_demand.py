@@ -10,7 +10,7 @@ from sc2.ids.unit_typeid import UnitTypeId
 from bot.engine.economy.models import ResourceCost
 from bot.world.attention import EconomyFacts
 
-from ..macro_goals import MacroGoalSet
+from ..strategy.goals import MacroGoalSet
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,7 +117,7 @@ def army_demand(
 
     ``supply_bonus`` widens the target when the bank is overflowing: unspent
     resources are a reason to want a bigger army, not a reason to want more
-    buildings (see ``production_proposals``).
+    buildings (see ``construction.capacity``).
     """
 
     counts = {

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import unittest
+from dataclasses import replace
+
+from sc2.position import Point2
 
 from bot.engine.economy import EconomyController
 from bot.engine.economy.models import (
@@ -12,7 +15,14 @@ from bot.engine.economy.models import (
     ResourceBank,
     ResourceCost,
 )
-from tests.fakes import FakeLogger
+from bot.world.attention import (
+    AttentionSnapshot,
+    CountFacts,
+    EconomyFacts,
+    MapFacts,
+    WorldFacts,
+)
+from tests.fakes import FakeEconomyCommands, FakeLogger
 
 
 def proposal(
@@ -616,6 +626,100 @@ class EconomyControllerTests(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             self.controller.tick(now=1.0, bank=ResourceBank(0, 0, 0.0))
+
+
+def economy_attention(
+    *,
+    time: float,
+    minerals: int = 500,
+    workers: int = 12,
+    protected_minerals: int = 0,
+) -> AttentionSnapshot:
+    return AttentionSnapshot(
+        WorldFacts(
+            iteration=int(time),
+            time=time,
+            minerals=minerals,
+            vespene=0,
+            supply_used=12.0,
+            supply_cap=23.0,
+            own_units=(),
+            enemy_units=(),
+            map=MapFacts(
+                center=Point2((50, 50)),
+                own_start=Point2((10, 10)),
+                enemy_starts=(Point2((90, 90)),),
+            ),
+            economy=EconomyFacts(
+                workers=CountFacts(existing=workers, ready=workers),
+                protected_minerals=protected_minerals,
+            ),
+        )
+    )
+
+
+class EconomyControllerStepTests(unittest.TestCase):
+    """`step` is one frame of the economic track: confirm, admit, dispatch."""
+
+    def setUp(self) -> None:
+        self.controller = EconomyController(logger=FakeLogger())
+        self.commands = FakeEconomyCommands()
+
+    def test_a_live_action_is_dispatched_again_every_frame(self):
+        worker = proposal("worker", key="worker:13")
+
+        for now in (1.0, 2.0):
+            self.controller.step(
+                attention=economy_attention(time=now),
+                proposals=(worker,),
+                commands=self.commands,
+            )
+
+        self.assertEqual(len(self.commands.commands), 2)
+        # The port's report from frame one is applied on frame two.
+        self.assertEqual(
+            self.controller.snapshots()[0].status, EconomicActionStatus.IN_FLIGHT
+        )
+
+    def test_attention_confirms_an_action_and_ends_its_dispatch(self):
+        worker = replace(proposal("worker", key="worker:13"), target_count=13)
+
+        self.controller.step(
+            attention=economy_attention(time=1.0, workers=12),
+            proposals=(worker,),
+            commands=self.commands,
+        )
+        self.controller.step(
+            attention=economy_attention(time=2.0, workers=13),
+            proposals=(),
+            commands=self.commands,
+        )
+
+        self.assertEqual(
+            self.controller.snapshots()[0].status, EconomicActionStatus.COMPLETED
+        )
+        self.assertEqual(len(self.commands.commands), 1)
+
+    def test_the_opening_protection_is_read_from_attention(self):
+        barracks = proposal(
+            "barracks",
+            key="production:barracks",
+            minerals=150,
+            kind=EconomicActionKind.BUILD_PRODUCTION,
+            target="BARRACKS",
+        )
+
+        result = self.controller.step(
+            attention=economy_attention(
+                time=1.0, minerals=200, protected_minerals=100
+            ),
+            proposals=(barracks,),
+            commands=self.commands,
+        )
+
+        self.assertEqual(result.admitted_actions, ())
+        self.assertEqual(result.protected_cost, ResourceCost(minerals=100))
+        self.assertEqual(self.commands.commands, [])
 
 
 if __name__ == "__main__":

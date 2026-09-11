@@ -5,14 +5,14 @@ from dataclasses import replace
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
-from bot.behavior.macro import (
+from bot.engine.economy.models import EconomicActionKind, ResourceCost
+from bot.macro import (
     MacroPlanner,
     MacroPlannerConfig,
     ProductionGoal,
     bio_three_one_one,
 )
-from bot.behavior.macro.planner.army_demand import army_demand
-from bot.engine.economy.models import EconomicActionKind, ResourceCost
+from bot.macro.production.army_demand import army_demand
 from bot.world.attention import (
     AttentionSnapshot,
     CountFacts,

@@ -31,12 +31,20 @@ def test_viewer_covers_the_structured_logging_catalog() -> None:
     assert "function renderObservation()" in html
     assert "function renderEconomyPanel()" in html
     assert 'id="stream-menu"' in html
+    assert 'data-view="summary"' in html
     assert 'data-view="observation"' in html
     assert 'data-view="knowledge"' in html
     assert 'data-view="economy"' in html
     assert "function renderObservationPanel()" in html
     assert "function renderKnowledgePanel()" in html
     assert "function renderEconomySummary()" in html
+    assert "function renderSummary()" in html
+    assert "function renderSummaryPanel()" in html
+    assert "function buildStoryMoments()" in html
+    assert "function renderMetricCard(" in html
+    assert '"behavior.state_changed"' in html
+    assert '"standing.unassigned_units_persisting"' in html
+    assert 'switchView("summary");' in html
     assert "item.planner" in html
     assert '"ego.mission_controller": "engine.missions.controller"' in html
     assert "buildStreams();" in html

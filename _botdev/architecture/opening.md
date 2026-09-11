@@ -27,13 +27,15 @@ harasser is on a live `AIR_HARASS` mission (see
 the opening itself pre-cloaking anything; the opening's only job is to have
 the tech and the units ready.
 
-`bot.behavior.macro.opening_macro_profiles.macro_config_for_opening` maps
+`bot.macro.strategy.openings.macro_config_for_opening` maps
 `chosen_opening` to a matching `MacroGoalSet` (`banshee_cloak()` in
-`bot/behavior/macro/strategy_goal_profiles.py`)
+`bot/macro/strategy/profiles.py`)
 so post-opening macro keeps producing Banshees instead of quietly reverting
-to Bio's composition. `BotRuntime._resolve_macro_profile` performs this
-lookup once `build_order_runner.chosen_opening` is non-empty and locks it in
-for the rest of the game.
+to Bio's composition. `MacroPlanner(follow_opening=True)` performs this
+lookup the first tick `economy.opening_name` is non-empty and locks it in
+for the rest of the game. The Banshee harass behavior never asks for
+Banshees itself: it reads how many exist, and producing them stays this
+macro profile's decision.
 
 ## Cycle order and `UseData`
 

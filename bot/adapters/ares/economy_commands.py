@@ -14,15 +14,18 @@ from bot.engine.economy.models import (
 class AresEconomyCommands:
     """Translate one funded economic action into an Ares macro operation.
 
-    Behaviors are executed here, after Ares updated its managers for the frame,
-    so the economy controller receives truthful dispatch feedback.  Strategic
-    decisions and resource arbitration remain outside this adapter.
+    The Ares side of ``bot.ports.EconomyCommands``. Behaviors are executed
+    here, after Ares updated its managers for the frame, so the economy
+    controller receives truthful dispatch feedback. Strategic decisions
+    (``bot.macro``) and resource arbitration (``bot.engine.economy``) remain
+    outside this adapter. So does unit ownership: the SCV an Ares behavior
+    picks to lay a structure is its builder selection, not a mission lease.
 
     Ares' own macro behaviors (``SpawnController``, ``BuildStructure``, ...)
     are built to be invoked every frame until their goal is met -- one call
     only ever produces one unit of progress (one train order, one worker sent
-    to build). ``bot.app.runtime.BotRuntime`` therefore calls ``dispatch``
-    again on every tick for as long as an action stays pending or in flight,
+    to build). ``EconomyController.step`` therefore calls ``dispatch`` again
+    on every tick for as long as an action stays pending or in flight,
     so a ``False`` return here just means "nothing to do this frame"
     (producer busy, no placement free yet) -- not a failure. Only an
     exception is a real failure worth ending the commitment for; everything

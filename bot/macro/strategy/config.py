@@ -1,14 +1,14 @@
 from dataclasses import dataclass, field
 
-from bot.behavior.macro.reference_build import (
-    ReferenceBuild,
-    bio_three_one_one_reference,
-)
 from bot.engine.economy.models import ResourceCost
 from bot.world.awareness import MacroPosture
 
-from .macro_goals import MacroGoalSet
-from .strategy_goal_profiles import bio_three_one_one
+from .goals import MacroGoalSet
+from .profiles import bio_three_one_one
+from .reference_build import (
+    ReferenceBuild,
+    bio_three_one_one_reference,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,8 +20,8 @@ class ResourceOverflowConfig:
     production. So it raises the army we want (``army_supply_bonus``) and is
     only allowed to raise the number of producers (``production_bonus``)
     once the existing ones are demonstrably saturated -- adding buildings
-    next to idle buildings would convert nothing. See ``army_demand`` and
-    ``production_proposals.assess_capacity``.
+    next to idle buildings would convert nothing. See
+    ``production.army_demand`` and ``construction.capacity.assess_capacity``.
     """
 
     mineral_threshold: float = 800.0

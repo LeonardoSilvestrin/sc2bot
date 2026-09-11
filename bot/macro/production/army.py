@@ -3,9 +3,9 @@ from __future__ import annotations
 from bot.engine.economy.models import EconomicActionKind, EconomicProposal
 from bot.world.awareness import MacroPosture
 
-from ..macro_config import MacroPlannerConfig
+from ..proposal_helpers import build_proposal
+from ..strategy.config import MacroPlannerConfig
 from .army_demand import ArmyDemand
-from .proposal_helpers import build_proposal
 
 
 def propose_army(
@@ -18,7 +18,7 @@ def propose_army(
     """Ask for one more of every unit the army still owes.
 
     Spawn decides *which unit* is useful now; it never decides to build a
-    Barracks (see ``production_proposals``) and never spends anything -- the
+    Barracks (see ``construction.capacity``) and never spends anything -- the
     economy controller admits or rejects each of these one at a time.
     """
 

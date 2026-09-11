@@ -176,6 +176,76 @@
   .status-DEFENSE { background: color-mix(in srgb, var(--bad) 20%, transparent); color: var(--bad); }
   .status-RECOVERY { background: color-mix(in srgb, var(--warn) 20%, transparent); color: var(--warn); }
 
+  .summary-view { padding: 18px; overflow-y: auto; height: 100%; }
+  .summary-hero {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(150px, 1fr));
+    gap: 10px;
+    margin-bottom: 18px;
+  }
+  .summary-card, .metric-card, .story-item {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 9px;
+  }
+  .summary-card { padding: 12px 14px; min-height: 82px; }
+  .summary-card .eyebrow, .metric-card .eyebrow {
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .05em;
+    text-transform: uppercase;
+  }
+  .summary-card .value { margin-top: 4px; font-size: 20px; font-weight: 700; }
+  .summary-card .detail { margin-top: 3px; color: var(--muted); font-size: 12px; }
+  .summary-card.result-win .value { color: var(--ok); }
+  .summary-card.result-loss .value, .summary-card.has-problem .value { color: var(--bad); }
+  .summary-section { margin: 18px 0; }
+  .summary-section-heading {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin: 0 0 9px;
+  }
+  .summary-section-heading h2 { margin: 0; font-size: 16px; }
+  .summary-section-heading .detail { color: var(--muted); font-size: 12px; }
+  .metrics-grid { display: grid; grid-template-columns: repeat(3, minmax(180px, 1fr)); gap: 10px; }
+  .metric-card { padding: 11px 12px 7px; min-width: 0; }
+  .metric-card .metric-value { float: right; color: var(--text); font: 12px var(--mono); }
+  .metric-card svg { display: block; width: 100%; height: 62px; margin-top: 5px; overflow: visible; }
+  .metric-card .range { color: var(--muted); font: 11px var(--mono); }
+  .story-list { position: relative; display: grid; gap: 7px; }
+  .story-item {
+    display: grid;
+    grid-template-columns: 72px 8px minmax(0, 1fr);
+    gap: 10px;
+    padding: 10px 12px;
+    cursor: pointer;
+  }
+  .story-item:hover { border-color: var(--accent); }
+  .story-item .story-time { color: var(--muted); font: 12px var(--mono); padding-top: 2px; }
+  .story-item .story-marker { width: 8px; height: 8px; margin-top: 5px; border-radius: 50%; background: var(--accent); }
+  .story-item.severity-ok .story-marker { background: var(--ok); }
+  .story-item.severity-warning .story-marker { background: var(--warn); }
+  .story-item.severity-error .story-marker { background: var(--bad); }
+  .story-item .story-title { font-weight: 650; }
+  .story-item .story-reason { color: var(--muted); margin-top: 2px; }
+  .story-item .story-meta { color: var(--telemetry); font: 11px var(--mono); margin-top: 4px; }
+  .story-item pre {
+    margin: 8px 0 0;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .summary-alert { cursor: default; border-left: 3px solid var(--warn); }
+  .summary-alert.bad { border-left-color: var(--bad); }
+  .summary-alert.clickable { cursor: pointer; }
+  .summary-alert .id { font-family: inherit; }
+  .summary-clear-filter { margin: 0 0 9px; border: 0; background: none; color: var(--accent); cursor: pointer; font: inherit; padding: 0; }
+
   .row {
     display: grid;
     grid-template-columns: 78px 90px 190px 1fr;
@@ -191,6 +261,8 @@
   .row .event { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .row .mission-id { color: var(--accent); white-space: nowrap; }
   .row .fields { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row .reason { grid-column: 3 / -1; color: var(--text); white-space: normal; }
+  .row .reason::before { content: "why: "; color: var(--muted); }
   .row.expanded .fields { white-space: normal; }
   .row pre {
     grid-column: 1 / -1;
@@ -226,6 +298,9 @@
     #side-panel { flex: 0 0 auto; width: 100%; border-left: 0; border-top: 1px solid var(--border); }
     .row { grid-template-columns: 68px minmax(90px, 150px) minmax(150px, 1fr); }
     .row .fields { grid-column: 2 / -1; }
+    .row .reason { grid-column: 2 / -1; }
+    .summary-hero { grid-template-columns: repeat(2, minmax(140px, 1fr)); }
+    .metrics-grid { grid-template-columns: 1fr; }
   }
 </style>
 </head>
@@ -246,7 +321,8 @@
       <select id="mission-filter"><option value="">all</option></select>
     </label>
     <nav class="stream-menu" id="stream-menu" aria-label="Log stream">
-      <button type="button" class="active" data-view="events" title="raw events and bot.engine.missions">Events<span class="count" data-count="events">0</span></button>
+      <button type="button" class="active" data-view="summary" title="important moments and outcomes">Summary<span class="count" data-count="summary">0</span></button>
+      <button type="button" data-view="events" title="raw events and bot.engine.missions">Events<span class="count" data-count="events">0</span></button>
       <button type="button" data-view="observation" title="bot.world.observation">Observation<span class="count" data-count="observation">0</span></button>
       <button type="button" data-view="knowledge" title="bot.world.knowledge">Knowledge<span class="count" data-count="knowledge">0</span></button>
       <button type="button" data-view="economy" title="bot.engine.economy">Economy<span class="count" data-count="economy">0</span></button>
@@ -273,16 +349,13 @@ const KNOWLEDGE_EVENTS = new Set([
 const NARRATIVE_EVENTS = new Set([
   "game.started", "game.ended",
   "macro.build_order_progress",
-  ...OBSERVATION_EVENTS,
-  ...KNOWLEDGE_EVENTS,
-  "proposal_created", "proposal_admitted", "proposal_rejected",
+  "proposal_admitted", "proposal_rejected",
   "mission_queued", "mission_started", "mission_blocked",
   "units_assigned", "units_reassigned", "units_released",
   "mission_completed", "mission_failed", "mission_cancelled",
-  "economic_proposal_created", "economic_proposal_rejected",
-  "economic_proposal_deferred", "economic_action_admitted",
-  "economic_action_pending", "economic_action_dispatched",
-  "economic_action_confirmed", "economic_action_failed",
+  "behavior.state_changed", "standing.unassigned_units_persisting",
+  "macro.idle_producer_unexplained",
+  "economic_action_failed",
   "economic_action_timed_out", "economic_feedback_rejected",
 ]);
 
@@ -294,8 +367,42 @@ let economicItems = new Map(); // action_id/deduplication_key -> lifecycle
 let visibleRows = PAGE_SIZE;
 let visibleSideItems = SIDE_LIMIT;
 let parseWarnings = [];
-let currentView = "events";
+let currentView = "summary";
 let streams = { observation: [], knowledge: [] };
+
+const MISSION_LABELS = {
+  HOLD_RALLY: "Main army",
+  SCOUT: "Scout",
+  HARASS: "Reaper harass",
+  AIR_HARASS: "Banshee harass",
+  DEFENSE: "Base defense",
+  MAP_CONTROL: "Map control",
+  POSITION: "Positioning",
+};
+
+function humanize(value) {
+  if (value == null || value === "") return "unknown";
+  return String(value)
+    .replace(/^Result\./, "")
+    .replace(/^UnitTypeId\./, "")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[_:.]+/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function missionTitle(info) {
+  if (!info) return "Mission";
+  const base = MISSION_LABELS[info.kind] || humanize(info.kind || info.planner || "Mission");
+  const target = info.target && !String(info.target).startsWith("hold_rally:") && !String(info.target).startsWith("map_control:")
+    ? ` · ${humanize(info.target)}`
+    : "";
+  return base + target;
+}
+
+function finalMissionStatus(info) {
+  const terminal = [...info.events].reverse().find((event) => ["COMPLETED", "FAILED", "CANCELLED"].includes(event.status));
+  return terminal?.status ?? [...info.events].reverse().find((event) => event.status)?.status ?? "UNKNOWN";
+}
 
 function formatTime(seconds) {
   seconds = Number(seconds);
@@ -422,7 +529,14 @@ function buildMissions() {
     }
     const mission = missions.get(missionId);
     mission.planner ||= r.data.planner_id;
-    mission.events.push({ time: r.game_time, event: r.event, status: r.data.status });
+    mission.events.push({
+      time: r.game_time,
+      event: r.event,
+      status: r.data.status,
+      reason: r.data.reason,
+      state: r.data.state,
+      record: r,
+    });
     const unitTypes = Array.isArray(r.data.unit_types) ? r.data.unit_types : [];
     for (const t of unitTypes) if (t) mission.unitTypes.add(t);
   }
@@ -519,6 +633,7 @@ function lastOf(items) {
 const COMPONENT_ALIASES = {
   "application.runtime": "app.runtime",
   "behavior.army.disposition": "behavior.standing",
+  "behavior.macro.planner": "macro.planner",
   "ego.mission_controller": "engine.missions.controller",
   "economy.controller": "engine.economy.controller",
 };
@@ -550,38 +665,352 @@ function appendParseWarnings(parent) {
   );
 }
 
-function renderMissions() {
-  const el = document.getElementById("side-panel");
-  el.replaceChildren();
-  appendTextElement(el, "h2", "", `Missions (${missions.size})`);
+function appendSummaryCard(parent, label, value, detail, className = "") {
+  const card = document.createElement("div");
+  card.className = `summary-card ${className}`.trim();
+  appendTextElement(card, "div", "eyebrow", label);
+  appendTextElement(card, "div", "value", value);
+  appendTextElement(card, "div", "detail", detail);
+  parent.appendChild(card);
+  return card;
+}
+
+function summaryHeading(parent, title, detail = "") {
+  const heading = document.createElement("div");
+  heading.className = "summary-section-heading";
+  appendTextElement(heading, "h2", "", title);
+  if (detail) appendTextElement(heading, "span", "detail", detail);
+  parent.appendChild(heading);
+}
+
+function economicFinalStatuses() {
+  return [...economicItems.values()]
+    .filter((item) => item.actionId)
+    .map((item) => lastOf(item.events)?.status ?? "UNKNOWN");
+}
+
+function buildStoryMoments() {
+  const moments = [];
+  let previousPosture;
+  let openingStarted = false;
+  const push = (record, title, reason = "", severity = "info") => moments.push({
+    time: record.game_time,
+    title,
+    reason,
+    severity,
+    missionId: record.data?.mission_id,
+    component: componentOf(record),
+    event: record.event,
+    record,
+  });
+
+  for (const record of records) {
+    const data = record.data ?? {};
+    const info = data.mission_id ? missions.get(data.mission_id) : undefined;
+    if (record.event === "game.started") {
+      push(record, `Game started · ${data.map || "unknown map"}`);
+    } else if (record.event === "game.ended") {
+      const result = humanize(data.result).toUpperCase();
+      push(record, `Game ended · ${result}`, "", result.includes("VICTORY") ? "ok" : "error");
+    } else if (record.event === "macro.build_order_progress") {
+      if (!openingStarted) {
+        push(record, `Opening started · ${humanize(data.opening)}`, `${data.total_steps ?? "?"} planned steps`);
+        openingStarted = true;
+      } else if (data.completed) {
+        push(record, `Opening completed · ${humanize(data.opening)}`, `${data.total_steps ?? data.step ?? "?"} steps`, "ok");
+      }
+    } else if (KNOWLEDGE_EVENTS.has(record.event)) {
+      const posture = data.posture;
+      if (posture && posture !== previousPosture) {
+        const strength = data.relative_strength?.score;
+        const reason = Number.isFinite(Number(strength)) ? `Relative strength ${Number(strength).toFixed(2)}` : "";
+        push(record, `Strategic posture → ${posture}`, reason, posture === "DEFENSE" ? "warning" : "info");
+        previousPosture = posture;
+      }
+    } else if (record.event === "mission_started") {
+      push(record, `${missionTitle(info)} started`, humanize(data.reason), "info");
+    } else if (record.event === "mission_blocked") {
+      push(record, `${missionTitle(info)} blocked`, humanize(data.reason), "warning");
+    } else if (record.event === "mission_completed") {
+      push(record, `${missionTitle(info)} completed`, humanize(data.reason), "ok");
+    } else if (record.event === "mission_failed") {
+      push(record, `${missionTitle(info)} failed`, humanize(data.reason), "error");
+    } else if (record.event === "mission_cancelled") {
+      push(record, `${missionTitle(info)} cancelled`, humanize(data.reason), "error");
+    } else if (record.event === "behavior.state_changed") {
+      push(record, `${missionTitle(info)} → ${data.state || "new state"}`, humanize(data.reason), data.state === "EVADE" ? "warning" : "info");
+    } else if (record.event === "economic_action_failed") {
+      push(record, `${humanize(data.action_kind)} failed · ${humanize(data.target)}`, humanize(data.reason), "error");
+    } else if (record.event === "economic_feedback_rejected") {
+      push(record, "Economic feedback rejected", humanize(data.feedback_reason || data.reason), "warning");
+    }
+  }
+
+  const timedOut = records.filter((record) => record.event === "economic_action_timed_out");
+  if (timedOut.length) {
+    const first = timedOut[0];
+    moments.push({
+      time: first.game_time,
+      title: `${timedOut.length} economic action${timedOut.length === 1 ? "" : "s"} timed out`,
+      reason: "Collapsed into one moment; inspect Economy for individual actions",
+      severity: "error",
+      component: componentOf(first),
+      event: first.event,
+      record: first,
+    });
+  }
+  for (const [eventName, title] of [
+    ["standing.unassigned_units_persisting", "Combat units remained unassigned"],
+    ["macro.idle_producer_unexplained", "Production buildings were unexpectedly idle"],
+  ]) {
+    const occurrences = records.filter((record) => record.event === eventName);
+    if (!occurrences.length) continue;
+    const first = occurrences[0];
+    moments.push({
+      time: first.game_time,
+      title: `${title} · ${occurrences.length}×`,
+      reason: "Repeated warnings collapsed into one moment",
+      severity: "warning",
+      component: componentOf(first),
+      event: first.event,
+      record: first,
+    });
+  }
+  return moments.sort((a, b) => a.time - b.time);
+}
+
+function renderMetricCard(parent, label, recordsForMetric, valueOf, color, formatter = (value) => String(value)) {
+  const points = recordsForMetric
+    .map((record) => ({ time: Number(record.game_time), value: Number(valueOf(record)) }))
+    .filter((point) => Number.isFinite(point.time) && Number.isFinite(point.value));
+  const card = document.createElement("div");
+  card.className = "metric-card";
+  const header = appendTextElement(card, "div", "eyebrow", label);
+  if (!points.length) {
+    appendTextElement(card, "div", "notice", "No data");
+    parent.appendChild(card);
+    return;
+  }
+  const values = points.map((point) => point.value);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const firstTime = points[0].time;
+  const lastTime = points[points.length - 1].time;
+  appendTextElement(header, "span", "metric-value", formatter(points[points.length - 1].value));
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 320 62");
+  svg.setAttribute("role", "img");
+  svg.setAttribute("aria-label", `${label} from ${formatter(min)} to ${formatter(max)}`);
+  const polyline = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+  const xSpan = Math.max(1, lastTime - firstTime);
+  const ySpan = Math.max(1, max - min);
+  polyline.setAttribute("points", points.map((point) => {
+    const x = ((point.time - firstTime) / xSpan) * 320;
+    const y = 57 - ((point.value - min) / ySpan) * 52;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(" "));
+  polyline.setAttribute("fill", "none");
+  polyline.setAttribute("stroke", color);
+  polyline.setAttribute("stroke-width", "2");
+  polyline.setAttribute("vector-effect", "non-scaling-stroke");
+  svg.appendChild(polyline);
+  card.appendChild(svg);
+  appendTextElement(card, "div", "range", `${formatter(min)} min · ${formatter(max)} max`);
+  parent.appendChild(card);
+}
+
+function renderSummary() {
+  const root = document.getElementById("timeline");
+  root.replaceChildren();
+  root.className = "summary-view";
+
+  const started = records.find((record) => record.event === "game.started");
+  const ended = [...records].reverse().find((record) => record.event === "game.ended");
+  const duration = records.reduce((max, record) => Math.max(max, Number(record.game_time) || 0), 0);
+  const result = ended ? humanize(ended.data?.result).toUpperCase() : "IN PROGRESS";
+  const resultClass = result.includes("VICTORY") ? "result-win" : (result.includes("DEFEAT") ? "result-loss" : "");
+  const progress = records.filter((record) => record.event === "macro.build_order_progress");
+  const latestProgress = lastOf(progress);
+  const opening = latestProgress?.data?.opening || streams.observation.find((record) => record.data?.economy?.opening_name)?.data?.economy?.opening_name;
+  const missionInfos = [...missions.values()];
+  const missionStatuses = missionInfos.map(finalMissionStatus);
+  const economicStatuses = economicFinalStatuses();
+  const timedOut = economicStatuses.filter((status) => status === "TIMED_OUT").length;
+  const confirmed = economicStatuses.filter((status) => status === "CONFIRMED").length;
+  const open = economicStatuses.length - confirmed - timedOut - economicStatuses.filter((status) => status === "FAILED").length;
+
+  const hero = document.createElement("div");
+  hero.className = "summary-hero";
+  appendSummaryCard(hero, "Result", result, `${started?.data?.map || "Unknown map"} · ${formatTime(duration)}`, resultClass);
+  appendSummaryCard(
+    hero,
+    "Opening",
+    humanize(opening || "Unknown"),
+    latestProgress ? `${latestProgress.data?.step ?? "?"}/${latestProgress.data?.total_steps ?? "?"} steps${latestProgress.data?.completed ? " · completed" : ""}` : "No opening progress",
+  );
+  appendSummaryCard(
+    hero,
+    "Missions",
+    String(missionInfos.length),
+    `${missionStatuses.filter((status) => status === "COMPLETED").length} completed · ${missionStatuses.filter((status) => status === "FAILED").length} failed · ${missionStatuses.filter((status) => status === "CANCELLED").length} cancelled`,
+    missionStatuses.some((status) => ["FAILED", "CANCELLED"].includes(status)) ? "has-problem" : "",
+  );
+  appendSummaryCard(
+    hero,
+    "Economy",
+    `${confirmed}/${economicStatuses.length}`,
+    `${confirmed} confirmed · ${timedOut} timed out · ${open} open`,
+    timedOut ? "has-problem" : "",
+  );
+  root.appendChild(hero);
+
+  const metrics = document.createElement("section");
+  metrics.className = "summary-section";
+  summaryHeading(metrics, "Match signals", "periodic snapshots shown as trends");
+  const metricGrid = document.createElement("div");
+  metricGrid.className = "metrics-grid";
+  renderMetricCard(metricGrid, "Minerals", streams.observation, (record) => record.data?.minerals, "var(--accent)", (value) => Math.round(value).toString());
+  renderMetricCard(metricGrid, "Supply used", streams.observation, (record) => record.data?.supply_used, "var(--ok)", (value) => Math.round(value).toString());
+  renderMetricCard(metricGrid, "Relative strength", streams.knowledge, (record) => record.data?.relative_strength?.score, "var(--warn)", (value) => Number(value).toFixed(2));
+  metrics.appendChild(metricGrid);
+  root.appendChild(metrics);
+
+  const focusedMission = document.getElementById("mission-filter").value;
+  const allMoments = buildStoryMoments();
+  const moments = focusedMission ? allMoments.filter((moment) => moment.missionId === focusedMission) : allMoments;
+  const story = document.createElement("section");
+  story.className = "summary-section";
+  const focusedInfo = focusedMission ? missions.get(focusedMission) : undefined;
+  summaryHeading(story, focusedInfo ? missionTitle(focusedInfo) : "Match story", focusedInfo ? focusedMission : `${moments.length} important moments`);
+  if (focusedMission) {
+    const clear = appendTextElement(story, "button", "summary-clear-filter", "← Show the whole match");
+    clear.type = "button";
+    clear.addEventListener("click", () => {
+      document.getElementById("mission-filter").value = "";
+      render();
+    });
+  }
+  const list = document.createElement("div");
+  list.className = "story-list";
+  for (const moment of moments) {
+    const item = document.createElement("div");
+    item.className = `story-item severity-${moment.severity}`;
+    appendTextElement(item, "div", "story-time", formatTime(moment.time));
+    appendTextElement(item, "div", "story-marker", "");
+    const content = document.createElement("div");
+    appendTextElement(content, "div", "story-title", moment.title);
+    if (moment.reason && moment.reason !== "Unknown") appendTextElement(content, "div", "story-reason", moment.reason);
+    appendTextElement(content, "div", "story-meta", `${moment.component} · ${moment.event}${moment.missionId ? ` · ${moment.missionId}` : ""}`);
+    item.appendChild(content);
+    item.addEventListener("click", () => {
+      const already = item.querySelector("pre");
+      if (already) { already.remove(); return; }
+      const pre = document.createElement("pre");
+      pre.textContent = JSON.stringify(moment.record, null, 2);
+      content.appendChild(pre);
+    });
+    list.appendChild(item);
+  }
+  if (!moments.length) appendTextElement(list, "div", "notice", "No important moments match this mission.");
+  story.appendChild(list);
+  root.appendChild(story);
+  appendParseWarnings(root);
+}
+
+function appendMissionGroups(el, targetView) {
   const activeFilter = document.getElementById("mission-filter").value;
   const entries = [...missions].map(([id, info]) => ({ id, ...info }));
   for (const [planner, plannerMissions] of groupBy(entries, (item) => item.planner)) {
-    appendGroupHeading(el, planner, plannerMissions.length);
+    appendGroupHeading(el, humanize(planner), plannerMissions.length);
     for (const info of plannerMissions) {
       const start = info.events[0].time;
       const end = info.events[info.events.length - 1].time;
-      const final = [...info.events].reverse().find((event) => event.status)?.status ?? "?";
+      const final = finalMissionStatus(info);
       const card = document.createElement("div");
       card.className = "entity-card" + (activeFilter === info.id ? " active-filter" : "");
-      const heading = appendTextElement(card, "div", "id", info.id);
+      const heading = appendTextElement(card, "div", "id", missionTitle(info));
       appendStatus(heading, final);
+      appendTextElement(card, "div", "meta", info.id);
       appendTextElement(
         card,
         "div",
         "meta",
-        `${info.kind || "?"} · target=${info.target}${info.unitTypes.size ? " · " + [...info.unitTypes].join(", ") : ""}`,
+        info.unitTypes.size ? [...info.unitTypes].map(humanize).join(", ") : "No units recorded",
       );
       appendTextElement(card, "div", "meta", `${formatTime(start)} .. ${formatTime(end)}`);
       card.addEventListener("click", () => {
         const select = document.getElementById("mission-filter");
         select.value = select.value === info.id ? "" : info.id;
-        switchView("events");
+        switchView(targetView);
       });
       el.appendChild(card);
     }
   }
+}
+
+function renderMissions() {
+  const el = document.getElementById("side-panel");
+  el.replaceChildren();
+  appendTextElement(el, "h2", "", `Missions (${missions.size})`);
+  appendMissionGroups(el, "events");
   if (!missions.size) appendTextElement(el, "div", "notice", "No mission events in this log.");
+}
+
+function renderSummaryPanel() {
+  const el = document.getElementById("side-panel");
+  el.replaceChildren();
+  const statuses = economicFinalStatuses();
+  const timedOut = statuses.filter((status) => status === "TIMED_OUT").length;
+  const failed = statuses.filter((status) => status === "FAILED").length;
+  const badMissions = [...missions].map(([id, info]) => ({ id, info, status: finalMissionStatus(info) }))
+    .filter((item) => ["FAILED", "CANCELLED", "BLOCKED"].includes(item.status));
+  const unassigned = records.filter((record) => record.event === "standing.unassigned_units_persisting").length;
+  const idle = records.filter((record) => record.event === "macro.idle_producer_unexplained").length;
+  const alertCount = (timedOut ? 1 : 0) + (failed ? 1 : 0) + badMissions.length + (unassigned ? 1 : 0) + (idle ? 1 : 0);
+  appendTextElement(el, "h2", "", `Attention (${alertCount})`);
+  if (timedOut) {
+    const card = document.createElement("div");
+    card.className = "entity-card summary-alert bad clickable";
+    appendTextElement(card, "div", "id", `${timedOut} economic actions timed out`);
+    appendTextElement(card, "div", "meta", "Open Economy to inspect individual lifecycles.");
+    card.addEventListener("click", () => switchView("economy"));
+    el.appendChild(card);
+  }
+  if (failed) {
+    const card = document.createElement("div");
+    card.className = "entity-card summary-alert bad clickable";
+    appendTextElement(card, "div", "id", `${failed} economic actions failed`);
+    card.addEventListener("click", () => switchView("economy"));
+    el.appendChild(card);
+  }
+  for (const item of badMissions) {
+    const card = document.createElement("div");
+    card.className = "entity-card summary-alert bad clickable";
+    const heading = appendTextElement(card, "div", "id", missionTitle(item.info));
+    appendStatus(heading, item.status);
+    const lastEvent = [...item.info.events].reverse().find((event) => event.status === item.status);
+    appendTextElement(card, "div", "meta", humanize(lastEvent?.reason));
+    card.addEventListener("click", () => {
+      document.getElementById("mission-filter").value = item.id;
+      render();
+    });
+    el.appendChild(card);
+  }
+  if (unassigned) {
+    const card = document.createElement("div");
+    card.className = "entity-card summary-alert";
+    appendTextElement(card, "div", "id", `${unassigned} unassigned-unit warnings`);
+    el.appendChild(card);
+  }
+  if (idle) {
+    const card = document.createElement("div");
+    card.className = "entity-card summary-alert";
+    appendTextElement(card, "div", "id", `${idle} unexplained idle-producer warnings`);
+    el.appendChild(card);
+  }
+  if (!alertCount) appendTextElement(el, "div", "notice", "No important alerts in this log.");
+  appendTextElement(el, "h2", "", `Missions by behavior (${missions.size})`);
+  appendMissionGroups(el, "summary");
 }
 
 function renderEconomyPanel() {
@@ -647,7 +1076,10 @@ function populateMissionSelect() {
 }
 
 function render() {
-  if (currentView === "observation") {
+  if (currentView === "summary") {
+    renderSummary();
+    renderSummaryPanel();
+  } else if (currentView === "observation") {
     renderObservation();
     renderObservationPanel();
   } else if (currentView === "knowledge") {
@@ -690,8 +1122,9 @@ function renderTimeline() {
     row.className = "row" + (isNarrative ? "" : " telemetry");
     appendTextElement(row, "span", "time", formatTime(r.game_time));
     appendTextElement(row, "span", "mission-id", missionId);
-    appendTextElement(row, "span", `event ev-${String(r.event).replace(/[^a-zA-Z0-9_-]/g, "-")}`, `${r.event}${reason ? " · " + reason : ""}`);
+    appendTextElement(row, "span", `event ev-${String(r.event).replace(/[^a-zA-Z0-9_-]/g, "-")}`, r.event);
     appendTextElement(row, "span", "fields", fields);
+    if (reason) appendTextElement(row, "span", "reason", humanize(reason));
     row.addEventListener("click", () => {
       const already = row.querySelector("pre");
       if (already) { already.remove(); row.classList.remove("expanded"); return; }
@@ -886,6 +1319,7 @@ function renderEconomySummary() {
 
 function updateStreamCounts() {
   const counts = {
+    summary: buildStoryMoments().length,
     events: records.length,
     observation: streams.observation.length,
     knowledge: streams.knowledge.length,
@@ -950,7 +1384,7 @@ function loadText(text, name) {
   document.getElementById("path-label").textContent = name;
   document.getElementById("drop").classList.add("hidden");
   document.getElementById("app").classList.add("active");
-  switchView("events");
+  switchView("summary");
 }
 
 function loadFile(file) {

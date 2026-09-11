@@ -42,17 +42,36 @@ flowchart TD
     Executors -->|"MissionCommands port"| AresAdapter["bot/adapters/ares\nAresMissionCommands"]
     AresAdapter --> AresBehaviors["Ares behaviors\n(KeepUnitSafe, AMove, MoveToSafeTarget, ...)"]
 
-    Awareness --> Macro["MacroPlanner\n(bot/behavior/macro)\nEconomicProposal tuple"]
-    Macro --> EconomyCtl["EconomyController\n(engine/economy)\nadmit against virtual bank"]
-    EconomyCtl --> EconomyAdapter["AresEconomyCommands\ndispatch + confirm"]
-    EconomyAdapter --> AresMacro["Ares macro behaviors\n(BuildWorkers, AutoSupply,\nExpansionController)"]
+    Awareness --> Macro["MacroPlanner\n(bot/macro)\nEconomicProposal tuple"]
+    Macro --> EconomyCtl["EconomyController\n(engine/economy)\nconfirm, admit against the bank, dispatch"]
+    EconomyCtl -->|"EconomyCommands port"| EconomyAdapter["bot/adapters/ares\nAresEconomyCommands"]
+    EconomyAdapter --> AresMacro["Ares macro behaviors\n(SpawnController, BuildStructure,\nExpansionController, ...)"]
 ```
 
-Two independent arbitration tracks share the same Attention/Awareness read
-side: the **mission** track (units, leases, positional/combat commitments)
-and the **economic** track (single-frame spend decisions, no unit lease).
-`MacroPlanner` only participates in the second one -- see
-[macro-planner.md](macro-planner.md).
+Two domains share the same Attention/Awareness read side and nothing else:
+
+```text
+             attention / awareness
+                      |
+            +---------+---------+
+            |                   |
+        behavior              macro
+     (bot/behavior)        (bot/macro)
+            |                   |
+     MissionProposal     EconomicProposal
+            |                   |
+    MissionController    EconomyController
+    (engine/missions)    (engine/economy)
+            |                   |
+          units      minerals / gas / supply / production
+```
+
+**Behavior** governs units already on the map: missions, squads and unit
+leases. **Macro** governs what to spend on -- production, construction,
+tech, expansion and timing -- paid out of the bank with no unit lease.
+Neither package imports the other, and neither engine imports either domain;
+`tests/test_macro_architecture.py` fails if that erodes. See
+[macro-planner.md](macro-planner.md) for the macro side.
 
 ## Ownership
 
@@ -63,6 +82,8 @@ and the **economic** track (single-frame spend decisions, no unit lease).
 - `ego` is the only domain allowed to admit proposals, change mission lifecycle,
   transfer leases, or release units.
 - `executors` implement one admitted mission and use only explicit command ports.
+- `macro` proposes purchases and never claims a unit; `EconomyController` alone
+  admits, reserves and dispatches them through the `EconomyCommands` port.
 - `infrastructure/ares` translates those ports into Ares roles and behaviors.
 - `application` wires the frame together without containing strategic rules.
 
@@ -116,10 +137,31 @@ every otherwise-idle combat unit, see
 `tests/test_behavior_architecture.py` fails if one of them grows a fifth
 file or loses one of the four.
 
-`macro/` is the deliberate exception. It produces `EconomicProposal`s on the
-other arbitration track: it claims no unit, holds no mission, and has no
-executor, so the four-file shape would describe nothing real. Its own split
-is by spend domain -- see [macro-planner.md](macro-planner.md).
+## Macro layout
+
+`bot/macro/` is not a behavior and does not live under `bot/behavior/`. It
+is split by what a proposal buys, so the intelligence for one kind of spend
+stays in one folder:
+
+```text
+bot/macro/
+  contracts.py         SpendPlanner -- the macro counterpart of BehaviorPlanner
+  planner.py           MacroPlanner: composes the domains into one tick's proposals
+  diagnostics.py       macro.status / macro.idle_producer_unexplained
+  proposal_helpers.py  one-step EconomicProposal builder, saturation target
+  strategy/            goals, per-opening profiles, costs + posture priorities,
+                       reference build
+  production/          PRODUCE_UNIT, PRODUCE_WORKER  (army_demand.py: assessment)
+  construction/        BUILD_PRODUCTION, BUILD_ADDON, PRODUCE_SUPPLY, BUILD_GAS
+                       (capacity.py: assessment)
+  expansion/           EXPAND
+```
+
+It keeps a behavior's discipline minus ownership: ASSESS (`army_demand`,
+`assess_capacity`) -> PLAN (one proposer per domain, composed by
+`MacroPlanner`) -> ADMIT (`EconomyController`, against the bank) -> EXECUTE
+(`AresEconomyCommands`, through the `EconomyCommands` port). See
+[macro-planner.md](macro-planner.md).
 
 ## Behavior planners
 

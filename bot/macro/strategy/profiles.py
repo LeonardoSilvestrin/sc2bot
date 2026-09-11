@@ -5,7 +5,7 @@ from sc2.ids.upgrade_id import UpgradeId
 
 from bot.engine.economy.models import ResourceCost
 
-from .macro_goals import (
+from .goals import (
     ArmyUnitGoal,
     MacroGoalSet,
     ProductionGoal,

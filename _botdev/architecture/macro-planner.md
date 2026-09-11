@@ -26,34 +26,53 @@ admits, reserves against, and executes them (see "Integration" below).
   `priority`, `reason`, and `cost`, matching the `MissionProposal` convention
   of an explicit, non-empty reason.
 
-## Planner package (`bot/behavior/macro/planner/`)
+## Package layout (`bot/macro/`)
 
-`MacroPlanner.propose(attention, awareness)` is a pure function of its inputs
--- no cadence state, no sequence counters -- so it is trivially deterministic:
-the same snapshot always yields the same tuple of proposals. It gates entirely
-on `economy.opening_completed` (`MacroPlannerConfig.require_opening_completed`,
-default `True`) and then delegates to seven independent, single-purpose
-modules (`supply`, `worker`, `expansion`, `gas`, `production`, `addons`,
-`army`), each returning `None`/`()` when it has nothing useful to say. The
-class itself only orders the calls, merges the results, and sorts them by
-`(-priority, kind, target)` for readable traces -- `EconomyController` owns
-the real admission order. `MacroGoalSet.upgrades` (`UpgradeGoal`) and
-`EconomicActionKind.RESEARCH_UPGRADE` already exist as declared goals/vocabulary,
-but no module yet converts them into proposals -- see "Deliberately not built"
-below.
+Macro is its own layer, beside `bot/behavior/` rather than inside it: a
+behavior governs units already on the map, macro governs what to spend on.
+The package is split by what a proposal buys:
+
+| Folder | Action kinds | Modules |
+| --- | --- | --- |
+| `strategy/` | -- | `goals.py`, `profiles.py`, `openings.py`, `config.py`, `reference_build.py` |
+| `production/` | `PRODUCE_UNIT`, `PRODUCE_WORKER` | `army_demand.py` (assessment), `army.py`, `workers.py` |
+| `construction/` | `BUILD_PRODUCTION`, `BUILD_ADDON`, `PRODUCE_SUPPLY`, `BUILD_GAS` | `capacity.py` (assessment + proposer), `addons.py`, `supply.py`, `gas.py` |
+| `expansion/` | `EXPAND` | `bases.py` |
+
+`planner.py` (`MacroPlanner`) is the one module that knows how those domains
+depend on each other (capacity reads army demand) and in which order they are
+asked; `contracts.py` holds `SpendPlanner`, the contract it keeps;
+`diagnostics.py` (`MacroDiagnostics`) emits `macro.status` and
+`macro.idle_producer_unexplained` once the economy controller has run. There
+is no `tech/` yet: `RESEARCH_UPGRADE` has vocabulary but no proposer.
+
+`MacroPlanner.propose(attention, awareness)` holds no cadence state and no
+sequence counters: the same snapshot always yields the same tuple of
+proposals. Its only state is `last_status` (for diagnostics) and, when built
+with `follow_opening=True`, the one-time switch to the chosen opening's
+profile (see "Integration" below). It runs during the opening too -- the
+economy controller withholds the cost of the opening's next steps
+(`protected`), so macro only spends a surplus; add-ons alone wait for
+`economy.opening_completed`. It delegates to seven single-purpose proposers,
+each returning `None`/`()` when it has nothing useful to say, merges the
+results, and sorts them by `(-priority, kind, target)` for readable traces --
+`EconomyController` owns the real admission order. `MacroGoalSet.upgrades`
+(`UpgradeGoal`) and `EconomicActionKind.RESEARCH_UPGRADE` already exist as
+declared goals/vocabulary, but no module yet converts them into proposals --
+see "Deliberately not built" below.
 
 ```mermaid
 flowchart TD
-    Propose(["MacroPlanner.propose(attention, awareness)"]) --> Gate{"opening_completed?"}
-    Gate -->|no| Empty["() -- no proposals"]
-    Gate -->|yes| Posture["posture = awareness.macro_posture"]
-    Posture --> Supply["supply_proposals.propose_supply\neffective_remaining <= supply_buffer?"]
-    Posture --> Worker["worker_proposals.propose_worker\nworkers < saturation_target?"]
-    Posture --> Expansion["expansion_proposals.propose_expansion\nsaturated enough + not DEFENSE + townhall not pending?"]
-    Posture --> Gas["gas_proposals.propose_gas\nrefineries < target + enough workers to spare?"]
-    Posture --> Production["production_proposals.propose_production\nper ProductionGoal: income-scaled + reference-build floor"]
-    Posture --> Addons["addon_proposals.propose_addons\nper (addon, desired, cost) below target?"]
-    Posture --> Army["army_proposals.propose_army\narmy_supply < target (+ overflow bonus)?"]
+    Propose(["MacroPlanner.propose(attention, awareness)"]) --> Follow["adopt the chosen opening's profile\n(once, if follow_opening)"]
+    Follow --> Assess["production/army_demand + construction/capacity.assess_capacity\nposture = awareness.macro_posture"]
+    Assess --> Supply["construction/supply.propose_supply\neffective_remaining <= supply_buffer?"]
+    Assess --> Worker["production/workers.propose_worker\nworkers < saturation_target?"]
+    Assess --> Expansion["expansion/bases.propose_expansion\nsaturated enough + not DEFENSE + townhall not pending?"]
+    Assess --> Gas["construction/gas.propose_gas\nrefineries < target + enough workers to spare?"]
+    Assess --> Production["construction/capacity.propose_production\nper ProductionGoal: demand + utilization + reference-build floor"]
+    Assess --> AddonGate{"opening_completed?"}
+    AddonGate -->|yes| Addons["construction/addons.propose_addons\nper (addon, desired, cost) below target?"]
+    Assess --> Army["production/army.propose_army\narmy_supply < target (+ overflow bonus)?"]
     Supply & Worker & Expansion & Gas & Production & Addons & Army --> Merge["merge + sort by (-priority, kind, target)"]
     Merge --> Out(["tuple[EconomicProposal, ...]"])
 ```
@@ -64,32 +83,32 @@ Every rule below reads `EconomyFacts` (from `WorldFacts.economy`) and the
 opening's `MacroGoalSet`; only `RelativeStrength`/`ThreatAssessment` are read
 outside `EconomyFacts`, and only where noted.
 
-- **`supply_proposals`**: proposes `PRODUCE_SUPPLY` when supply is not already
+- **`construction/supply.py`**: proposes `PRODUCE_SUPPLY` when supply is not already
   at `max_supply_cap` and `supply_cap + supply_pending - supply_used <=
   supply_buffer` (6 by default) -- counting supply already under construction,
   not just the current cap, so it does not double-queue depots.
-- **`worker_proposals`**: proposes `PRODUCE_WORKER` up to
+- **`production/workers.py`**: proposes `PRODUCE_WORKER` up to
   `min(max_workers, townhalls * workers_per_townhall)` ("saturation target"),
   floored so a snapshot without a tracked townhall does not divide to zero.
-- **`expansion_proposals`**: proposes `EXPAND` once workers cross a
+- **`expansion/bases.py`**: proposes `EXPAND` once workers cross a
   posture-dependent fraction of the saturation target (90% BALANCED, 72%
   GREED, 100% RECOVERY/DEFENSE -- effectively never under those last two),
   and only when no townhall is currently pending and posture is not
   `DEFENSE`.
-- **`gas_proposals`**: proposes `BUILD_GAS` up to `refineries_per_townhall *
+- **`construction/gas.py`**: proposes `BUILD_GAS` up to `refineries_per_townhall *
   ready_townhalls` (capped at `max_refineries`), holding off until there are
   enough workers to spare (`max(12, (desired - 1) * 3)`) so early gas does not
   starve mineral income.
-- **`production_proposals`**: for each `ProductionGoal`, targets
+- **`construction/capacity.py`**: for each `ProductionGoal`, targets
   `minimum` structures, scaled up when sustained mineral/vespene collection
   rate crosses a configured threshold (`target_for_income`), but only holds
   that higher target once existing producers are already busy enough
   (`minimum_utilization`); otherwise falls back to `minimum`. A
   `ReferenceBuild` timing floor (see below) can raise the target further.
-- **`addon_proposals`**: proposes `BUILD_ADDON` per configured
+- **`construction/addons.py`**: proposes `BUILD_ADDON` per configured
   `(addon_type, desired_count, cost)` tuple below its target -- flat counts,
   no income scaling.
-- **`army_proposals`**: fills `MacroGoalSet.army` composition weights up to
+- **`production/army.py`**: fills `MacroGoalSet.army` composition weights up to
   `army_supply_target`, topping up whichever unit is furthest behind its own
   weight share of the total army (not the grand total), so an over-built
   member never blocks catching up an under-built one.
@@ -100,7 +119,7 @@ A pile of banked resources above `mineral_threshold`/`vespene_threshold`
 (800/400 by default) is itself evidence that current production/composition
 targets are too low -- a build's timings or income-scaling can both
 under-shoot when the bot converts resources into buildings/units slower than
-it earns them. `production_proposals` and `army_proposals` both add a bonus
+it earns them. `construction/capacity.py` and `production/army_demand.py` both add a bonus
 (`production_bonus`, `army_supply_bonus`) derived from how far over threshold
 the bank sits, on top of their normal target, bypassing the usual
 "producers must already be busy" gate.
@@ -153,7 +172,7 @@ single scouting unit wanders past a base.
 
 - `RESEARCH_UPGRADE` proposals: `MacroGoalSet.upgrades` and `UpgradeGoal`
   already carry declared upgrade targets and costs (see
-  `strategy_goal_profiles.py`), and `upgrade_priority` already exists on
+  `strategy/profiles.py`), and `upgrade_priority` already exists on
   `MacroPlannerConfig`, but no `propose_upgrade` module reads them yet --
   upgrades in the Bio 3-1-1 goal set are currently produced only by the
   static `terran_builds.yml` opening, not by ongoing macro convergence.
@@ -172,20 +191,30 @@ single scouting unit wanders past a base.
 economic actions are single-frame and self-gating rather than multi-frame
 unit commitments -- no unit lease or executor lifecycle is needed.
 
-- `bot/app/runtime.py` calls `MacroPlanner().propose(attention,
-  awareness)` from the same frame step that collects the mission planners'
-  proposals, gated on `build_order_runner.build_completed` being true.
+- `bot/app/runtime.py` wires the two domains side by side each frame: the
+  mission planners into `MissionController.tick`, then
+  `EconomyController.step(attention=..., proposals=MacroPlanner.propose(...),
+  commands=AresEconomyCommands(bot))`, then `MacroDiagnostics.report`. The
+  runtime holds no economic state of its own.
+- `EconomyController.step` is the economy counterpart of
+  `MissionController.tick`: it confirms live actions from Attention
+  (`observe_economic_confirmations`), merges last frame's dispatch feedback,
+  arbitrates with `tick` against the observed bank (`observe_bank`) minus
+  what the opening protects (`observe_protected_cost`), and dispatches every
+  live action again through the `EconomyCommands` port.
 - Which `MacroGoalSet` that `MacroPlanner` converges toward is not fixed at
   `BotRuntime` construction: `chosen_opening` is unknown until the Ares build
-  runner resolves it, so `BotRuntime._resolve_macro_profile` looks it up via
-  `bot.behavior.macro.opening_macro_profiles.macro_config_for_opening` on the
-  first frame it becomes non-empty and locks it in for the rest of the game
-  (an opening never changes mid-game). `MACRO_PROFILES` maps opening name ->
-  `MacroPlannerConfig`; an opening with no matching entry, or the opening not
-  yet being known, falls back to the default (Bio) profile rather than
-  raising. This is the only place the build order and dynamic macro actually
-  talk to each other -- see [opening.md](opening.md) for the `BansheeCloak`
-  opening this exists for.
+  runner resolves it, so the runtime builds the planner with
+  `follow_opening=True`. The first tick `economy.opening_name` is non-empty,
+  the planner adopts `bot.macro.strategy.openings.macro_config_for_opening`
+  and locks it in for the rest of the game (an opening never changes
+  mid-game). `MACRO_PROFILES` maps opening name -> `MacroPlannerConfig`; an
+  opening with no matching entry, or the opening not yet being known, falls
+  back to the default (Bio) profile rather than raising. A config passed as
+  `BotRuntime(macro_config=...)` is pinned and never follows. This is the
+  only place the build order and dynamic macro actually talk to each other
+  -- see [opening.md](opening.md) for the `BansheeCloak` opening this exists
+  for.
 ```mermaid
 flowchart TD
     Tick(["EconomyController.tick\n(after applying dispatch/confirm/fail feedback\nand expiring timed-out actions)"]) --> Seed["available = today's real ResourceBank,\nheld down by every still-PENDING\ncommitment's reserved cost"]
@@ -218,10 +247,14 @@ also simply time out (`dispatch_timeout_seconds` before dispatch,
   `economic_proposal_deferred` for the same reason every frame does not spam
   the log.
 - Execution is implemented by `AresEconomyCommands`
-  (`bot/adapters/ares/economy_commands.py`), which registers Ares's own macro
-  behaviors: `BuildWorkers` for `PRODUCE_WORKER`, `AutoSupply` for
-  `PRODUCE_SUPPLY` (at `WorldFacts.map.own_start`), and `ExpansionController`
-  for `EXPAND` (`to_count` = current ready townhalls, via
-  `ready_townhall_count`, plus one). These Ares behaviors own worker
-  selection, structure placement, and expansion-site selection themselves;
-  `MacroPlanner` only argues that the action is warranted and affordable.
+  (`bot/adapters/ares/economy_commands.py`), the Ares side of the
+  `bot.ports.EconomyCommands` port. It invokes Ares's own macro behaviors --
+  `SpawnController` for `PRODUCE_WORKER`/`PRODUCE_UNIT`, `BuildStructure` for
+  `PRODUCE_SUPPLY`/`BUILD_PRODUCTION`, `GasBuildingController` for
+  `BUILD_GAS`, `ExpansionController` for `EXPAND`, `UpgradeController` for
+  `RESEARCH_UPGRADE` -- and orders add-ons on an idle bare parent directly.
+  Those Ares behaviors own worker selection, structure placement, and
+  expansion-site selection themselves. The SCV one picks is marked
+  `UnitRole.BUILDING` by Ares and so reads as unavailable to missions, but it
+  is never a mission lease; `MacroPlanner` only argues that the action is
+  warranted.

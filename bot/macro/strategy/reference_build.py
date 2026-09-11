@@ -35,7 +35,7 @@ class ReferenceBuild:
     Not a schedule the bot is forced to follow: ``MacroPlanner`` uses it only
     as a floor -- "a standard build would have this many of X by now" -- on
     top of its own income-driven and bank-overflow-driven targets (see
-    ``ResourceOverflowConfig`` in ``bot.behavior.macro.config``). Past the
+    ``ResourceOverflowConfig`` in ``bot.macro.strategy.config``). Past the
     last point the floor holds steady; nothing in the sources below claims a
     "standard" building count for an open-ended macro game, so growth beyond
     that point is left to those other two signals rather than invented here.
@@ -75,10 +75,9 @@ def bio_three_one_one_reference() -> ReferenceBuild:
     terrancraft's "TvP Standard 3-1-1 Framework" article -- both already
     informed this bot's own opening (see ``terran_builds.yml`` and
     ``_botdev/architecture/opening.md``). Only production structures are
-    tracked, since ``MacroPlanner`` only consults this for
-    ``_propose_production``; imprecision here is not load-bearing, as it
-    only ever raises a floor that the existing income/overflow scaling would
-    otherwise reach anyway.
+    tracked, since only ``construction.capacity`` consults this;
+    imprecision here is not load-bearing, as it only ever raises a floor
+    that the existing income/overflow scaling would otherwise reach anyway.
     """
 
     return ReferenceBuild(

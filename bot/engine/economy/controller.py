@@ -16,7 +16,15 @@ from bot.engine.economy.models import (
     ResourceBank,
     ResourceCost,
 )
+from bot.engine.economy.observer import (
+    merge_economic_feedback,
+    observe_bank,
+    observe_economic_confirmations,
+    observe_protected_cost,
+)
+from bot.ports.economy_commands import EconomyCommands
 from bot.ports.logging import BotLogger
+from bot.world.attention import AttentionSnapshot
 
 _NOTHING_PROTECTED = ResourceCost()
 
@@ -40,14 +48,15 @@ class _Commitment:
 
 
 class EconomyController:
-    """Arbitrate spending: prioritize, protect, admit or reject.
+    """Arbitrate spending: prioritize, protect, admit or reject, dispatch.
 
-    What the bot *should* have is decided upstream (army/capacity demand);
-    this only answers "can we afford this one purchase, and does something
-    more important want the money first?". It has no knowledge of Ares or
-    python-sc2, of unit composition, or of production capacity. It returns
-    funded ``EconomicAction`` values; an infrastructure adapter reports
-    dispatch, completion, or failure as ``EconomicFeedback`` on a later tick.
+    What the bot *should* have is decided upstream (``bot.macro``); this only
+    answers "can we afford this one purchase, and does something more
+    important want the money first?". It has no knowledge of Ares or
+    python-sc2, of unit composition, or of production capacity, and it owns
+    no unit: funded ``EconomicAction`` values go out through an
+    ``EconomyCommands`` port, and dispatch, completion or failure come back
+    as ``EconomicFeedback`` on a later tick.
     """
 
     def __init__(self, *, logger: BotLogger) -> None:
@@ -57,6 +66,8 @@ class EconomyController:
         self._last_proposal_outcomes: dict[str, tuple[str, ...]] = {}
         self._action_sequence = 0
         self._last_tick_at = -1.0
+        # What the port reported on the last `step`, applied on the next one.
+        self._dispatch_feedback: tuple[EconomicFeedback, ...] = ()
 
     def snapshots(self) -> tuple[EconomicActionSnapshot, ...]:
         return tuple(
@@ -69,6 +80,48 @@ class EconomyController:
                 ),
             )
         )
+
+    def step(
+        self,
+        *,
+        attention: AttentionSnapshot,
+        proposals: Iterable[EconomicProposal],
+        commands: EconomyCommands,
+    ) -> EconomyTickResult:
+        """One frame of the economic track: confirm, arbitrate, dispatch.
+
+        The economy counterpart of ``MissionController.tick``. Live actions
+        are confirmed from what Attention shows (preferred over whatever the
+        port reported last frame), ``tick`` admits against the observed bank
+        minus what the opening protects, and then every live action is
+        dispatched again: Ares' macro behaviors make one unit of progress per
+        call, so a pending or in-flight action is re-issued each frame until
+        it is confirmed, fails or times out.
+        """
+
+        world = attention.world
+        feedback = merge_economic_feedback(
+            observe_economic_confirmations(self.snapshots(), world.economy),
+            self._dispatch_feedback,
+        )
+        result = self.tick(
+            now=world.time,
+            bank=observe_bank(world),
+            proposals=proposals,
+            feedback=feedback,
+            protected=observe_protected_cost(world.economy),
+        )
+        live_actions = tuple(
+            snapshot.action
+            for snapshot in self.snapshots()
+            if not snapshot.status.terminal
+        )
+        self._dispatch_feedback = tuple(
+            dispatched
+            for action in live_actions
+            if (dispatched := commands.dispatch(action)) is not None
+        )
+        return result
 
     def tick(
         self,

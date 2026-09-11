@@ -9,8 +9,10 @@ from bot.engine.economy.models import (
     EconomicActionStatus,
     EconomicFeedback,
     EconomicFeedbackKind,
+    ResourceBank,
+    ResourceCost,
 )
-from bot.world.attention import EconomyFacts
+from bot.world.attention import EconomyFacts, WorldFacts
 
 
 def observe_economic_confirmations(
@@ -52,6 +54,30 @@ def merge_economic_feedback(
     observed_ids = {item.action_id for item in observed_items}
     return observed_items + tuple(
         item for item in dispatched if item.action_id not in observed_ids
+    )
+
+
+def observe_bank(world: WorldFacts) -> ResourceBank:
+    """The bank one tick arbitrates against, as observed this frame.
+
+    Clamped at zero: Ares behaviors decrement ``bot.minerals``/``vespene`` in
+    place to simulate spend across chained behaviors in one frame, which can
+    leave the observation momentarily negative.
+    """
+
+    return ResourceBank(
+        minerals=max(0, world.minerals),
+        vespene=max(0, world.vespene),
+        supply_available=max(0.0, world.supply_cap - world.supply_used),
+    )
+
+
+def observe_protected_cost(economy: EconomyFacts) -> ResourceCost:
+    """What the opening's next build steps cost -- withheld from every proposal."""
+
+    return ResourceCost(
+        minerals=economy.protected_minerals,
+        vespene=economy.protected_vespene,
     )
 
 

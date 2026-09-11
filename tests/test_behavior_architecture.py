@@ -77,9 +77,9 @@ PLANNERS = (
     IntelPlanner(),
 )
 
-# Every mission behavior is now a vertical folder. `macro/` deliberately is
-# not: it produces EconomicProposals, owns no unit and has no executor, so
-# the four-file shape would be a costume rather than a structure.
+# Every behavior is a vertical folder. Spend decisions are not a behavior at
+# all -- they live in `bot/macro`, whose boundary `test_macro_architecture.py`
+# keeps.
 VERTICAL_BEHAVIORS = (
     ("harass", "banshee"),
     ("harass", "reaper"),

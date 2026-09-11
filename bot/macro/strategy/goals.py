@@ -15,7 +15,7 @@ class ArmyUnitGoal:
     ``weight`` is a count ratio, not a terminal count: the composition is
     scaled up until it would reach ``MacroGoalSet.army_supply_target``, so a
     member's ``minimum`` is a floor for early-game usefulness and never a
-    reason to stop producing (see ``planner.army_demand``).
+    reason to stop producing (see ``production.army_demand``).
     """
 
     unit_type: UnitTypeId
@@ -114,7 +114,7 @@ class UpgradeGoal:
 class MacroGoalSet:
     """Configurable post-opening convergence goals for one strategy.
 
-    Concrete instances (one per opening) live in ``goal_profiles.py``,
+    Concrete instances (one per opening) live in ``profiles.py``,
     kept separate so this file doesn't grow with every new opening.
     """
 

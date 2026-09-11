@@ -9,8 +9,8 @@ from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
 from bot.app import BotRuntime
-from bot.behavior.macro import macro_config_for_opening
 from bot.engine.missions import MissionKind, MissionStatus
+from bot.macro import macro_config_for_opening
 from tests.fakes import FakeCommands, FakeEconomyCommands, FakeLogger
 
 

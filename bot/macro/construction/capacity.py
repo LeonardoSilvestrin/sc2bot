@@ -8,10 +8,10 @@ from bot.engine.economy.models import EconomicActionKind, EconomicProposal
 from bot.world.attention import EconomyFacts, ProducerFacts
 from bot.world.awareness import MacroPosture
 
-from ..macro_config import MacroPlannerConfig
-from ..macro_goals import ProductionGoal
-from .army_demand import ArmyDemand
-from .proposal_helpers import build_proposal
+from ..production.army_demand import ArmyDemand
+from ..proposal_helpers import build_proposal
+from ..strategy.config import MacroPlannerConfig
+from ..strategy.goals import ProductionGoal
 
 
 @dataclass(frozen=True, slots=True)

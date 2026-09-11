@@ -7,8 +7,9 @@ from enum import Enum, auto
 class MacroPosture(Enum):
     """Coarse strategic pressure used to arbitrate economic spending.
 
-    The posture describes how risky spending is right now; behavior policies
-    still own what the bot is trying to build.
+    The posture describes how risky spending is right now; ``bot.macro``
+    still owns what the bot is trying to build. Behaviors read it too, as a
+    coarse risk signal (standing, map control).
     """
 
     DEFENSE = auto()

@@ -10,7 +10,7 @@ from ares.dicts.unit_tech_requirement import UNIT_TECH_REQUIREMENT
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.ids.upgrade_id import UpgradeId
 
-from bot.behavior.macro import (
+from bot.macro import (
     MacroGoalSet,
     ProductionGoal,
     banshee_cloak,

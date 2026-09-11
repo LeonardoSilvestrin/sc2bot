@@ -6,8 +6,8 @@ from bot.engine.economy.models import EconomicActionKind, EconomicProposal
 from bot.world.attention import EconomyFacts
 from bot.world.awareness import MacroPosture
 
-from ..macro_config import MacroPlannerConfig
-from .proposal_helpers import build_proposal, saturation_target
+from ..proposal_helpers import build_proposal, saturation_target
+from ..strategy.config import MacroPlannerConfig
 
 
 def propose_worker(

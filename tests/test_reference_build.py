@@ -4,7 +4,7 @@ import unittest
 
 from sc2.ids.unit_typeid import UnitTypeId
 
-from bot.behavior.macro.reference_build import (
+from bot.macro.strategy.reference_build import (
     ReferenceBuild,
     ReferenceBuildPoint,
     bio_three_one_one_reference,

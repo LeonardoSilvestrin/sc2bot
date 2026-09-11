@@ -13,7 +13,12 @@ from .models import (
     ResourceBank,
     ResourceCost,
 )
-from .observer import merge_economic_feedback, observe_economic_confirmations
+from .observer import (
+    merge_economic_feedback,
+    observe_bank,
+    observe_economic_confirmations,
+    observe_protected_cost,
+)
 
 __all__ = [
     "EconomicAction",
@@ -28,5 +33,7 @@ __all__ = [
     "ResourceBank",
     "ResourceCost",
     "merge_economic_feedback",
+    "observe_bank",
     "observe_economic_confirmations",
+    "observe_protected_cost",
 ]
