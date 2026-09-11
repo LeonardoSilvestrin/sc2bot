@@ -13,14 +13,23 @@ from dataclasses import dataclass, field
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
+from bot.behavior.contracts import BehaviorLog
 from bot.engine.missions.execution import (
     MissionContext,
     MissionExecutor,
     MissionOutcome,
     MissionResult,
 )
+from bot.ports.logging import BotLogger
+from bot.ports.scouting_commands import ScoutingCommands
+from bot.world.attention import AttentionSnapshot
+from bot.world.awareness import AwarenessSnapshot
 
-from .model import IntelConfig
+from .assessment import ScanAssessor
+from .model import IntelConfig, ScanAssessment, ScanConfig, ScanPlan
+from .planner import ScanPlanner
+
+SCAN_COMPONENT = "behavior.scouting.scan"
 
 
 @dataclass(slots=True)
@@ -89,3 +98,75 @@ class ScoutExecutor(MissionExecutor):
             success_at_distance=self.arrival_radius,
         )
         return MissionResult(MissionOutcome.ACTIVE, "moving_to_stale_location")
+
+
+@dataclass(slots=True)
+class MainBaseScanBehavior:
+    """Orchestrate one scan without inventing a mission for a structure."""
+
+    config: ScanConfig = field(default_factory=ScanConfig)
+    logger: BotLogger | None = None
+    _assessor: ScanAssessor = field(init=False, repr=False)
+    _planner: ScanPlanner = field(init=False, repr=False)
+    _log: BehaviorLog = field(init=False, repr=False)
+    _last_attempt_at: float | None = field(default=None, init=False, repr=False)
+    _last_scan_at: float | None = field(default=None, init=False, repr=False)
+    last_assessment: ScanAssessment | None = field(default=None, init=False)
+    last_plan: ScanPlan | None = field(default=None, init=False)
+
+    def __post_init__(self) -> None:
+        self._assessor = ScanAssessor(config=self.config)
+        self._planner = ScanPlanner(
+            max_without_vision=self.config.max_without_vision,
+            target_key=self.config.target_key,
+        )
+        self._log = BehaviorLog(component=SCAN_COMPONENT, logger=self.logger)
+
+    def execute(
+        self, plan: ScanPlan, *, now: float, commands: ScoutingCommands
+    ) -> bool:
+        if (
+            self._last_attempt_at is not None
+            and now - self._last_attempt_at < self.config.retry_after
+        ):
+            return False
+        self._last_attempt_at = now
+        accepted = commands.scan(orbital_tag=plan.orbital_tag, target=plan.target)
+        if accepted:
+            self._last_scan_at = now
+        self._log.state_changed(
+            now=now,
+            state="scan_dispatched" if accepted else "scan_rejected",
+            reason=plan.reason,
+            orbital_tag=plan.orbital_tag,
+            target=[plan.target.x, plan.target.y],
+        )
+        return accepted
+
+    def tick(
+        self,
+        attention: AttentionSnapshot,
+        awareness: AwarenessSnapshot,
+        commands: ScoutingCommands,
+    ) -> bool:
+        assessment = self._assessor.assess(attention, awareness)
+        self.last_assessment = assessment
+        if (
+            self._last_scan_at is not None
+            and assessment.now - self._last_scan_at < self.config.post_scan_cooldown
+        ):
+            self.last_plan = None
+            return False
+        if (
+            self._last_attempt_at is not None
+            and assessment.now - self._last_attempt_at < self.config.retry_after
+        ):
+            self.last_plan = None
+            return False
+        plan = self._planner.plan(assessment)
+        self.last_plan = plan
+        if plan is None:
+            return False
+        self._log.assessed(assessment, now=assessment.now, decision="scan")
+        self._log.proposed(plan, now=assessment.now)
+        return self.execute(plan, now=assessment.now, commands=commands)

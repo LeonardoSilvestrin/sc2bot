@@ -7,6 +7,7 @@ from ares.consts import BUILD_CHOICES, CYCLE, DEBUG, TEST_OPPONENT_ID
 from bot.adapters.ares import (
     AresEconomyCommands,
     AresMissionCommands,
+    AresScoutingCommands,
     AresWorldObserver,
     register_baseline_behaviors,
 )
@@ -15,7 +16,12 @@ from bot.behavior.defense import DefenseConfig, DefensePlanner
 from bot.behavior.harass.banshee import BansheeHarassConfig, BansheeHarassPlanner
 from bot.behavior.harass.reaper import ReaperHarassConfig, ReaperHarassPlanner
 from bot.behavior.map_control import MapControlConfig, MapControlPlanner
-from bot.behavior.scouting import IntelConfig, IntelPlanner
+from bot.behavior.scouting import (
+    IntelConfig,
+    IntelPlanner,
+    MainBaseScanBehavior,
+    ScanConfig,
+)
 from bot.behavior.standing import StandingConfig, StandingPlanner
 from bot.engine.economy import EconomyController
 from bot.engine.missions import MissionController
@@ -55,6 +61,7 @@ class BotRuntime:
         *,
         logger: BotLogger,
         intel_config: IntelConfig | None = None,
+        scan_config: ScanConfig | None = None,
         banshee_harass_config: BansheeHarassConfig | None = None,
         reaper_harass_config: ReaperHarassConfig | None = None,
         defense_config: DefenseConfig | None = None,
@@ -66,6 +73,7 @@ class BotRuntime:
         self.logger = logger
         self._rng = rng or random.Random()
         self.intel_config = intel_config or IntelConfig()
+        self.scan_config = scan_config or ScanConfig()
         self.banshee_harass_config = banshee_harass_config or BansheeHarassConfig()
         self.reaper_harass_config = reaper_harass_config or ReaperHarassConfig()
         self.defense_config = defense_config or DefenseConfig()
@@ -77,6 +85,9 @@ class BotRuntime:
         )
         # Behavior domain: planners propose missions for units on the map.
         self.intel_planner = IntelPlanner(config=self.intel_config, logger=logger)
+        self.main_base_scan = MainBaseScanBehavior(
+            config=self.scan_config, logger=logger
+        )
         self.banshee_harass_planner = BansheeHarassPlanner(
             config=self.banshee_harass_config, logger=logger
         )
@@ -218,6 +229,12 @@ class BotRuntime:
         attention = AttentionService.build(world=world)
         awareness = self.awareness.update(attention)
         await self._announce_awareness_changes(bot, awareness)
+
+        # A scan spends structure energy rather than leasing a mobile unit,
+        # so it runs beside (not inside) the mission controller.
+        self.main_base_scan.tick(
+            attention, awareness, AresScoutingCommands(bot)
+        )
 
         # Behavior: units already on the map, owned through missions.
         proposals = tuple(

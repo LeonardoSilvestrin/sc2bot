@@ -111,6 +111,13 @@ only after closing the lap. Unknown information creates the initial scout after 
 economy reaches 16 workers; stale information can be revisited in the periodic
 phase. These values live in `IntelConfig`.
 
+Scanner Sweep complements that mobile scouting when the enemy main has had no
+vision for 120 seconds. It spends from the fullest ready Orbital only when at least
+100 energy is available, preserving 50 energy after the cast. Because this spends
+structure energy rather than controlling a mobile unit, it runs beside the mission
+controller and records its result directly in the behavior log. These values live
+in `ScanConfig`.
+
 ## Behavior layout
 
 `bot/behavior/` is organized vertically: one folder per behavior, holding

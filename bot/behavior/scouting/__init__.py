@@ -6,16 +6,30 @@
     model.py        the config/assessment/plan types all three share
 """
 
-from .assessment import IntelAssessor
-from .executor import ScoutExecutor
-from .model import IntelAssessment, IntelConfig, ScoutPlan, ScoutTarget
-from .planner import IntelPlanner
+from .assessment import IntelAssessor, ScanAssessor
+from .executor import MainBaseScanBehavior, ScoutExecutor
+from .model import (
+    IntelAssessment,
+    IntelConfig,
+    ScanAssessment,
+    ScanConfig,
+    ScanPlan,
+    ScoutPlan,
+    ScoutTarget,
+)
+from .planner import IntelPlanner, ScanPlanner
 
 __all__ = [
     "IntelAssessment",
     "IntelAssessor",
     "IntelConfig",
     "IntelPlanner",
+    "MainBaseScanBehavior",
+    "ScanAssessment",
+    "ScanAssessor",
+    "ScanConfig",
+    "ScanPlan",
+    "ScanPlanner",
     "ScoutExecutor",
     "ScoutPlan",
     "ScoutTarget",

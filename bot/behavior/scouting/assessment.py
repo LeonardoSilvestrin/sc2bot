@@ -9,7 +9,17 @@ from sc2.ids.unit_typeid import UnitTypeId
 from bot.world.attention import AttentionSnapshot, WorldFacts
 from bot.world.awareness import AwarenessSnapshot
 
-from .model import IntelAssessment, IntelConfig, ScoutTarget
+from .model import (
+    IntelAssessment,
+    IntelConfig,
+    ScanAssessment,
+    ScanConfig,
+    ScoutTarget,
+)
+
+_ORBITAL_TYPES = frozenset(
+    {UnitTypeId.ORBITALCOMMAND, UnitTypeId.ORBITALCOMMANDFLYING}
+)
 
 
 @dataclass(slots=True)
@@ -65,3 +75,43 @@ class IntelAssessor:
         if preferred_alive:
             return self.config.unit_types
         return self.config.fallback_unit_types
+
+
+@dataclass(slots=True)
+class ScanAssessor:
+    """Measure enemy-main vision age and available Orbital energy."""
+
+    config: ScanConfig = field(default_factory=ScanConfig)
+
+    def assess(
+        self, attention: AttentionSnapshot, awareness: AwarenessSnapshot
+    ) -> ScanAssessment:
+        world = attention.world
+        observation = world.map.observation(self.config.target_key)
+        knowledge = awareness.enemy.location(self.config.target_key)
+        last_observed_at = None if knowledge is None else knowledge.last_observed_at
+        seconds_without_vision = (
+            world.time
+            if last_observed_at is None
+            else max(0.0, world.time - last_observed_at)
+        )
+        eligible = tuple(
+            sorted(
+                (
+                    (structure.tag, structure.energy)
+                    for structure in world.own_structures
+                    if structure.unit_type in _ORBITAL_TYPES
+                    and structure.is_ready
+                    and structure.energy >= self.config.required_energy
+                ),
+                key=lambda item: (-item[1], item[0]),
+            )
+        )
+        return ScanAssessment(
+            now=world.time,
+            target=None if observation is None else observation.position,
+            visible_now=False if observation is None else observation.visible_now,
+            last_observed_at=last_observed_at,
+            seconds_without_vision=seconds_without_vision,
+            eligible_orbitals=eligible,
+        )

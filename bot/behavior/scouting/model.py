@@ -116,3 +116,62 @@ class ScoutPlan:
             "priority": self.priority,
             "reason": self.reason,
         }
+
+
+@dataclass(frozen=True, slots=True)
+class ScanConfig:
+    """Policy for spending Orbital energy on stale enemy-main vision."""
+
+    target_key: str = "enemy_main"
+    max_without_vision: float = 120.0
+    scan_energy_cost: float = 50.0
+    reserve_energy: float = 50.0
+    retry_after: float = 5.0
+    post_scan_cooldown: float = 15.0
+
+    def __post_init__(self) -> None:
+        if not self.target_key.strip():
+            raise ValueError("target_key must not be empty")
+        if self.max_without_vision <= 0.0 or self.scan_energy_cost <= 0.0:
+            raise ValueError("vision age and scan cost must be positive")
+        if min(self.reserve_energy, self.retry_after, self.post_scan_cooldown) < 0.0:
+            raise ValueError("scan reserve and cooldowns must not be negative")
+
+    @property
+    def required_energy(self) -> float:
+        return self.scan_energy_cost + self.reserve_energy
+
+
+@dataclass(frozen=True, slots=True)
+class ScanAssessment:
+    now: float
+    target: Point2 | None
+    visible_now: bool
+    last_observed_at: float | None
+    seconds_without_vision: float
+    eligible_orbitals: tuple[tuple[int, float], ...]
+
+    def log_fields(self) -> dict[str, Any]:
+        return {
+            "target": None if self.target is None else [self.target.x, self.target.y],
+            "visible_now": self.visible_now,
+            "last_observed_at": self.last_observed_at,
+            "seconds_without_vision": self.seconds_without_vision,
+            "eligible_orbitals": len(self.eligible_orbitals),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ScanPlan:
+    target: Point2
+    orbital_tag: int
+    energy: float
+    reason: str
+
+    def log_fields(self) -> dict[str, Any]:
+        return {
+            "target": [self.target.x, self.target.y],
+            "orbital_tag": self.orbital_tag,
+            "energy": self.energy,
+            "reason": self.reason,
+        }

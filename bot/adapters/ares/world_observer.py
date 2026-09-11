@@ -652,6 +652,7 @@ class AresWorldObserver:
             is_constructing=bool(getattr(unit, "is_constructing_scv", False)),
             available_for_mission=available_for_mission,
             supply_cost=cls._supply_cost(unit.type_id),
+            energy=float(getattr(unit, "energy", 0.0) or 0.0),
         )
 
     @staticmethod

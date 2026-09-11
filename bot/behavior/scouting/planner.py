@@ -17,7 +17,7 @@ from bot.world.attention import AttentionSnapshot
 from bot.world.awareness import AwarenessSnapshot
 
 from .assessment import IntelAssessor
-from .model import IntelAssessment, IntelConfig, ScoutPlan
+from .model import IntelAssessment, IntelConfig, ScanAssessment, ScanPlan, ScoutPlan
 
 COMPONENT = "behavior.scouting"
 
@@ -117,4 +117,27 @@ class IntelPlanner:
             cooldown_seconds=self.config.failure_cooldown,
             can_preempt=False,
             commitment_seconds=5.0,
+        )
+
+
+@dataclass(slots=True)
+class ScanPlanner:
+    """Choose the fullest eligible Orbital once enemy-main vision is old."""
+
+    max_without_vision: float = 120.0
+    target_key: str = "enemy_main"
+
+    def plan(self, assessment: ScanAssessment) -> ScanPlan | None:
+        if assessment.target is None or assessment.visible_now:
+            return None
+        if assessment.seconds_without_vision < self.max_without_vision:
+            return None
+        if not assessment.eligible_orbitals:
+            return None
+        orbital_tag, energy = assessment.eligible_orbitals[0]
+        return ScanPlan(
+            target=assessment.target,
+            orbital_tag=orbital_tag,
+            energy=energy,
+            reason=f"{self.target_key}_vision_stale",
         )
