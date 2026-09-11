@@ -296,7 +296,6 @@ class BotRuntime:
         signature = (
             awareness.macro_posture,
             round(strength.score, 3),
-            round(strength.confidence, 3),
             strength.own_combat_units,
             strength.known_enemy_combat_units,
             threat.visible_enemy_units,
@@ -394,10 +393,8 @@ class BotRuntime:
         signature = (
             economy.relative.raw_state,
             economy.relative.stable_state,
-            round(economy.relative.confidence, 3),
             army.relative.raw_state,
             army.relative.stable_state,
-            round(army.relative.confidence, 3),
         )
         changed = signature != self._last_belief_signature
         periodic = game_time - self._last_belief_log_at >= 10.0

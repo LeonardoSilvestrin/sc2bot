@@ -221,7 +221,7 @@ class RuntimePilotTests(unittest.IsolatedAsyncioTestCase):
                 "posture": "RECOVERY",
                 "relative_strength": {
                     "score": 0.0,
-                    "confidence": 0.083,
+                    "confidence": 1.0,
                     "own_combat_units": 1,
                     "known_enemy_combat_units": 1,
                 },

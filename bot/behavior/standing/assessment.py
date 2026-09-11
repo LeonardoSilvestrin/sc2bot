@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from bot.world.attention import AttentionSnapshot
-from bot.world.awareness import AwarenessSnapshot, MacroPosture
+from bot.world.awareness import AwarenessSnapshot, MacroPosture, RelativePosition
 
 from .model import CombatPosture, StandingAssessment, StandingConfig
 
@@ -14,22 +14,25 @@ def derive_combat_posture(*, awareness: AwarenessSnapshot) -> CombatPosture:
     """A small, deterministic policy over already-computed Awareness signals.
 
     No new observation is introduced here -- ``bases.threatened``,
-    ``relative_strength`` and ``macro_posture`` already exist precisely to
-    answer "is something wrong right now" and "are we ahead". This only has
-    to decide which of three postures that maps to.
+    The stabilized army belief and ``macro_posture`` already exist precisely
+    to answer "is something wrong right now" and "are we ahead". This only
+    has to decide which of three postures that maps to.
     """
 
-    strength = awareness.relative_strength
+    army = awareness.army.relative
     if (
         awareness.bases.threatened
         or awareness.macro_posture in {MacroPosture.DEFENSE, MacroPosture.RECOVERY}
-        or (strength.confidence > 0.0 and strength.score <= -0.25)
+        or (
+            army.stable_state is RelativePosition.BEHIND
+            and army.confidence >= 0.35
+        )
     ):
         return CombatPosture.TURTLE
 
     if (
-        strength.confidence >= 0.5
-        and strength.score >= 0.35
+        army.stable_state is RelativePosition.AHEAD
+        and army.confidence >= 0.60
         and awareness.threat.near_own_base_enemy_combat_units == 0
     ):
         return CombatPosture.PRESSURE

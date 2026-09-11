@@ -27,7 +27,7 @@ commands. There is no `position:reserve` catch-all.
 `map.own_start`, the current lightweight proxy for expansion order),
 threatened bases, pressure near our bases, and how many eligible combat units
 exist. `derive_combat_posture` maps Awareness' `bases.threatened`,
-`relative_strength` and `macro_posture` onto TURTLE / BALANCED / PRESSURE --
+the stabilized army belief and `macro_posture` onto TURTLE / BALANCED / PRESSURE --
 a different axis from `MacroPosture`, which is about spending risk rather
 than where the army sits.
 

@@ -10,6 +10,7 @@ from bot.world.attention import (
     CountFacts,
     EconomyFacts,
     MapFacts,
+    MapObservation,
     UnitSnapshot,
     WorldFacts,
 )
@@ -326,7 +327,7 @@ class HysteresisTests(unittest.TestCase):
         )
         self.assertEqual(state.stable, RelativePosition.AHEAD)
 
-    def test_strong_estimated_gap_bypasses_persistence(self):
+    def test_strong_apparent_advantage_still_requires_persistence(self):
         config = RelativeBeliefConfig(strong_ratio=0.45)
         state = HysteresisState(stable=RelativePosition.EVEN)
 
@@ -341,8 +342,46 @@ class HysteresisTests(unittest.TestCase):
             config=config,
         )
 
-        self.assertEqual(state.stable, RelativePosition.AHEAD)
-        self.assertEqual(assessment.stable_state, RelativePosition.AHEAD)
+        self.assertEqual(assessment.raw_state, RelativePosition.AHEAD)
+        self.assertEqual(state.stable, RelativePosition.EVEN)
+        self.assertEqual(assessment.stable_state, RelativePosition.EVEN)
+
+    def test_large_apparent_advantage_needs_more_than_barely_enough_confidence(self):
+        assessment, state = advance_belief(
+            now=0.0,
+            own=50.0,
+            estimated=5.0,
+            observed=5.0,
+            # This used to be enough to announce AHEAD after seeing only a
+            # tiny slice of the opponent's army.
+            confidence=0.40,
+            reason="",
+            state=HysteresisState(),
+            config=RelativeBeliefConfig(),
+        )
+
+        self.assertEqual(assessment.raw_state, RelativePosition.UNKNOWN)
+        self.assertEqual(state.stable, RelativePosition.UNKNOWN)
+
+    def test_lost_vision_reduces_confidence_without_erasing_stable_belief(self):
+        config = RelativeBeliefConfig(persist_seconds=8.0)
+        state = HysteresisState(stable=RelativePosition.BEHIND)
+
+        assessment, state = advance_belief(
+            now=120.0,
+            own=50.0,
+            estimated=20.0,
+            observed=0.0,
+            confidence=0.0,
+            reason="",
+            state=state,
+            config=config,
+        )
+
+        self.assertEqual(assessment.raw_state, RelativePosition.UNKNOWN)
+        self.assertEqual(assessment.stable_state, RelativePosition.BEHIND)
+        self.assertEqual(state.stable, RelativePosition.BEHIND)
+        self.assertIsNone(state.pending)
 
     def test_hard_observed_evidence_flips_state_immediately(self):
         # Mirrors the spec example: own army=50, enemy observed=72.
@@ -396,6 +435,57 @@ def _enemy_combat_unit(
 
 
 class AwarenessServiceChatTests(unittest.TestCase):
+    def test_partial_scout_glimpse_does_not_announce_ahead(self):
+        service = AwarenessService()
+        own_army = UnitSnapshot(
+            tag=1,
+            unit_type=UnitTypeId.SIEGETANK,
+            position=Point2((10, 10)),
+            health_percentage=1.0,
+            is_flying=False,
+            is_worker=False,
+            can_attack_air=False,
+            can_attack_ground=True,
+            supply_cost=10.0,
+        )
+        enemy = _enemy_combat_unit(2, supply_cost=2.0)
+        expansions = tuple(
+            MapObservation(
+                key=f"expansion:{index}",
+                position=Point2((30 + index * 5, 30)),
+                visible_now=index == 0,
+            )
+            for index in range(6)
+        )
+
+        result = service.update(
+            AttentionSnapshot(
+                WorldFacts(
+                    iteration=100,
+                    time=100.0,
+                    minerals=0,
+                    vespene=0,
+                    supply_used=0,
+                    supply_cap=0,
+                    own_units=(own_army,),
+                    enemy_units=(enemy,),
+                    map=MapFacts(
+                        center=MAP.center,
+                        own_start=MAP.own_start,
+                        enemy_starts=MAP.enemy_starts,
+                        expansions=expansions,
+                    ),
+                )
+            )
+        )
+
+        # Numerically 10 vs 2 looks overwhelming, but only one sixth of the
+        # map has been checked. This exact shape caused the game-log flaps.
+        self.assertGreater(result.relative_strength.score, 0.5)
+        self.assertEqual(result.army.relative.raw_state, RelativePosition.UNKNOWN)
+        self.assertEqual(result.army.relative.stable_state, RelativePosition.UNKNOWN)
+        self.assertEqual(result.chat_messages, ())
+
     def test_chat_fires_exactly_when_stable_state_changes_and_axes_are_independent(
         self,
     ):
