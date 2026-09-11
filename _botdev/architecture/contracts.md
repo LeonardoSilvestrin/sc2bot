@@ -104,6 +104,7 @@ sequenceDiagram
     participant Att as AttentionService
     participant Awa as AwarenessService
     participant Pln as Mission planners
+    participant Vision as VisionService
     participant Mac as MacroPlanner
     participant MC as MissionController
     participant Alloc as UnitAllocator
@@ -116,11 +117,16 @@ sequenceDiagram
     Att->>Awa: AttentionSnapshot
     Awa-->>Pln: AwarenessSnapshot
     Att-->>Pln: AttentionSnapshot
+    Pln->>Vision: request(position, urgency, requester, reason, ttl)
+    Vision->>Vision: persist / spatial dedup / arbitrate
+    Vision->>Cmd: selected provider action
+    Cmd->>Ares: Scanner Sweep (current provider)
     Pln->>MC: tuple[MissionProposal]
     MC->>MC: admit / reject / update-standing / cancel
     MC->>Alloc: allocate(priority, requirement, can_preempt, preemption_cost)
     Alloc-->>MC: assigned/preempted/released tags
     MC->>Exec: step(MissionContext)
+    Vision-->>Exec: context.services.vision
     Exec->>Cmd: MissionCommands (path_to/attack_move/...)
     Cmd->>Ares: register Ares behavior
 

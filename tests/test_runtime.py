@@ -531,13 +531,16 @@ class RuntimePilotTests(unittest.IsolatedAsyncioTestCase):
         orbital = bot.structures[0]
         orbital.type_id = UnitTypeId.ORBITALCOMMAND
         orbital.energy = 100.0
-        scouting_commands = SimpleNamespace(scan=Mock(return_value=True))
+        vision_commands = SimpleNamespace(
+            has_vision=Mock(return_value=False),
+            scan=Mock(return_value=True),
+        )
 
         runtime = BotRuntime(logger=FakeLogger())
         with (
             patch(
-                "bot.app.runtime.AresScoutingCommands",
-                return_value=scouting_commands,
+                "bot.app.runtime.AresVisionCommands",
+                return_value=vision_commands,
             ),
             patch(
                 "bot.app.runtime.AresEconomyCommands",
@@ -547,7 +550,7 @@ class RuntimePilotTests(unittest.IsolatedAsyncioTestCase):
         ):
             await runtime.on_step(bot, iteration=1)
 
-        scouting_commands.scan.assert_called_once_with(
+        vision_commands.scan.assert_called_once_with(
             orbital_tag=999, target=Point2((90, 90))
         )
 

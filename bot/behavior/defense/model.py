@@ -39,6 +39,8 @@ class DefenseConfig:
     max_desired_units: int = 6
     minimum_unit_health: float = 0.3
     commitment_seconds: float = 3.0
+    remembered_threat_max_age: float = 12.0
+    vision_request_ttl: float = 6.0
 
     # --- tactics ----------------------------------------------------------
     engagement_radius: float = 25.0
@@ -69,6 +71,8 @@ class DefenseConfig:
             raise ValueError("minimum_unit_health must be between 0 and 1")
         if self.commitment_seconds < 0.0:
             raise ValueError("commitment_seconds must not be negative")
+        if self.remembered_threat_max_age <= 0.0 or self.vision_request_ttl <= 0.0:
+            raise ValueError("defense vision timings must be positive")
         if self.engagement_radius <= 0.0 or self.arrival_radius <= 0.0:
             raise ValueError("engagement and arrival radii must be positive")
 

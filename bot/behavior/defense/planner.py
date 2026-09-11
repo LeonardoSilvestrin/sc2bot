@@ -16,6 +16,11 @@ from dataclasses import dataclass, field
 from bot.behavior.contracts import BehaviorLog
 from bot.engine.missions.models import MissionProposal, UnitRequirement
 from bot.engine.missions.planning import ProposalCadence
+from bot.engine.services import (
+    BehaviorServices,
+    VisionRequestResult,
+    VisionUrgency,
+)
 from bot.ports.logging import BotLogger
 from bot.world.attention import AttentionSnapshot
 from bot.world.awareness import AwarenessSnapshot
@@ -32,6 +37,7 @@ class DefensePlanner:
 
     config: DefenseConfig = field(default_factory=DefenseConfig)
     logger: BotLogger | None = None
+    services: BehaviorServices | None = None
     planner_id: str = "defense_planner"
     _assessor: DefenseAssessor = field(init=False, repr=False)
     _log: BehaviorLog = field(init=False, repr=False)
@@ -44,6 +50,9 @@ class DefensePlanner:
     last_plans: tuple[DefensePlan, ...] = field(
         default=(), init=False, repr=False
     )
+    last_vision_result: VisionRequestResult | None = field(
+        default=None, init=False, repr=False
+    )
 
     def __post_init__(self) -> None:
         self._assessor = DefenseAssessor(config=self.config)
@@ -55,6 +64,9 @@ class DefensePlanner:
         awareness: AwarenessSnapshot,
     ) -> tuple[MissionProposal, ...]:
         now = attention.world.time
+        self.last_vision_result = self._request_vision_for_remembered_threat(
+            attention, awareness
+        )
         if not self._cadence.ready(now, self.config.proposal_cadence):
             return ()
 
@@ -73,6 +85,45 @@ class DefensePlanner:
         for plan in plans:
             self._log.proposed(plan, now=now, planner=self.planner_id)
         return tuple(self._proposal_for(plan, now) for plan in plans)
+
+    def _request_vision_for_remembered_threat(
+        self,
+        attention: AttentionSnapshot,
+        awareness: AwarenessSnapshot,
+    ) -> VisionRequestResult | None:
+        """Ask for vision where a recent nearby attacker disappeared.
+
+        This is deliberately small: it proves Defense can consume the same
+        capability without teaching it how active vision is provided.
+        """
+
+        if self.services is None:
+            return None
+        now = attention.world.time
+        bases = attention.world.bases
+        candidates = tuple(
+            sighting
+            for sighting in awareness.enemy.sightings
+            if not sighting.visible_now
+            and not sighting.is_worker
+            and (sighting.can_attack_air or sighting.can_attack_ground)
+            and now - sighting.last_seen_at <= self.config.remembered_threat_max_age
+            and any(
+                sighting.last_position.distance_to(base.position)
+                <= self.config.engagement_radius
+                for base in bases
+            )
+        )
+        if not candidates:
+            return None
+        target = max(candidates, key=lambda item: item.last_seen_at)
+        return self.services.vision.request(
+            position=target.last_position,
+            urgency=VisionUrgency.HIGH,
+            requester=self.planner_id,
+            reason="recent_threat_lost_near_own_base",
+            ttl=self.config.vision_request_ttl,
+        )
 
     def _plan(self, base: ThreatenedBase) -> DefensePlan:
         return DefensePlan(

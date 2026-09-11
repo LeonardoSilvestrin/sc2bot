@@ -111,12 +111,14 @@ only after closing the lap. Unknown information creates the initial scout after 
 economy reaches 16 workers; stale information can be revisited in the periodic
 phase. These values live in `IntelConfig`.
 
-Scanner Sweep complements that mobile scouting when the enemy main has had no
-vision for 120 seconds. It spends from the fullest ready Orbital only when at least
-100 energy is available, preserving 50 energy after the cast. Because this spends
-structure energy rather than controlling a mobile unit, it runs beside the mission
-controller and records its result directly in the behavior log. These values live
-in `ScanConfig`.
+Active vision is a shared service rather than a scouting implementation detail.
+Scouting requests normal-urgency vision when the enemy main has been unseen for
+120 seconds; Defense requests high-urgency vision when a recent nearby threat
+disappears. `VisionService` persists, deduplicates and arbitrates those needs, while
+its current `ScanProvider` selects the fullest ready Orbital with at least 100
+energy, preserving 50 after Scanner Sweep. Consumers know neither Orbitals nor the
+provider. Mission executors receive the same capability as
+`context.services.vision` for future tactical consumers.
 
 ## Behavior layout
 

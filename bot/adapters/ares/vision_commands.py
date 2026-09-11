@@ -5,8 +5,8 @@ from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
 
-class AresScoutingCommands:
-    """Translate information-gathering actions into python-sc2 commands."""
+class AresVisionCommands:
+    """Observe visibility and execute provider-selected active-vision actions."""
 
     _ORBITAL_TYPES = frozenset(
         {UnitTypeId.ORBITALCOMMAND, UnitTypeId.ORBITALCOMMANDFLYING}
@@ -14,6 +14,10 @@ class AresScoutingCommands:
 
     def __init__(self, bot) -> None:
         self._bot = bot
+
+    def has_vision(self, position: Point2) -> bool:
+        is_visible = getattr(self._bot, "is_visible", None)
+        return bool(is_visible(position)) if callable(is_visible) else False
 
     def scan(self, *, orbital_tag: int, target: Point2) -> bool:
         orbital = self._bot.unit_tag_dict.get(orbital_tag)

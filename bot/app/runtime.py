@@ -7,7 +7,7 @@ from ares.consts import BUILD_CHOICES, CYCLE, DEBUG, TEST_OPPONENT_ID
 from bot.adapters.ares import (
     AresEconomyCommands,
     AresMissionCommands,
-    AresScoutingCommands,
+    AresVisionCommands,
     AresWorldObserver,
     register_baseline_behaviors,
 )
@@ -19,12 +19,19 @@ from bot.behavior.map_control import MapControlConfig, MapControlPlanner
 from bot.behavior.scouting import (
     IntelConfig,
     IntelPlanner,
-    MainBaseScanBehavior,
-    ScanConfig,
+    ScoutingVisionConfig,
+    ScoutingVisionRequester,
 )
 from bot.behavior.standing import StandingConfig, StandingPlanner
 from bot.engine.economy import EconomyController
 from bot.engine.missions import MissionController
+from bot.engine.services import (
+    BehaviorServices,
+    ScanProvider,
+    ScanProviderConfig,
+    VisionService,
+    VisionServiceConfig,
+)
 from bot.macro import MacroDiagnostics, MacroPlanner, MacroPlannerConfig
 from bot.ports.logging import BotLogger
 from bot.world.attention import AttentionService
@@ -61,7 +68,9 @@ class BotRuntime:
         *,
         logger: BotLogger,
         intel_config: IntelConfig | None = None,
-        scan_config: ScanConfig | None = None,
+        scouting_vision_config: ScoutingVisionConfig | None = None,
+        vision_service_config: VisionServiceConfig | None = None,
+        scan_provider_config: ScanProviderConfig | None = None,
         banshee_harass_config: BansheeHarassConfig | None = None,
         reaper_harass_config: ReaperHarassConfig | None = None,
         defense_config: DefenseConfig | None = None,
@@ -73,7 +82,9 @@ class BotRuntime:
         self.logger = logger
         self._rng = rng or random.Random()
         self.intel_config = intel_config or IntelConfig()
-        self.scan_config = scan_config or ScanConfig()
+        self.scouting_vision_config = (
+            scouting_vision_config or ScoutingVisionConfig()
+        )
         self.banshee_harass_config = banshee_harass_config or BansheeHarassConfig()
         self.reaper_harass_config = reaper_harass_config or ReaperHarassConfig()
         self.defense_config = defense_config or DefenseConfig()
@@ -83,10 +94,20 @@ class BotRuntime:
         self.awareness = AwarenessService(
             location_stale_after=self.intel_config.location_stale_after
         )
+        self.vision = VisionService(
+            provider=ScanProvider(
+                config=scan_provider_config or ScanProviderConfig(), logger=logger
+            ),
+            config=vision_service_config or VisionServiceConfig(),
+            logger=logger,
+        )
+        self.services = BehaviorServices(vision=self.vision)
         # Behavior domain: planners propose missions for units on the map.
         self.intel_planner = IntelPlanner(config=self.intel_config, logger=logger)
-        self.main_base_scan = MainBaseScanBehavior(
-            config=self.scan_config, logger=logger
+        self.scouting_vision = ScoutingVisionRequester(
+            services=self.services,
+            config=self.scouting_vision_config,
+            logger=logger,
         )
         self.banshee_harass_planner = BansheeHarassPlanner(
             config=self.banshee_harass_config, logger=logger
@@ -94,7 +115,11 @@ class BotRuntime:
         self.reaper_harass_planner = ReaperHarassPlanner(
             config=self.reaper_harass_config, logger=logger
         )
-        self.defense_planner = DefensePlanner(config=self.defense_config, logger=logger)
+        self.defense_planner = DefensePlanner(
+            config=self.defense_config,
+            logger=logger,
+            services=self.services,
+        )
         self.map_control_planner = MapControlPlanner(
             config=self.map_control_config, logger=logger
         )
@@ -230,11 +255,10 @@ class BotRuntime:
         awareness = self.awareness.update(attention)
         await self._announce_awareness_changes(bot, awareness)
 
-        # A scan spends structure energy rather than leasing a mobile unit,
-        # so it runs beside (not inside) the mission controller.
-        self.main_base_scan.tick(
-            attention, awareness, AresScoutingCommands(bot)
-        )
+        # Shared capabilities collect needs from every behavior before
+        # choosing how to satisfy them once for the frame.
+        self.vision.begin_frame(attention, AresVisionCommands(bot))
+        self.scouting_vision.tick(attention, awareness)
 
         # Behavior: units already on the map, owned through missions.
         proposals = tuple(
@@ -242,6 +266,7 @@ class BotRuntime:
             for planner in self._mission_planners
             for proposal in planner.propose(attention, awareness)
         )
+        self.vision.resolve()
         register_baseline_behaviors(bot)
         commands = AresMissionCommands(bot, self.missions.allocator)
         await self.missions.tick(
@@ -249,6 +274,7 @@ class BotRuntime:
             awareness=awareness,
             proposals=proposals,
             commands=commands,
+            services=self.services,
         )
 
         # Macro: what to spend on, admitted against the bank -- no unit, no
