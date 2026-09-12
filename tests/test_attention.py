@@ -46,6 +46,126 @@ def unit(
 
 
 class AresWorldObserverTests(unittest.TestCase):
+    def test_extracts_coarse_pathable_samples_and_measured_chokes(self):
+        grid = np.zeros((26, 26), dtype=np.uint8)
+        grid[5, 5] = 1
+        grid[15, 15] = 1
+        choke = SimpleNamespace(
+            center=Point2((9, 9)),
+            side_a=Point2((7, 9)),
+            side_b=Point2((11, 9)),
+        )
+        bot = SimpleNamespace(
+            mediator=SimpleNamespace(
+                get_initial_pathing_grid=grid,
+                get_map_data_object=SimpleNamespace(map_chokes=(choke,)),
+            )
+        )
+
+        points = AresWorldObserver._sample_pathable_points(bot)
+        chokes = AresWorldObserver._choke_facts(bot)
+
+        self.assertEqual(points, (Point2((5.5, 5.5)), Point2((15.5, 15.5))))
+        self.assertEqual(chokes[0].position, Point2((9, 9)))
+        self.assertEqual(chokes[0].width, 4.0)
+
+    def test_choke_width_is_only_reported_where_the_geometry_measures_it(self):
+        raw = SimpleNamespace(
+            center=Point2((9, 9)), side_a=Point2((7, 9)), side_b=Point2((11, 9))
+        )
+        ramp = SimpleNamespace(
+            center=Point2((20, 20)),
+            is_ramp=True,
+            side_a=Point2((20, 17)),
+            side_b=Point2((20, 23)),
+        )
+        bushes = SimpleNamespace(
+            center=Point2((30, 30)),
+            is_vision_blocker=True,
+            side_a=(28, 30),
+            side_b=(34, 30),
+        )
+        sideless = SimpleNamespace(center=Point2((40, 40)), side_a=None, side_b=None)
+        bot = SimpleNamespace(
+            mediator=SimpleNamespace(
+                get_map_data_object=SimpleNamespace(
+                    map_chokes=(raw, ramp, bushes, sideless)
+                )
+            )
+        )
+
+        chokes = AresWorldObserver._choke_facts(bot)
+
+        self.assertEqual([choke.width for choke in chokes], [4.0, 7.0, None, None])
+
+    def test_map_topology_and_traffic_routes_retry_until_ares_provides_them(self):
+        observer = AresWorldObserver()
+        calls = []
+
+        def pathfind(start, goal, grid, **_options):
+            calls.append((start, goal))
+            return [start, goal]
+
+        mediator = SimpleNamespace(get_enemy_nat=None)
+        bot = SimpleNamespace(
+            time=0.0,
+            mediator=mediator,
+            enemy_start_locations=(Point2((90, 90)),),
+            start_location=Point2((10, 10)),
+        )
+
+        self.assertEqual(observer._map_topology(bot), ((), ()))
+        self.assertEqual(observer._ground_traffic_routes(bot, ()), ())
+
+        grid = np.zeros((26, 26), dtype=np.uint8)
+        grid[5, 5] = 1
+        mediator.get_initial_pathing_grid = grid
+        mediator.get_map_data_object = SimpleNamespace(
+            map_chokes=(SimpleNamespace(center=Point2((9, 9))),),
+            pathfind=pathfind,
+            get_pyastar_grid=lambda: grid,
+        )
+        bot.time = 1.0
+
+        points, chokes = observer._map_topology(bot)
+        routes = observer._ground_traffic_routes(bot, ())
+
+        self.assertEqual(points, (Point2((5.5, 5.5)),))
+        self.assertEqual(len(chokes), 1)
+        self.assertEqual(len(routes), 1)
+        self.assertIs(observer._map_topology(bot)[0], points)
+        self.assertIs(observer._ground_traffic_routes(bot, ()), routes)
+        self.assertEqual(len(calls), 1)
+
+    def test_failed_route_pathfinding_is_retried_after_a_backoff(self):
+        observer = AresWorldObserver()
+        attempts = []
+
+        def pathfind(start, goal, grid, **_options):
+            attempts.append(bot.time)
+            if len(attempts) == 1:
+                raise RuntimeError("map analysis not ready")
+            return [start, goal]
+
+        bot = SimpleNamespace(
+            time=0.0,
+            mediator=SimpleNamespace(
+                get_enemy_nat=None,
+                get_map_data_object=SimpleNamespace(
+                    pathfind=pathfind, get_pyastar_grid=lambda: "grid"
+                ),
+            ),
+            enemy_start_locations=(Point2((90, 90)),),
+            start_location=Point2((10, 10)),
+        )
+
+        self.assertEqual(observer._ground_traffic_routes(bot, ()), ())
+        bot.time = 1.0
+        self.assertEqual(observer._ground_traffic_routes(bot, ()), ())
+        bot.time = 2.5
+        self.assertEqual(len(observer._ground_traffic_routes(bot, ())), 1)
+        self.assertEqual(attempts, [0.0, 2.5])
+
     def test_economy_counts_every_form_of_a_unit_as_the_type_it_was_built_as(self):
         bot = SimpleNamespace(
             time=300.0,

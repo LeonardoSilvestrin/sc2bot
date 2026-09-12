@@ -35,7 +35,11 @@ from bot.engine.services import (
 from bot.macro import MacroDiagnostics, MacroPlanner, MacroPlannerConfig
 from bot.ports.logging import BotLogger
 from bot.world.attention import AttentionService
-from bot.world.awareness import AwarenessService, AwarenessSnapshot
+from bot.world.awareness import (
+    AwarenessService,
+    AwarenessSnapshot,
+    SpatialModelConfig,
+)
 
 # `terran_builds.yml` sets `UseData: false` (ladder-safe: never persist
 # opponent history to disk), which makes Ares' own build-selection cycle
@@ -77,6 +81,8 @@ class BotRuntime:
         macro_config: MacroPlannerConfig | None = None,
         map_control_config: MapControlConfig | None = None,
         standing_config: StandingConfig | None = None,
+        spatial_model_config: SpatialModelConfig | None = None,
+        spatial_sample_spacing: int = 10,
         rng: random.Random | None = None,
     ) -> None:
         self.logger = logger
@@ -90,9 +96,13 @@ class BotRuntime:
         self.defense_config = defense_config or DefenseConfig()
         self.map_control_config = map_control_config or MapControlConfig()
         self.standing_config = standing_config or StandingConfig()
-        self.world_observer = AresWorldObserver()
+        self.world_observer = AresWorldObserver(
+            spatial_sample_spacing=spatial_sample_spacing
+        )
         self.awareness = AwarenessService(
-            location_stale_after=self.intel_config.location_stale_after
+            location_stale_after=self.intel_config.location_stale_after,
+            spatial_model_config=spatial_model_config,
+            logger=logger,
         )
         self.vision = VisionService(
             provider=ScanProvider(

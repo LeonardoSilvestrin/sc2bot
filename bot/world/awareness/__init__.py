@@ -34,6 +34,13 @@ from .snapshot import (
     RelativeStrength,
     ThreatAssessment,
 )
+from .spatial import (
+    SpatialField,
+    SpatialFieldModel,
+    SpatialFieldSample,
+    SpatialModelConfig,
+    SpatialPerformance,
+)
 
 __all__ = [
     "ArmyBelief",
@@ -66,6 +73,11 @@ __all__ = [
     "RelativeBeliefConfig",
     "RelativePosition",
     "RelativeStrength",
+    "SpatialField",
+    "SpatialFieldModel",
+    "SpatialFieldSample",
+    "SpatialModelConfig",
+    "SpatialPerformance",
     "ThreatAssessment",
     "WorkerEstimate",
 ]

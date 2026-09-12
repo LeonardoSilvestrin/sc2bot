@@ -17,6 +17,7 @@ from bot.world.attention.facts import (
     TOWNHALL_TYPES,
     CountFacts,
     EconomyFacts,
+    MapChoke,
     MapFacts,
     MapObservation,
     MapRoute,
@@ -87,10 +88,22 @@ class AresWorldObserver:
     # Half the side of a townhall's 5x5 footprint: the area that decides
     # whether a base location is in vision (see `_base_location_visible`).
     _TOWNHALL_HALF_EXTENT = 2.5
+    # After a pathfinding call raises, wait this long before retrying the same
+    # route endpoints rather than re-running A* on every frame.
+    _TRAFFIC_RETRY_SECONDS = 2.0
 
-    def __init__(self) -> None:
+    def __init__(self, *, spatial_sample_spacing: int = 10) -> None:
+        if spatial_sample_spacing <= 0:
+            raise ValueError("spatial_sample_spacing must be positive")
+        self.spatial_sample_spacing = spatial_sample_spacing
         self._utilization: dict[UnitTypeId, float] = {}
         self._utilization_at: float | None = None
+        self._pathable_points: tuple[Point2, ...] = ()
+        self._map_chokes: tuple[MapChoke, ...] = ()
+        self._routing_grid = None
+        self._traffic_signature: tuple[tuple[float, float], ...] | None = None
+        self._traffic_routes: tuple[MapRoute, ...] = ()
+        self._traffic_retry_at: float | None = None
 
     @staticmethod
     def _safe_attr(obj, name: str, default=None):
@@ -855,6 +868,215 @@ class AresWorldObserver:
             ),
         )
 
+    @classmethod
+    def _initial_pathing_grid(cls, bot):
+        mediator = cls._safe_attr(bot, "mediator")
+        grid = cls._safe_attr(mediator, "get_initial_pathing_grid")
+        if grid is not None:
+            return grid
+        pathing = cls._safe_attr(cls._safe_attr(bot, "game_info"), "pathing_grid")
+        return cls._safe_attr(pathing, "data_numpy")
+
+    @classmethod
+    def _sample_pathable_points(cls, bot, *, spacing: int = 10) -> tuple[Point2, ...]:
+        """Sample the immutable ground pathing grid on a coarse regular lattice."""
+
+        grid = cls._initial_pathing_grid(bot)
+        shape = cls._safe_attr(grid, "shape")
+        if shape is None or len(shape) < 2:
+            return ()
+        height, width = int(shape[0]), int(shape[1])
+        offset = max(1, spacing // 2)
+        points: list[Point2] = []
+        for y in range(offset, height, spacing):
+            for x in range(offset, width, spacing):
+                try:
+                    pathable = float(grid[y, x]) > 0.0
+                except (IndexError, TypeError, ValueError):
+                    pathable = False
+                if pathable:
+                    points.append(Point2((float(x) + 0.5, float(y) + 0.5)))
+        return tuple(points)
+
+    @classmethod
+    def _choke_facts(cls, bot) -> tuple[MapChoke, ...]:
+        """MapAnalyzer choke centres, with a width only where one is measured."""
+
+        mediator = cls._safe_attr(bot, "mediator")
+        map_data = cls._safe_attr(mediator, "get_map_data_object")
+        raw_chokes = cls._safe_attr(map_data, "map_chokes", ())
+        try:
+            chokes = tuple(raw_chokes or ())
+        except (RuntimeError, TypeError):
+            chokes = ()
+
+        result: list[MapChoke] = []
+        for index, choke in enumerate(chokes):
+            center = cls._point(cls._safe_attr(choke, "center"))
+            if center is None:
+                points = cls._safe_attr(choke, "points", ())
+                try:
+                    converted = tuple(
+                        point
+                        for raw in points
+                        if (point := cls._point(raw)) is not None
+                    )
+                except (RuntimeError, TypeError):
+                    converted = ()
+                if not converted:
+                    continue
+                center = Point2(
+                    (
+                        sum(point.x for point in converted) / len(converted),
+                        sum(point.y for point in converted) / len(converted),
+                    )
+                )
+            result.append(
+                MapChoke(
+                    key=f"choke:{index}",
+                    position=center,
+                    width=cls._choke_width(choke),
+                )
+            )
+        return tuple(result)
+
+    @classmethod
+    def _choke_width(cls, choke) -> float | None:
+        """Passage width where MapAnalyzer's geometry actually measures one.
+
+        Raw chokes carry the passage line the C extension found, and a ramp
+        walks across its own cells, so both ``side_a``/``side_b`` pairs span
+        the passage. A vision blocker's sides are midpoints of the bush
+        blob's extremes, which says nothing about passage width, so it --
+        like any area without sides -- reports ``None``.
+        """
+
+        if bool(cls._safe_attr(choke, "is_vision_blocker", False)):
+            return None
+        side_a = cls._point(cls._safe_attr(choke, "side_a"))
+        side_b = cls._point(cls._safe_attr(choke, "side_b"))
+        if side_a is None or side_b is None:
+            return None
+        width = float(side_a.distance_to(side_b))
+        if bool(cls._safe_attr(choke, "is_ramp", False)):
+            # A ramp's sides are its outermost cells, not the walls beyond
+            # them, so both end cells still belong to the passage.
+            width += 1.0
+        return max(1.0, width)
+
+    @staticmethod
+    def _point(value) -> Point2 | None:
+        if isinstance(value, Point2):
+            return value
+        try:
+            return Point2((float(value[0]), float(value[1])))
+        except (IndexError, TypeError, ValueError):
+            return None
+
+    def _map_topology(self, bot) -> tuple[tuple[Point2, ...], tuple[MapChoke, ...]]:
+        """Static ground topology, cached only once Ares has produced it.
+
+        The pathing grid and MapAnalyzer's chokes may not exist on the first
+        attempts, so an empty result is never cached: a real map always has
+        pathable ground and at least its ramps. While Ares has nothing yet,
+        a retry costs a few attribute lookups.
+        """
+
+        if not self._pathable_points:
+            self._pathable_points = self._sample_pathable_points(
+                bot, spacing=self.spatial_sample_spacing
+            )
+        if not self._map_chokes:
+            self._map_chokes = self._choke_facts(bot)
+        return self._pathable_points, self._map_chokes
+
+    def _routing_tools(self, bot):
+        """MapAnalyzer's pathfinder and static grid; ``None`` while unavailable."""
+
+        mediator = self._safe_attr(bot, "mediator")
+        map_data = self._safe_attr(mediator, "get_map_data_object")
+        pathfind = self._safe_attr(map_data, "pathfind")
+        if not callable(pathfind):
+            return None, None
+        if self._routing_grid is None:
+            get_grid = self._safe_attr(map_data, "get_pyastar_grid")
+            if callable(get_grid):
+                try:
+                    self._routing_grid = get_grid()
+                except (AttributeError, RuntimeError, TypeError, ValueError):
+                    self._routing_grid = None
+        return pathfind, self._routing_grid
+
+    def _ground_traffic_routes(
+        self, bot, own_structures: tuple
+    ) -> tuple[MapRoute, ...]:
+        """Path likely enemy origins to held bases, caching by endpoint set.
+
+        The endpoint signature is only committed once every pair was really
+        attempted. While map analysis is unavailable the previous routes are
+        kept and the next frame retries; if a pathfinding call raises, the
+        partial result is used and the same endpoints are retried after
+        ``_TRAFFIC_RETRY_SECONDS``.
+        """
+
+        source_items = list(self._items(bot, "enemy_start_locations"))
+        enemy_natural = self._safe_attr(
+            self._safe_attr(bot, "mediator"), "get_enemy_nat"
+        )
+        if enemy_natural is not None and enemy_natural not in source_items:
+            source_items.append(enemy_natural)
+        sources = tuple(source_items)
+        targets = tuple(
+            structure.position
+            for structure in own_structures
+            if structure.type_id in TOWNHALL_TYPES
+            and bool(self._safe_attr(structure, "is_ready", True))
+            and not bool(self._safe_attr(structure, "is_flying", False))
+        ) or (bot.start_location,)
+        endpoints = (*sources, *targets)
+        signature = tuple((float(point.x), float(point.y)) for point in endpoints)
+        if signature == self._traffic_signature:
+            return self._traffic_routes
+        now = float(self._safe_attr(bot, "time", 0.0))
+        if self._traffic_retry_at is not None and now < self._traffic_retry_at:
+            return self._traffic_routes
+        pathfind, grid = self._routing_tools(bot)
+        if pathfind is None or grid is None:
+            return self._traffic_routes
+
+        routes: list[MapRoute] = []
+        failed = False
+        for source_index, source in enumerate(sources):
+            for target_index, target in enumerate(targets):
+                try:
+                    path = pathfind(
+                        source,
+                        target,
+                        grid,
+                        smoothing=False,
+                        sensitivity=3,
+                    )
+                except (AttributeError, RuntimeError, TypeError, ValueError):
+                    failed = True
+                    continue
+                if not path:
+                    continue
+                routes.append(
+                    MapRoute(
+                        key=f"traffic:{source_index}:{target_index}",
+                        waypoints=tuple(
+                            RouteWaypoint(position=point) for point in path
+                        ),
+                    )
+                )
+        self._traffic_routes = tuple(routes)
+        if failed:
+            self._traffic_retry_at = now + self._TRAFFIC_RETRY_SECONDS
+        else:
+            self._traffic_signature = signature
+            self._traffic_retry_at = None
+        return self._traffic_routes
+
     def world_facts(self, bot, *, iteration: int) -> WorldFacts:
         unavailable_units = self._unavailable_unit_tags(bot)
         raw_own_units = self._items(bot, "units")
@@ -900,6 +1122,7 @@ class AresWorldObserver:
             )
             for unit in raw_enemy_structures
         )
+        pathable_points, map_chokes = self._map_topology(bot)
         return WorldFacts(
             iteration=int(iteration),
             time=float(bot.time),
@@ -916,6 +1139,10 @@ class AresWorldObserver:
                 observations=self._map_observations(bot),
                 routes=self._map_routes(bot),
                 expansions=self._expansions(bot),
+                pathable_points=pathable_points,
+                pathable_sample_spacing=float(self.spatial_sample_spacing),
+                chokes=map_chokes,
+                traffic_routes=self._ground_traffic_routes(bot, raw_own_structures),
             ),
             own_structures=own_structures,
             enemy_structures=enemy_structures,

@@ -14,10 +14,12 @@ from bot.engine.missions.execution import (
     MissionOutcome,
     MissionResult,
 )
+from bot.engine.missions.models import Mission
 from bot.ports.logging import BotLogger
-from bot.world.attention import MapFacts, UnitSnapshot
+from bot.world.attention import UnitSnapshot
 from bot.world.awareness import MacroPosture
 from bot.world.awareness.bases import BaseSecurityLevel
+from bot.world.awareness.spatial import SpatialField
 
 from .model import MapControlConfig, PatrolPhase
 
@@ -26,7 +28,7 @@ COMPONENT = "behavior.map_control"
 
 @dataclass(slots=True)
 class MapControlExecutor(MissionExecutor):
-    """Patrols the friendly half of the map and disengages from every fight."""
+    """Patrols the region around its spatial anchor and disengages from fights."""
 
     mission_id: str
     target_key: str
@@ -37,6 +39,8 @@ class MapControlExecutor(MissionExecutor):
     phase: PatrolPhase = field(default=PatrolPhase.WAITING, init=False, repr=False)
     _log: BehaviorLog = field(init=False, repr=False)
     _waypoint_index: int = field(default=0, init=False, repr=False)
+    _patrol_route: tuple[Point2, ...] = field(default=(), init=False, repr=False)
+    _patrol_route_key: tuple | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self._log = BehaviorLog(component=COMPONENT, logger=self.logger)
@@ -56,6 +60,14 @@ class MapControlExecutor(MissionExecutor):
     @property
     def retreat_health(self) -> float:
         return self.config.retreat_health
+
+    def refresh(self, mission: Mission) -> None:
+        """Follow a hysteresis-approved target without replacing the mission."""
+
+        target = mission.proposal.target
+        if target != self.target:
+            self.target = target
+            self._waypoint_index = 0
 
     async def step(self, context: MissionContext) -> MissionResult:
         units = context.assigned_units
@@ -84,7 +96,7 @@ class MapControlExecutor(MissionExecutor):
             )
 
         self._enter(PatrolPhase.PATROL, "map_is_clear_enough", context)
-        waypoints = self._patrol_points(context.attention.world.map)
+        waypoints = self._patrol_waypoints(context.awareness.spatial)
         waypoint = waypoints[self._waypoint_index % len(waypoints)]
         if all(
             unit.position.distance_to(waypoint) <= self.arrival_radius
@@ -95,6 +107,33 @@ class MapControlExecutor(MissionExecutor):
 
         self._move_safely(context, units, waypoint)
         return MissionResult(MissionOutcome.ACTIVE, "patrolling_safe_map_route")
+
+    def _patrol_waypoints(self, spatial: SpatialField) -> tuple[Point2, ...]:
+        """The anchor, then the pathable samples of its region by angle.
+
+        The planner owns where the region is; this only walks it. Every
+        waypoint is a sampled pathable point, and sweeping them by angle
+        circles the anchor instead of zig-zagging across it. Without a field
+        yet, the region is just the anchor.
+        """
+
+        key = (self.target, spatial.sample_spacing, len(spatial.samples))
+        if key != self._patrol_route_key:
+            anchor = self.target
+            radius = self.config.patrol_radius_sample_steps * spatial.sample_spacing
+            ring = sorted(
+                (
+                    sample.position
+                    for sample in spatial.near(anchor, radius)
+                    if sample.position != anchor
+                ),
+                key=lambda position: math.atan2(
+                    position.y - anchor.y, position.x - anchor.x
+                ),
+            )
+            self._patrol_route = (anchor, *ring)
+            self._patrol_route_key = key
+        return self._patrol_route
 
     def _enter(
         self, phase: PatrolPhase, reason: str, context: MissionContext
@@ -163,35 +202,3 @@ class MapControlExecutor(MissionExecutor):
                 target=target,
                 success_at_distance=self.arrival_radius,
             )
-
-    @staticmethod
-    def _patrol_points(map_facts: MapFacts) -> tuple[Point2, ...]:
-        own = map_facts.own_start
-        center = map_facts.center
-        dx = float(center.x - own.x)
-        dy = float(center.y - own.y)
-        distance = math.hypot(dx, dy)
-        if distance <= 1.0:
-            return (center,)
-
-        perpendicular_x = -dy / distance
-        perpendicular_y = dx / distance
-        side_offset = min(12.0, max(4.0, distance * 0.22))
-        forward = Point2((own.x + dx * 0.78, own.y + dy * 0.78))
-        staging = Point2((own.x + dx * 0.48, own.y + dy * 0.48))
-        return (
-            Point2(
-                (
-                    forward.x + perpendicular_x * side_offset,
-                    forward.y + perpendicular_y * side_offset,
-                )
-            ),
-            center,
-            Point2(
-                (
-                    forward.x - perpendicular_x * side_offset,
-                    forward.y - perpendicular_y * side_offset,
-                )
-            ),
-            staging,
-        )

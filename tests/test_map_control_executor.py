@@ -6,7 +6,15 @@ from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
 from bot.behavior.map_control import MapControlExecutor
-from bot.engine.missions import MissionContext, MissionOutcome
+from bot.engine.missions import (
+    Mission,
+    MissionContext,
+    MissionKind,
+    MissionMode,
+    MissionOutcome,
+    MissionProposal,
+    UnitRequirement,
+)
 from bot.world.attention import (
     AttentionSnapshot,
     MapFacts,
@@ -17,6 +25,8 @@ from bot.world.awareness import (
     AwarenessSnapshot,
     MacroPosture,
     RelativeStrength,
+    SpatialField,
+    SpatialFieldSample,
     ThreatAssessment,
 )
 from bot.world.awareness.bases import (
@@ -70,6 +80,7 @@ def context(
     enemy_units: tuple[UnitSnapshot, ...] = (),
     posture: MacroPosture = MacroPosture.BALANCED,
     bases: BaseAwareness | None = None,
+    spatial: SpatialField | None = None,
     commands: FakeCommands,
 ) -> MissionContext:
     world = WorldFacts(
@@ -90,6 +101,7 @@ def context(
         updated_at=world.time,
         macro_posture=posture,
         bases=bases or base_awareness(),
+        spatial=spatial or SpatialField(),
     )
     return MissionContext(
         attention=AttentionSnapshot(world),
@@ -188,6 +200,67 @@ class MapControlExecutorTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result.outcome, MissionOutcome.ACTIVE)
         self.assertEqual(result.reason, "waiting_for_squad_members")
+
+    async def test_refreshes_target_without_replacing_persistent_executor(self):
+        executor = self.executor()
+        target = Point2((35, 42))
+        proposal = MissionProposal(
+            proposal_id="map-control:2",
+            deduplication_key="map_control:patrol",
+            planner="map_control_planner",
+            kind=MissionKind.MAP_CONTROL,
+            priority=40,
+            target_key="map_control:patrol",
+            target=target,
+            reason="spatial_target_changed",
+            requirement=UnitRequirement.combat(
+                unit_types=frozenset({UnitTypeId.MARINE}), desired=1, minimum=0
+            ),
+            created_at=200.0,
+            mode=MissionMode.STANDING,
+        )
+        mission = Mission(
+            mission_id="mission-0001",
+            proposal=proposal,
+            admitted_at=180.0,
+        )
+
+        executor.refresh(mission)
+        commands = FakeCommands()
+        await executor.step(
+            context(assigned_units=(marine(1, MAP.own_start),), commands=commands)
+        )
+
+        self.assertEqual(executor.mission_id, "mission-0001")
+        self.assertEqual(commands.commands[0][3], target)
+
+    async def test_patrols_the_pathable_region_around_the_spatial_anchor(self):
+        anchor = MAP.center
+        east, north, west = Point2((60, 50)), Point2((50, 60)), Point2((40, 50))
+        spatial = SpatialField(
+            samples=tuple(
+                SpatialFieldSample(position)
+                for position in (anchor, east, north, west, Point2((80, 80)))
+            ),
+            sample_spacing=10.0,
+        )
+        executor = self.executor()
+        position = MAP.own_start
+        visited = []
+
+        for _ in range(5):
+            commands = FakeCommands()
+            await executor.step(
+                context(
+                    assigned_units=(marine(1, position),),
+                    spatial=spatial,
+                    commands=commands,
+                )
+            )
+            position = commands.commands[0][3]
+            visited.append(position)
+
+        self.assertEqual(visited, [anchor, east, north, west, anchor])
 
 
 if __name__ == "__main__":

@@ -11,15 +11,23 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 
+from sc2.position import Point2
+
 from bot.behavior.contracts import BehaviorLog
 from bot.engine.missions.models import MissionMode, MissionProposal, UnitRequirement
 from bot.engine.missions.planning import ProposalCadence
 from bot.ports.logging import BotLogger
 from bot.world.attention import AttentionSnapshot
 from bot.world.awareness import AwarenessSnapshot
+from bot.world.awareness.spatial import SpatialFieldSample
 
 from .assessment import MapControlAssessor
-from .model import MapControlAssessment, MapControlConfig, MapControlPlan
+from .model import (
+    MapControlAssessment,
+    MapControlCandidate,
+    MapControlConfig,
+    MapControlPlan,
+)
 
 COMPONENT = "behavior.map_control"
 DEDUPLICATION_KEY = "map_control:patrol"
@@ -41,6 +49,9 @@ class MapControlPlanner:
         default=None, init=False, repr=False
     )
     last_plan: MapControlPlan | None = field(default=None, init=False, repr=False)
+    last_candidates: tuple[MapControlCandidate, ...] = field(
+        default=(), init=False, repr=False
+    )
 
     def __post_init__(self) -> None:
         self._assessor = MapControlAssessor(config=self.config)
@@ -64,8 +75,9 @@ class MapControlPlanner:
             return ()
 
         self._cadence.mark(now)
+        anchor = self._spatial_anchor(attention, awareness)
         plan = MapControlPlan(
-            anchor=attention.world.map.center,
+            anchor=anchor,
             desired_units=self.config.desired_units
             or max(
                 1, math.ceil(assessment.eligible_units * self.config.force_ratio)
@@ -75,6 +87,85 @@ class MapControlPlanner:
         self._log_plan_change(plan, assessment)
         self.last_plan = plan
         return (self._proposal_for(plan, now),)
+
+    def _spatial_anchor(
+        self, attention: AttentionSnapshot, awareness: AwarenessSnapshot
+    ) -> Point2:
+        all_samples = awareness.spatial.candidates
+        samples = tuple(
+            sample
+            for sample in all_samples
+            if all(
+                sample.position.distance_to(base.position)
+                >= self.config.base_exclusion_radius
+                for base in awareness.bases
+            )
+        )
+        if not samples:
+            samples = all_samples
+        if not samples:
+            self.last_candidates = ()
+            return attention.world.map.center
+
+        ranked = tuple(
+            sorted(
+                (
+                    MapControlCandidate(
+                        sample=sample,
+                        score=score_spatial_sample(sample, self.config),
+                    )
+                    for sample in samples
+                ),
+                key=lambda candidate: (
+                    -candidate.score,
+                    candidate.sample.position.x,
+                    candidate.sample.position.y,
+                ),
+            )
+        )
+        self.last_candidates = ranked
+        selected = ranked[0]
+
+        if self.last_plan is not None:
+            current_sample = awareness.spatial.at(self.last_plan.anchor)
+            if (
+                current_sample is not None
+                and current_sample.position.distance_to(self.last_plan.anchor)
+                <= awareness.spatial.sample_spacing * 1.5
+                and any(
+                    candidate.sample.position == current_sample.position
+                    for candidate in ranked
+                )
+            ):
+                current = MapControlCandidate(
+                    sample=current_sample,
+                    score=score_spatial_sample(current_sample, self.config),
+                )
+                move_distance = current_sample.position.distance_to(
+                    selected.sample.position
+                )
+                improvement = selected.score - current.score
+                min_distance = (
+                    self.config.retarget_min_sample_steps
+                    * awareness.spatial.sample_spacing
+                )
+                if (
+                    move_distance < min_distance
+                    or improvement < self.config.retarget_score_improvement
+                ):
+                    selected = current
+
+        if self.last_plan is None or selected.sample.position != self.last_plan.anchor:
+            self._log.event(
+                "map_control.spatial_candidates",
+                now=attention.world.time,
+                candidates=[
+                    candidate.log_fields()
+                    for candidate in ranked[: self.config.logged_candidate_count]
+                ],
+                selected=selected.log_fields(),
+            )
+        return selected.sample.position
 
     def _log_plan_change(
         self, plan: MapControlPlan, assessment: MapControlAssessment
@@ -114,3 +205,14 @@ class MapControlPlanner:
             mode=MissionMode.STANDING,
             squad_id=self.config.squad_id,
         )
+
+
+def score_spatial_sample(sample: SpatialFieldSample, config: MapControlConfig) -> float:
+    """Map-control utility; Awareness deliberately owns none of these weights."""
+
+    return (
+        config.friendly_weight * sample.friendly_value
+        + config.choke_weight * sample.choke_value
+        + config.route_weight * sample.route_value
+        - config.threat_weight * sample.enemy_threat
+    )

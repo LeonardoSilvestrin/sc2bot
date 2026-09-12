@@ -10,6 +10,7 @@ from bot.behavior.map_control import (
     MapControlAssessor,
     MapControlConfig,
     MapControlPlanner,
+    score_spatial_sample,
 )
 from bot.engine.missions import MissionKind
 from bot.world.attention import (
@@ -22,10 +23,17 @@ from bot.world.awareness import (
     AwarenessSnapshot,
     MacroPosture,
     RelativeStrength,
+    SpatialField,
+    SpatialFieldSample,
     ThreatAssessment,
 )
-from bot.world.awareness.bases import BaseAwareness
+from bot.world.awareness.bases import (
+    BaseAssessment,
+    BaseAwareness,
+    BaseSecurityLevel,
+)
 from bot.world.awareness.enemy import EnemyAwareness
+from tests.fakes import FakeLogger
 
 MAP = MapFacts(
     center=Point2((50, 50)),
@@ -93,8 +101,34 @@ class MapControlConfigTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             MapControlConfig(force_ratio=1.0)
 
+    def test_score_combines_components_with_behavior_owned_weights(self):
+        sample = SpatialFieldSample(
+            position=Point2((40, 40)),
+            friendly_value=0.7,
+            choke_value=0.8,
+            route_value=0.6,
+            enemy_threat=0.2,
+        )
+        config = MapControlConfig(
+            friendly_weight=1.0,
+            choke_weight=2.0,
+            route_weight=3.0,
+            threat_weight=4.0,
+        )
+
+        self.assertAlmostEqual(score_spatial_sample(sample, config), 3.3)
+
 
 class MapControlPlannerTests(unittest.TestCase):
+    @staticmethod
+    def spatial_awareness(
+        now: float, *samples: SpatialFieldSample
+    ) -> AwarenessSnapshot:
+        return replace(
+            awareness(now),
+            spatial=SpatialField(samples=tuple(samples), updated_at=now),
+        )
+
     def test_waits_for_minimum_force_size(self):
         planner = MapControlPlanner()
 
@@ -143,6 +177,156 @@ class MapControlPlannerTests(unittest.TestCase):
 
         self.assertEqual(len(planner.propose(attention(180.0), awareness(180.0))), 1)
         self.assertEqual(planner.propose(attention(181.0), awareness(181.0)), ())
+
+    def test_hysteresis_ignores_small_gain_then_accepts_material_retarget(self):
+        first, second = Point2((30, 30)), Point2((50, 50))
+        config = MapControlConfig(
+            proposal_cadence=1.0,
+            friendly_weight=1.0,
+            choke_weight=0.0,
+            route_weight=0.0,
+            threat_weight=0.0,
+            retarget_score_improvement=0.1,
+            retarget_min_sample_steps=1.5,
+        )
+        planner = MapControlPlanner(config=config)
+
+        initial = planner.propose(
+            attention(0.0),
+            self.spatial_awareness(
+                0.0,
+                SpatialFieldSample(first, friendly_value=0.76),
+                SpatialFieldSample(second, friendly_value=0.70),
+            ),
+        )[0]
+        small_gain = planner.propose(
+            attention(1.0),
+            self.spatial_awareness(
+                1.0,
+                SpatialFieldSample(first, friendly_value=0.76),
+                SpatialFieldSample(second, friendly_value=0.79),
+            ),
+        )[0]
+        material_gain = planner.propose(
+            attention(2.0),
+            self.spatial_awareness(
+                2.0,
+                SpatialFieldSample(first, friendly_value=0.50),
+                SpatialFieldSample(second, friendly_value=0.90),
+            ),
+        )[0]
+
+        self.assertEqual(initial.target, first)
+        self.assertEqual(small_gain.target, first)
+        self.assertEqual(material_gain.target, second)
+
+    def test_retarget_distance_is_measured_in_grid_steps(self):
+        current, neighbour = Point2((30, 30)), Point2((40, 30))
+        config = MapControlConfig(
+            proposal_cadence=1.0,
+            friendly_weight=1.0,
+            choke_weight=0.0,
+            route_weight=0.0,
+            threat_weight=0.0,
+            retarget_score_improvement=0.1,
+            retarget_min_sample_steps=1.5,
+        )
+
+        def spatial_state(now, spacing, current_value, neighbour_value):
+            return replace(
+                awareness(now),
+                spatial=SpatialField(
+                    samples=(
+                        SpatialFieldSample(current, friendly_value=current_value),
+                        SpatialFieldSample(neighbour, friendly_value=neighbour_value),
+                    ),
+                    updated_at=now,
+                    sample_spacing=spacing,
+                ),
+            )
+
+        coarse = MapControlPlanner(config=config)
+        coarse.propose(attention(0.0), spatial_state(0.0, 10.0, 0.8, 0.2))
+        # One step on a 10-cell grid: the patrol region already covers it.
+        coarse_retarget = coarse.propose(
+            attention(1.0), spatial_state(1.0, 10.0, 0.2, 0.9)
+        )[0]
+        fine = MapControlPlanner(config=config)
+        fine.propose(attention(0.0), spatial_state(0.0, 5.0, 0.8, 0.2))
+        # The same ten units are two steps on a 5-cell grid: a real move.
+        fine_retarget = fine.propose(
+            attention(1.0), spatial_state(1.0, 5.0, 0.2, 0.9)
+        )[0]
+
+        self.assertEqual(coarse_retarget.target, current)
+        self.assertEqual(fine_retarget.target, neighbour)
+
+    def test_logs_ranked_components_when_spatial_target_is_selected(self):
+        logger = FakeLogger()
+        planner = MapControlPlanner(logger=logger)
+        point = Point2((35, 35))
+
+        planner.propose(
+            attention(10.0),
+            self.spatial_awareness(
+                10.0,
+                SpatialFieldSample(
+                    point,
+                    friendly_value=0.7,
+                    choke_value=0.8,
+                    route_value=0.9,
+                    enemy_threat=0.1,
+                ),
+            ),
+        )
+
+        event = next(
+            item
+            for item in logger.events
+            if item["name"] == "map_control.spatial_candidates"
+        )
+        selected = event["data"]["selected"]
+        self.assertEqual(selected["position"], [35.0, 35.0])
+        self.assertEqual(
+            set(selected),
+            {
+                "position",
+                "score",
+                "friendly",
+                "choke",
+                "route",
+                "threat",
+                "confidence",
+            },
+        )
+
+    def test_does_not_select_the_townhall_center_as_military_position(self):
+        base_position = Point2((20, 20))
+        valid_position = Point2((32, 20))
+        state = self.spatial_awareness(
+            10.0,
+            SpatialFieldSample(base_position, friendly_value=1.0),
+            SpatialFieldSample(valid_position, friendly_value=0.7),
+        )
+        state = replace(
+            state,
+            bases=BaseAwareness(
+                (
+                    BaseAssessment(
+                        "base:1",
+                        base_position,
+                        True,
+                        0.0,
+                        0.0,
+                        BaseSecurityLevel.SAFE,
+                    ),
+                )
+            ),
+        )
+
+        proposal = MapControlPlanner().propose(attention(10.0), state)[0]
+
+        self.assertEqual(proposal.target, valid_position)
 
 
 class MapControlAssessmentTests(unittest.TestCase):

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from bot.ports.logging import BotLogger
 from bot.world.attention import TOWNHALL_TYPES, AttentionSnapshot
 
 from .bases import BaseSecurityAssessor
@@ -29,6 +30,7 @@ from .snapshot import (
     RelativeStrength,
     ThreatAssessment,
 )
+from .spatial import SpatialFieldModel, SpatialModelConfig
 
 
 class AwarenessService:
@@ -47,6 +49,8 @@ class AwarenessService:
         enemy_force_heuristics: EnemyForceHeuristics | None = None,
         economy_belief_config: EconomyBeliefConfig | None = None,
         army_belief_config: ArmyBeliefConfig | None = None,
+        spatial_model_config: SpatialModelConfig | None = None,
+        logger: BotLogger | None = None,
     ) -> None:
         if location_stale_after <= 0.0:
             raise ValueError("location_stale_after must be positive")
@@ -66,6 +70,9 @@ class AwarenessService:
         self._enemy_base_memory = EnemyBaseMemory(stale_after=enemy_base_stale_after)
         self._enemy_base_assessor = EnemyBaseAssessor(enemy_base_heuristics)
         self._enemy_force_tracker = EnemyForceTracker(enemy_force_heuristics)
+        self._spatial_model = SpatialFieldModel(
+            spatial_model_config or SpatialModelConfig(), logger=logger
+        )
         self._location_last_observed: dict[str, float] = {}
         self._posture_state = PostureState()
         self._economy_hysteresis = HysteresisState()
@@ -120,6 +127,7 @@ class AwarenessService:
             observations=base_observations, sightings=sightings, now=world.time
         )
         enemy_forces = self._enemy_force_tracker.update(sightings, now=world.time)
+        bases = self._base_assessor.update(world)
         economy_belief, self._economy_hysteresis = assess_economy(
             world=world,
             sightings=sightings,
@@ -244,9 +252,12 @@ class AwarenessService:
             ),
             updated_at=world.time,
             macro_posture=self._posture_state.posture,
-            bases=self._base_assessor.update(world),
+            bases=bases,
             economy=economy_belief,
             army=army_belief,
+            spatial=self._spatial_model.update(
+                world, bases=bases, enemy_forces=enemy_forces
+            ),
             chat_messages=chat_messages,
         )
 

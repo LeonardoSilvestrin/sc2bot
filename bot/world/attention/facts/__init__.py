@@ -1,6 +1,6 @@
 from .base_facts import TOWNHALL_TYPES, BaseSnapshot
 from .economy_facts import CountFacts, EconomyFacts, ProducerFacts, UnitTypeCount
-from .map_facts import MapFacts, MapObservation, MapRoute, RouteWaypoint
+from .map_facts import MapChoke, MapFacts, MapObservation, MapRoute, RouteWaypoint
 from .unit_facts import UnitSnapshot
 from .world_facts import WorldFacts
 
@@ -9,6 +9,7 @@ __all__ = [
     "CountFacts",
     "EconomyFacts",
     "MapFacts",
+    "MapChoke",
     "MapObservation",
     "MapRoute",
     "ProducerFacts",

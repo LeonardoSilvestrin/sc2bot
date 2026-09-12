@@ -10,18 +10,21 @@ from .assessment import MapControlAssessor
 from .executor import MapControlExecutor
 from .model import (
     MapControlAssessment,
+    MapControlCandidate,
     MapControlConfig,
     MapControlPlan,
     PatrolPhase,
 )
-from .planner import MapControlPlanner
+from .planner import MapControlPlanner, score_spatial_sample
 
 __all__ = [
     "MapControlAssessment",
     "MapControlAssessor",
+    "MapControlCandidate",
     "MapControlConfig",
     "MapControlExecutor",
     "MapControlPlan",
     "MapControlPlanner",
     "PatrolPhase",
+    "score_spatial_sample",
 ]

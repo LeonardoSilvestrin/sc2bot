@@ -10,6 +10,7 @@ from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
 from bot.engine.missions.models import MissionKind
+from bot.world.awareness.spatial import SpatialFieldSample
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,7 +32,23 @@ class MapControlConfig:
     minimum_unit_health: float = 0.7
     commitment_seconds: float = 1.0
 
+    # --- spatial utility --------------------------------------------------
+    friendly_weight: float = 0.45
+    choke_weight: float = 0.35
+    route_weight: float = 0.55
+    threat_weight: float = 0.80
+    base_exclusion_radius: float = 6.0
+    retarget_score_improvement: float = 0.12
+    # Measured in grid steps (multiples of the field's sample spacing), so it
+    # keeps its meaning when the spacing changes. 1.5 steps spans a sample's
+    # eight neighbours, which the patrol region already covers.
+    retarget_min_sample_steps: float = 1.5
+    logged_candidate_count: int = 5
+
     # --- tactics ----------------------------------------------------------
+    # The patrol walks every sampled pathable point within this many grid
+    # steps of the anchor; 0 holds the anchor itself.
+    patrol_radius_sample_steps: float = 1.5
     danger_radius: float = 20.0
     arrival_radius: float = 5.0
     retreat_arrival_radius: float = 7.0
@@ -63,6 +80,20 @@ class MapControlConfig:
             raise ValueError("minimum_unit_health must be between 0 and 1")
         if self.commitment_seconds < 0.0:
             raise ValueError("commitment_seconds must not be negative")
+        for name in (
+            "friendly_weight",
+            "choke_weight",
+            "route_weight",
+            "threat_weight",
+            "base_exclusion_radius",
+            "retarget_score_improvement",
+            "retarget_min_sample_steps",
+            "patrol_radius_sample_steps",
+        ):
+            if getattr(self, name) < 0.0:
+                raise ValueError(f"{name} must not be negative")
+        if self.logged_candidate_count < 1:
+            raise ValueError("logged_candidate_count must be positive")
         for name in ("danger_radius", "arrival_radius", "retreat_arrival_radius"):
             if getattr(self, name) <= 0.0:
                 raise ValueError(f"{name} must be positive")
@@ -106,6 +137,29 @@ class MapControlPlan:
             "anchor": [round(float(self.anchor.x), 1), round(float(self.anchor.y), 1)],
             "desired_units": self.desired_units,
             "priority": self.priority,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class MapControlCandidate:
+    """One sampled point scored with map-control-specific preferences."""
+
+    sample: SpatialFieldSample
+    score: float
+
+    def log_fields(self) -> dict[str, Any]:
+        sample = self.sample
+        return {
+            "position": [
+                round(float(sample.position.x), 1),
+                round(float(sample.position.y), 1),
+            ],
+            "score": round(self.score, 3),
+            "friendly": round(sample.friendly_value, 3),
+            "choke": round(sample.choke_value, 3),
+            "route": round(sample.route_value, 3),
+            "threat": round(sample.enemy_threat, 3),
+            "confidence": round(sample.confidence, 3),
         }
 
 

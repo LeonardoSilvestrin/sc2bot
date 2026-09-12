@@ -31,6 +31,19 @@ class MapRoute:
 
 
 @dataclass(frozen=True, slots=True)
+class MapChoke:
+    """One ground choke reported by Ares/python-sc2-map-analysis.
+
+    ``width`` is the measured passage width, or ``None`` when the source
+    geometry does not measure one; consumers must not read that as narrow.
+    """
+
+    key: str
+    position: Point2
+    width: float | None
+
+
+@dataclass(frozen=True, slots=True)
 class MapFacts:
     center: Point2
     own_start: Point2
@@ -42,6 +55,14 @@ class MapFacts:
     # which slots it has actually looked at, not just the two named
     # ``observations`` above (enemy_main/enemy_natural).
     expansions: tuple[MapObservation, ...] = ()
+    # Coarse, immutable ground topology for reusable spatial reasoning.
+    # The adapter computes these once Ares provides them and then reuses the
+    # same tuples each frame, so a new tuple means a new topology version.
+    pathable_points: tuple[Point2, ...] = ()
+    pathable_sample_spacing: float = 10.0
+    chokes: tuple[MapChoke, ...] = ()
+    # Ground paths from likely enemy origins to currently held bases.
+    traffic_routes: tuple[MapRoute, ...] = ()
 
     def observation(self, key: str) -> MapObservation | None:
         return next((item for item in self.observations if item.key == key), None)

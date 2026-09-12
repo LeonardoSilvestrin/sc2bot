@@ -16,6 +16,7 @@ from .belief import (
 )
 from .enemy import EnemyAwareness
 from .posture import MacroPosture
+from .spatial import SpatialField
 
 
 def _unknown_relative() -> RelativeAssessment:
@@ -79,6 +80,7 @@ class AwarenessSnapshot:
     bases: BaseAwareness = field(default_factory=BaseAwareness)
     economy: EconomyBelief = field(default_factory=_default_economy_belief)
     army: ArmyBelief = field(default_factory=_default_army_belief)
+    spatial: SpatialField = field(default_factory=SpatialField)
     # Populated only on the tick a stable economy/army belief actually
     # changes -- see ``AwarenessService``. ``BotRuntime`` is what turns
     # these into real `chat_send` calls; Awareness itself performs no I/O.
