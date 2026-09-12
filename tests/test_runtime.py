@@ -184,10 +184,10 @@ class RuntimePilotTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "bot.app.runtime.AresMissionCommands",
+                "bot.app.frame.AresMissionCommands",
                 return_value=commands,
             ),
-            patch("bot.app.runtime.register_baseline_behaviors"),
+            patch("bot.app.frame.register_baseline_behaviors"),
         ):
             await runtime.on_step(bot, iteration=1)
 
@@ -302,10 +302,10 @@ class RuntimePilotTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "bot.app.runtime.AresMissionCommands",
+                "bot.app.frame.AresMissionCommands",
                 return_value=commands,
             ),
-            patch("bot.app.runtime.register_baseline_behaviors"),
+            patch("bot.app.frame.register_baseline_behaviors"),
         ):
             await runtime.on_step(bot, iteration=1)
 
@@ -352,10 +352,10 @@ class RuntimePilotTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "bot.app.runtime.AresMissionCommands",
+                "bot.app.frame.AresMissionCommands",
                 return_value=commands,
             ),
-            patch("bot.app.runtime.register_baseline_behaviors"),
+            patch("bot.app.frame.register_baseline_behaviors"),
         ):
             await runtime.on_step(bot, iteration=1)
             self.assertEqual(
@@ -385,10 +385,10 @@ class RuntimePilotTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "bot.app.runtime.AresEconomyCommands",
+                "bot.app.frame.AresEconomyCommands",
                 return_value=economy_commands,
             ),
-            patch("bot.app.runtime.register_baseline_behaviors"),
+            patch("bot.app.frame.register_baseline_behaviors"),
         ):
             await runtime.on_step(bot, iteration=1)
 
@@ -416,10 +416,10 @@ class RuntimePilotTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "bot.app.runtime.AresEconomyCommands",
+                "bot.app.frame.AresEconomyCommands",
                 return_value=economy_commands,
             ),
-            patch("bot.app.runtime.register_baseline_behaviors"),
+            patch("bot.app.frame.register_baseline_behaviors"),
         ):
             await runtime.on_step(bot, iteration=1)
 
@@ -460,10 +460,10 @@ class RuntimePilotTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "bot.app.runtime.AresEconomyCommands",
+                "bot.app.frame.AresEconomyCommands",
                 return_value=economy_commands,
             ),
-            patch("bot.app.runtime.register_baseline_behaviors"),
+            patch("bot.app.frame.register_baseline_behaviors"),
         ):
             await runtime.on_step(bot, iteration=1)
             names = [event["name"] for event in logger.events]
@@ -539,14 +539,14 @@ class RuntimePilotTests(unittest.IsolatedAsyncioTestCase):
         runtime = BotRuntime(logger=FakeLogger())
         with (
             patch(
-                "bot.app.runtime.AresVisionCommands",
+                "bot.app.frame.AresVisionCommands",
                 return_value=vision_commands,
             ),
             patch(
-                "bot.app.runtime.AresEconomyCommands",
+                "bot.app.frame.AresEconomyCommands",
                 return_value=FakeEconomyCommands(),
             ),
-            patch("bot.app.runtime.register_baseline_behaviors"),
+            patch("bot.app.frame.register_baseline_behaviors"),
         ):
             await runtime.on_step(bot, iteration=1)
 
@@ -587,10 +587,10 @@ class RuntimePilotTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "bot.app.runtime.AresEconomyCommands",
+                "bot.app.frame.AresEconomyCommands",
                 return_value=economy_commands,
             ),
-            patch("bot.app.runtime.register_baseline_behaviors"),
+            patch("bot.app.frame.register_baseline_behaviors"),
         ):
             await runtime.on_step(bot, iteration=1)
 
@@ -635,10 +635,10 @@ class RuntimePilotTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "bot.app.runtime.AresEconomyCommands",
+                "bot.app.frame.AresEconomyCommands",
                 return_value=economy_commands,
             ),
-            patch("bot.app.runtime.register_baseline_behaviors"),
+            patch("bot.app.frame.register_baseline_behaviors"),
         ):
             await runtime.on_step(bot, iteration=1)
             first_tick_commands = len(economy_commands.commands)
@@ -686,10 +686,10 @@ class RuntimePilotTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "bot.app.runtime.AresEconomyCommands",
+                "bot.app.frame.AresEconomyCommands",
                 return_value=economy_commands,
             ),
-            patch("bot.app.runtime.register_baseline_behaviors"),
+            patch("bot.app.frame.register_baseline_behaviors"),
         ):
             await runtime.on_step(bot, iteration=1)
 
@@ -721,10 +721,10 @@ class RuntimePilotTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "bot.app.runtime.AresMissionCommands",
+                "bot.app.frame.AresMissionCommands",
                 return_value=commands,
             ),
-            patch("bot.app.runtime.register_baseline_behaviors"),
+            patch("bot.app.frame.register_baseline_behaviors"),
         ):
             await runtime.on_step(bot, iteration=1)
 
@@ -835,10 +835,10 @@ class RuntimePilotTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "bot.app.runtime.AresEconomyCommands",
+                "bot.app.frame.AresEconomyCommands",
                 return_value=economy_commands,
             ),
-            patch("bot.app.runtime.register_baseline_behaviors"),
+            patch("bot.app.frame.register_baseline_behaviors"),
         ):
             await runtime.on_step(bot, iteration=1)
 
@@ -846,6 +846,36 @@ class RuntimePilotTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(runtime.macro_planner.config.goals.name, expected.goals.name)
         self.assertEqual(
             runtime.macro_planner.config.goals.opening_name, "BansheeCloak"
+        )
+
+    async def test_end_of_frame_diagnostics_log_in_their_documented_order(self):
+        # Every deduplicating gate is fresh on the first frame, so each
+        # diagnostic stream logs exactly once, in the order contracts.md lists.
+        logger = FakeLogger()
+        bot = self._opening_bot(minerals=500)
+        runtime = BotRuntime(logger=logger)
+
+        with (
+            patch(
+                "bot.app.frame.AresEconomyCommands",
+                return_value=FakeEconomyCommands(),
+            ),
+            patch("bot.app.frame.register_baseline_behaviors"),
+        ):
+            await runtime.on_step(bot, iteration=1)
+
+        diagnostics = [
+            "macro.build_order_progress",
+            "knowledge.enemy_intel",
+            "knowledge.enemy_model",
+            "awareness.world_belief",
+            "knowledge.updated",
+            "observation.updated",
+            "standing.updated",
+        ]
+        logged = [event["name"] for event in logger.events]
+        self.assertEqual(
+            [name for name in logged if name in diagnostics], diagnostics
         )
 
 

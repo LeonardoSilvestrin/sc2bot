@@ -264,11 +264,11 @@ single unit wanders past a base.
 economic actions are short and self-gating rather than multi-frame unit
 commitments -- no unit lease or executor lifecycle is needed.
 
-- `bot/app/runtime.py` wires the two domains side by side each frame: the
-  mission planners into `MissionController.tick`, then
+- `FrameProcessor` (`bot/app/frame.py`) runs the two domains side by side
+  each frame: the mission planners into `MissionController.tick`, then
   `EconomyController.step(attention=..., proposals=MacroPlanner.propose(...),
   commands=AresEconomyCommands(bot))`, then `MacroDiagnostics.report`. The
-  runtime holds no economic state of its own.
+  app layer holds no economic state of its own.
 - `EconomyController.step` is the economy counterpart of
   `MissionController.tick`: it confirms live actions from Attention
   (`observe_economic_confirmations`), merges last frame's dispatch feedback,
@@ -277,7 +277,7 @@ commitments -- no unit lease or executor lifecycle is needed.
   live action again through the `EconomyCommands` port.
 - Which `MacroGoalSet` that `MacroPlanner` converges toward is not fixed at
   `BotRuntime` construction: the opening is only known once the runtime has
-  picked it (see [opening.md](opening.md)), so the runtime builds the planner
+  picked it (see [opening.md](opening.md)), so `compose_bot` builds the planner
   with `follow_opening=True`. The first tick `economy.opening_name` is
   non-empty, the planner adopts
   `bot.macro.strategy.openings.macro_config_for_opening` and locks it in for

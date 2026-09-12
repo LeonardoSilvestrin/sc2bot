@@ -18,7 +18,9 @@ The bot is layered as a sense → believe → decide → arbitrate → act pipel
 - `bot/engine/` — arbitration: `missions/` (bidding/allocation/controller) and `economy/` commit proposals into
   concrete actions.
 - `bot/adapters/ares/` — translates between the bot's world model and the Ares/python-sc2 API.
-- `bot/app/runtime.py` — composition root wiring all of the above together each tick.
+- `bot/app/` — the application shell: `composition.py` wires all of the above once per game, `frame.py`
+  (`FrameProcessor`) runs them each tick, `runtime.py` (`BotRuntime`) forwards Ares' game hooks, and
+  `telemetry/` logs the end-of-frame diagnostics.
 
 See `_botdev/architecture/` for versioned design docs and contracts, and `_botdev/README.md` for the dev workspace
 conventions (the ladder entrypoint must always compose the bot with `NullBotLogger`).

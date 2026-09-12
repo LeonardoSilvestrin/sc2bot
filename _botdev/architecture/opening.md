@@ -17,8 +17,8 @@ With `UseData: false` (deliberately, for ladder safety -- no opponent history
 is ever written to disk), Ares' `DataManager.initialise()` always sets
 `chosen_opening = build_cycle[0]` and never advances through the rest of a
 race's `Cycle` list; `BuildSelection: Cycle` only actually cycles when
-`UseData: true`. `BotRuntime` therefore re-rolls the opening itself in
-`on_start`, before the runner has taken a step: `_choose_and_announce_opening`
+`UseData: true`. `BotRuntime.on_start` therefore re-rolls the opening itself,
+before the runner has taken a step: `OpeningSelector` (`bot/app/opening.py`)
 picks uniformly at random from the same configured `Cycle` (the opponent id's
 entry if there is one, otherwise the enemy race's), calls
 `build_order_runner.switch_opening`, and announces the choice in game chat

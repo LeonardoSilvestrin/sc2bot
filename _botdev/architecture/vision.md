@@ -34,7 +34,7 @@ live request.
 
 ## Frame protocol
 
-`BotRuntime` drives the service in three steps around mission planning:
+`FrameProcessor` drives the service in three steps around mission planning:
 
 1. `begin_frame(attention, commands)` -- drops requests past their TTL and
    dispatches older than `scan_cooldown`, marks requests `SATISFIED` when their
@@ -74,7 +74,7 @@ registering it, so the result is known in the same frame.
 
 `ScoutingVisionRequester` follows a behavior's assess -> plan shape and logs
 `behavior.assessed`/`behavior.proposed` under `behavior.scouting.vision`, but it
-produces no mission; `BotRuntime` ticks it before the mission planners. No
+produces no mission; `FrameProcessor` ticks it before the mission planners. No
 executor consumes `context.services.vision` yet.
 
 ## Events

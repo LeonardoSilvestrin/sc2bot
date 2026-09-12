@@ -111,9 +111,13 @@ the macro side.
   (`bot/engine/economy`) alone admits, reserves and dispatches them through
   the `EconomyCommands` port.
 - `bot/adapters/ares` translates those ports into Ares roles and behaviors.
-- `bot/app` wires the frame together without containing strategic rules
-  (`runtime.py`) and binds each mission kind to its executor
-  (`mission_registry.py`).
+- `bot/app` wires the frame together without containing strategic rules:
+  `composition.py` builds every long-lived object once, `frame.py`
+  (`FrameProcessor`) runs one frame's steps in order, `runtime.py`
+  (`BotRuntime`) forwards Ares' `on_start`/`on_step`/`on_end` to them,
+  `opening.py` re-rolls the opening, `telemetry/` logs the end-of-frame
+  diagnostics, and `mission_registry.py` binds each mission kind to its
+  executor.
 
 ## World package layout
 
@@ -303,7 +307,7 @@ It keeps a behavior's discipline minus ownership: ASSESS (`army_demand`,
 
 ## Behavior planners
 
-Six mission planner instances are wired into `BotRuntime` today, each with
+Six mission planner instances are wired by `compose_bot` today, each with
 its concrete executor in the same folder:
 
 | Behavior | Planner | Mission kind | Priority | Mode | Can preempt |
@@ -321,7 +325,7 @@ and each ranks every confirmed enemy base as a target through its own
 heuristics. Banshee activation additionally requires compatible build intent. `SCOUT`
 remains unit-based and is the only proposal that cannot preempt.
 
-`BotRuntime` concatenates every planner's proposals into one tuple each frame;
+`FrameProcessor` concatenates every planner's proposals into one tuple each frame;
 `MissionController` sorts live missions by `-priority` before allocating, so
 list order does not decide arbitration -- see
 [harass-and-defense-planners.md](harass-and-defense-planners.md) for the

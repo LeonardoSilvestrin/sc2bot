@@ -15,7 +15,7 @@
    lifetime rather than inventing a longer one.
 3. Awareness describes the world. Controller state, leases, cooldowns, and mission
    status never enter Awareness. It performs no I/O either: a stable belief change
-   travels as `AwarenessSnapshot.chat_messages`, and `BotRuntime` sends it.
+   travels as `AwarenessSnapshot.chat_messages`, and `FrameProcessor` sends it.
 4. A behavior assessment reads Attention and Awareness only -- never mission
    state, leases, `bot.engine` or `bot.app` -- and returns a plain reading.
    `tests/test_behavior_architecture.py` checks the imports.
@@ -97,8 +97,9 @@ missions in [harass-and-defense-planners.md](harass-and-defense-planners.md).
 
 ## Frame lifecycle
 
-`BotRuntime.on_start` picks and announces the opening (see
-[opening.md](opening.md)) and logs `game.started`. Then, every frame:
+`BotRuntime.on_start` has `OpeningSelector` pick and announce the opening (see
+[opening.md](opening.md)) and logs `game.started`. Then, every frame,
+`BotRuntime.on_step` hands the bot to `FrameProcessor.process`:
 
 ```text
 observe current Ares state (AresWorldObserver -> WorldFacts)
@@ -130,8 +131,8 @@ EconomyController.step:
     admit against the observed bank minus the opening's protected cost
     dispatch every live action through the EconomyCommands port
 MacroDiagnostics.report (macro.status, macro.idle_producer_unexplained)
-log build order progress, enemy intel, world belief, knowledge/observation
-    snapshots, and standing ownership
+FrameTelemetry.report: log build order progress, enemy intel and model, world
+    belief, knowledge/observation snapshots, and standing ownership
 ```
 
 Ares executes and clears registered behaviors in `_after_step`, so `Mining`,

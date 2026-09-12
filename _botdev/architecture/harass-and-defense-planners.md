@@ -49,7 +49,7 @@ producing them is the opening's macro profile's decision (`BansheeCloak`,
 `bot/engine/missions/models.py`; it stays the shared vocabulary in the mission
 engine, alongside
 `MissionProposal`/`Mission`/`MissionController`.
-`BotRuntime` holds a tuple of mission planners and concatenates their proposals
+`FrameProcessor` holds a tuple of mission planners and concatenates their proposals
 every frame instead of calling a single planner by name, so wiring in a future
 planner does not require touching the admission call site.
 
@@ -116,7 +116,7 @@ unsiege. The full command/role table is rule 9 in [contracts.md](contracts.md).
 
 Each raid is its own vertical behavior with its own assessor, planner,
 executor and config -- `harass/reaper/` and `harass/banshee/`. They share
-nothing but the folder above them, and `BotRuntime` wires both planners into
+nothing but the folder above them, and `compose_bot` wires both planners into
 the same proposal tuple, so a Reaper raid and a Banshee raid can be live at
 once, each with its own mission kind and dedup key.
 
