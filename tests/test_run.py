@@ -7,7 +7,7 @@ from run import parse_local_args
 def test_spatial_view_is_opt_in() -> None:
     defaults = parse_local_args([])
     assert not defaults.spatial_view
-    assert defaults.spatial_view_spacing == 5
+    assert defaults.spatial_view_spacing == 2
 
     configured = parse_local_args(
         ["--spatial-view", "--spatial-view-spacing", "4"]
@@ -53,7 +53,7 @@ def test_vscode_exposes_the_supported_launcher_modes() -> None:
         "events",
         "--spatial-view",
         "--spatial-view-spacing",
-        "5",
+        "2",
     ]
     assert configurations[3]["args"] == [
         "--bot-log",
@@ -65,6 +65,6 @@ def test_vscode_exposes_the_supported_launcher_modes() -> None:
         "events",
         "--spatial-view",
         "--spatial-view-spacing",
-        "5",
+        "2",
         "--spatial-snapshot",
     ]

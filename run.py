@@ -43,8 +43,8 @@ CONFIG_FILE: str = "config.yml"
 MAP_FILE_EXT: str = "SC2Map"
 MY_BOT_NAME: str = "MyBotName"
 MY_BOT_RACE: str = "MyBotRace"
-DEFAULT_SPATIAL_SPACING = 10
-DEFAULT_SPATIAL_VIEW_SPACING = 5
+DEFAULT_SPATIAL_SPACING = 2
+DEFAULT_SPATIAL_VIEW_SPACING = 2
 
 
 def _positive_int(value: str) -> int:
@@ -72,7 +72,7 @@ def parse_local_args(args=None):
         type=_positive_int,
         default=DEFAULT_SPATIAL_VIEW_SPACING,
         metavar="UNITS",
-        help="Spacing between debug-view samples (default: 5; normal: 10).",
+        help="Spacing between debug-view samples (default: 2; normal: 2).",
     )
     parser.add_argument(
         "--spatial-snapshot",
@@ -182,7 +182,7 @@ def main():
             maps.get(random.choice(map_list)),
             [
                 bot1,
-                Computer(random_race, Difficulty.CheatVision, ai_build=AIBuild.Macro),
+                Computer(random_race, Difficulty.Hard, ai_build=AIBuild.Rush),
             ],
             realtime=False,
         )
