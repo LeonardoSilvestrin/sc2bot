@@ -1,7 +1,7 @@
 """Decision Timeline logic, run in a real headless Chromium-family browser.
 
 The viewer is a standalone page, so its model is JavaScript. These tests load
-the same ``scripts/log_viewer/*.js`` files the page loads and skip when no
+the same ``logs/viewer/*.js`` files the page loads and skip when no
 Chrome, Chromium or Edge is installed.
 """
 
@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-MODULES = Path(__file__).parents[1] / "scripts" / "log_viewer"
+MODULES = Path(__file__).parents[1] / "logs" / "viewer"
 SCRIPTS = ("timeline_model.js", "diagnostics.js", "snapshots.js")
 
 _BROWSER_CANDIDATES = (

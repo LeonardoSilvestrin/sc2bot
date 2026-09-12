@@ -42,7 +42,7 @@ IDEIA DE USO
      / get_is_proxy_zealot etc. para antecipar MacroPosture.DEFENSE (e
      CombatPosture.TURTLE) antes do inimigo chegar fisicamente perto da base --
      worker-rush continua fora de escopo (BaseSecurityAssessor filtra is_worker
-     fora do threat_score), ver "Deliberately not built" em base-model.md.
+     fora do threat_score), ver "Deliberately not built" em docs/world/base-security.md.
   2. Opcional: trocar o loop de BaseSecurityAssessor._assess por
      get_main_ground_threats_near_townhall / get_main_air_threats_near_townhall
      (ja cacheados por frame). Hoje e mais consistencia e menos codigo do que

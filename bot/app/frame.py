@@ -28,8 +28,7 @@ class FrameProcessor:
     behavior planners, whose missions ``MissionController`` admits and runs on
     units, and ``MacroPlanner``, whose purchases ``EconomyController`` admits
     against the bank. Diagnostics read the outcome last. The step order is
-    behavior, not presentation -- see "Frame lifecycle" in
-    ``_botdev/architecture/contracts.md``.
+    behavior, not presentation -- see ``docs/frame-lifecycle.md``.
     """
 
     def __init__(

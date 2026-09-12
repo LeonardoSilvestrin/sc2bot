@@ -5,6 +5,12 @@ them should implement. `bot/engine/services/vision/` owns it: behaviors ask for
 vision, the service decides which needs are worth answering this frame, and a
 provider answers them. Today the only provider is Terran Scanner Sweep.
 
+Source: `bot/engine/services/` (`context.py`, `vision/model.py`,
+`vision/service.py`, `vision/scan_provider.py`), `bot/ports/vision_commands.py`,
+`bot/adapters/ares/vision_commands.py`. Consumers:
+[behavior/scouting.md](../behavior/scouting.md),
+[behavior/defense.md](../behavior/defense.md).
+
 ```text
 behavior (planner or executor)
     -> VisionRequester.request(position, urgency, reason, requester, ttl)

@@ -2,7 +2,7 @@
 
 Pure and runtime-free: it reads ``StrategyInputs`` and returns a
 ``StrategySnapshot``. Shadow mode -- nothing consumes it yet. See
-``_botdev/architecture/strategy.md``.
+``docs/strategy.md``.
 """
 
 from .config import (

@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-VIEWER = Path(__file__).parents[1] / "scripts" / "log_viewer.html"
+VIEWER = Path(__file__).parents[1] / "logs" / "viewer.html"
 MODULES = tuple(
-    VIEWER.parent / "log_viewer" / name
+    VIEWER.parent / "viewer" / name
     for name in (
         "timeline_model.js",
         "diagnostics.js",
@@ -67,7 +67,7 @@ def test_viewer_loads_the_decision_timeline_modules() -> None:
     assert 'data-view="decision"' in html
     assert 'id="folder-input"' in html
     for module in MODULES:
-        assert f'<script src="log_viewer/{module.name}"></script>' in html
+        assert f'<script src="viewer/{module.name}"></script>' in html
 
 
 def test_viewer_never_injects_log_values_as_html() -> None:

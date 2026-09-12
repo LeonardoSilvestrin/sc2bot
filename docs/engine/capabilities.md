@@ -2,6 +2,12 @@
 
 Three concepts in three layers. They meet only through the units that exist.
 
+Source: `bot/domain/` (`capabilities.py`, `profiles.py`),
+`bot/engine/missions/roles.py`, `bot/engine/missions/models.py`
+(`UnitRequirement`), `bot/engine/missions/allocator.py`,
+`bot/macro/composition/doctrine.py`. The full allocation algorithm is in
+[missions.md](missions.md#unitallocator).
+
 ```text
 SHARED DOMAIN    bot/domain/               what a unit type can do
                  CombatCapabilities, UNIT_PROFILES, COMBAT_UNIT_TYPES,
@@ -85,10 +91,17 @@ are `no_capability_profile`, `cannot_attack`, `cannot_attack_ground`,
 A role is a job a generic mission needs done. It carries one
 `CapabilityRequirement` and nothing else: no unit list and no build.
 
-| Role | Weights (main) | Floors | Hard |
+| Role | Weights | Floors | Hard |
 | --- | --- | --- | --- |
-| `MOBILE_CONTROL` | mobility 1.0, anti_ground 0.6 | mobility 0.5, anti_ground 0.4 | anti-ground |
-| `SIEGE_ANCHOR` | anti_ground, range, siege 1.0 | range 0.6, siege 0.5 | anti-ground |
+| `MOBILE_CONTROL` | mobility 1.0, anti_ground 0.6, anti_air 0.3, range 0.3, durability 0.3 | mobility 0.5, anti_ground 0.4 | anti-ground |
+| `SIEGE_ANCHOR` | mobility 0.2, anti_ground 1.0, range 1.0, siege 1.0, splash 0.7, durability 0.7 | range 0.6, siege 0.5 | anti-ground |
+
+Worked example, a Cyclone for `MOBILE_CONTROL`: coverage = (1.0 x 0.75 + 0.6 x
+0.60 + 0.3 x 0.50 + 0.3 x 0.70 + 0.3 x 0.45) / 2.5 = 0.64; its mobility (0.75)
+and anti-ground (0.60) clear both floors, so the floor factor is 1 and S =
+0.64. A Siege Tank covers 0.47 but its mobility of 0.30 is 60% of the floor,
+so the factor is 0.6^2 = 0.36 and S = 0.17 (0.19 in the table below, which
+also counts its anti-ground floor factor of 1).
 
 | Unit | MOBILE_CONTROL | SIEGE_ANCHOR |
 | --- | ---: | ---: |

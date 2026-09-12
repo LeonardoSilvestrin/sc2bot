@@ -113,7 +113,7 @@ class StrategyConfig:
     """Every tunable number behind the strategic direction, in one place.
 
     First, deliberately small guesses, left untuned until shadow-mode logs
-    show where they are wrong. See ``_botdev/architecture/strategy.md``.
+    show where they are wrong. See ``docs/strategy.md``.
     """
 
     # Strategy is recomputed on this cadence and reused unchanged in between.

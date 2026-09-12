@@ -74,7 +74,7 @@ def bio_three_one_one_reference() -> ReferenceBuild:
     52 Factory @4:34, 50 Starport @6:12) with the qualitative sequencing from
     terrancraft's "TvP Standard 3-1-1 Framework" article -- both already
     informed this bot's own opening (see ``terran_builds.yml`` and
-    ``_botdev/architecture/opening.md``). Only production structures are
+    ``docs/macro/builds.md``). Only production structures are
     tracked, since only ``construction.capacity`` consults this;
     imprecision here is not load-bearing, as it only ever raises a floor
     that the existing income/overflow scaling would otherwise reach anyway.

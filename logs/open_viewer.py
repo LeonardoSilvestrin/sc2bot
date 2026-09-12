@@ -6,5 +6,5 @@ import webbrowser
 from pathlib import Path
 
 if __name__ == "__main__":
-    path = Path(__file__).resolve().parent / "log_viewer.html"
+    path = Path(__file__).resolve().parent / "viewer.html"
     webbrowser.open(path.as_uri())

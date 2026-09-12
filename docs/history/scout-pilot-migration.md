@@ -1,5 +1,9 @@
 # Scout pilot migration
 
+> **Historical record.** This describes the first vertical slice and the
+> decisions made when it was migrated. It is not kept up to date. The current
+> scouting behavior is in [behavior/scouting.md](../behavior/scouting.md).
+
 ## Sources deliberately mined
 
 The research source was branch `ares` at commit `2eab783`. The destination and
@@ -34,7 +38,7 @@ The pilot reimplemented these useful ideas rather than copying their code:
 - Generic task factories, pick-policy protocols, event buses, service locators, and
   lease heartbeats: each adds machinery without helping this single mission.
 - Scans, rush-specific cadence, and probabilistic inference remained outside this
-  slice. Scans later arrived as a shared service; see [vision.md](vision.md).
+  slice. Scans later arrived as a shared service; see [vision.md](../engine/vision.md).
 
 ## `IntelPlanner` decision
 
@@ -94,7 +98,7 @@ authority and one causal record.
 
 Separately from the mission, `ScoutingVisionRequester` asks the vision service
 for a scan once the enemy main has gone 120 seconds without vision; it never
-claims a unit (see [vision.md](vision.md)).
+claims a unit (see [vision.md](../engine/vision.md)).
 
 ## Deferred decisions
 
@@ -103,4 +107,4 @@ claims a unit (see [vision.md](vision.md)).
 - How emergency priority 100 should bypass or shorten commitment protection.
 - The future economy contract was deferred here; it has since been built as
   `EconomicProposal`, reservations against a virtual bank, and
-  `EconomyController` -- see [macro-planner.md](macro-planner.md).
+  `EconomyController` -- see [engine/economy.md](../engine/economy.md).

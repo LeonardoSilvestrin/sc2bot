@@ -12,8 +12,7 @@ class FrameProcessorOrderTests(unittest.IsolatedAsyncioTestCase):
     async def test_a_frame_runs_its_steps_in_the_documented_order(self):
         # The order is behavior, not presentation: vision needs collected
         # before it resolves, leases synced before macro reads the frame,
-        # diagnostics after both domains acted. See "Frame lifecycle" in
-        # _botdev/architecture/contracts.md.
+        # diagnostics after both domains acted. See docs/frame-lifecycle.md.
         calls: list[str] = []
 
         def record(name, result=None):

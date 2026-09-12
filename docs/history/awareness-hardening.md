@@ -1,5 +1,11 @@
 # Awareness hardening
 
+> **Historical record (September 2026).** The audit report as delivered, not
+> kept up to date. Its semantics now live in
+> [world/awareness.md](../world/awareness.md#confidence) and
+> [world/territory.md](../world/territory.md). Since then the launcher test
+> mentioned at the end was updated to the seven current launchers.
+
 Esta auditoria trata Awareness como uma descrição do mundo: o que foi
 observado, o que ainda é acreditado e quanto essa crença é confiável. Nenhuma
 decisão, oportunidade ou preferência estratégica foi adicionada.

@@ -19,7 +19,7 @@ ONDE FICA
 GAP NO BOT
   O bot ja tem squads proprios em bot/engine/squads/ (SquadController): main_army,
   map_control e banshee_harass guardam identidade e membership persistentes e
-  viram preferencia de alocacao (ver _botdev/architecture/squads.md). Isso e so
+  viram preferencia de alocacao (ver docs/engine/squads.md). Isso e so
   "quem anda junto": nao usa o UnitSquad do ares e nao move o grupo como grupo.
 
   Todos os executors ainda iteram context.assigned_units e mandam um comando por

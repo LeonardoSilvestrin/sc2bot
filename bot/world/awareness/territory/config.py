@@ -9,7 +9,7 @@ class TerritoryConfig:
 
     First, deliberately small guesses, kept together so they can be read and
     retuned without touching how influence, classification or ground access
-    are computed. See ``_botdev/architecture/territory.md``.
+    are computed. See ``docs/world/territory.md``.
     """
 
     # Territory is strategic information: recomputed on this cadence, and

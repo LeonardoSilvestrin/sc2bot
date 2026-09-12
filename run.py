@@ -62,7 +62,7 @@ def parse_local_args(args=None):
         "--bot-log",
         choices=("off", "events"),
         default="off",
-        help="Write structured local bot logs to _botdev/logs.",
+        help="Write structured local bot logs to logs/.",
     )
     parser.add_argument(
         "--spatial-view",
@@ -115,7 +115,7 @@ def main():
     is_ladder = "--LadderServer" in sys.argv
     snapshots_enabled = local_args.spatial_snapshot and not is_ladder
     if (local_args.bot_log == "events" or snapshots_enabled) and not is_ladder:
-        bot_logger = JsonlBotLogger(Path("_botdev/logs"))
+        bot_logger = JsonlBotLogger(Path("logs"))
         print(f"Bot structured log: {bot_logger.path}")
     else:
         bot_logger = NullBotLogger()

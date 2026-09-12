@@ -130,8 +130,8 @@ dmypy.json
 
 .idea
 
-# Local bot development artifacts (architecture docs remain versioned)
-_botdev/logs/
+# Local bot development artifacts (architecture docs and log viewer remain versioned)
+/logs/game-*/
 _botdev/reports/
 _botdev/tmp/
 .ruff_cache/

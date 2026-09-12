@@ -8,9 +8,15 @@
 It decides a **direction**, never an execution. It says "PRESSURE", never
 "attack the enemy third with the main army".
 
-**Shadow mode.** Strategy is a pure layer with no producer and no consumer
-yet: nothing builds `StrategyInputs` from Awareness, and nothing in the bot
-reads a `StrategySnapshot`. `tests/test_strategy_architecture.py`
+Source: `bot/strategy/` (`model.py`, `config.py`, `scoring.py`,
+`hysteresis.py`, `director.py`).
+
+**Shadow mode, not wired.** Strategy is a pure layer with no producer and no
+consumer yet: `compose_bot` never builds a `StrategicDirector`, nothing builds
+`StrategyInputs` from Awareness, nothing in the bot reads a
+`StrategySnapshot`, and nothing logs one (the planned `strategy.updated`
+event is described in [logging.md](logging.md#planned-strategydirector); the
+log viewer already has a track waiting for it). `tests/test_strategy_architecture.py`
 (`ShadowModeTests`) fails if any `bot/` module outside `bot/strategy/`
 imports it, so wiring a consumer is a deliberate change: delete that guard
 when it happens. Every weight below is a first guess, left untuned until

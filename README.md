@@ -22,7 +22,7 @@ The bot is layered as a sense → believe → decide → arbitrate → act pipel
   (`FrameProcessor`) runs them each tick, `runtime.py` (`BotRuntime`) forwards Ares' game hooks, and
   `telemetry/` logs the end-of-frame diagnostics.
 
-See `_botdev/architecture/` for versioned design docs and contracts, and `_botdev/README.md` for the dev workspace
+See `docs/README.md` for the architecture documentation (start at `docs/overview.md`), and `_botdev/README.md` for the dev workspace
 conventions (the ladder entrypoint must always compose the bot with `NullBotLogger`).
 
 ---
@@ -111,10 +111,11 @@ poetry run python run.py --spatial-view
 ```
 
 The view draws the bot's own sample grid (`DEFAULT_SPATIAL_SPACING` in
-`run.py`, 10 map units) and never changes it, so a game with the view plays
-like one without. Use `--spatial-view-spacing 20` or larger to draw fewer
-markers; the gap is rounded to whole grid steps, and a value at or below the
-grid spacing draws every sample. The SVG snapshot always shows the full grid.
+`run.py`, 2 map units) and never changes it, so a game with the view plays
+like one without. Markers are drawn about 4 map units apart by default; use
+`--spatial-view-spacing 10` or larger to draw fewer. The gap is rounded to
+whole grid steps, and a value at or below the grid spacing draws every sample.
+The SVG snapshot always shows the full grid.
 
 To write the observational SVG snapshot every 30 seconds of game time, run:
 
@@ -126,7 +127,7 @@ Use `--spatial-snapshot-interval 15` to change the game-time interval. This
 also opens the structured game log, and keeps both artifacts together:
 
 ```text
-_botdev/logs/game-<UTC timestamp>/
+logs/game-<UTC timestamp>/
 |-- game.jsonl
 `-- spatial/
     |-- latest.svg
@@ -139,12 +140,13 @@ are never enabled for ladder games.
 
 In VS Code, **Run and Debug** offers these launch modes:
 
-- `sem logs nem view`
-- `só logs`
-- `logs e view`
-- `logs e snapshot SVG`
-- `logs, view e snapshot SVG`
-- `log visualizer`
+- `play` -- no logs, no view
+- `play_log` -- structured logs
+- `play_logs_imap` -- logs and the in-game spatial view
+- `play_logs_SVG` -- logs and SVG snapshots
+- `play_full_debug` -- logs, view and SVG snapshots
+- `log_view` -- open the log viewer
+- `open WT` -- open an agent worktree
 
 ## Start Developing Your Bot
 
