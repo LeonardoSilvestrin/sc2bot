@@ -91,6 +91,12 @@ the macro side.
 - `bot/world/awareness` owns memory and derived beliefs: enemy sightings and
   location freshness, enemy base memory and assessment, enemy force clusters,
   per-base security, the economy and army beliefs, and the macro posture.
+- `bot/domain` is the shared domain model: static knowledge about unit types
+  (capability profiles, the combat-unit predicate, the suitability math). It
+  imports nothing from `bot` and holds no policy, so behaviors, the mission
+  engine and macro all read it without depending on each other. Roles live in
+  `bot/engine/missions/roles.py`; the composition doctrine lives in
+  `bot/macro/composition`. See [capabilities.md](capabilities.md).
 - Behavior planners propose useful work. They never allocate or command units.
 - `MissionController` (`bot/engine/missions`) is the only code allowed to
   admit proposals, change mission lifecycle, transfer leases, or release
@@ -265,6 +271,7 @@ bot/macro/
   planner.py           MacroPlanner: composes the domains into one tick's proposals
   diagnostics.py       macro.status / macro.idle_producer_unexplained
   proposal_helpers.py  one-step EconomicProposal builder, saturation target
+  composition/         CompositionDoctrine (BIO, MECH): what a goal set buys within
   strategy/            goals, per-opening profiles, costs + posture priorities,
                        reference build
   production/          PRODUCE_UNIT, PRODUCE_WORKER  (army_demand.py: assessment)

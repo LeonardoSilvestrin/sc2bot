@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum, auto
 from typing import Any
 
-from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
 from bot.engine.missions.models import MissionKind
+from bot.engine.missions.roles import CombatRole
 from bot.world.awareness.spatial import SpatialFieldSample
 
 
@@ -22,12 +22,15 @@ class MapControlConfig:
     priority: int = 40
     mission_timeout: float = 3600.0
     failure_cooldown: float = 15.0
-    unit_types: frozenset[UnitTypeId] = field(
-        default_factory=lambda: frozenset({UnitTypeId.MARINE})
-    )
+    # What the patrol is for, not what it is made of: every combat unit is
+    # scored against the role, and the best-suited ones patrol.
+    role: CombatRole = CombatRole.MOBILE_CONTROL
+    # The patrol's share of the army, measured in combat supply.
     force_ratio: float = 0.2
-    minimum_force_size: int = 6
-    # Optional fixed override retained for experiments/config compatibility.
+    # Below this much combat supply a share would leave no real army at home.
+    minimum_force_supply: float = 6.0
+    # Optional fixed unit count retained for experiments/config compatibility;
+    # it replaces the supply share.
     desired_units: int | None = None
     minimum_unit_health: float = 0.7
     commitment_seconds: float = 1.0
@@ -68,12 +71,10 @@ class MapControlConfig:
             raise ValueError("mission_timeout must be positive")
         if self.failure_cooldown < 0.0:
             raise ValueError("failure_cooldown must not be negative")
-        if not self.unit_types:
-            raise ValueError("unit_types must not be empty")
         if not 0.0 < self.force_ratio < 1.0:
             raise ValueError("force_ratio must be between 0 and 1")
-        if self.minimum_force_size < 1:
-            raise ValueError("minimum_force_size must be positive")
+        if self.minimum_force_supply <= 0.0:
+            raise ValueError("minimum_force_supply must be positive")
         if self.desired_units is not None and self.desired_units < 1:
             raise ValueError("desired_units must be positive when provided")
         if not 0.0 <= self.minimum_unit_health <= 1.0:
@@ -108,17 +109,21 @@ class MapControlAssessment:
     """Whether we can currently spare a squad to hold the map."""
 
     now: float
-    eligible_units: int
+    # Ready combat units healthy enough to roam, of any type, and the supply
+    # they add up to: the army the patrol takes a share of.
+    combat_units: int
+    combat_supply: float
     started: bool
     strategically_safe: bool
 
     @property
     def force_available(self) -> bool:
-        return self.started and self.eligible_units > 0
+        return self.started and self.combat_units > 0
 
     def log_fields(self) -> dict[str, Any]:
         return {
-            "eligible_units": self.eligible_units,
+            "combat_units": self.combat_units,
+            "combat_supply": round(self.combat_supply, 1),
             "started": self.started,
             "strategically_safe": self.strategically_safe,
         }
@@ -129,13 +134,17 @@ class MapControlPlan:
     """How much of the army roams, and where it centres its patrol."""
 
     anchor: Point2
+    # A count cap. With a supply budget it is every combat unit, so the
+    # budget is what binds.
     desired_units: int
+    supply_budget: float | None
     priority: int
 
     def log_fields(self) -> dict[str, Any]:
         return {
             "anchor": [round(float(self.anchor.x), 1), round(float(self.anchor.y), 1)],
             "desired_units": self.desired_units,
+            "supply_budget": self.supply_budget,
             "priority": self.priority,
         }
 

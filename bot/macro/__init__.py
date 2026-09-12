@@ -13,6 +13,8 @@ Awareness; neither imports the other.
 Split by what a proposal buys, so the intelligence for one kind of spend
 stays in one folder:
 
+    composition/    what the army is meant to be made of: the doctrine each
+                    goal set buys within (core / support / specialized)
     strategy/       what this game converges toward: goal sets per opening,
                     costs, posture-adjusted priorities, reference timings
     production/     units to train: the army's supply debt, workers
@@ -33,6 +35,7 @@ operational need of construction, not a unit lease, and the seam where a
 worker controller would later mediate.
 """
 
+from .composition import BIO, MECH, CompositionDoctrine
 from .contracts import SpendPlanner
 from .diagnostics import MacroDiagnostics
 from .planner import MacroPlanner, MacroStatus
@@ -47,8 +50,11 @@ from .strategy.reference_build import (
 )
 
 __all__ = [
+    "BIO",
     "MACRO_PROFILES",
+    "MECH",
     "ArmyUnitGoal",
+    "CompositionDoctrine",
     "MacroDiagnostics",
     "MacroGoalSet",
     "MacroPlanner",

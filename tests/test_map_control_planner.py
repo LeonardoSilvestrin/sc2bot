@@ -12,7 +12,7 @@ from bot.behavior.map_control import (
     MapControlPlanner,
     score_spatial_sample,
 )
-from bot.engine.missions import MissionKind
+from bot.engine.missions import CombatRole, MissionKind
 from bot.world.attention import (
     AttentionSnapshot,
     MapFacts,
@@ -58,6 +58,7 @@ def marine(
         can_attack_air=True,
         can_attack_ground=True,
         available_for_mission=available,
+        supply_cost=1.0,
     )
 
 
@@ -65,7 +66,13 @@ def enemy_marine(tag: int) -> UnitSnapshot:
     return replace(marine(tag), position=Point2((50, 50)))
 
 
-def attention(now: float, *, marines: int = 6, enemies: int = 0) -> AttentionSnapshot:
+def attention(
+    now: float,
+    *,
+    marines: int = 6,
+    enemies: int = 0,
+    extra: tuple[UnitSnapshot, ...] = (),
+) -> AttentionSnapshot:
     return AttentionSnapshot(
         WorldFacts(
             iteration=int(now),
@@ -74,7 +81,10 @@ def attention(now: float, *, marines: int = 6, enemies: int = 0) -> AttentionSna
             vespene=0,
             supply_used=float(marines),
             supply_cap=200.0,
-            own_units=tuple(marine(tag) for tag in range(1, marines + 1)),
+            own_units=(
+                *(marine(tag) for tag in range(1, marines + 1)),
+                *extra,
+            ),
             enemy_units=tuple(enemy_marine(100 + tag) for tag in range(enemies)),
             map=MAP,
         )
@@ -97,9 +107,11 @@ def awareness(
 
 
 class MapControlConfigTests(unittest.TestCase):
-    def test_rejects_an_invalid_force_ratio(self):
+    def test_rejects_an_invalid_force_ratio_or_minimum_supply(self):
         with self.assertRaises(ValueError):
             MapControlConfig(force_ratio=1.0)
+        with self.assertRaises(ValueError):
+            MapControlConfig(minimum_force_supply=0.0)
 
     def test_score_combines_components_with_behavior_owned_weights(self):
         sample = SpatialFieldSample(
@@ -129,7 +141,7 @@ class MapControlPlannerTests(unittest.TestCase):
             spatial=SpatialField(samples=tuple(samples), updated_at=now),
         )
 
-    def test_waits_for_minimum_force_size(self):
+    def test_waits_for_minimum_force_supply(self):
         planner = MapControlPlanner()
 
         self.assertEqual(
@@ -159,18 +171,29 @@ class MapControlPlannerTests(unittest.TestCase):
         self.assertEqual(proposal.kind, MissionKind.MAP_CONTROL)
         self.assertEqual(proposal.target, MAP.center)
         self.assertEqual(proposal.deduplication_key, "map_control:patrol")
-        self.assertEqual(proposal.requirement.desired, 2)
+        # A fifth of six supply; the count only caps, it does not size.
+        self.assertEqual(proposal.requirement.supply_budget, 1.2)
+        self.assertEqual(proposal.requirement.desired, 6)
         self.assertEqual(proposal.requirement.minimum, 0)
-        self.assertEqual(
-            proposal.requirement.unit_types,
-            frozenset({UnitTypeId.MARINE}),
+        # A role, not a unit list.
+        self.assertIs(
+            proposal.requirement.capability, CombatRole.MOBILE_CONTROL.requirement
         )
+        self.assertEqual(proposal.requirement.unit_types, frozenset())
         self.assertEqual(proposal.priority, 40)
         # Standing POSITION/RESERVE missions hold most idle units now, so
         # map control must be able to preempt them to get its squad at all.
         self.assertTrue(proposal.can_preempt)
         self.assertEqual(proposal.mode.name, "STANDING")
         self.assertEqual(proposal.squad_id, "map_control")
+
+    def test_a_fixed_unit_count_override_sizes_by_count(self):
+        planner = MapControlPlanner(config=MapControlConfig(desired_units=3))
+
+        proposal = planner.propose(attention(180.0), awareness(180.0))[0]
+
+        self.assertEqual(proposal.requirement.desired, 3)
+        self.assertIsNone(proposal.requirement.supply_budget)
 
     def test_respects_proposal_cadence(self):
         planner = MapControlPlanner()
@@ -330,25 +353,36 @@ class MapControlPlannerTests(unittest.TestCase):
 
 
 class MapControlAssessmentTests(unittest.TestCase):
-    def test_counts_only_units_healthy_enough_to_roam(self):
-        current, state = attention(30.0, marines=8), awareness(30.0)
+    def test_counts_every_combat_unit_healthy_enough_to_roam(self):
+        extra = (
+            marine(20, health=0.5),
+            replace(marine(21), unit_type=UnitTypeId.MEDIVAC, supply_cost=2.0),
+            replace(marine(22), unit_type=UnitTypeId.SIEGETANK, supply_cost=3.0),
+        )
+        current, state = attention(30.0, marines=8, extra=extra), awareness(30.0)
 
         assessment = MapControlAssessor().assess(current, state)
 
-        self.assertEqual(assessment.eligible_units, 8)
+        self.assertEqual(assessment.combat_units, 9)
+        self.assertEqual(assessment.combat_supply, 11.0)
         self.assertTrue(assessment.started)
         self.assertTrue(assessment.force_available)
 
-    def test_the_plan_claims_the_configured_share(self):
-        current, state = attention(30.0, marines=10), awareness(30.0)
+    def test_the_plan_claims_the_configured_share_of_supply(self):
+        tanks = tuple(
+            replace(marine(tag), unit_type=UnitTypeId.SIEGETANK, supply_cost=3.0)
+            for tag in (20, 21)
+        )
+        current, state = attention(30.0, marines=4, extra=tanks), awareness(30.0)
         planner = MapControlPlanner()
 
         proposals = planner.propose(current, state)
 
         self.assertEqual(len(proposals), 1)
-        self.assertEqual(planner.last_plan.desired_units, 2)
+        # Four Marines and two Tanks are ten supply, not six heads.
+        self.assertEqual(planner.last_plan.supply_budget, 2.0)
         self.assertEqual(
-            proposals[0].requirement.desired, planner.last_plan.desired_units
+            proposals[0].requirement.supply_budget, planner.last_plan.supply_budget
         )
 
     def test_a_too_small_army_produces_no_plan(self):
@@ -357,7 +391,7 @@ class MapControlAssessmentTests(unittest.TestCase):
 
         self.assertEqual(planner.propose(current, state), ())
         self.assertIsNone(planner.last_plan)
-        self.assertEqual(planner.last_assessment.eligible_units, 3)
+        self.assertEqual(planner.last_assessment.combat_supply, 3.0)
 
 
 if __name__ == "__main__":

@@ -93,6 +93,13 @@ Every rule below reads `EconomyFacts` (from `WorldFacts.economy`), the
 opening's `MacroGoalSet` and `awareness.macro_posture`; `ResourceOverflowConfig`
 also reads the bank.
 
+Each `MacroGoalSet` names the `CompositionDoctrine` it buys within
+(`bot/macro/composition/`: core / support / specialized unit types; `BIO` for
+both current goal sets, `MECH` defined for BattleMech). Construction fails if
+an army goal falls outside it. The doctrine only bounds production. Missions
+never see it: they score whatever units exist, so a doctrine change reaches the
+army only through what gets built (see [capabilities.md](capabilities.md)).
+
 - **`construction/supply.py`**: proposes `PRODUCE_SUPPLY` (a Supply Depot) when
   `supply_cap` is below `max_supply_cap` (200) and
   `supply_cap + supply_pending - supply_used <= supply_buffer` (6) -- counting

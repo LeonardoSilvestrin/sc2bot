@@ -8,6 +8,9 @@ units, or a `MissionController` that starts knowing what a Banshee is.
 from __future__ import annotations
 
 import ast
+import dataclasses
+import inspect
+import re
 import unittest
 from pathlib import Path
 
@@ -21,8 +24,16 @@ from bot.behavior.contracts import (
     BehaviorPlanner,
 )
 from bot.behavior.defense import DefenseAssessor, DefensePlanner
-from bot.behavior.harass.banshee import BansheeHarassAssessor, BansheeHarassPlanner
-from bot.behavior.harass.reaper import ReaperHarassAssessor, ReaperHarassPlanner
+from bot.behavior.harass.banshee import (
+    BansheeHarassAssessor,
+    BansheeHarassConfig,
+    BansheeHarassPlanner,
+)
+from bot.behavior.harass.reaper import (
+    ReaperHarassAssessor,
+    ReaperHarassConfig,
+    ReaperHarassPlanner,
+)
 from bot.behavior.map_control import MapControlAssessor, MapControlPlanner
 from bot.behavior.scouting import IntelAssessor, IntelPlanner
 from bot.behavior.standing import StandingAssessor, StandingPlanner
@@ -213,6 +224,100 @@ class MissionControllerGenericityTests(unittest.TestCase):
         )
         for behavior_word in ("banshee", "cloak", "harass", "rally", "anchor"):
             self.assertNotIn(behavior_word, controller_source.lower())
+
+
+class CompositionIndependenceTests(unittest.TestCase):
+    """Generic behaviors state a job; only specialized ones name a unit; and
+    what macro chooses to produce never reaches the mission system."""
+
+    GENERIC_BEHAVIORS = (("map_control",), ("standing",))
+    SPECIALIZED_BEHAVIORS = (("harass", "banshee"), ("harass", "reaper"))
+
+    def test_generic_behaviors_never_name_a_concrete_unit_type(self):
+        concrete = re.compile(r"UnitTypeId\.[A-Z]")
+        for parts in self.GENERIC_BEHAVIORS:
+            for path in BOT.joinpath("behavior", *parts).glob("*.py"):
+                with self.subTest(path="/".join((*parts, path.name))):
+                    self.assertIsNone(
+                        concrete.search(path.read_text(encoding="utf-8"))
+                    )
+
+    def test_map_control_asks_for_a_role_and_standing_for_every_combat_unit(self):
+        requests = {
+            ("map_control",): "UnitRequirement.for_role(",
+            ("standing",): "UnitRequirement.any_combat_unit(",
+        }
+        for parts, request in requests.items():
+            source = BOT.joinpath("behavior", *parts, "planner.py").read_text(
+                encoding="utf-8"
+            )
+            with self.subTest(behavior="/".join(parts)):
+                self.assertIn(request, source)
+                self.assertNotIn("UnitRequirement.combat(", source)
+
+    def test_specialized_behaviors_still_ask_for_their_own_unit(self):
+        for parts in self.SPECIALIZED_BEHAVIORS:
+            source = BOT.joinpath("behavior", *parts, "planner.py").read_text(
+                encoding="utf-8"
+            )
+            with self.subTest(behavior="/".join(parts)):
+                self.assertIn("UnitRequirement.combat(", source)
+                self.assertNotIn("for_role", source)
+                self.assertNotIn("any_combat_unit", source)
+        self.assertEqual(
+            BansheeHarassConfig().unit_types, frozenset({UnitTypeId.BANSHEE})
+        )
+        self.assertEqual(
+            ReaperHarassConfig().unit_types, frozenset({UnitTypeId.REAPER})
+        )
+
+    def test_generic_behaviors_know_no_doctrine(self):
+        for parts in self.GENERIC_BEHAVIORS:
+            for path in BOT.joinpath("behavior", *parts).glob("*.py"):
+                with self.subTest(path="/".join((*parts, path.name))):
+                    self.assertNotIn(
+                        "doctrine", path.read_text(encoding="utf-8").lower()
+                    )
+                    self.assertFalse(
+                        any(
+                            name.startswith("bot.macro")
+                            for name in imported_modules(path)
+                        )
+                    )
+
+    def test_the_mission_engine_knows_no_doctrine(self):
+        """Requirements and allocation never see what macro is producing."""
+
+        for path in (BOT / "engine").rglob("*.py"):
+            with self.subTest(path=path.relative_to(BOT).as_posix()):
+                self.assertNotIn("doctrine", path.read_text(encoding="utf-8").lower())
+        self.assertNotIn(
+            "doctrine", inspect.signature(UnitRequirement.for_role).parameters
+        )
+        self.assertFalse(
+            {field.name for field in dataclasses.fields(UnitRequirement)}
+            & {"preferred_unit_types", "doctrine"}
+        )
+
+    def test_doctrine_is_defined_and_used_only_by_macro(self):
+        for path in BOT.rglob("*.py"):
+            relative = path.relative_to(BOT)
+            if relative.parts[0] == "macro":
+                continue
+            with self.subTest(path=relative.as_posix()):
+                self.assertNotIn(
+                    "CompositionDoctrine", path.read_text(encoding="utf-8")
+                )
+        self.assertFalse((BOT / "combat").exists())
+
+    def test_the_shared_domain_depends_on_nothing_and_holds_no_policy(self):
+        for path in (BOT / "domain").glob("*.py"):
+            source = path.read_text(encoding="utf-8")
+            with self.subTest(path=path.name):
+                for name in imported_modules(path):
+                    self.assertFalse(name.startswith("bot"), name)
+                for policy in ("CombatRole", "CompositionDoctrine", "UnitRequirement"):
+                    self.assertNotIn(policy, source)
 
 
 class UnitUtilityContractTests(unittest.TestCase):

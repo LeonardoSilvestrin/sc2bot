@@ -48,6 +48,7 @@ def marine(tag: int, position: Point2 = MAP.own_start) -> UnitSnapshot:
         is_worker=False,
         can_attack_air=True,
         can_attack_ground=True,
+        supply_cost=1.0,
     )
 
 
@@ -738,17 +739,20 @@ class StandingFallbackOwnershipTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn(controller.allocator.owner_of(unit.tag), mission_ids)
 
     async def test_every_eligible_unit_is_owned_before_map_control_is_active(self):
-        # Four Marines is below map control's minimum force size, so it stays
-        # silent; the Marauder and the Tank are standing-eligible as well.
+        # Below map control's minimum force supply it stays silent, and every
+        # combat unit -- whatever it is -- belongs to the main army.
         units = (
             *(marine(tag) for tag in range(1, 5)),
-            replace(marine(5), unit_type=UnitTypeId.MARAUDER),
-            replace(marine(6), unit_type=UnitTypeId.SIEGETANK),
+            replace(marine(5), unit_type=UnitTypeId.MARAUDER, supply_cost=2.0),
+            replace(marine(6), unit_type=UnitTypeId.SIEGETANK, supply_cost=3.0),
         )
         controller = MissionController(
             logger=FakeLogger(), executor_factories=DEFAULT_EXECUTOR_FACTORIES
         )
-        planners = (MapControlPlanner(), StandingPlanner())
+        planners = (
+            MapControlPlanner(config=MapControlConfig(minimum_force_supply=20.0)),
+            StandingPlanner(),
+        )
 
         await self.advance(controller, 10.0, units, planners=planners)
 
@@ -756,8 +760,18 @@ class StandingFallbackOwnershipTests(unittest.IsolatedAsyncioTestCase):
         main = controller.board.live_for_key("hold_rally:main_army")
         self.assert_owned_by(controller, units, main.mission_id)
 
-        # A unit produced later is picked up on standing's next cadence.
-        units = (*units, replace(marine(7), unit_type=UnitTypeId.MARAUDER))
+        # A unit produced later is picked up on standing's next cadence -- a
+        # flying anti-air Viking as readily as another Marine.
+        units = (
+            *units,
+            replace(
+                marine(7),
+                unit_type=UnitTypeId.VIKINGFIGHTER,
+                is_flying=True,
+                can_attack_ground=False,
+                supply_cost=2.0,
+            ),
+        )
         await self.advance(controller, 15.0, units, planners=planners)
 
         self.assertIsNone(controller.board.live_for_key("map_control:patrol"))

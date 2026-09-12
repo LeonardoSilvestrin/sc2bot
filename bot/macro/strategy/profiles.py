@@ -5,6 +5,7 @@ from sc2.ids.upgrade_id import UpgradeId
 
 from bot.engine.economy.models import ResourceCost
 
+from ..composition import BIO
 from .goals import (
     ArmyUnitGoal,
     MacroGoalSet,
@@ -82,6 +83,7 @@ def bio_three_one_one() -> MacroGoalSet:
                 vespene_rate_per_extra=500.0,
             ),
         ),
+        doctrine=BIO,
         addons=(
             (
                 UnitTypeId.BARRACKSTECHLAB,
@@ -188,6 +190,7 @@ def banshee_cloak() -> MacroGoalSet:
                 cost=ResourceCost(minerals=150, vespene=100),
             ),
         ),
+        doctrine=BIO,
         addons=(
             (
                 UnitTypeId.STARPORTTECHLAB,

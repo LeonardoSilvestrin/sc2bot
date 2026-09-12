@@ -1,6 +1,6 @@
 """PLAN: where does the heart of the army sit when nothing needs it?
 
-This is the default behavior. Every combat unit no special mission has
+This is the default behavior. Every combat unit no more specific mission has
 claimed should end up owned by this one, so that no unit is ever commanded
 by two behaviors at once and none is left ownerless. It proposes a
 ``MissionMode.STANDING`` responsibility: re-proposing the same key updates
@@ -8,6 +8,10 @@ the live mission's anchor and desired count in place (see
 ``MissionController._update_standing``) rather than tearing the mission down
 and rebuilding it, so a posture change reshapes the army without churning
 leases.
+
+It asks for no role and scores nothing: it claims every combat unit
+(``UnitRequirement.any_combat_unit``), so a surviving Marine, a new Cyclone
+and a Thor all rest here until something with a real job takes them.
 """
 
 from __future__ import annotations
@@ -82,7 +86,7 @@ class StandingPlanner:
         return (self._proposal_for(plan, now),)
 
     def _plan(self, assessment: StandingAssessment) -> StandingPlan:
-        """Choose the anchor; the core army asks for every eligible unit.
+        """Choose the anchor; the core army asks for every combat unit.
 
         Asking for all of them, rather than a share, is what makes this the
         fallback owner. Every mission allowed to preempt (map control,
@@ -105,7 +109,7 @@ class StandingPlanner:
             anchor_reason=reason,
             # `UnitRequirement` needs desired > 0; with no army yet the claim
             # simply idles (minimum=0).
-            core_count=max(1, assessment.eligible_units),
+            core_count=max(1, assessment.combat_units),
             priority=self.config.priority,
         )
 
@@ -173,8 +177,7 @@ class StandingPlanner:
             target_key=DEDUPLICATION_KEY,
             target=plan.anchor,
             reason="main_army_holds_latest_expansion_rally",
-            requirement=UnitRequirement.combat(
-                unit_types=self.config.unit_types,
+            requirement=UnitRequirement.any_combat_unit(
                 desired=plan.core_count,
                 # Holding zero units is idle, not failed: everything above
                 # this behavior may legitimately take the whole army.

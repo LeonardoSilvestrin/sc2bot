@@ -23,6 +23,7 @@ from bot.behavior.scouting import (
     ScoutingVisionRequester,
 )
 from bot.behavior.standing import StandingConfig, StandingPlanner
+from bot.domain import is_combat_unit
 from bot.engine.economy import EconomyController
 from bot.engine.missions import MissionController
 from bot.engine.services import (
@@ -510,11 +511,10 @@ class BotRuntime:
                     len(mission.assigned_unit_tags),
                 )
 
-        eligible_types = self.standing_config.unit_types
         unassigned_tags = tuple(
             unit.tag
             for unit in world.own_units
-            if unit.unit_type in eligible_types
+            if is_combat_unit(unit.unit_type)
             and unit.available_for_mission
             and self.missions.allocator.owner_of(unit.tag) is None
         )

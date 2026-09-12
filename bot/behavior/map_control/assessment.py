@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from bot.domain import is_combat_unit
 from bot.world.attention import AttentionSnapshot, UnitSnapshot
 from bot.world.awareness import AwarenessSnapshot, MacroPosture
 
@@ -18,11 +19,11 @@ class MapControlAssessor:
         self, attention: AttentionSnapshot, awareness: AwarenessSnapshot
     ) -> MapControlAssessment:
         world = attention.world
+        army = tuple(unit for unit in world.own_units if self._counts(unit))
         return MapControlAssessment(
             now=world.time,
-            eligible_units=sum(
-                self._eligible(unit) for unit in world.own_units
-            ),
+            combat_units=len(army),
+            combat_supply=sum(unit.supply_cost for unit in army),
             started=world.time >= self.config.start_after,
             # Reported, not gated on: the planner keeps declaring the squad
             # under pressure and lets the executor pull it home, so the
@@ -35,9 +36,9 @@ class MapControlAssessor:
             ),
         )
 
-    def _eligible(self, unit: UnitSnapshot) -> bool:
+    def _counts(self, unit: UnitSnapshot) -> bool:
         return (
-            unit.unit_type in self.config.unit_types
+            is_combat_unit(unit.unit_type)
             and unit.is_ready
             and unit.health_percentage >= self.config.minimum_unit_health
         )

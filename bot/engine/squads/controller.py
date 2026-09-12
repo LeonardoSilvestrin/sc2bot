@@ -153,26 +153,35 @@ class SquadController:
     def effective_requirement(
         self, mission: Mission, allocator: UnitAllocator
     ) -> UnitRequirement | None:
-        """Avoid backfilling a home squad while members are preempted."""
+        """Avoid backfilling a home squad while members are preempted.
+
+        The members away shrink the request by their count and, for a
+        supply-sized request, by their supply too.
+        """
 
         squad_id = mission.proposal.squad_id
         squad = self._squads.get(squad_id) if squad_id is not None else None
         if squad is None or squad.home_mission_id != mission.mission_id:
             return mission.proposal.requirement
-        temporarily_away = sum(
-            1
+        temporarily_away = [
+            tag
             for tag in squad.member_tags
             if (owner := allocator.owner_of(tag)) is not None
             and owner != mission.mission_id
             and self._mission_squads.get(owner) == squad.squad_id
-        )
-        desired = max(0, mission.proposal.requirement.desired - temporarily_away)
-        if desired == 0:
+        ]
+        requirement = mission.proposal.requirement
+        desired = max(0, requirement.desired - len(temporarily_away))
+        budget = requirement.supply_budget
+        if budget is not None:
+            budget -= sum(allocator.unit_supply(tag) for tag in temporarily_away)
+        if desired == 0 or (budget is not None and budget <= 0.0):
             return None
         return replace(
-            mission.proposal.requirement,
+            requirement,
             desired=desired,
-            minimum=min(mission.proposal.requirement.minimum, desired),
+            minimum=min(requirement.minimum, desired),
+            supply_budget=budget,
         )
 
     def allocation_changed(

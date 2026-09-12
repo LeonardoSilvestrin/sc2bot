@@ -5,6 +5,7 @@ from typing import Any
 
 from bot.engine.missions.allocator import AllocationResult, UnitAllocator
 from bot.engine.missions.board import MissionBoard
+from bot.engine.missions.capability_log import CapabilityAllocationLog
 from bot.engine.missions.execution import (
     MissionContext,
     MissionExecutor,
@@ -45,6 +46,7 @@ class MissionController:
         self.squads = squad_controller or SquadController(logger=logger)
         self._executor_factories = executor_factories
         self._executors: dict[str, MissionExecutor] = {}
+        self._capability_log = CapabilityAllocationLog()
         self._processed_proposals: set[str] = set()
         self._cooldown_until: dict[str, float] = {}
         self._mission_sequence = 0
@@ -130,6 +132,13 @@ class MissionController:
                 allocator=self.allocator,
                 now=now,
             )
+            for event, data in self._capability_log.observe(
+                mission_id=mission.mission_id,
+                requirement=mission.proposal.requirement,
+                assigned=self.allocator.assigned_units(mission.mission_id),
+                own_units=attention.world.own_units,
+            ):
+                self._emit(event, now, "capability_allocation", mission=mission, **data)
 
             if not allocation.requirements_satisfied:
                 if mission.started_at is not None and not allocation.assigned_tags:
@@ -240,17 +249,52 @@ class MissionController:
                 unit_types=self._unit_type_names(allocation.assigned_tags),
             )
 
-        if allocation.released_tags:
-            unit_types = self._unit_type_names(allocation.released_tags)
-            for tag in allocation.released_tags:
+        if allocation.upgrades:
+            self._emit(
+                "units_upgraded",
+                now,
+                "clearly_more_suitable_unit_available",
+                mission=mission,
+                upgrades=[
+                    {
+                        "released_tag": upgrade.released_tag,
+                        "released_type": self._unit_type_names(
+                            [upgrade.released_tag]
+                        )[0],
+                        "released_utility": round(upgrade.released_utility, 3),
+                        "acquired_tag": upgrade.acquired_tag,
+                        "acquired_type": self._unit_type_names(
+                            [upgrade.acquired_tag]
+                        )[0],
+                        "acquired_utility": round(upgrade.acquired_utility, 3),
+                    }
+                    for upgrade in allocation.upgrades
+                ],
+            )
+
+        replaced = {upgrade.released_tag for upgrade in allocation.upgrades}
+        for reason, tags in (
+            (
+                "requirement_desired_reduced",
+                [tag for tag in allocation.released_tags if tag not in replaced],
+            ),
+            (
+                "replaced_by_more_suitable_unit",
+                [tag for tag in allocation.released_tags if tag in replaced],
+            ),
+        ):
+            if not tags:
+                continue
+            unit_types = self._unit_type_names(tags)
+            for tag in tags:
                 commands.release(mission_id=mission.mission_id, unit_tag=tag)
-            self.allocator.release_units(mission.mission_id, allocation.released_tags)
+            self.allocator.release_units(mission.mission_id, tags)
             self._emit(
                 "units_released",
                 now,
-                "requirement_desired_reduced",
+                reason,
                 mission=mission,
-                unit_tags=list(allocation.released_tags),
+                unit_tags=tags,
                 unit_types=unit_types,
             )
 
@@ -406,6 +450,7 @@ class MissionController:
                 mission=mission,
                 previous_priority=previous.priority,
                 previous_desired=previous.requirement.desired,
+                previous_supply_budget=previous.requirement.supply_budget,
             )
 
     def _reconcile_standing_missions(
@@ -487,6 +532,7 @@ class MissionController:
         mission.finished_at = now
         mission.last_reason = reason
         self._executors.pop(mission.mission_id, None)
+        self._capability_log.forget(mission.mission_id)
         self.squads.mission_finished(mission, now=now)
         self._cooldown_until[mission.proposal.deduplication_key] = (
             now + mission.proposal.cooldown_seconds

@@ -7,6 +7,7 @@ from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
 from bot.behavior.standing import StandingPlanner
+from bot.domain import COMBAT_UNIT_TYPES
 from bot.engine.missions import MissionKind, MissionMode
 from bot.world.attention import AttentionSnapshot, MapFacts, UnitSnapshot, WorldFacts
 from bot.world.awareness import AwarenessSnapshot, RelativeStrength, ThreatAssessment
@@ -79,7 +80,7 @@ def current(
 
 
 class CoreArmyStandingTests(unittest.TestCase):
-    def test_declares_one_persistent_main_army_claiming_every_eligible_unit(self):
+    def test_declares_one_persistent_main_army_claiming_every_combat_unit(self):
         attention, awareness = current(10.0, count=10)
 
         proposals = StandingPlanner().propose(attention, awareness)
@@ -103,19 +104,28 @@ class CoreArmyStandingTests(unittest.TestCase):
 
         self.assertEqual(proposal.target, Point2((34.4, 34.4)))
 
-    def test_banshees_are_left_for_the_specialized_persistent_squad(self):
+    def test_every_combat_unit_is_claimed_whatever_produced_it(self):
+        """Specialized squads preempt theirs; nothing is ownerless meanwhile."""
+
         attention, awareness = current(10.0, count=5)
         attention = AttentionSnapshot(
             replace(
                 attention.world,
-                own_units=(*attention.world.own_units, unit(99, UnitTypeId.BANSHEE)),
+                own_units=(
+                    *attention.world.own_units,
+                    unit(97, UnitTypeId.CYCLONE),
+                    unit(98, UnitTypeId.THOR),
+                    unit(99, UnitTypeId.BANSHEE),
+                    unit(100, UnitTypeId.MEDIVAC),
+                ),
             )
         )
 
         proposal = StandingPlanner().propose(attention, awareness)[0]
 
-        self.assertNotIn(UnitTypeId.BANSHEE, proposal.requirement.unit_types)
-        self.assertEqual(proposal.requirement.desired, 5)
+        self.assertIsNone(proposal.requirement.capability)
+        self.assertEqual(proposal.requirement.unit_types, COMBAT_UNIT_TYPES)
+        self.assertEqual(proposal.requirement.desired, 8)
 
     def test_assessment_reports_what_the_plan_was_decided_from(self):
         attention, awareness = current(10.0, count=10)
@@ -125,7 +135,7 @@ class CoreArmyStandingTests(unittest.TestCase):
 
         assessment = planner.last_assessment
         plan = planner.last_plan
-        self.assertEqual(assessment.eligible_units, 10)
+        self.assertEqual(assessment.combat_units, 10)
         self.assertEqual(assessment.posture, planner.last_posture)
         self.assertEqual(plan.core_count, 10)
         self.assertTrue(plan.anchor_reason.strip())

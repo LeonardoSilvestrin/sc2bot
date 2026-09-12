@@ -1,14 +1,19 @@
 """PLAN: keep a small, expendability-averse share of the army on the map.
 
 This is the roaming counterpart to `behavior/standing/`: the core army holds
-its anchor, and this claims the remainder. It only declares the squad once
-enough suitable units exist that taking a fifth of them still leaves a real
-army at home.
+its anchor, and this claims a share of it. It only declares the squad once
+the army is large enough that taking a fifth of it still leaves a real army
+at home.
+
+It asks for a role (`CombatRole.MOBILE_CONTROL`) and a share of the army's
+combat supply -- never for a unit type or a head count. Every combat unit is
+scored against the role, so whatever the army is made of -- Marines,
+Hellions, Cyclones, or all three while production shifts -- competes for the
+patrol on suitability alone, without this file changing.
 """
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass, field
 
 from sc2.position import Point2
@@ -70,23 +75,41 @@ class MapControlPlanner:
 
         assessment = self._assessor.assess(attention, awareness)
         self.last_assessment = assessment
-        if assessment.eligible_units < self.config.minimum_force_size:
+        if assessment.combat_supply < self.config.minimum_force_supply:
             self.last_plan = None
             return ()
 
         self._cadence.mark(now)
-        anchor = self._spatial_anchor(attention, awareness)
-        plan = MapControlPlan(
-            anchor=anchor,
-            desired_units=self.config.desired_units
-            or max(
-                1, math.ceil(assessment.eligible_units * self.config.force_ratio)
-            ),
-            priority=self.config.priority,
-        )
+        plan = self._plan(self._spatial_anchor(attention, awareness), assessment)
         self._log_plan_change(plan, assessment)
         self.last_plan = plan
         return (self._proposal_for(plan, now),)
+
+    def _plan(
+        self, anchor: Point2, assessment: MapControlAssessment
+    ) -> MapControlPlan:
+        """Size the patrol as a share of the army's supply, not its head count.
+
+        Units do not weigh the same -- a Cyclone is three Marines of supply
+        -- so a count share would make the patrol's real size depend on
+        which units the allocator happens to pick.
+        """
+
+        if self.config.desired_units is not None:
+            return MapControlPlan(
+                anchor=anchor,
+                desired_units=self.config.desired_units,
+                supply_budget=None,
+                priority=self.config.priority,
+            )
+        return MapControlPlan(
+            anchor=anchor,
+            desired_units=max(1, assessment.combat_units),
+            supply_budget=round(
+                assessment.combat_supply * self.config.force_ratio, 2
+            ),
+            priority=self.config.priority,
+        )
 
     def _spatial_anchor(
         self, attention: AttentionSnapshot, awareness: AwarenessSnapshot
@@ -175,7 +198,12 @@ class MapControlPlanner:
         if self.last_plan == plan:
             return
         self._log.assessed(assessment, now=assessment.now, decision="propose")
-        self._log.proposed(plan, now=assessment.now, planner=self.planner_id)
+        self._log.proposed(
+            plan,
+            now=assessment.now,
+            planner=self.planner_id,
+            role=self.config.role.name,
+        )
 
     def _proposal_for(self, plan: MapControlPlan, now: float) -> MissionProposal:
         sequence = self._cadence.next_sequence()
@@ -188,12 +216,13 @@ class MapControlPlanner:
             target_key=DEDUPLICATION_KEY,
             target=plan.anchor,
             reason="persistent_map_control_share_available",
-            requirement=UnitRequirement.combat(
-                unit_types=self.config.unit_types,
+            requirement=UnitRequirement.for_role(
+                self.config.role,
                 desired=plan.desired_units,
                 # The standing mission survives full defense preemption.
                 minimum=0,
                 minimum_health=self.config.minimum_unit_health,
+                supply_budget=plan.supply_budget,
             ),
             created_at=now,
             timeout_seconds=self.config.mission_timeout,

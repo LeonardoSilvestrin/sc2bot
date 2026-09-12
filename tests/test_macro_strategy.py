@@ -142,4 +142,5 @@ def test_goal_set_rejects_duplicate_army_targets():
             army_supply_target=original.army_supply_target,
             army=(original.army[0], original.army[0]),
             production=original.production,
+            doctrine=original.doctrine,
         )

@@ -7,6 +7,8 @@ from sc2.ids.upgrade_id import UpgradeId
 
 from bot.engine.economy.models import ResourceCost
 
+from ..composition import CompositionDoctrine
+
 
 @dataclass(frozen=True, slots=True)
 class ArmyUnitGoal:
@@ -128,10 +130,23 @@ class MacroGoalSet:
     army_supply_target: float
     army: tuple[ArmyUnitGoal, ...]
     production: tuple[ProductionGoal, ...]
+    # The composition this goal set buys within: every army member belongs
+    # to it.
+    doctrine: CompositionDoctrine
     addons: tuple[tuple[UnitTypeId, int, ResourceCost], ...] = ()
     upgrades: tuple[UpgradeGoal, ...] = ()
 
     def __post_init__(self) -> None:
+        outside = sorted(
+            goal.unit_type.name
+            for goal in self.army
+            if not self.doctrine.includes(goal.unit_type)
+        )
+        if outside:
+            raise ValueError(
+                f"army goals outside the {self.doctrine.name} doctrine: "
+                + ", ".join(outside)
+            )
         if not self.name.strip() or not self.opening_name.strip():
             raise ValueError("strategy and opening names must not be empty")
         if self.max_workers <= 0 or self.max_townhalls <= 0:

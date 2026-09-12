@@ -2,30 +2,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum, auto
 from typing import Any
 
-from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
 from bot.engine.missions.models import MissionKind
 from bot.world.awareness.bases import BaseAssessment
-
-# Same roster DefensePlanner treats as combat-capable; kept independent
-# (rather than imported) so the two behaviors' unit lists can diverge later
-# without coupling them. Banshees are deliberately absent: they belong to
-# the specialized harass squad, which would otherwise have to preempt the
-# standing army for its own units every time one is produced.
-_DEFAULT_COMBAT_TYPES: frozenset[UnitTypeId] = frozenset(
-    {
-        UnitTypeId.MARINE,
-        UnitTypeId.MARAUDER,
-        UnitTypeId.REAPER,
-        UnitTypeId.SIEGETANK,
-        UnitTypeId.SIEGETANKSIEGED,
-    }
-)
 
 
 class CombatPosture(Enum):
@@ -53,12 +37,14 @@ class StandingConfig:
     active tactical mission, so a standing slot is always freely
     preemptible. The anchor fraction is a deliberately small, deterministic
     policy knob rather than a composition system.
+
+    Which units belong to the core army is not configured here: every combat
+    unit no more specific mission is using, whatever produced it. Specialized
+    behaviors (the Banshee raid) take theirs back through ordinary
+    preemption.
     """
 
     proposal_cadence: float = 5.0
-    unit_types: frozenset[UnitTypeId] = field(
-        default_factory=lambda: _DEFAULT_COMBAT_TYPES
-    )
     minimum_unit_health: float = 0.0
     mission_timeout: float = 3600.0
     cooldown_seconds: float = 5.0
@@ -71,8 +57,6 @@ class StandingConfig:
     def __post_init__(self) -> None:
         if self.proposal_cadence <= 0.0:
             raise ValueError("proposal_cadence must be positive")
-        if not self.unit_types:
-            raise ValueError("unit_types must not be empty")
         if not 0.0 <= self.minimum_unit_health <= 1.0:
             raise ValueError("minimum_unit_health must be between 0 and 1")
         if self.mission_timeout <= 0.0:
@@ -100,7 +84,7 @@ class StandingAssessment:
     bases: tuple[BaseAssessment, ...]
     threatened_base_ids: tuple[str, ...]
     pressure: int
-    eligible_units: int
+    combat_units: int
     own_start: Point2
 
     @property
@@ -117,7 +101,7 @@ class StandingAssessment:
             "bases": len(self.bases),
             "threatened_bases": list(self.threatened_base_ids),
             "pressure": self.pressure,
-            "eligible_units": self.eligible_units,
+            "combat_units": self.combat_units,
         }
 
 
@@ -127,8 +111,9 @@ class StandingPlan:
 
     anchor: Point2
     anchor_reason: str
-    # Every eligible combat unit, not a share of them: this is the fallback
-    # owner, so whatever no higher-priority mission holds belongs here.
+    # Every combat unit, not a share: this is the fallback owner, so whatever
+    # no higher-priority mission holds belongs here. A cardinality, not a
+    # force size -- "all of them" is exact whatever each unit weighs.
     core_count: int
     priority: int
 

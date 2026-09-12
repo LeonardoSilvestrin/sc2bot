@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from bot.domain import is_combat_unit
 from bot.world.attention import AttentionSnapshot
 from bot.world.awareness import AwarenessSnapshot, MacroPosture, RelativePosition
 
@@ -57,8 +58,8 @@ class StandingAssessor:
                 ),
             )
         )
-        eligible = sum(
-            unit.unit_type in self.config.unit_types
+        combat_units = sum(
+            is_combat_unit(unit.unit_type)
             and unit.is_ready
             and unit.health_percentage >= self.config.minimum_unit_health
             for unit in world.own_units
@@ -71,6 +72,6 @@ class StandingAssessor:
                 base.base_id for base in awareness.bases.threatened
             ),
             pressure=awareness.threat.near_own_base_enemy_combat_units,
-            eligible_units=eligible,
+            combat_units=combat_units,
             own_start=world.map.own_start,
         )
