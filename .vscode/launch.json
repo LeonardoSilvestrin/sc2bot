@@ -2,7 +2,7 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "sem logs nem view",
+      "name": "play",
       "type": "debugpy",
       "request": "launch",
       "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
@@ -13,7 +13,7 @@
       "justMyCode": false
     },
     {
-      "name": "só logs",
+      "name": "play_log",
       "type": "debugpy",
       "request": "launch",
       "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
@@ -24,7 +24,7 @@
       "justMyCode": false
     },
     {
-      "name": "logs e view",
+      "name": "play_logs_imap",
       "type": "debugpy",
       "request": "launch",
       "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
@@ -41,7 +41,7 @@
       "justMyCode": false
     },
     {
-      "name": "logs e snapshot SVG",
+      "name": "play_logs_SVG",
       "type": "debugpy",
       "request": "launch",
       "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
@@ -52,7 +52,7 @@
       "justMyCode": false
     },
     {
-      "name": "logs, view e snapshot SVG",
+      "name": "play_full_debug",
       "type": "debugpy",
       "request": "launch",
       "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
@@ -70,7 +70,7 @@
       "justMyCode": false
     },
     {
-      "name": "log visualizer",
+      "name": "log_view",
       "type": "debugpy",
       "request": "launch",
       "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
@@ -80,7 +80,7 @@
       "justMyCode": false
     },
     {
-      "name": "abrir worktree de agente",
+      "name": "open WT",
       "type": "node-terminal",
       "request": "launch",
       "cwd": "${workspaceFolder}",
