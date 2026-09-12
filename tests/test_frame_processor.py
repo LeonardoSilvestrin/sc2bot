@@ -64,6 +64,9 @@ class FrameProcessorOrderTests(unittest.IsolatedAsyncioTestCase):
                 report=record("macro_diagnostics.report")
             ),
             telemetry=SimpleNamespace(report=record("telemetry.report")),
+            spatial_debug=SimpleNamespace(
+                enabled=True, render=record("spatial_debug.render")
+            ),
         )
 
         with (
@@ -92,6 +95,7 @@ class FrameProcessorOrderTests(unittest.IsolatedAsyncioTestCase):
                 "macro_planner.propose",
                 "economy.step",
                 "macro_diagnostics.report",
+                "spatial_debug.render",
                 "telemetry.report",
             ],
         )

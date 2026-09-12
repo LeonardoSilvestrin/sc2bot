@@ -14,6 +14,7 @@ from bot.ports.logging import BotLogger
 from bot.world.awareness import SpatialModelConfig
 
 from .composition import compose_bot
+from .debug import SpatialDebugConfig
 
 
 class BotRuntime:
@@ -40,6 +41,7 @@ class BotRuntime:
         standing_config: StandingConfig | None = None,
         spatial_model_config: SpatialModelConfig | None = None,
         spatial_sample_spacing: int = 10,
+        spatial_debug_config: SpatialDebugConfig | None = None,
         rng: random.Random | None = None,
     ) -> None:
         self.logger = logger
@@ -57,6 +59,7 @@ class BotRuntime:
             standing_config=standing_config,
             spatial_model_config=spatial_model_config,
             spatial_sample_spacing=spatial_sample_spacing,
+            spatial_debug_config=spatial_debug_config,
             rng=rng,
         )
         self._opening = composition.opening
