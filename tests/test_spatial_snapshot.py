@@ -233,7 +233,7 @@ class SpatialSnapshotRendererTests(unittest.TestCase):
         svg = SpatialSnapshotRenderer().render(*snapshots())
 
         self.assertIn(">R1</text>", svg)
-        self.assertIn(">H 0.72</text>", svg)
+        self.assertIn(">H 0.80</text>", svg)
         self.assertIn(">MAIN [R1]</text>", svg)
         self.assertIn(">F | Sec 0.75 Acc 0.25</text>", svg)
         self.assertIn(">OWN 24</text>", svg)

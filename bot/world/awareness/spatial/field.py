@@ -14,7 +14,8 @@ class SpatialFieldSample:
     enemy_threat: float = 0.0
     choke_value: float = 0.0
     route_value: float = 0.0
-    confidence: float = 1.0
+    # No enemy evidence is unknown by default, not a known-zero threat.
+    confidence: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)

@@ -98,7 +98,11 @@ def assess_economy(
     now = world.time
     own_workers = world.economy.workers.existing
     workers = roster_evidence(
-        ((1.0, entry.last_seen_at) for entry in roster if entry.is_worker),
+        (
+            (1.0, entry.last_seen_at)
+            for entry in roster
+            if entry.is_worker and entry.last_seen_known
+        ),
         now=now,
         config=config.estimate,
     )
@@ -168,7 +172,10 @@ def assess_economy(
         bases=BaseEstimate(
             confirmed=len(confirmed),
             estimated=len(confirmed),
-            confidence=clamp01(coverage),
+            # ``scouting_coverage`` deliberately falls back to 1 when the
+            # adapter has no expansion lattice, for older aggregate callers.
+            # This particular reading has no slots to support it, however.
+            confidence=clamp01(coverage) if base_observations else 0.0,
         ),
     )
     return (

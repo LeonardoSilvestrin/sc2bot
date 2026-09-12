@@ -103,6 +103,9 @@ class SpatialFieldModel:
     _chokes_source: tuple[MapChoke, ...] | None = field(
         default=None, init=False, repr=False
     )
+    # ``center`` is a topology input only while the pathable lattice is not
+    # available and the field uses its one-point fallback.
+    _fallback_center: Point2 | None = field(default=None, init=False, repr=False)
     _points: tuple[Point2, ...] = field(default=(), init=False, repr=False)
     _choke_values: tuple[float, ...] = field(default=(), init=False, repr=False)
     _friendly_values: tuple[float, ...] = field(default=(), init=False, repr=False)
@@ -140,17 +143,23 @@ class SpatialFieldModel:
             same_version(map_facts.pathable_points, self._points_source)
             and same_version(map_facts.chokes, self._chokes_source)
             and map_facts.pathable_sample_spacing == self._sample_spacing
+            and (
+                bool(map_facts.pathable_points)
+                or map_facts.center == self._fallback_center
+            )
         )
         if static_valid:
             # Adopt an equal rebuilt value so the next check is identity again.
             self._points_source = map_facts.pathable_points
             self._chokes_source = map_facts.chokes
+            self._fallback_center = map_facts.center
         static_cache_ms = _elapsed_ms(started)
         static_recompute_ms = 0.0
         if not static_valid:
             started = perf_counter()
             self._points_source = map_facts.pathable_points
             self._chokes_source = map_facts.chokes
+            self._fallback_center = map_facts.center
             self._sample_spacing = map_facts.pathable_sample_spacing
             # Until the adapter has a pathing grid, one placeholder keeps the
             # field usable; the first real topology version replaces it.

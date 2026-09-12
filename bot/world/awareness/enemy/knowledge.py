@@ -19,6 +19,11 @@ class EnemySighting:
     is_structure: bool
     is_worker: bool = False
     supply_cost: float = 0.0
+    # False when this Awareness runtime first learned the unit from Ares'
+    # fog-of-war memory. In that case ``last_seen_at`` is only a compatibility
+    # placeholder: the adapter does not expose when the underlying sighting
+    # happened, so consumers must not treat it as fresh evidence.
+    last_seen_known: bool = True
 
     @property
     def is_combat_unit(self) -> bool:

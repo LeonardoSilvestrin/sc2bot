@@ -50,7 +50,7 @@ class ForceInfluence(NamedTuple):
     # Each force's strength, scaled by its confidence and by how far it reaches.
     raw: float
     # Locality- and strength-weighted confidence of the forces that reach the
-    # point; 1.0 where none does.
+    # point; 0.0 where none does. No evidence is unknown, not known-empty.
     confidence: float
     # ``raw`` as if every force were seen this instant: how much the forces
     # would weigh here, however much they are still believed.
@@ -100,7 +100,7 @@ def force_influence(
             confidence_weight += weight
             weighted_confidence += weight * force.confidence
     confidence = (
-        weighted_confidence / confidence_weight if confidence_weight > 0.0 else 1.0
+        weighted_confidence / confidence_weight if confidence_weight > 0.0 else 0.0
     )
     return ForceInfluence(raw=raw, confidence=confidence, evidence=evidence)
 

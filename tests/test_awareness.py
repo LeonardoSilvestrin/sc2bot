@@ -137,6 +137,12 @@ class AwarenessServiceTests(unittest.TestCase):
         # Still remembered in Awareness's persistent sightings, just not "here now".
         self.assertEqual(len(snapshot.enemy.sightings), 1)
         self.assertFalse(snapshot.enemy.sightings[0].visible_now)
+        self.assertFalse(snapshot.enemy.sightings[0].last_seen_known)
+        self.assertEqual(snapshot.enemy.forces.clusters[0].confidence, 0.0)
+        self.assertIsNone(snapshot.enemy.main_force)
+        self.assertEqual(snapshot.enemy.forces.near(hydralisk.position), ())
+        self.assertEqual(snapshot.spatial.samples[0].confidence, 0.0)
+        self.assertEqual(snapshot.relative_strength.confidence, 0.0)
 
     def test_defense_posture_releases_only_after_safe_window(self):
         service = AwarenessService(defense_release_after=10.0, posture_min_hold=0.0)

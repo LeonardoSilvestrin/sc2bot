@@ -168,6 +168,9 @@ def defender_freshness(
 ) -> float:
     """How much a remembered defender still describes the present, 0..1."""
 
+    if not sighting.last_seen_known:
+        return 0.0
+
     stale_after = (
         config.structure_defense_stale_after
         if sighting.is_structure

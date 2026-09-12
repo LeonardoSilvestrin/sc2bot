@@ -394,6 +394,7 @@ class EconomyBeliefTests(unittest.TestCase):
         belief, _ = self.assess(world)
 
         self.assertEqual(belief.enemy.workers.estimated, 45)
+        self.assertEqual(belief.enemy.bases.confidence, 0.0)
         self.assertIs(belief.relative.raw_state, RelativePosition.EVEN)
 
     def test_confirmed_bases_project_workers(self):

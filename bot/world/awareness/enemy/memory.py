@@ -27,6 +27,9 @@ class EnemyKnowledge:
             first_seen_at = (
                 previous.first_seen_at if previous is not None else world.time
             )
+            last_seen_known = unit.visible_now or (
+                previous is not None and previous.last_seen_known
+            )
             last_seen_at = (
                 world.time
                 if unit.visible_now
@@ -44,6 +47,7 @@ class EnemyKnowledge:
                 is_structure=unit.is_structure,
                 is_worker=unit.is_worker,
                 supply_cost=unit.supply_cost,
+                last_seen_known=last_seen_known,
             )
 
         for tag in tuple(self._sightings):

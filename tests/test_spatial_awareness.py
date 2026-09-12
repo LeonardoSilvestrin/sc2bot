@@ -20,11 +20,14 @@ from bot.world.awareness.enemy import EnemyForceAwareness, EnemyForceCluster
 from bot.world.awareness.service import AwarenessService
 from bot.world.awareness.spatial import (
     SpatialFieldModel,
+    SpatialFieldSample,
     SpatialModelConfig,
     sample_route_positions,
 )
 from bot.world.awareness.spatial.kernel import saturate
 from tests.fakes import FakeLogger
+
+MAP_CENTER = Point2((50, 50))
 
 
 def base(position: Point2, *, main: bool = True) -> BaseAssessment:
@@ -67,6 +70,7 @@ def world(
     chokes: tuple[MapChoke, ...] = (),
     routes: tuple[MapRoute, ...] = (),
     now: float = 10.0,
+    center: Point2 = MAP_CENTER,
 ) -> WorldFacts:
     return WorldFacts(
         iteration=int(now),
@@ -78,7 +82,7 @@ def world(
         own_units=(),
         enemy_units=(),
         map=MapFacts(
-            center=Point2((50, 50)),
+            center=center,
             own_start=Point2((10, 10)),
             enemy_starts=(Point2((90, 90)),),
             pathable_points=points,
@@ -131,6 +135,19 @@ class SpatialFieldModelTests(unittest.TestCase):
             uncertain.samples[0].enemy_threat, fresh.samples[0].enemy_threat
         )
         self.assertAlmostEqual(uncertain.samples[0].confidence, 0.4)
+
+    def test_no_enemy_evidence_is_unknown_instead_of_known_safe(self):
+        self.assertEqual(SpatialFieldSample(Point2((0, 0))).confidence, 0.0)
+        field = self.model().update(
+            world((Point2((10, 10)), Point2((90, 90)))),
+            bases=BaseAwareness(),
+            enemy_forces=EnemyForceAwareness(),
+        )
+
+        self.assertEqual(
+            tuple((sample.enemy_threat, sample.confidence) for sample in field.samples),
+            ((0.0, 0.0), (0.0, 0.0)),
+        )
 
     def test_choke_and_repeated_routes_raise_nearby_values(self):
         near, far = Point2((50, 50)), Point2((80, 80))
@@ -467,6 +484,29 @@ class SpatialFieldModelTests(unittest.TestCase):
             and perf.routes_rebuilt
             and perf.threat_rebuilt
         )
+        self.assertEqual(perf.static_rebuilds, 2)
+
+    def test_placeholder_tracks_center_until_pathable_samples_arrive(self):
+        model = SpatialFieldModel(SpatialModelConfig(update_interval=10.0))
+        first_center = Point2((40, 40))
+        second_center = Point2((60, 60))
+
+        first = model.update(
+            world((), now=0.0, center=first_center),
+            bases=BaseAwareness(),
+            enemy_forces=EnemyForceAwareness(),
+        )
+        second = model.update(
+            world((), now=1.0, center=second_center),
+            bases=BaseAwareness(),
+            enemy_forces=EnemyForceAwareness(),
+        )
+
+        self.assertEqual(first.samples[0].position, first_center)
+        self.assertEqual(second.samples[0].position, second_center)
+        perf = model.last_performance
+        assert perf is not None
+        self.assertTrue(perf.static_rebuilt)
         self.assertEqual(perf.static_rebuilds, 2)
 
     def test_equal_rebuilt_inputs_are_not_treated_as_new_versions(self):

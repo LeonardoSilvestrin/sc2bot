@@ -41,6 +41,7 @@ from tests.fakes import FakeLogger
 BOT = Path(__file__).resolve().parents[1] / "bot"
 CONFIG = TerritoryConfig()
 OWN_START = Point2((90, 50))
+MAP_CENTER = Point2((50, 50))
 EPSILON = CONFIG.dominance_epsilon
 
 
@@ -86,15 +87,17 @@ def cluster(
     strength: float = 16.0,
     confidence: float = 1.0,
     uncertainty: float = 0.0,
+    ground: bool = True,
+    cluster_id: int = 1,
 ) -> EnemyForceCluster:
     return EnemyForceCluster(
-        cluster_id=1,
+        cluster_id=cluster_id,
         center=position,
         radius=0.0,
         position_uncertainty=uncertainty,
         combat_strength=strength,
         anti_air_strength=0.0,
-        anti_ground_strength=strength,
+        anti_ground_strength=strength if ground else 0.0,
         unit_count=8,
         visible_unit_count=8 if confidence == 1.0 else 0,
         unit_tags=tuple(range(8)),
@@ -154,6 +157,7 @@ def world(
     enemy_starts: tuple[Point2, ...] = (),
     own_start: Point2 = OWN_START,
     visibility: tuple[bool, ...] = (),
+    center: Point2 = MAP_CENTER,
 ) -> WorldFacts:
     return WorldFacts(
         iteration=int(now),
@@ -165,7 +169,7 @@ def world(
         own_units=own_units,
         enemy_units=(),
         map=MapFacts(
-            center=Point2((50, 50)),
+            center=center,
             own_start=own_start,
             enemy_starts=enemy_starts,
             pathable_points=points,
@@ -246,6 +250,28 @@ class DominanceTests(unittest.TestCase):
         empty = classify(friendly=0.0, enemy=0.0, confidence=1.0, config=CONFIG)
 
         self.assertEqual((empty.dominance, empty.control), (0.0, U))
+
+    def test_derived_readings_clamp_every_bounded_value(self):
+        reading = classify(
+            friendly=2.0,
+            enemy=-1.0,
+            confidence=3.0,
+            friendly_military=4.0,
+            friendly_ground_denial=5.0,
+            enemy_ground_military=2.0,
+            enemy_ground_presence=2.0,
+            config=CONFIG,
+        )
+
+        self.assertEqual(reading.friendly_influence, 1.0)
+        self.assertEqual(reading.enemy_influence, 0.0)
+        self.assertGreaterEqual(reading.dominance, -1.0)
+        self.assertLessEqual(reading.dominance, 1.0)
+        self.assertEqual(reading.confidence, 1.0)
+        self.assertEqual(reading.friendly_military, 1.0)
+        self.assertEqual(reading.friendly_ground_denial, 1.0)
+        self.assertEqual(reading.enemy_ground_military, 0.0)
+        self.assertEqual(reading.enemy_ground_presence, 0.0)
 
 
 class ClassificationTests(unittest.TestCase):
@@ -464,10 +490,12 @@ class GroundAccessTests(unittest.TestCase):
         assert enemy_main is not None
         self.assertEqual(enemy_main.ground_security, 0.0)
         self.assertIs(natural.control, F)
-        self.assertGreater(main.ground_security, natural.ground_security)
-        self.assertGreater(main.ground_security, 0.8)
+        # One force is one defensive line, even though its smooth influence
+        # reaches both passages around the natural.
+        self.assertAlmostEqual(main.ground_security, natural.ground_security)
+        self.assertGreater(main.ground_security, 0.55)
 
-    def test_one_army_is_one_barrier_per_passage_not_one_per_node(self):
+    def test_one_army_is_not_multiplied_into_successive_barriers(self):
         snapshot = assess(chain(army(Point2((50, 50)), 20)))
 
         first, second = snapshot.passages
@@ -475,10 +503,28 @@ class GroundAccessTests(unittest.TestCase):
         assert main is not None
         self.assertAlmostEqual(
             main.ground_access,
-            (1.0 - first.reading.hold) * (1.0 - second.reading.hold),
+            min(1.0 - first.reading.hold, 1.0 - second.reading.hold),
         )
         # The first model also counted the natural itself as a third wall.
         self.assertLess(main.layered_ground_access, main.ground_access)
+
+    def test_distinct_armies_form_distinct_successive_barriers(self):
+        first_only = assess(chain(army(Point2((30, 50)), 20))).region("main")
+        second_only = assess(
+            chain(army(Point2((70, 50)), 20, first_tag=100))
+        ).region("main")
+        snapshot = assess(
+            chain(
+                army(Point2((30, 50)), 20) + army(Point2((70, 50)), 20, first_tag=100)
+            )
+        )
+
+        main = snapshot.region("main")
+        assert first_only is not None and second_only is not None and main is not None
+        self.assertAlmostEqual(
+            main.ground_access,
+            first_only.ground_access * second_only.ground_access,
+        )
 
     def test_bases_make_regions_ours_but_block_no_ground_passage(self):
         snapshot = assess(
@@ -506,6 +552,37 @@ class GroundAccessTests(unittest.TestCase):
         self.assertEqual(natural.reading.friendly_ground_denial, 0.0)
         self.assertIs(natural.control, F)
         self.assertLess(main.ground_security, 0.05)
+
+    def test_air_only_enemy_force_is_not_a_ground_access_origin(self):
+        baseline = assess(chain(army(Point2((50, 50)), 20)))
+        held = assess(
+            chain(army(Point2((50, 50)), 20)),
+            enemy_awareness=enemy(cluster(Point2((90, 50)), ground=False)),
+        )
+        baseline_main = baseline.region("main")
+        main = held.region("main")
+        assert baseline_main is not None and main is not None
+
+        self.assertAlmostEqual(main.ground_access, baseline_main.ground_access)
+
+    def test_unresolved_enemy_origin_defaults_to_exposed_not_secure(self):
+        facts = world(
+            row(50),
+            regions=(MapRegion("only", Point2((50, 50)), row(50)),),
+            enemy_starts=(),
+        )
+
+        region = assess(facts).region("only")
+        assert region is not None
+        self.assertEqual((region.ground_access, region.ground_security), (1.0, 0.0))
+
+    def test_access_clamps_inputs_and_rejects_shape_mismatches(self):
+        self.assertEqual(
+            ground_access(((1,), (0,)), sources=(2.0, -1.0), passes=(3.0, -2.0)),
+            (1.0, 1.0),
+        )
+        with self.assertRaises(ValueError):
+            ground_access(((1,), (0,)), sources=(1.0,), passes=(1.0, 1.0))
 
     def test_an_open_second_route_leaves_the_main_exposed(self):
         points = row(10, 20) + row(80, 90)
@@ -585,6 +662,28 @@ class TerritoryStructureTests(unittest.TestCase):
         self.assertEqual(events[-1]["data"]["topology_rebuilds"], 1)
         self.assertEqual(events[-1]["data"]["updates"], 3)
 
+    def test_placeholder_center_change_rebuilds_territory_topology(self):
+        assessor = TerritoryAssessor(TerritoryConfig(update_interval=10.0))
+        first_center = Point2((40, 40))
+        second_center = Point2((60, 60))
+
+        first = assessor.update(
+            world((), now=0.0, center=first_center),
+            spatial=SpatialField(samples=(SpatialFieldSample(first_center),)),
+            bases=BaseAwareness(),
+            enemy=enemy(),
+        )
+        second = assessor.update(
+            world((), now=1.0, center=second_center),
+            spatial=SpatialField(samples=(SpatialFieldSample(second_center),)),
+            bases=BaseAwareness(),
+            enemy=enemy(),
+        )
+
+        self.assertEqual(first.samples[0].position, first_center)
+        self.assertEqual(second.samples[0].position, second_center)
+        self.assertEqual((assessor.topology_rebuilds, assessor.updates), (2, 2))
+
     def test_awareness_snapshot_places_our_bases_in_their_regions(self):
         facts = chain(army(Point2((50, 50)), 20))
 
@@ -594,7 +693,7 @@ class TerritoryStructureTests(unittest.TestCase):
         (base,) = territory.bases
         assert base.region is not None
         self.assertEqual(base.region.key, "main")
-        self.assertGreater(base.region.ground_security, 0.8)
+        self.assertGreater(base.region.ground_security, 0.55)
         self.assertIs(
             territory.region_at(Point2((52, 51))), territory.region("natural")
         )
