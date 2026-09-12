@@ -3,6 +3,17 @@ from __future__ import annotations
 from pathlib import Path
 
 VIEWER = Path(__file__).parents[1] / "scripts" / "log_viewer.html"
+MODULES = tuple(
+    VIEWER.parent / "log_viewer" / name
+    for name in (
+        "timeline_model.js",
+        "diagnostics.js",
+        "snapshots.js",
+        "decision_view.js",
+    )
+)
+# Model-only modules build no DOM at all.
+PURE_MODULES = {"timeline_model.js", "diagnostics.js", "snapshots.js"}
 
 
 def test_viewer_covers_the_structured_logging_catalog() -> None:
@@ -50,12 +61,22 @@ def test_viewer_covers_the_structured_logging_catalog() -> None:
     assert "buildStreams();" in html
 
 
-def test_viewer_never_injects_log_values_as_html() -> None:
+def test_viewer_loads_the_decision_timeline_modules() -> None:
     html = VIEWER.read_text(encoding="utf-8")
 
-    assert "innerHTML" not in html
-    assert "outerHTML" not in html
-    assert "insertAdjacentHTML" not in html
-    assert "eval(" not in html
-    assert "new Function" not in html
-    assert "textContent" in html
+    assert 'data-view="decision"' in html
+    assert 'id="folder-input"' in html
+    for module in MODULES:
+        assert f'<script src="log_viewer/{module.name}"></script>' in html
+
+
+def test_viewer_never_injects_log_values_as_html() -> None:
+    for path in (VIEWER, *MODULES):
+        source = path.read_text(encoding="utf-8")
+
+        assert "innerHTML" not in source, path.name
+        assert "outerHTML" not in source, path.name
+        assert "insertAdjacentHTML" not in source, path.name
+        assert "eval(" not in source, path.name
+        assert "new Function" not in source, path.name
+        assert "textContent" in source or path.name in PURE_MODULES, path.name

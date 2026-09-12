@@ -311,6 +311,25 @@ shared the single `application.runtime` component, further splits it into
 so pre-restructure logs still group correctly in the Observation/Knowledge/Economy
 views.
 
+The viewer's **Decision Timeline** tab lays those same events out as
+horizontal tracks on one selected time: macro/combat posture, army/economy
+belief, relative strength and threat, missions by kind, behavior phases,
+territory and economy, plus the nearest `spatial/territory-*.svg` (open the
+whole game folder to load the SVGs). Its logic lives in
+`scripts/log_viewer/` -- `timeline_model.js` (step-function tracks and the
+state at any time), `diagnostics.js` (explicit contradiction rules, hints
+rather than verdicts), `snapshots.js` (SVG time matching) and
+`decision_view.js` (rendering) -- and `tests/test_decision_timeline.py` runs
+it in a headless Chromium-family browser.
+
+Strategy has no telemetry yet (see [strategy.md](strategy.md)). When the
+director runs in shadow mode it should log `strategy.updated` (component
+`strategy.director`) mirroring `StrategySnapshot`: `objective`,
+`previous_objective`, `leader`, `confidence`, `time_in_objective`, `inputs`
+(the six `StrategyInputs` signals), `scores` (objective -> score) and
+`shadow`. The viewer treats every objective not marked `shadow: false` as
+shadow, never as an executed command.
+
 ## Mission loss and cleanup
 
 - After allocator synchronization, a started mission that has lost its entire

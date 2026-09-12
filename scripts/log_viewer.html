@@ -292,6 +292,94 @@
 
   #empty-state { color: var(--muted); padding: 30px; text-align: center; }
 
+  /* Decision Timeline */
+  .decision-view { height: 100%; overflow: auto; padding: 0 0 16px; }
+  .dt-toolbar {
+    position: sticky; top: 0; z-index: 3; display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+    padding: 6px 12px; background: var(--panel); border-bottom: 1px solid var(--border);
+  }
+  .dt-toolbar-label { color: var(--muted); }
+  .dt-time { font: 600 15px var(--mono); min-width: 74px; }
+  .dt-group { display: inline-flex; gap: 2px; }
+  .dt-button {
+    font: 12px var(--mono); padding: 2px 7px; border: 1px solid var(--border); border-radius: 4px;
+    background: var(--bg); color: var(--text); cursor: pointer;
+  }
+  .dt-button:hover { border-color: var(--accent); }
+  .dt-button.active { background: var(--accent); color: var(--panel); border-color: var(--accent); }
+  .dt-badge { margin-left: auto; font: 11px var(--mono); padding: 2px 7px; border-radius: 4px; border: 1px dashed var(--border); color: var(--muted); }
+  .dt-badge.shadow { border-color: var(--warn); color: var(--warn); }
+  .dt-badge.live { border-style: solid; border-color: var(--ok); color: var(--ok); }
+  .dt-tracks { display: flex; border-bottom: 1px solid var(--border); }
+  .dt-labels { flex: 0 0 190px; border-right: 1px solid var(--border); background: var(--panel); }
+  .dt-label {
+    display: flex; align-items: center; justify-content: space-between; gap: 4px; padding: 0 8px;
+    font: 11px var(--mono); white-space: nowrap; overflow: hidden; border-bottom: 1px solid transparent;
+  }
+  .dt-label-group { background: var(--bg); color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: .04em; font-size: 10px; }
+  .dt-label-ruler { color: var(--muted); }
+  .dt-range { color: var(--telemetry); font-size: 10px; }
+  .dt-plot { flex: 1 1 auto; min-width: 0; overflow-x: auto; overflow-y: hidden; }
+  .dt-svg { display: block; cursor: crosshair; font-family: var(--mono); }
+  .dt-rowline { stroke: var(--border); stroke-width: 1; opacity: .5; }
+  .dt-group-bg { fill: var(--bg); }
+  .dt-tick { stroke: var(--muted); }
+  .dt-tick-label { fill: var(--muted); font-size: 10px; }
+  .dt-snap-mark { fill: none; stroke: var(--accent); cursor: pointer; }
+  .dt-snap-mark.loaded { fill: var(--accent); }
+  .dt-seg { stroke-width: 1; }
+  .dt-seg.shadow { stroke-dasharray: 3 2; fill-opacity: .55; }
+  .dt-seg-label { font-size: 10px; fill: var(--text); pointer-events: none; }
+  .dt-seg.tone-neutral { fill: color-mix(in srgb, var(--accent) 22%, transparent); stroke: color-mix(in srgb, var(--accent) 60%, transparent); }
+  .dt-seg.tone-ok { fill: color-mix(in srgb, var(--ok) 25%, transparent); stroke: color-mix(in srgb, var(--ok) 60%, transparent); }
+  .dt-seg.tone-warn { fill: color-mix(in srgb, var(--warn) 25%, transparent); stroke: color-mix(in srgb, var(--warn) 60%, transparent); }
+  .dt-seg.tone-bad { fill: color-mix(in srgb, var(--bad) 28%, transparent); stroke: color-mix(in srgb, var(--bad) 65%, transparent); }
+  .dt-series { fill: none; stroke: var(--accent); stroke-width: 1.4; vector-effect: non-scaling-stroke; }
+  .dt-series.overlay { stroke: var(--bad); }
+  .dt-zero { stroke: var(--muted); stroke-dasharray: 2 3; }
+  .dt-fail { stroke: var(--bad); stroke-width: 2; }
+  .dt-diag.sev-warning { fill: color-mix(in srgb, var(--warn) 35%, transparent); stroke: var(--warn); }
+  .dt-diag.sev-note { fill: color-mix(in srgb, var(--telemetry) 25%, transparent); stroke: var(--telemetry); }
+  .dt-na { fill: var(--muted); font-size: 11px; font-style: italic; }
+  .dt-cursor { stroke: var(--text); stroke-width: 1.5; pointer-events: none; }
+  .dt-bottom { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0; }
+  .dt-inspector { padding: 10px 12px; border-right: 1px solid var(--border); min-width: 0; }
+  .dt-inspector-title { font: 600 13px var(--mono); margin-bottom: 6px; }
+  .dt-inspector-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 14px; }
+  .dt-section { margin-bottom: 8px; min-width: 0; }
+  .dt-section.dt-wide { grid-column: 1 / -1; margin-top: 6px; }
+  .dt-section-title { color: var(--muted); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; border-bottom: 1px solid var(--border); margin-bottom: 2px; }
+  .dt-kv { display: flex; justify-content: space-between; gap: 8px; font: 12px var(--mono); }
+  .dt-kv.dt-sub { color: var(--muted); font-size: 11px; }
+  .dt-k { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .dt-v { text-align: right; overflow-wrap: anywhere; }
+  .dt-missing { color: var(--telemetry); }
+  .tone-text-bad { color: var(--bad); }
+  .tone-text-warn { color: var(--warn); }
+  .tone-text-ok { color: var(--ok); }
+  .dt-hint { color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+  .dt-diag-line { font: 12px var(--mono); }
+  .dt-diag-line.sev-warning { color: var(--warn); }
+  .dt-event { display: grid; grid-template-columns: 62px 190px minmax(0, 1fr); gap: 6px; font: 11px var(--mono); cursor: pointer; padding: 1px 0; }
+  .dt-event:hover { background: var(--panel); }
+  .dt-event-time { color: var(--muted); }
+  .dt-event-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dt-event-fields { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dt-event pre { grid-column: 1 / -1; margin: 3px 0 6px; padding: 6px 8px; background: var(--bg); border: 1px solid var(--border); white-space: pre-wrap; word-break: break-word; }
+  .dt-now { color: var(--accent); font: 11px var(--mono); }
+  .dt-snapshot { padding: 10px 12px; min-width: 0; }
+  .dt-snapshot-header { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px; font: 12px var(--mono); margin-bottom: 4px; }
+  .dt-snapshot-frame { margin-top: 6px; background: #11161d; border: 1px solid var(--border); border-radius: 4px; overflow: auto; }
+  .dt-snapshot-image { display: block; width: 100%; height: auto; }
+  .dt-cause { margin-top: 6px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); font: 11px var(--mono); }
+  .dt-cause-title { font-weight: 700; margin: 2px 0; }
+  .dt-changed { font-weight: 700; }
+  .dt-unchanged { color: var(--muted); }
+  .dt-transition .meta { font-family: var(--mono); }
+  .dt-shadow-pill { background: color-mix(in srgb, var(--warn) 20%, transparent); color: var(--warn); }
+  .story-item .story-jump { margin-left: 8px; border: 0; background: none; color: var(--accent); cursor: pointer; font: 11px var(--mono); padding: 0; }
+  #drop .drop-actions { display: flex; gap: 8px; }
+
   @media (max-width: 900px) {
     main { overflow: auto; flex-direction: column; }
     #timeline { flex: 0 0 auto; width: 100%; min-height: 55vh; }
@@ -301,15 +389,22 @@
     .row .reason { grid-column: 2 / -1; }
     .summary-hero { grid-template-columns: repeat(2, minmax(140px, 1fr)); }
     .metrics-grid { grid-template-columns: 1fr; }
+    .dt-bottom, .dt-inspector-grid { grid-template-columns: 1fr; }
+    .dt-labels { flex-basis: 120px; }
   }
 </style>
 </head>
 <body>
 
 <div id="drop">
-  <p>Drop a <code>.jsonl</code> bot log here, or</p>
-  <button id="pick">Choose file…</button>
-  <input id="file-input" type="file" accept=".jsonl,.json,.log" hidden />
+  <p>Drop a game folder (<code>game.jsonl</code> + <code>spatial/*.svg</code>) or a <code>.jsonl</code> bot log here, or</p>
+  <div class="drop-actions">
+    <button id="pick-folder">Choose game folder…</button>
+    <button id="pick">Choose log file…</button>
+  </div>
+  <input id="file-input" type="file" accept=".jsonl,.json,.log,.svg" multiple hidden />
+  <input id="folder-input" type="file" webkitdirectory multiple hidden />
+  <input id="svg-input" type="file" accept=".svg" multiple hidden />
 </div>
 
 <div id="app">
@@ -322,6 +417,7 @@
     </label>
     <nav class="stream-menu" id="stream-menu" aria-label="Log stream">
       <button type="button" class="active" data-view="summary" title="important moments and outcomes">Summary<span class="count" data-count="summary">0</span></button>
+      <button type="button" data-view="decision" title="what the bot knew, decided and did, on one timeline (count: diagnostics)">Decision Timeline<span class="count" data-count="decision">0</span></button>
       <button type="button" data-view="events" title="raw events and bot.engine.missions">Events<span class="count" data-count="events">0</span></button>
       <button type="button" data-view="observation" title="bot.world.observation">Observation<span class="count" data-count="observation">0</span></button>
       <button type="button" data-view="knowledge" title="bot.world.knowledge">Knowledge<span class="count" data-count="knowledge">0</span></button>
@@ -336,6 +432,10 @@
   </main>
 </div>
 
+<script src="log_viewer/timeline_model.js"></script>
+<script src="log_viewer/diagnostics.js"></script>
+<script src="log_viewer/snapshots.js"></script>
+<script src="log_viewer/decision_view.js"></script>
 <script>
 const OBSERVATION_EVENTS = new Set([
   "observation.updated",
@@ -900,7 +1000,13 @@ function renderSummary() {
     const content = document.createElement("div");
     appendTextElement(content, "div", "story-title", moment.title);
     if (moment.reason && moment.reason !== "Unknown") appendTextElement(content, "div", "story-reason", moment.reason);
-    appendTextElement(content, "div", "story-meta", `${moment.component} · ${moment.event}${moment.missionId ? ` · ${moment.missionId}` : ""}`);
+    const meta = appendTextElement(content, "div", "story-meta", `${moment.component} · ${moment.event}${moment.missionId ? ` · ${moment.missionId}` : ""}`);
+    const jump = appendTextElement(meta, "button", "story-jump", "open in timeline →");
+    jump.type = "button";
+    jump.addEventListener("click", (event) => {
+      event.stopPropagation();
+      openDecisionAt(moment.time);
+    });
     item.appendChild(content);
     item.addEventListener("click", () => {
       const already = item.querySelector("pre");
@@ -966,8 +1072,17 @@ function renderSummaryPanel() {
     .filter((item) => ["FAILED", "CANCELLED", "BLOCKED"].includes(item.status));
   const unassigned = records.filter((record) => record.event === "standing.unassigned_units_persisting").length;
   const idle = records.filter((record) => record.event === "macro.idle_producer_unexplained").length;
-  const alertCount = (timedOut ? 1 : 0) + (failed ? 1 : 0) + badMissions.length + (unassigned ? 1 : 0) + (idle ? 1 : 0);
+  const diagnosticCount = DecisionView.diagnosticCount();
+  const alertCount = (timedOut ? 1 : 0) + (failed ? 1 : 0) + badMissions.length + (unassigned ? 1 : 0) + (idle ? 1 : 0) + (diagnosticCount ? 1 : 0);
   appendTextElement(el, "h2", "", `Attention (${alertCount})`);
+  if (diagnosticCount) {
+    const card = document.createElement("div");
+    card.className = "entity-card summary-alert clickable";
+    appendTextElement(card, "div", "id", `${diagnosticCount} decision contradiction hint${diagnosticCount === 1 ? "" : "s"}`);
+    appendTextElement(card, "div", "meta", "Open the Decision Timeline to see them against postures, missions and snapshots.");
+    card.addEventListener("click", () => switchView("decision"));
+    el.appendChild(card);
+  }
   if (timedOut) {
     const card = document.createElement("div");
     card.className = "entity-card summary-alert bad clickable";
@@ -1088,6 +1203,8 @@ function render() {
   } else if (currentView === "knowledge") {
     renderKnowledge();
     renderKnowledgePanel();
+  } else if (currentView === "decision") {
+    DecisionView.render(document.getElementById("timeline"), document.getElementById("side-panel"));
   } else if (currentView === "economy") {
     renderEconomySummary();
     renderEconomyPanel();
@@ -1329,10 +1446,16 @@ function updateStreamCounts() {
     observation: streams.observation.length,
     knowledge: streams.knowledge.length,
     economy: [...economicItems.values()].filter((item) => item.actionId).length,
+    decision: DecisionView.diagnosticCount(),
   };
   for (const [view, count] of Object.entries(counts)) {
     document.querySelector(`[data-count="${view}"]`).textContent = String(count);
   }
+}
+
+function openDecisionAt(time) {
+  DecisionView.focus(time);
+  switchView("decision");
 }
 
 function switchView(view) {
@@ -1350,7 +1473,7 @@ function switchView(view) {
   render();
 }
 
-function loadText(text, name) {
+function loadText(text, name, svgFiles = []) {
   records = [];
   parseWarnings = [];
   for (const [index, rawLine] of text.split("\n").entries()) {
@@ -1384,6 +1507,7 @@ function loadText(text, name) {
   buildStreams();
   buildMissions();
   buildEconomicItems();
+  DecisionView.load(records, svgFiles);
   populateMissionSelect();
   updateStreamCounts();
   document.getElementById("path-label").textContent = name;
@@ -1392,15 +1516,63 @@ function loadText(text, name) {
   switchView("summary");
 }
 
-function loadFile(file) {
+function showDropError(message) {
+  const element = document.querySelector("#drop p");
+  element.textContent = message;
+  element.classList.add("parse-error");
+}
+
+// A game folder holds game.jsonl and spatial/territory-*.svg; a lone log still works.
+function loadFiles(fileList) {
+  const files = [...fileList];
+  const logs = files.filter((file) => /\.(jsonl|json|log)$/i.test(file.name));
+  const svgFiles = files.filter((file) => SC2Snapshots.timeFromName(file.name) !== undefined);
+  const log = logs.find((file) => file.name === "game.jsonl") || logs[0];
+  if (!log) {
+    if (svgFiles.length && records.length) {
+      DecisionView.attachSnapshotFiles(svgFiles);
+      render();
+      return;
+    }
+    showDropError("No .jsonl log found in the selection.");
+    return;
+  }
+  const folder = (log.webkitRelativePath || "").split("/").slice(0, -1).join("/");
   const reader = new FileReader();
-  reader.onload = () => loadText(reader.result, file.name);
-  reader.onerror = () => {
-    const message = document.querySelector("#drop p");
-    message.textContent = `Could not read ${file.name}.`;
-    message.classList.add("parse-error");
-  };
-  reader.readAsText(file);
+  reader.onload = () => loadText(reader.result, folder ? `${folder}/${log.name}` : log.name, svgFiles);
+  reader.onerror = () => showDropError(`Could not read ${log.name}.`);
+  reader.readAsText(log);
+}
+
+function loadFile(file) {
+  loadFiles([file]);
+}
+
+function readEntry(entry) {
+  if (entry.isFile) return new Promise((resolve) => entry.file((file) => resolve([file]), () => resolve([])));
+  if (!entry.isDirectory) return Promise.resolve([]);
+  const reader = entry.createReader();
+  const pending = [];
+  return new Promise((resolve) => {
+    const next = () => reader.readEntries((entries) => {
+      if (!entries.length) {
+        Promise.all(pending).then((groups) => resolve(groups.flat()));
+        return;
+      }
+      pending.push(...entries.map(readEntry));
+      next();
+    }, () => resolve([]));
+    next();
+  });
+}
+
+// Entries must be taken synchronously, while the drop event is still live.
+function filesFromDrop(dataTransfer) {
+  const entries = [...(dataTransfer.items || [])]
+    .map((item) => (item.webkitGetAsEntry ? item.webkitGetAsEntry() : null))
+    .filter(Boolean);
+  if (!entries.length) return Promise.resolve([...dataTransfer.files]);
+  return Promise.all(entries.map(readEntry)).then((groups) => groups.flat());
 }
 
 const drop = document.getElementById("drop");
@@ -1409,19 +1581,30 @@ drop.addEventListener("dragleave", () => drop.classList.remove("dragover"));
 drop.addEventListener("drop", (e) => {
   e.preventDefault();
   drop.classList.remove("dragover");
-  const file = e.dataTransfer.files[0];
-  if (file) loadFile(file);
+  filesFromDrop(e.dataTransfer).then((files) => {
+    if (files.length) loadFiles(files);
+  });
 });
 
 document.getElementById("pick").addEventListener("click", () => document.getElementById("file-input").click());
-document.getElementById("file-input").addEventListener("change", (e) => {
-  const file = e.target.files[0];
-  if (file) loadFile(file);
+document.getElementById("pick-folder").addEventListener("click", () => document.getElementById("folder-input").click());
+for (const id of ["file-input", "folder-input"]) {
+  document.getElementById(id).addEventListener("change", (e) => {
+    if (e.target.files.length) loadFiles(e.target.files);
+  });
+}
+document.getElementById("svg-input").addEventListener("change", (e) => {
+  if (!e.target.files.length) return;
+  DecisionView.attachSnapshotFiles([...e.target.files]);
+  e.target.value = "";
+  render();
 });
+DecisionView.setSvgFileRequester(() => document.getElementById("svg-input").click());
 document.getElementById("load-another").addEventListener("click", () => {
   document.getElementById("app").classList.remove("active");
   document.getElementById("drop").classList.remove("hidden");
   document.getElementById("file-input").value = "";
+  document.getElementById("folder-input").value = "";
 });
 
 document.getElementById("all-events").addEventListener("change", render);
@@ -1430,6 +1613,15 @@ document.getElementById("mission-filter").addEventListener("change", () => switc
 for (const button of document.querySelectorAll("#stream-menu button")) {
   button.addEventListener("click", () => switchView(button.dataset.view));
 }
+document.addEventListener("keydown", (e) => {
+  if (currentView === "decision") DecisionView.handleKey(e);
+});
+let resizeTimer;
+window.addEventListener("resize", () => {
+  if (currentView !== "decision") return;
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => DecisionView.redraw(), 150);
+});
 </script>
 </body>
 </html>
