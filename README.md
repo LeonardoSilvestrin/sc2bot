@@ -104,6 +104,15 @@ Optionally set your bot name and race in `config.yml`
 poetry run python run.py
 ```
 
+To display the in-game spatial/territory debug view during a local game, run:
+
+```bash
+poetry run python run.py --spatial-view
+```
+
+In VS Code, the same options are available in **Run and Debug** as
+`spatial play` and `logs + spatial play`.
+
 ## Start Developing Your Bot
 
 If everything has worked thus far, open up `bot/main.py` and delve into the excitement of bot development!

@@ -24,6 +24,28 @@
       "justMyCode": false
     },
     {
+      "name": "spatial play",
+      "type": "debugpy",
+      "request": "launch",
+      "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "program": "${workspaceFolder}\\run.py",
+      "cwd": "${workspaceFolder}",
+      "args": ["--bot-log", "off", "--spatial-view"],
+      "console": "integratedTerminal",
+      "justMyCode": false
+    },
+    {
+      "name": "logs + spatial play",
+      "type": "debugpy",
+      "request": "launch",
+      "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "program": "${workspaceFolder}\\run.py",
+      "cwd": "${workspaceFolder}",
+      "args": ["--bot-log", "events", "--spatial-view"],
+      "console": "integratedTerminal",
+      "justMyCode": false
+    },
+    {
       "name": "Open Log Viewer",
       "type": "debugpy",
       "request": "launch",

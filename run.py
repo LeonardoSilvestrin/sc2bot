@@ -1,12 +1,11 @@
+import argparse
+import platform
 import random
 import sys
-import argparse
 from os import path
 from pathlib import Path
-import platform
-from typing import List
-from loguru import logger
 
+from loguru import logger
 from sc2 import maps
 from sc2.data import AIBuild, Difficulty, Race
 from sc2.main import run_game
@@ -18,8 +17,9 @@ sys.path.append("ares-sc2")
 
 import yaml
 
-from bot.main import MyBot
 from bot.adapters.logging import JsonlBotLogger, NullBotLogger
+from bot.app.debug import SpatialDebugConfig
+from bot.main import MyBot
 from ladder import run_ladder_game
 
 plt = platform.system()
@@ -45,7 +45,7 @@ MY_BOT_NAME: str = "MyBotName"
 MY_BOT_RACE: str = "MyBotRace"
 
 
-def main():
+def parse_local_args(args=None):
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument(
         "--bot-log",
@@ -53,7 +53,17 @@ def main():
         default="off",
         help="Write structured local bot logs to _botdev/logs.",
     )
-    local_args, _ = parser.parse_known_args()
+    parser.add_argument(
+        "--spatial-view",
+        action="store_true",
+        help="Draw the spatial territory debug view in local games.",
+    )
+    local_args, _ = parser.parse_known_args(args)
+    return local_args
+
+
+def main():
+    local_args = parse_local_args()
 
     bot_name: str = "MyBot"
     race: Race = Race.Random
@@ -75,7 +85,18 @@ def main():
         print(f"Bot structured log: {bot_logger.path}")
     else:
         bot_logger = NullBotLogger()
-    bot1 = Bot(race, MyBot(logger=bot_logger), bot_name)
+    spatial_debug_config = SpatialDebugConfig(
+        enabled=local_args.spatial_view,
+        show_grid=True,
+    )
+    bot1 = Bot(
+        race,
+        MyBot(
+            logger=bot_logger,
+            spatial_debug_config=spatial_debug_config,
+        ),
+        bot_name,
+    )
 
     if is_ladder:
         # Ladder game started by LadderManager
@@ -84,13 +105,13 @@ def main():
         print(result, " against opponent ", opponentid)
     else:
         # Local game
-        map_list: List[str] = [
+        map_list: list[str] = [
             p.name.replace(f".{MAP_FILE_EXT}", "")
             for p in Path(MAPS_PATH).glob(f"*.{MAP_FILE_EXT}")
             if p.is_file()
         ]
         if len(map_list) == 0:
-            logger.error(f"Can't find maps, please check `MAPS_PATH` in `run.py'")
+            logger.error("Can't find maps, please check `MAPS_PATH` in `run.py'")
             logger.info("Trying back up option")
             logger.info(
                 f"\nLooking for maps in {MAPS_PATH} but didn't find anything. \n"
@@ -100,7 +121,7 @@ def main():
             )
 
             # see if user has any recent ladder maps
-            map_list: List[str] = [
+            map_list: list[str] = [
                 "PylonAIE_v4",
                 "PersephoneAIE_v4",
                 "TorchesAIE_v4",
