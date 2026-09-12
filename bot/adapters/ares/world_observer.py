@@ -85,6 +85,8 @@ class AresWorldObserver:
     _PROTECTED_STEP_LOOKAHEAD = 2
     _PROTECTED_MINERAL_CAP = 600
     _PROTECTED_VESPENE_CAP = 400
+    # What one Supply Depot, Pylon or Overlord adds to the cap.
+    _SUPPLY_PER_PROVIDER = 8
     # Half the side of a townhall's 5x5 footprint: the area that decides
     # whether a base location is in vision (see `_base_location_visible`).
     _TOWNHALL_HALF_EXTENT = 2.5
@@ -571,12 +573,14 @@ class AresWorldObserver:
         producers.sort(key=lambda item: item.unit_type.value)
         self._utilization_at = now
 
+        # Supply, not structures: it is added to `supply_cap`, so one depot
+        # under construction must read as the 8 supply it will provide.
         supply_pending_value = self._safe_attr(bot, "supply_pending")
         if supply_pending_value is None:
             supply_type = self._safe_attr(bot, "supply_type")
             supply_pending = 0
             if isinstance(supply_type, UnitTypeId):
-                supply_pending = max(
+                supply_pending = self._SUPPLY_PER_PROVIDER * max(
                     unit_count_by_type.get(
                         supply_type, UnitTypeCount(supply_type)
                     ).pending,

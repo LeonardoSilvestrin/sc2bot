@@ -36,9 +36,12 @@ for it to finish. While the runner is still stepping,
 steps (capped at 600 minerals and 400 gas) into
 `EconomyFacts.protected_minerals`/`protected_vespene`, and `EconomyController`
 withholds that amount before admitting anything. Macro therefore only spends a
-genuine surplus during the opening. The one thing it holds back entirely is
-add-ons, which wait for `economy.opening_completed` because they contend for a
-production slot the opening may still need, not just for money. Once the
+genuine surplus during the opening. Two things it holds back entirely until
+`economy.opening_completed`: add-ons, because they contend for a production
+slot the opening may still need, not just for money; and supply depots,
+because the opening's depot steps say where they go (`supply @ ramp` closes
+the wall) and `AutoSupplyAtSupply` already covers supply between them. A macro
+depot went down behind the mineral line and the ramp's depot came too late. Once the
 runner reports `build_completed`, nothing is protected and `MacroPlanner` owns
 production, expansions, and composition -- see
 [macro-planner.md](macro-planner.md) for how it picks the right convergence

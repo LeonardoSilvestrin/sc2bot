@@ -63,8 +63,8 @@ proposals. Its only state is `last_status` (a `MacroStatus` for diagnostics)
 and, when built with `follow_opening=True`, the one-time switch to the chosen
 opening's profile (see "Integration" below). It runs during the opening too --
 the economy controller withholds the cost of the opening's next steps
-(`protected`), so macro only spends a surplus; add-ons alone wait for
-`economy.opening_completed`. It delegates to seven single-purpose proposers,
+(`protected`), so macro only spends a surplus; add-ons and supply depots wait
+for `economy.opening_completed`. It delegates to seven single-purpose proposers,
 each returning `None`/`()` when it has nothing useful to say, merges the
 results, and sorts them by `(-priority, kind, target)` for readable traces --
 `EconomyController` owns the real admission order. `MacroGoalSet.upgrades`
@@ -110,8 +110,12 @@ army only through what gets built (see [capabilities.md](capabilities.md)).
 - **`construction/supply.py`**: proposes `PRODUCE_SUPPLY` (a Supply Depot) when
   `supply_cap` is below `max_supply_cap` (200) and
   `supply_cap + supply_pending - supply_used <= supply_buffer` (6) -- counting
-  supply already under construction, not just the current cap, so it does not
-  double-queue depots.
+  supply already under construction (8 per depot, not one), not just the
+  current cap, so it does not double-queue depots. It waits for
+  `opening_completed`: the opening's depot steps carry their own placement
+  (`supply @ ramp` closes the wall) and `AutoSupplyAtSupply` covers the rest,
+  so a macro depot there would go down off the wall and take that step's
+  place.
   `target_count` is the depot count plus one, so the action is confirmed as
   soon as the next depot is under way.
 - **`production/workers.py`**: proposes `PRODUCE_WORKER` up to

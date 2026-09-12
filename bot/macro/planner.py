@@ -99,17 +99,23 @@ class MacroPlanner:
             vespene=world.vespene,
         )
 
-        supply_proposal = propose_supply(
-            self.config,
-            self.planner_id,
-            economy,
-            world.supply_used,
-            world.supply_cap,
-            posture,
-            world.time,
-        )
-        if supply_proposal is not None:
-            proposals.append(supply_proposal)
+        # The opening owns supply outright: its depot steps name where they go
+        # (`supply @ ramp` closes the wall) and Ares' `AutoSupplyAtSupply`
+        # covers the gaps. A macro depot would be laid wherever the placement
+        # solver keeps plain depots, and would take the build order's own
+        # depot slot in time, leaving the wall open.
+        if economy.opening_completed:
+            supply_proposal = propose_supply(
+                self.config,
+                self.planner_id,
+                economy,
+                world.supply_used,
+                world.supply_cap,
+                posture,
+                world.time,
+            )
+            if supply_proposal is not None:
+                proposals.append(supply_proposal)
 
         worker_proposal = propose_worker(
             self.config, self.planner_id, economy, posture, world.time

@@ -430,7 +430,8 @@ class AresWorldObserverTests(unittest.TestCase):
         self.assertEqual(
             (economy.townhalls.ready, economy.townhalls.pending), (1, 1)
         )
-        self.assertEqual(economy.supply_pending, 1)
+        # One depot under construction is the 8 supply it will add to the cap.
+        self.assertEqual(economy.supply_pending, 8)
         self.assertEqual(economy.unit_count(UnitTypeId.MARINE).total, 5)
         self.assertEqual(economy.structure_count(UnitTypeId.FACTORY).total, 1)
         self.assertEqual(economy.structure_count(UnitTypeId.SUPPLYDEPOT).pending, 1)

@@ -431,6 +431,20 @@ class TestMacroPlanner:
             EconomicActionKind.PRODUCE_SUPPLY,
         ) is None
 
+    def test_opening_owns_supply_depots(self):
+        # The build order places its own depots (`supply @ ramp` closes the
+        # wall); a macro depot would go down off the wall and take its turn.
+        near_limit = dict(supply_used=17.0, supply_cap=23.0, minerals=150)
+
+        assert proposal_of_kind(
+            proposals_for(economy_attention(opening_completed=False, **near_limit)),
+            EconomicActionKind.PRODUCE_SUPPLY,
+        ) is None
+        assert proposal_of_kind(
+            proposals_for(economy_attention(opening_completed=True, **near_limit)),
+            EconomicActionKind.PRODUCE_SUPPLY,
+        ) is not None
+
     def test_supply_goal_does_not_require_100_minerals_in_bank(self):
         attention = economy_attention(
             supply_used=194.0,
