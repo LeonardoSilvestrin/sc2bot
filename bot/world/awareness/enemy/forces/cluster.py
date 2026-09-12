@@ -29,7 +29,7 @@ class EnemyForceCluster:
     unit_count: int
     visible_unit_count: int
     unit_tags: tuple[int, ...]
-    last_observed_at: float
+    last_observed_at: float | None
     confidence: float
 
     def distance_to(self, position: Point2) -> float:
@@ -70,7 +70,8 @@ class EnemyForceAwareness:
                 (
                     cluster
                     for cluster in self.clusters
-                    if cluster.distance_to(position) <= distance
+                    if cluster.confidence > 0.0
+                    and cluster.distance_to(position) <= distance
                 ),
                 key=lambda cluster: (cluster.distance_to(position), cluster.cluster_id),
             )

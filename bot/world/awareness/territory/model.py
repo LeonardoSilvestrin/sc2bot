@@ -50,7 +50,10 @@ class TerritoryReading:
     ``friendly_influence`` and ``enemy_influence`` are saturated (0..1), each
     side's army and bases together. Of ours, ``friendly_military`` is the army
     alone and ``friendly_ground_denial`` the part of it that can fight ground
-    units. ``dominance`` is the normalized difference, -1 (enemy) to +1 (ours).
+    units. ``enemy_ground_military`` is the symmetric enemy component, while
+    ``enemy_ground_presence`` also includes infrastructure that may originate
+    a ground force. ``dominance`` is the normalized difference, -1 (enemy) to
+    +1 (ours).
 
     ``confidence`` is how well we know the enemy side of the reading -- ours is
     always known. It rests on how recently we looked at the place and on how
@@ -65,12 +68,23 @@ class TerritoryReading:
     confidence: float = 0.0
     friendly_military: float = 0.0
     friendly_ground_denial: float = 0.0
+    # Enemy military influence able to fight ground. Kept separate from the
+    # broader ground-presence origin below so infrastructure does not weaken
+    # our army's local hold merely by existing nearby.
+    enemy_ground_military: float = 0.0
+    # Enemy presence that can create a ground-access origin. Enemy bases
+    # count because they can produce ground forces; air-only forces do not.
+    enemy_ground_presence: float = 0.0
 
     @property
     def presence(self) -> float:
         """Both sides' influence together, saturated like either one."""
 
-        return 1.0 - (1.0 - self.friendly_influence) * (1.0 - self.enemy_influence)
+        return _clamp01(
+            1.0
+            - (1.0 - _clamp01(self.friendly_influence))
+            * (1.0 - _clamp01(self.enemy_influence))
+        )
 
     @property
     def hold(self) -> float:
@@ -81,7 +95,10 @@ class TerritoryReading:
         stops no one, and neither does a unit that only shoots air.
         """
 
-        return self.friendly_ground_denial * max(0.0, self.dominance)
+        friendly = _clamp01(self.friendly_ground_denial)
+        enemy = _clamp01(self.enemy_ground_military)
+        ground_dominance = (friendly - enemy) / (friendly + enemy + 1e-6)
+        return friendly * _clamp01(ground_dominance)
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,7 +141,7 @@ class RegionTerritory:
 
     @property
     def ground_security(self) -> float:
-        return 1.0 - self.ground_access
+        return 1.0 - _clamp01(self.ground_access)
 
 
 @dataclass(frozen=True, slots=True)
@@ -226,3 +243,7 @@ def locate_region(
         if nearest is None or distance < nearest_distance:
             nearest, nearest_distance = (point, region), distance
     return None if nearest is None else nearest[1]
+
+
+def _clamp01(value: float) -> float:
+    return max(0.0, min(1.0, value))

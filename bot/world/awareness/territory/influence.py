@@ -117,10 +117,19 @@ def read_point(
         sigma=config.military_sigma,
         full_strength=config.full_strength,
     )
+    enemy_ground = force_influence(
+        point,
+        sources.enemy_forces,
+        sigma=config.military_sigma,
+        full_strength=config.full_strength,
+        ground_only=True,
+    )
     enemy_raw, evidence = enemy.raw, enemy.evidence
+    enemy_ground_raw = enemy_ground.raw
     for site, site_confidence in sources.enemy_sites:
         reach = _site_influence(point, site, config)
         enemy_raw += reach * site_confidence
+        enemy_ground_raw += reach * site_confidence
         evidence += reach
     return classify(
         friendly=saturate(friendly_raw),
@@ -132,13 +141,17 @@ def read_point(
         previous=previous,
         friendly_military=saturate(military.raw),
         friendly_ground_denial=saturate(ground.raw),
+        enemy_ground_military=saturate(enemy_ground.raw),
+        enemy_ground_presence=saturate(enemy_ground_raw),
     )
 
 
 def dominance(friendly: float, enemy: float, epsilon: float) -> float:
     """``(F - E) / (F + E + epsilon)``: -1 enemy, 0 balanced or empty, +1 ours."""
 
-    return (friendly - enemy) / (friendly + enemy + epsilon)
+    friendly = _clamp01(friendly)
+    enemy = _clamp01(enemy)
+    return max(-1.0, min(1.0, (friendly - enemy) / (friendly + enemy + epsilon)))
 
 
 def reading_confidence(
@@ -179,6 +192,8 @@ def classify(
     previous: TerritoryControl | None = None,
     friendly_military: float = 0.0,
     friendly_ground_denial: float = 0.0,
+    enemy_ground_military: float = 0.0,
+    enemy_ground_presence: float = 0.0,
 ) -> TerritoryReading:
     """Name who holds a place from both influences and the confidence.
 
@@ -189,13 +204,19 @@ def classify(
     of the class the place already had.
     """
 
+    friendly = _clamp01(friendly)
+    enemy = _clamp01(enemy)
+    friendly_military = min(friendly, _clamp01(friendly_military))
+    friendly_ground_denial = min(friendly_military, _clamp01(friendly_ground_denial))
     reading = TerritoryReading(
         friendly_influence=friendly,
         enemy_influence=enemy,
         dominance=dominance(friendly, enemy, config.dominance_epsilon),
-        confidence=confidence,
+        confidence=_clamp01(confidence),
         friendly_military=friendly_military,
         friendly_ground_denial=friendly_ground_denial,
+        enemy_ground_military=min(enemy, _clamp01(enemy_ground_military)),
+        enemy_ground_presence=min(enemy, _clamp01(enemy_ground_presence)),
     )
     # Falling under the presence floor enters UNCONTROLLED.
     if reading.presence < config.min_presence - _shift(
@@ -236,6 +257,10 @@ def _site_influence(point: Point2, site: Point2, config: TerritoryConfig) -> flo
     return config.infrastructure_weight * kernel_squared(
         distance_squared(point, site), config.infrastructure_sigma
     )
+
+
+def _clamp01(value: float) -> float:
+    return max(0.0, min(1.0, value))
 
 
 def _position(unit: UnitSnapshot) -> Point2:

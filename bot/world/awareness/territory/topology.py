@@ -133,8 +133,12 @@ def ground_access(
     """
 
     count = len(adjacency)
+    if len(sources) != count or len(passes) != count:
+        raise ValueError("adjacency, sources and passes must have equal lengths")
+    bounded_sources = tuple(_clamp01(float(value)) for value in sources)
+    bounded_passes = tuple(_clamp01(float(value)) for value in passes)
     arrived = [0.0] * count
-    leaving = [max(0.0, float(value)) for value in sources]
+    leaving = list(bounded_sources)
     heap = [(-value, node) for node, value in enumerate(leaving) if value > 0.0]
     heapq.heapify(heap)
     while heap:
@@ -145,13 +149,16 @@ def ground_access(
             if leaving[node] <= arrived[neighbour]:
                 continue
             arrived[neighbour] = leaving[node]
-            carried = max(sources[neighbour], arrived[neighbour] * passes[neighbour])
+            carried = max(
+                bounded_sources[neighbour],
+                arrived[neighbour] * bounded_passes[neighbour],
+            )
             if carried > leaving[neighbour]:
                 leaving[neighbour] = carried
                 heapq.heappush(heap, (-carried, neighbour))
     return tuple(
-        min(1.0, max(source, arrival))
-        for source, arrival in zip(sources, arrived, strict=True)
+        max(source, arrival)
+        for source, arrival in zip(bounded_sources, arrived, strict=True)
     )
 
 
@@ -161,3 +168,7 @@ def _nearest_sample(position: Point2, points: Sequence[Point2]) -> int | None:
         key=lambda index: distance_squared(position, points[index]),
         default=None,
     )
+
+
+def _clamp01(value: float) -> float:
+    return max(0.0, min(1.0, value))

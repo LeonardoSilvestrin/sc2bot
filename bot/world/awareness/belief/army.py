@@ -98,7 +98,9 @@ def assess_army(
     own_total = max(
         world.supply_used, sum(unit.supply_cost for unit in world.own_units)
     )
-    combat_roster = tuple(entry for entry in roster if entry.is_combat_unit)
+    combat_roster = tuple(
+        entry for entry in roster if entry.is_combat_unit and entry.last_seen_known
+    )
     evidence = roster_evidence(
         ((entry.supply_cost, entry.last_seen_at) for entry in combat_roster),
         now=now,

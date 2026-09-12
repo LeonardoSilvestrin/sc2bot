@@ -108,7 +108,11 @@ def summarize(
     weighted_freshness = weighted_age = 0.0
     for member in members:
         value = combat_value(member, config.combat)
-        age = max(0.0, now - member.last_seen_at)
+        age = (
+            max(0.0, now - member.last_seen_at)
+            if member.last_seen_known
+            else config.stale_after
+        )
         strength += value.total
         anti_air += value.anti_air
         anti_ground += value.anti_ground
@@ -128,6 +132,9 @@ def summarize(
         unit_count=len(members),
         visible_unit_count=sum(member.visible_now for member in members),
         unit_tags=tuple(member.tag for member in members),
-        last_observed_at=max(member.last_seen_at for member in members),
+        last_observed_at=max(
+            (member.last_seen_at for member in members if member.last_seen_known),
+            default=None,
+        ),
         confidence=weighted_freshness / strength if strength > 0.0 else 0.0,
     )

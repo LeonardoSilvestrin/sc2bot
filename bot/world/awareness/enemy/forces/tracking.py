@@ -131,7 +131,7 @@ class EnemyForceTracker:
     ) -> EnemyForceCluster | None:
         config = self.config
         return max(
-            clusters,
+            (cluster for cluster in clusters if cluster.confidence > 0.0),
             key=lambda cluster: (
                 main_force_score(cluster.combat_strength, cluster.confidence, config),
                 cluster.confidence,

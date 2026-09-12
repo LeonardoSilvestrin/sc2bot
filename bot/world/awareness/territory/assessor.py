@@ -12,7 +12,7 @@ from bot.world.attention import MapPassage, MapRegion, WorldFacts
 from ..bases import BaseAwareness
 from ..enemy import EnemyAwareness
 from ..spatial import SpatialField
-from ..spatial.kernel import cadence_due, same_version
+from ..spatial.kernel import cadence_due, force_influence, same_version, saturate
 from .config import TerritoryConfig
 from .frontline import frontline
 from .influence import (
@@ -24,6 +24,7 @@ from .influence import (
 )
 from .model import (
     BaseTerritory,
+    FriendlyForce,
     PassageTerritory,
     RegionTerritory,
     TerritoryControl,
@@ -74,6 +75,7 @@ class TerritoryAssessor:
         default=None, init=False, repr=False
     )
     _spacing: float | None = field(default=None, init=False, repr=False)
+    _fallback_center: Point2 | None = field(default=None, init=False, repr=False)
     _last_perf_logged_at: float | None = field(default=None, init=False, repr=False)
 
     def update(
@@ -128,12 +130,17 @@ class TerritoryAssessor:
             and same_version(map_facts.passages, self._passages_source)
             and same_version(map_facts.enemy_starts, self._starts_source)
             and spatial.sample_spacing == self._spacing
+            and (
+                bool(map_facts.pathable_points)
+                or map_facts.center == self._fallback_center
+            )
         )
         # Adopt an equal rebuilt value so the next check is identity again.
         self._points_source = map_facts.pathable_points
         self._regions_source = map_facts.regions
         self._passages_source = map_facts.passages
         self._starts_source = map_facts.enemy_starts
+        self._fallback_center = map_facts.center
         if valid:
             return False
         self._spacing = spatial.sample_spacing
@@ -200,19 +207,32 @@ class TerritoryAssessor:
 
         # Regions are the first nodes of the access graph, passages follow.
         node_readings = (*region_readings, *passage_readings)
-        enemy_presence = [reading.enemy_influence for reading in node_readings]
-        for origin in topology.origins:
-            enemy_presence[origin] = max(
-                enemy_presence[origin], config.enemy_origin_strength
-            )
+        enemy_presence = [reading.enemy_ground_presence for reading in node_readings]
+        if topology.origins:
+            for origin in topology.origins:
+                enemy_presence[origin] = max(
+                    enemy_presence[origin], config.enemy_origin_strength
+                )
+        else:
+            # Failure to resolve an enemy start into the graph is missing
+            # topology, not proof that every region is unreachable. Default
+            # to fully exposed instead of manufacturing perfect security.
+            for index in range(len(region_readings)):
+                enemy_presence[index] = config.enemy_origin_strength
         passes = [1.0 - reading.hold for reading in node_readings]
         region_count = len(region_readings)
+        passage_passes = _independent_passage_passes(
+            topology.passages,
+            passage_readings,
+            tuple(sources.friendly_forces),
+            config,
+        )
         # Passages are the barriers; the layered walk, where regions block
         # too, is kept alongside for comparison in shadow mode.
         access = ground_access(
             topology.adjacency,
             enemy_presence,
-            [1.0] * region_count + passes[region_count:],
+            [1.0] * region_count + list(passage_passes),
         )
         layered_access = ground_access(topology.adjacency, enemy_presence, passes)
 
@@ -286,6 +306,14 @@ class TerritoryAssessor:
                 reading.friendly_ground_denial for reading in members
             )
             / count,
+            enemy_ground_military=sum(
+                reading.enemy_ground_military for reading in members
+            )
+            / count,
+            enemy_ground_presence=sum(
+                reading.enemy_ground_presence for reading in members
+            )
+            / count,
         )
 
     def _maybe_log_performance(
@@ -325,3 +353,55 @@ def _previous_control(
     if index >= len(items):
         return None
     return items[index].control
+
+
+def _independent_passage_passes(
+    passages: Sequence[MapPassage],
+    readings: Sequence[TerritoryReading],
+    forces: tuple[FriendlyForce, ...],
+    config: TerritoryConfig,
+) -> tuple[float, ...]:
+    """Passage factors without counting one force as several walls.
+
+    A force's smooth influence can reach consecutive or alternative
+    passages. Multiplying all of those samples would turn one physical force
+    into several independent defensive lines. Assign each force to the
+    passage where it has its strongest ground influence; forces assigned to
+    different passages still compound normally.
+    """
+
+    assigned_raw = [0.0] * len(passages)
+    for force in forces:
+        if force.anti_ground_strength <= 0.0:
+            continue
+        contributions = tuple(
+            force_influence(
+                passage.position,
+                (force,),
+                sigma=config.military_sigma,
+                full_strength=config.full_strength,
+                ground_only=True,
+            ).raw
+            for passage in passages
+        )
+        strongest = max(
+            range(len(passages)),
+            key=lambda index: (contributions[index], -index),
+            default=None,
+        )
+        if (
+            strongest is not None
+            and contributions[strongest] > config.dominance_epsilon
+        ):
+            assigned_raw[strongest] += contributions[strongest]
+
+    factors: list[float] = []
+    for raw, reading in zip(assigned_raw, readings, strict=True):
+        friendly = saturate(raw)
+        enemy = reading.enemy_ground_military
+        ground_dominance = (friendly - enemy) / (
+            friendly + enemy + config.dominance_epsilon
+        )
+        hold = friendly * max(0.0, min(1.0, ground_dominance))
+        factors.append(1.0 - hold)
+    return tuple(factors)
