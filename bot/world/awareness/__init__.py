@@ -41,6 +41,16 @@ from .spatial import (
     SpatialModelConfig,
     SpatialPerformance,
 )
+from .territory import (
+    BaseTerritory,
+    PassageTerritory,
+    RegionTerritory,
+    TerritoryConfig,
+    TerritoryControl,
+    TerritoryReading,
+    TerritorySample,
+    TerritorySnapshot,
+)
 
 __all__ = [
     "ArmyBelief",
@@ -52,6 +62,7 @@ __all__ = [
     "BaseAwareness",
     "BaseEstimate",
     "BaseSecurityLevel",
+    "BaseTerritory",
     "EconomyBelief",
     "EconomyBeliefConfig",
     "EnemyArmyKnowledge",
@@ -69,6 +80,8 @@ __all__ = [
     "EnemySighting",
     "EnemyUnitTypeCount",
     "MacroPosture",
+    "PassageTerritory",
+    "RegionTerritory",
     "RelativeAssessment",
     "RelativeBeliefConfig",
     "RelativePosition",
@@ -78,6 +91,11 @@ __all__ = [
     "SpatialFieldSample",
     "SpatialModelConfig",
     "SpatialPerformance",
+    "TerritoryConfig",
+    "TerritoryControl",
+    "TerritoryReading",
+    "TerritorySample",
+    "TerritorySnapshot",
     "ThreatAssessment",
     "WorkerEstimate",
 ]

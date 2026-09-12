@@ -23,6 +23,7 @@ from bot.world.awareness.spatial import (
     SpatialModelConfig,
     sample_route_positions,
 )
+from bot.world.awareness.spatial.kernel import saturate
 from tests.fakes import FakeLogger
 
 
@@ -436,7 +437,7 @@ class SpatialFieldModelTests(unittest.TestCase):
             unmeasured.samples[0].choke_value, narrow.samples[0].choke_value
         )
         self.assertAlmostEqual(
-            unmeasured.samples[0].choke_value, SpatialFieldModel._saturate(0.5)
+            unmeasured.samples[0].choke_value, saturate(0.5)
         )
 
     def test_static_topology_retries_until_pathable_samples_arrive(self):

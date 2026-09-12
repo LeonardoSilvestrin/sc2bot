@@ -34,6 +34,7 @@ from .snapshot import (
     ThreatAssessment,
 )
 from .spatial import SpatialFieldModel, SpatialModelConfig
+from .territory import TerritoryAssessor, TerritoryConfig
 
 
 class AwarenessService:
@@ -53,6 +54,7 @@ class AwarenessService:
         economy_belief_config: EconomyBeliefConfig | None = None,
         army_belief_config: ArmyBeliefConfig | None = None,
         spatial_model_config: SpatialModelConfig | None = None,
+        territory_config: TerritoryConfig | None = None,
         logger: BotLogger | None = None,
     ) -> None:
         if location_stale_after <= 0.0:
@@ -77,6 +79,9 @@ class AwarenessService:
         self._enemy_force_tracker = EnemyForceTracker(enemy_force_heuristics)
         self._spatial_model = SpatialFieldModel(
             spatial_model_config or SpatialModelConfig(), logger=logger
+        )
+        self._territory = TerritoryAssessor(
+            territory_config or TerritoryConfig(), logger=logger
         )
         self._location_last_observed: dict[str, float] = {}
         self._posture_state = PostureState()
@@ -243,13 +248,17 @@ class AwarenessService:
             if message is not None
         )
 
+        enemy = EnemyAwareness(
+            sightings=sightings,
+            locations=tuple(locations),
+            bases=enemy_bases,
+            forces=enemy_forces,
+        )
+        spatial = self._spatial_model.update(
+            world, bases=bases, enemy_forces=enemy_forces
+        )
         return AwarenessSnapshot(
-            enemy=EnemyAwareness(
-                sightings=sightings,
-                locations=tuple(locations),
-                bases=enemy_bases,
-                forces=enemy_forces,
-            ),
+            enemy=enemy,
             relative_strength=RelativeStrength(
                 score=score,
                 confidence=army_belief.relative.confidence,
@@ -271,8 +280,9 @@ class AwarenessService:
             bases=bases,
             economy=economy_belief,
             army=army_belief,
-            spatial=self._spatial_model.update(
-                world, bases=bases, enemy_forces=enemy_forces
+            spatial=spatial,
+            territory=self._territory.update(
+                world, spatial=spatial, bases=bases, enemy=enemy
             ),
             belief_changes=belief_changes,
         )

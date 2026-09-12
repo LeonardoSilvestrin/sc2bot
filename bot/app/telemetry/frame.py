@@ -10,6 +10,7 @@ from .belief import BeliefTelemetry
 from .build_order import BuildOrderTelemetry
 from .enemy import EnemyTelemetry
 from .standing import StandingTelemetry
+from .territory import TerritoryTelemetry
 from .world import WorldSnapshotTelemetry
 
 
@@ -27,6 +28,7 @@ class FrameTelemetry:
         self._build_order = BuildOrderTelemetry(logger=logger)
         self._enemy = EnemyTelemetry(logger=logger)
         self._belief = BeliefTelemetry(logger=logger)
+        self._territory = TerritoryTelemetry(logger=logger)
         self._world = WorldSnapshotTelemetry(logger=logger)
         self._standing = StandingTelemetry(
             logger=logger, missions=missions, standing_planner=standing_planner
@@ -39,5 +41,6 @@ class FrameTelemetry:
         self._build_order.report(bot, game_time=game_time)
         self._enemy.report(awareness, game_time=game_time)
         self._belief.report(awareness, game_time=game_time)
+        self._territory.report(awareness, game_time=game_time)
         self._world.report(attention, awareness, missions=self._missions.snapshots())
         self._standing.report(attention)

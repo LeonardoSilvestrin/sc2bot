@@ -98,6 +98,54 @@ class AresWorldObserverTests(unittest.TestCase):
 
         self.assertEqual([choke.width for choke in chokes], [4.0, 7.0, None, None])
 
+    def test_region_graph_joins_regions_only_through_real_ground_passages(self):
+        grid = np.ones((10, 40), dtype=np.uint8)
+        grid[:, 20] = 0  # a cliff between the two plateaus
+        high = SimpleNamespace(label=0, center=Point2((8, 5)), bases=[Point2((6, 6))])
+        low = SimpleNamespace(label=1, center=Point2((30, 5)), bases=[])
+
+        def in_region(point):
+            if point.x < 10:
+                return high
+            # Unbuildable ground next to the cliff lies in no region.
+            return low if point.x > 20 else None
+
+        ramp = SimpleNamespace(center=Point2((20, 8)), regions=[high, low])
+        map_data = SimpleNamespace(
+            regions={0: high, 1: low}, in_region_p=in_region, map_chokes=(ramp,)
+        )
+        bot = SimpleNamespace(
+            mediator=SimpleNamespace(
+                get_initial_pathing_grid=grid, get_map_data_object=map_data
+            )
+        )
+        points = AresWorldObserver._sample_pathable_points(bot)
+
+        regions, passages = AresWorldObserver._region_graph(bot, points, spacing=10)
+
+        self.assertEqual(
+            [(region.key, region.points) for region in regions],
+            [
+                ("region:0", (Point2((5.5, 5.5)), Point2((15.5, 5.5)))),
+                ("region:1", (Point2((25.5, 5.5)), Point2((35.5, 5.5)))),
+            ],
+        )
+        self.assertEqual(regions[0].expansions, (Point2((6, 6)),))
+        # The cliff is not a passage; only the ramp joins the plateaus.
+        self.assertEqual(
+            [(passage.key, passage.regions) for passage in passages],
+            [("choke:0", ("region:0", "region:1"))],
+        )
+
+        grid[:, 20] = 1
+        map_data.map_chokes = ()
+        _, open_border = AresWorldObserver._region_graph(bot, points, spacing=10)
+
+        self.assertEqual(
+            [(passage.key, passage.position) for passage in open_border],
+            [("border:region:0|region:1", Point2((20.5, 5.5)))],
+        )
+
     def test_map_topology_and_traffic_routes_retry_until_ares_provides_them(self):
         observer = AresWorldObserver()
         calls = []

@@ -19,7 +19,7 @@ Game / Ares
 flowchart TD
     Game["Game / Ares state"] --> Observer["AresWorldObserver\n(bot/adapters/ares)\nWorldFacts"]
     Observer --> Attention["Attention\n(bot/world/attention)\nimmutable current facts"]
-    Attention --> Awareness["Awareness\n(bot/world/awareness)\nmemory + derived beliefs\nenemy sightings, bases and forces, base security,\neconomy/army beliefs, macro posture"]
+    Attention --> Awareness["Awareness\n(bot/world/awareness)\nmemory + derived beliefs\nenemy sightings, bases and forces, base security,\neconomy/army beliefs, macro posture,\nspatial field, territory (shadow mode)"]
 
     Awareness --> Planners
     Attention --> Planners
@@ -90,7 +90,8 @@ the macro side.
   is the only code that reads Ares to build them.
 - `bot/world/awareness` owns memory and derived beliefs: enemy sightings and
   location freshness, enemy base memory and assessment, enemy force clusters,
-  per-base security, the economy and army beliefs, and the macro posture.
+  per-base security, the economy and army beliefs, the macro posture, the
+  spatial field, and the territory reading.
 - `bot/domain` is the shared domain model: static knowledge about unit types
   (capability profiles, the combat-unit predicate, the suitability math). It
   imports nothing from `bot` and holds no policy, so behaviors, the mission
@@ -150,6 +151,11 @@ explicit state/derivation names instead of repeated `models.py` files:
   belief (below).
 - `posture.py` -- `derive_macro_posture`, described in
   [macro-planner.md](macro-planner.md).
+- `spatial/` -- `SpatialFieldModel` (friendly, threat, choke and route values
+  on the coarse pathable lattice) and `kernel.py`, the Gaussian kernel,
+  saturation and force influence every spatial reading shares.
+- `territory/` -- the territory reading: control, frontline and ground
+  access. See [Territory](#territory).
 
 Consumers import from `bot.world.awareness` or the relevant subpackage.
 
@@ -230,6 +236,26 @@ The snapshot only reports these readings; what they mean for a raid or a
 defense is left to the behavior reading them (for the raids, see
 [Target selection](harass-and-defense-planners.md#target-selection)).
 `knowledge.enemy_model` logs them.
+
+### Territory
+
+`AwarenessSnapshot.territory` answers "who holds which part of the map, where
+do the two sides meet, and how exposed is each region to enemy ground
+forces?" It keeps three things apart: control (who dominates a place), value
+(chokes and routes, which stay on `spatial`) and ground security (how
+reachable a place is). Friendly influence comes from our army as well as our
+bases; enemy influence reuses the force clusters with their confidence and
+position uncertainty. Every sample, region and passage carries a
+`TerritoryReading` classified `FRIENDLY`, `CONTESTED`, `ENEMY` or
+`UNCONTROLLED`; a coarse `frontline` marks where dominance changes sign; and
+each region has a `ground_access` walked over the static region graph that
+`AresWorldObserver` extracts once from MapAnalyzer.
+
+Territory is in shadow mode: computed on a one-second cadence, tested and
+logged (`knowledge.territory`), but read by no behavior, macro or engine code
+yet -- `tests/test_territory.py` fails if one starts to before that is a
+deliberate change. Formulas, costs and limits are in
+[territory.md](territory.md).
 
 ## Scouting and active vision
 

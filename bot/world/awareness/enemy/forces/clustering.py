@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from typing import Any, TypeVar
 
 from sc2.position import Point2
 
@@ -16,37 +17,49 @@ from ..heuristics import (
 from ..knowledge import EnemySighting
 from .cluster import EnemyForceCluster
 
+_Item = TypeVar("_Item")
+
+
+def _last_position(sighting: EnemySighting) -> Point2:
+    return sighting.last_position
+
 
 def group_by_proximity(
-    sightings: Sequence[EnemySighting], link_radius: float
-) -> tuple[tuple[EnemySighting, ...], ...]:
+    sightings: Sequence[_Item],
+    link_radius: float,
+    *,
+    position_of: Callable[[Any], Point2] = _last_position,
+) -> tuple[tuple[_Item, ...], ...]:
     """Connected components of "within ``link_radius`` of each other".
 
     Single linkage, so a strung-out column still reads as one group. Units
     are first bucketed into ``link_radius``-sized cells, so each one is only
     compared with the units in its own and the eight surrounding cells.
-    Groups, and the units within each, keep the input order.
+    Groups, and the units within each, keep the input order. Sightings are
+    grouped by where they were last seen; ``position_of`` lets our own units
+    be grouped the same way.
     """
 
+    positions = tuple(position_of(sighting) for sighting in sightings)
     cells: dict[tuple[int, int], list[int]] = {}
-    for index, sighting in enumerate(sightings):
-        cells.setdefault(_cell(sighting.last_position, link_radius), []).append(index)
+    for index, item_position in enumerate(positions):
+        cells.setdefault(_cell(item_position, link_radius), []).append(index)
     limit = link_radius * link_radius
 
     def neighbours(index: int) -> Iterator[int]:
-        position = sightings[index].last_position
+        position = positions[index]
         cell_x, cell_y = _cell(position, link_radius)
         for dx in (-1, 0, 1):
             for dy in (-1, 0, 1):
                 for other in cells.get((cell_x + dx, cell_y + dy), ()):
-                    other_position = sightings[other].last_position
+                    other_position = positions[other]
                     if (other_position.x - position.x) ** 2 + (
                         other_position.y - position.y
                     ) ** 2 <= limit:
                         yield other
 
     grouped: set[int] = set()
-    groups: list[tuple[EnemySighting, ...]] = []
+    groups: list[tuple[_Item, ...]] = []
     for start in range(len(sightings)):
         if start in grouped:
             continue

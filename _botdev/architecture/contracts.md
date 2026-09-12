@@ -106,7 +106,8 @@ observe current Ares state (AresWorldObserver -> WorldFacts)
 build AttentionSnapshot (AttentionService)
 update AwarenessSnapshot (AwarenessService): sightings, location freshness,
     enemy base memory and assessment, enemy force clusters, economy/army
-    beliefs, macro posture, base security
+    beliefs, macro posture, base security, spatial field, territory
+    (on its own cadence, read by nobody yet)
 log stable belief changes (awareness.belief_changed)
 VisionService.begin_frame: expire requests, re-check visibility, read Orbital energy
 ScoutingVisionRequester.tick (may request vision)
@@ -132,7 +133,7 @@ EconomyController.step:
     dispatch every live action through the EconomyCommands port
 MacroDiagnostics.report (macro.status, macro.idle_producer_unexplained)
 FrameTelemetry.report: log build order progress, enemy intel and model, world
-    belief, knowledge/observation snapshots, and standing ownership
+    belief, territory, knowledge/observation snapshots, and standing ownership
 ```
 
 Ares executes and clears registered behaviors in `_after_step`, so `Mining`,
@@ -230,6 +231,15 @@ where applicable (`proposal_id`, `mission_id`, `deduplication_key`,
 - Beliefs: `awareness.world_belief` (economy and army beliefs with raw vs
   stable state and confidence, on change plus a ten-second heartbeat) and
   `awareness.belief_changed` (one per stable state transition).
+- Territory: `knowledge.territory` (samples and regions counted per control,
+  frontline size with a few representative points, and ground
+  access/security for every held base and every region holding an expansion
+  slot), when one of those regions changes control or security step, a base
+  changes region, or the frontline appears or disappears, plus a ten-second
+  heartbeat. See [territory.md](territory.md).
+- Spatial cost: `spatial.perf` and `territory.perf`, each on a ten-second
+  heartbeat, with what the last update cost and how often each cached
+  component has been rebuilt.
 - Mission proposals: `proposal_created`, `proposal_admitted`,
   `proposal_rejected`.
 - Mission lifecycle: `mission_queued`, `mission_started`, `mission_blocked`,
@@ -276,6 +286,8 @@ Component names mirror the current package layout:
 | `world.awareness` | `knowledge.updated` |
 | `world.awareness.enemy` | `knowledge.enemy_intel`, `knowledge.enemy_model` |
 | `world.awareness.belief` | `awareness.world_belief`, `awareness.belief_changed` |
+| `world.awareness.spatial` | `spatial.perf` |
+| `world.awareness.territory` | `knowledge.territory`, `territory.perf` |
 | `engine.missions.controller` | proposals, mission lifecycle, unit leases |
 | `engine.squads.controller` | squad events |
 | `engine.services.vision` | vision requests |

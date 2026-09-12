@@ -17,6 +17,7 @@ from .belief import (
 from .enemy import EnemyAwareness
 from .posture import MacroPosture
 from .spatial import SpatialField
+from .territory import TerritorySnapshot
 
 
 def _unknown_relative() -> RelativeAssessment:
@@ -81,6 +82,8 @@ class AwarenessSnapshot:
     economy: EconomyBelief = field(default_factory=_default_economy_belief)
     army: ArmyBelief = field(default_factory=_default_army_belief)
     spatial: SpatialField = field(default_factory=SpatialField)
+    # Shadow mode: perceived territory, not yet read by any behavior or macro.
+    territory: TerritorySnapshot = field(default_factory=TerritorySnapshot)
     # Populated only on the tick a stable economy/army belief actually
     # changes. ``FrameProcessor`` writes these diagnostics to the log;
     # Awareness itself performs no I/O.

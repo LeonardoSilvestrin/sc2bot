@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from collections import Counter
+from collections import Counter, deque
 from collections.abc import Mapping
 
 from ares.consts import ALL_STRUCTURES, WORKER_TYPES
@@ -20,6 +20,8 @@ from bot.world.attention.facts import (
     MapChoke,
     MapFacts,
     MapObservation,
+    MapPassage,
+    MapRegion,
     MapRoute,
     ProducerFacts,
     RouteWaypoint,
@@ -102,6 +104,8 @@ class AresWorldObserver:
         self._utilization_at: float | None = None
         self._pathable_points: tuple[Point2, ...] = ()
         self._map_chokes: tuple[MapChoke, ...] = ()
+        self._map_regions: tuple[MapRegion, ...] = ()
+        self._map_passages: tuple[MapPassage, ...] = ()
         self._routing_grid = None
         self._traffic_signature: tuple[tuple[float, float], ...] | None = None
         self._traffic_routes: tuple[MapRoute, ...] = ()
@@ -998,6 +1002,199 @@ class AresWorldObserver:
             self._map_chokes = self._choke_facts(bot)
         return self._pathable_points, self._map_chokes
 
+    def _ground_regions(
+        self, bot, pathable_points: tuple[Point2, ...]
+    ) -> tuple[tuple[MapRegion, ...], tuple[MapPassage, ...]]:
+        """The static region graph, cached only once map analysis produced it.
+
+        Like ``_map_topology``, an empty result is never cached: the graph
+        needs both the pathable samples and MapAnalyzer's regions.
+        """
+
+        if not self._map_regions and pathable_points:
+            self._map_regions, self._map_passages = self._region_graph(
+                bot, pathable_points, spacing=self.spatial_sample_spacing
+            )
+        return self._map_regions, self._map_passages
+
+    @classmethod
+    def _region_graph(
+        cls, bot, points: tuple[Point2, ...], *, spacing: int
+    ) -> tuple[tuple[MapRegion, ...], tuple[MapPassage, ...]]:
+        """MapAnalyzer's regions over the coarse samples, joined by passages.
+
+        A sample belongs to the region MapAnalyzer places it in. One on ground
+        no region covers (a ramp, an unbuildable plate) joins the region of a
+        sample it reaches in one straight pathable lattice step. Two regions
+        are joined by every choke MapAnalyzer says borders both and, where no
+        choke does, by the straight pathable steps between their samples. A
+        cliff interrupts such a step, so high and low ground only meet where
+        a passage really exists. Runs once: a few thousand grid reads.
+        """
+
+        map_data = cls._safe_attr(
+            cls._safe_attr(bot, "mediator"), "get_map_data_object"
+        )
+        in_region = cls._safe_attr(map_data, "in_region_p")
+        grid = cls._initial_pathing_grid(bot)
+        try:
+            raw_regions = cls._safe_attr(map_data, "regions")
+            regions = tuple(raw_regions.values()) if raw_regions else ()
+        except (AttributeError, RuntimeError, TypeError):
+            regions = ()
+        if not regions or not callable(in_region) or grid is None:
+            return (), ()
+        keys = {
+            id(region): f"region:{cls._safe_attr(region, 'label', index)}"
+            for index, region in enumerate(regions)
+        }
+
+        sample_regions: list[str | None] = []
+        for point in points:
+            try:
+                region = in_region(point)
+            except (AttributeError, IndexError, RuntimeError, TypeError, ValueError):
+                region = None
+            sample_regions.append(None if region is None else keys.get(id(region)))
+
+        index_of = {point: index for index, point in enumerate(points)}
+        steps: list[tuple[int, int]] = []
+        for index, point in enumerate(points):
+            for dx, dy in ((spacing, 0), (0, spacing)):
+                other = index_of.get(Point2((point.x + dx, point.y + dy)))
+                if other is not None and cls._straight_step_clear(
+                    grid, point, points[other]
+                ):
+                    steps.append((index, other))
+        neighbours: list[list[int]] = [[] for _ in points]
+        for first, second in steps:
+            neighbours[first].append(second)
+            neighbours[second].append(first)
+        frontier = deque(
+            index for index, key in enumerate(sample_regions) if key is not None
+        )
+        while frontier:
+            index = frontier.popleft()
+            for other in neighbours[index]:
+                if sample_regions[other] is None:
+                    sample_regions[other] = sample_regions[index]
+                    frontier.append(other)
+
+        members: dict[str, list[Point2]] = {key: [] for key in keys.values()}
+        for point, key in zip(points, sample_regions, strict=True):
+            if key is not None:
+                members[key].append(point)
+        map_regions: list[MapRegion] = []
+        for region in regions:
+            key = keys[id(region)]
+            try:
+                center = cls._point(cls._safe_attr(region, "center"))
+            except (IndexError, ValueError):
+                center = None
+            if center is None and members[key]:
+                center = Point2(
+                    (
+                        sum(point.x for point in members[key]) / len(members[key]),
+                        sum(point.y for point in members[key]) / len(members[key]),
+                    )
+                )
+            if center is None:
+                continue
+            map_regions.append(
+                MapRegion(
+                    key=key,
+                    center=center,
+                    points=tuple(members[key]),
+                    expansions=tuple(
+                        expansion
+                        for raw in cls._items(region, "bases")
+                        if (expansion := cls._point(raw)) is not None
+                    ),
+                )
+            )
+        kept = {region.key for region in map_regions}
+
+        passages: list[MapPassage] = []
+        joined: set[tuple[str, str]] = set()
+        for index, choke in enumerate(cls._items(map_data, "map_chokes")):
+            center = cls._point(cls._safe_attr(choke, "center"))
+            if center is None:
+                continue
+            bordering = sorted(
+                {
+                    keys[id(region)]
+                    for region in cls._items(choke, "regions")
+                    if keys.get(id(region)) in kept
+                }
+            )
+            pairs = [
+                (region_a, region_b)
+                for position, region_a in enumerate(bordering)
+                for region_b in bordering[position + 1 :]
+            ]
+            for region_a, region_b in pairs:
+                passages.append(
+                    MapPassage(
+                        key=(
+                            f"choke:{index}"
+                            if len(pairs) == 1
+                            else f"choke:{index}:{region_a}:{region_b}"
+                        ),
+                        position=center,
+                        regions=(region_a, region_b),
+                    )
+                )
+                joined.add((region_a, region_b))
+
+        crossings: dict[tuple[str, str], list[Point2]] = {}
+        for first_index, second_index in steps:
+            first_key = sample_regions[first_index]
+            second_key = sample_regions[second_index]
+            if (
+                first_key is None
+                or second_key is None
+                or first_key == second_key
+                or not {first_key, second_key} <= kept
+            ):
+                continue
+            pair = (min(first_key, second_key), max(first_key, second_key))
+            if pair in joined:
+                continue
+            start, end = points[first_index], points[second_index]
+            crossings.setdefault(pair, []).append(
+                Point2(((start.x + end.x) / 2.0, (start.y + end.y) / 2.0))
+            )
+        for (region_a, region_b), midpoints in sorted(crossings.items()):
+            passages.append(
+                MapPassage(
+                    key=f"border:{region_a}|{region_b}",
+                    position=Point2(
+                        (
+                            sum(point.x for point in midpoints) / len(midpoints),
+                            sum(point.y for point in midpoints) / len(midpoints),
+                        )
+                    ),
+                    regions=(region_a, region_b),
+                )
+            )
+        return tuple(map_regions), tuple(passages)
+
+    @staticmethod
+    def _straight_step_clear(grid, start: Point2, end: Point2) -> bool:
+        """Whether every grid cell on the straight segment is pathable."""
+
+        steps = max(1, math.ceil(start.distance_to(end) * 2.0))
+        for step in range(steps + 1):
+            fraction = step / steps
+            x = math.floor(start.x + (end.x - start.x) * fraction)
+            y = math.floor(start.y + (end.y - start.y) * fraction)
+            try:
+                if not float(grid[y, x]) > 0.0:
+                    return False
+            except (IndexError, TypeError, ValueError):
+                return False
+        return True
+
     def _routing_tools(self, bot):
         """MapAnalyzer's pathfinder and static grid; ``None`` while unavailable."""
 
@@ -1131,6 +1328,7 @@ class AresWorldObserver:
             for unit in raw_enemy_structures
         )
         pathable_points, map_chokes = self._map_topology(bot)
+        map_regions, map_passages = self._ground_regions(bot, pathable_points)
         return WorldFacts(
             iteration=int(iteration),
             time=float(bot.time),
@@ -1151,6 +1349,8 @@ class AresWorldObserver:
                 pathable_sample_spacing=float(self.spatial_sample_spacing),
                 chokes=map_chokes,
                 traffic_routes=self._ground_traffic_routes(bot, raw_own_structures),
+                regions=map_regions,
+                passages=map_passages,
             ),
             own_structures=own_structures,
             enemy_structures=enemy_structures,

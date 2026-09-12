@@ -12,6 +12,14 @@ from bot.world.awareness.bases import BaseAwareness
 from bot.world.awareness.enemy import EnemyForceAwareness
 
 from .field import SpatialField, SpatialFieldSample
+from .kernel import (
+    cadence_due,
+    distance_squared,
+    force_influence,
+    kernel_squared,
+    same_version,
+    saturate,
+)
 from .performance import SpatialPerformance
 
 COMPONENT = "world.awareness.spatial"
@@ -72,8 +80,9 @@ class SpatialFieldModel:
     """Build independently cached static, semi-static and dynamic fields.
 
     Every source still uses ``K(d, sigma) = exp(-0.5 * (d / sigma) ** 2)``
-    and ``S(x) = 1 - exp(-x)``. Routes use distance-spaced representative
-    points instead of an exact projection against every polyline segment.
+    and ``S(x) = 1 - exp(-x)`` (see ``kernel.py``). Routes use
+    distance-spaced representative points instead of an exact projection
+    against every polyline segment.
 
     Each component first checks whether its cache is still valid and only
     then recomputes; ``last_performance`` reports both costs separately.
@@ -128,8 +137,8 @@ class SpatialFieldModel:
 
         started = perf_counter()
         static_valid = (
-            _same_version(map_facts.pathable_points, self._points_source)
-            and _same_version(map_facts.chokes, self._chokes_source)
+            same_version(map_facts.pathable_points, self._points_source)
+            and same_version(map_facts.chokes, self._chokes_source)
             and map_facts.pathable_sample_spacing == self._sample_spacing
         )
         if static_valid:
@@ -180,7 +189,7 @@ class SpatialFieldModel:
 
         started = perf_counter()
         routes = map_facts.traffic_routes
-        routes_valid = _same_version(routes, self._route_source)
+        routes_valid = same_version(routes, self._route_source)
         if routes_valid:
             self._route_source = routes
         route_cache_ms = _elapsed_ms(started)
@@ -201,12 +210,9 @@ class SpatialFieldModel:
 
         started = perf_counter()
         threat_key = self._enemy_force_key(enemy_forces)
-        cadence_due = (
-            self._threat_updated_at is None
-            or world.time < self._threat_updated_at
-            or world.time - self._threat_updated_at >= self.config.update_interval
+        threat_valid = threat_key == self._threat_key and not cadence_due(
+            world.time, self._threat_updated_at, self.config.update_interval
         )
-        threat_valid = threat_key == self._threat_key and not cadence_due
         threat_cache_ms = _elapsed_ms(started)
         threat_recompute_ms = 0.0
         if not threat_valid:
@@ -275,59 +281,36 @@ class SpatialFieldModel:
         self._maybe_log_performance(world.time, performance)
         return self._field
 
-    @staticmethod
-    def _saturate(value: float) -> float:
-        return 1.0 - math.exp(-max(0.0, value))
-
-    @staticmethod
-    def _kernel_squared(distance_squared: float, sigma: float) -> float:
-        return math.exp(-0.5 * distance_squared / (sigma * sigma))
-
     def _friendly_value(self, point: Point2, bases: BaseAwareness) -> float:
         raw = sum(
             (1.0 if base.is_main else self.config.frontier_base_weight)
-            * self._kernel_squared(
-                _distance_squared(point, base.position), self.config.friendly_sigma
+            * kernel_squared(
+                distance_squared(point, base.position), self.config.friendly_sigma
             )
             for base in bases
         )
-        return self._saturate(raw)
+        return saturate(raw)
 
     def _threat_and_confidence(
         self, point: Point2, enemy_forces: EnemyForceAwareness
     ) -> tuple[float, float]:
-        raw = confidence_weight = weighted_confidence = 0.0
-        for cluster in enemy_forces:
-            spread = (
-                self.config.threat_sigma + cluster.radius + cluster.position_uncertainty
-            )
-            locality = self._kernel_squared(
-                _distance_squared(point, cluster.center), spread
-            )
-            raw += (
-                cluster.combat_strength
-                * cluster.confidence
-                * locality
-                / self.config.full_threat_strength
-            )
-            if locality > 0.01:
-                weight = locality * max(cluster.combat_strength, 0.01)
-                confidence_weight += weight
-                weighted_confidence += weight * cluster.confidence
-        confidence = (
-            weighted_confidence / confidence_weight if confidence_weight > 0.0 else 1.0
+        raw, confidence = force_influence(
+            point,
+            enemy_forces,
+            sigma=self.config.threat_sigma,
+            full_strength=self.config.full_threat_strength,
         )
-        return self._saturate(raw), confidence
+        return saturate(raw), confidence
 
     def _choke_value(self, point: Point2, chokes: tuple[MapChoke, ...]) -> float:
         raw = sum(
             self._choke_narrowness(choke)
-            * self._kernel_squared(
-                _distance_squared(point, choke.position), self.config.choke_sigma
+            * kernel_squared(
+                distance_squared(point, choke.position), self.config.choke_sigma
             )
             for choke in chokes
         )
-        return self._saturate(raw)
+        return saturate(raw)
 
     def _choke_narrowness(self, choke: MapChoke) -> float:
         if choke.width is None:
@@ -338,14 +321,14 @@ class SpatialFieldModel:
         self, point: Point2, routes: tuple[tuple[Point2, ...], ...]
     ) -> float:
         raw = sum(
-            self._kernel_squared(
-                min(_distance_squared(point, route_point) for route_point in route),
+            kernel_squared(
+                min(distance_squared(point, route_point) for route_point in route),
                 self.config.route_sigma,
             )
             for route in routes
             if route
         )
-        return self._saturate(raw)
+        return saturate(raw)
 
     def _enemy_force_key(self, enemy_forces: EnemyForceAwareness) -> tuple:
         config = self.config
@@ -426,18 +409,6 @@ def sample_route_positions(route: MapRoute, spacing: float) -> tuple[Point2, ...
             )
         )
     return tuple(sampled)
-
-
-def _same_version(current: tuple, cached: tuple | None) -> bool:
-    """Identity is the O(1) version token; equality only runs when it fails."""
-
-    return current is cached or (cached is not None and current == cached)
-
-
-def _distance_squared(first: Point2, second: Point2) -> float:
-    dx = float(first.x - second.x)
-    dy = float(first.y - second.y)
-    return dx * dx + dy * dy
 
 
 def _elapsed_ms(started: float) -> float:

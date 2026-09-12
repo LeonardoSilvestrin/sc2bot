@@ -44,6 +44,30 @@ class MapChoke:
 
 
 @dataclass(frozen=True, slots=True)
+class MapRegion:
+    """One ground region from map analysis: a main, a natural, an open area.
+
+    ``points`` are the ``MapFacts.pathable_points`` samples that lie in it and
+    ``expansions`` the expansion slots inside it.
+    """
+
+    key: str
+    center: Point2
+    points: tuple[Point2, ...] = ()
+    expansions: tuple[Point2, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class MapPassage:
+    """One ground connection between two regions: a ramp or choke that joins
+    them, or a stretch of open border they share."""
+
+    key: str
+    position: Point2
+    regions: tuple[str, str]
+
+
+@dataclass(frozen=True, slots=True)
 class MapFacts:
     center: Point2
     own_start: Point2
@@ -63,6 +87,10 @@ class MapFacts:
     chokes: tuple[MapChoke, ...] = ()
     # Ground paths from likely enemy origins to currently held bases.
     traffic_routes: tuple[MapRoute, ...] = ()
+    # The coarse ground region graph: tens of regions joined by passages.
+    # Static like the topology above, and versioned the same way.
+    regions: tuple[MapRegion, ...] = ()
+    passages: tuple[MapPassage, ...] = ()
 
     def observation(self, key: str) -> MapObservation | None:
         return next((item for item in self.observations if item.key == key), None)
