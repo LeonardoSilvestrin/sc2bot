@@ -82,6 +82,6 @@ class AwarenessSnapshot:
     army: ArmyBelief = field(default_factory=_default_army_belief)
     spatial: SpatialField = field(default_factory=SpatialField)
     # Populated only on the tick a stable economy/army belief actually
-    # changes -- see ``AwarenessService``. ``BotRuntime`` is what turns
-    # these into real `chat_send` calls; Awareness itself performs no I/O.
-    chat_messages: tuple[str, ...] = ()
+    # changes. ``FrameProcessor`` writes these diagnostics to the log;
+    # Awareness itself performs no I/O.
+    belief_changes: tuple[str, ...] = ()

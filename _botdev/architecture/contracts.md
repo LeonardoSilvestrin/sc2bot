@@ -15,7 +15,7 @@
    lifetime rather than inventing a longer one.
 3. Awareness describes the world. Controller state, leases, cooldowns, and mission
    status never enter Awareness. It performs no I/O either: a stable belief change
-   travels as `AwarenessSnapshot.chat_messages`, and `FrameProcessor` sends it.
+   travels as `AwarenessSnapshot.belief_changes`, and `FrameProcessor` logs it.
 4. A behavior assessment reads Attention and Awareness only -- never mission
    state, leases, `bot.engine` or `bot.app` -- and returns a plain reading.
    `tests/test_behavior_architecture.py` checks the imports.
@@ -107,7 +107,7 @@ build AttentionSnapshot (AttentionService)
 update AwarenessSnapshot (AwarenessService): sightings, location freshness,
     enemy base memory and assessment, enemy force clusters, economy/army
     beliefs, macro posture, base security
-send stable belief changes to game chat (awareness.belief_changed)
+log stable belief changes (awareness.belief_changed)
 VisionService.begin_frame: expire requests, re-check visibility, read Orbital energy
 ScoutingVisionRequester.tick (may request vision)
 collect mission proposals from every behavior planner (Intel/ReaperHarass/
@@ -229,7 +229,7 @@ where applicable (`proposal_id`, `mission_id`, `deduplication_key`,
   confirmed bases or main force plus a ten-second heartbeat.
 - Beliefs: `awareness.world_belief` (economy and army beliefs with raw vs
   stable state and confidence, on change plus a ten-second heartbeat) and
-  `awareness.belief_changed` (one per chat announcement).
+  `awareness.belief_changed` (one per stable state transition).
 - Mission proposals: `proposal_created`, `proposal_admitted`,
   `proposal_rejected`.
 - Mission lifecycle: `mission_queued`, `mission_started`, `mission_blocked`,

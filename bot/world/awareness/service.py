@@ -230,13 +230,13 @@ class AwarenessService:
             posture_min_hold=self.posture_min_hold,
         )
 
-        chat_messages = tuple(
+        belief_changes = tuple(
             message
             for message in (
-                _belief_chat_message(
+                _belief_change_message(
                     "ECONOMY", previous_economy_stable, economy_belief.relative
                 ),
-                _belief_chat_message(
+                _belief_change_message(
                     "ARMY", previous_army_stable, army_belief.relative
                 ),
             )
@@ -274,11 +274,11 @@ class AwarenessService:
             spatial=self._spatial_model.update(
                 world, bases=bases, enemy_forces=enemy_forces
             ),
-            chat_messages=chat_messages,
+            belief_changes=belief_changes,
         )
 
 
-def _belief_chat_message(
+def _belief_change_message(
     label: str, previous: RelativePosition, assessment: RelativeAssessment
 ) -> str | None:
     """Render one ``[Awareness] LABEL: OLD -> NEW`` line, or ``None`` if the

@@ -181,8 +181,8 @@ with a running *estimate* of the enemy's, built in three layers:
    Before an axis has any evidence it stays `UNKNOWN`; afterwards staleness
    degrades it toward `EVEN`, never freezes it.
 
-A stable change is announced in game chat (`[Awareness] ARMY: EVEN -> BEHIND
-...`, logged as `awareness.belief_changed`). The army belief also feeds
+A stable change is written only to the logs (`awareness.belief_changed`); it is
+not announced in game chat. The army belief also feeds
 `RelativeStrength` (a supply comparison, with a unit-count fallback), the
 `GREED` gate of the macro posture, and the standing army's `CombatPosture`.
 

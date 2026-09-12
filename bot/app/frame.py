@@ -64,35 +64,23 @@ class FrameProcessor:
         world = self._world_observer.world_facts(bot, iteration=iteration)
         attention = AttentionService.build(world=world)
         awareness = self._awareness.update(attention)
-        await self._announce_belief_changes(bot, awareness)
+        self._log_belief_changes(awareness)
 
         await self._step_behavior(bot, attention, awareness)
         self._step_macro(bot, attention, awareness)
 
         self._telemetry.report(bot, attention, awareness)
 
-    async def _announce_belief_changes(
-        self, bot, awareness: AwarenessSnapshot
-    ) -> None:
-        """Speak a stable economy/army belief change in game chat.
+    def _log_belief_changes(self, awareness: AwarenessSnapshot) -> None:
+        """Log stable economy/army belief changes without exposing them in chat."""
 
-        ``AwarenessService`` decides *whether* a change happened (and
-        debounces it against flapping) -- this only performs the I/O, same
-        division as ``OpeningSelector``.
-        """
-
-        if not awareness.chat_messages:
-            return
-        chat_send = getattr(bot, "chat_send", None)
-        for message in awareness.chat_messages:
+        for message in awareness.belief_changes:
             self._logger.event(
                 "awareness.belief_changed",
                 component="world.awareness.belief",
                 game_time=awareness.updated_at,
                 data={"message": message},
             )
-            if callable(chat_send):
-                await chat_send(message)
 
     async def _step_behavior(
         self, bot, attention: AttentionSnapshot, awareness: AwarenessSnapshot

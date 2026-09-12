@@ -35,9 +35,6 @@ class FrameProcessorOrderTests(unittest.IsolatedAsyncioTestCase):
             calls.append("missions.tick")
             proposals.append(kwargs["proposals"])
 
-        async def chat_send(message):
-            calls.append("chat")
-
         proposals: list[tuple] = []
         logger = FakeLogger()
         processor = FrameProcessor(
@@ -48,7 +45,7 @@ class FrameProcessorOrderTests(unittest.IsolatedAsyncioTestCase):
             awareness=SimpleNamespace(
                 update=record(
                     "awareness.update",
-                    SimpleNamespace(chat_messages=("belief moved",), updated_at=42.0),
+                    SimpleNamespace(belief_changes=("belief moved",), updated_at=42.0),
                 )
             ),
             vision=SimpleNamespace(
@@ -78,14 +75,13 @@ class FrameProcessorOrderTests(unittest.IsolatedAsyncioTestCase):
                 side_effect=record("register_baseline_behaviors"),
             ),
         ):
-            await processor.process(SimpleNamespace(chat_send=chat_send), iteration=7)
+            await processor.process(SimpleNamespace(), iteration=7)
 
         self.assertEqual(
             calls,
             [
                 "observe",
                 "awareness.update",
-                "chat",
                 "vision.begin_frame",
                 "scouting_vision.tick",
                 "propose:intel",

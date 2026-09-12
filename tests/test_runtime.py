@@ -273,11 +273,11 @@ class RuntimePilotTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(observation_events[0]["component"], "world.attention")
         self.assertEqual(knowledge_events[0]["component"], "world.awareness")
 
-    async def test_runtime_announces_an_awareness_belief_change_in_chat(self):
+    async def test_runtime_logs_an_awareness_belief_change_without_chat(self):
         # Directly observed enemy workers outnumbering our own is hard proof
         # (see RelativeBeliefConfig.decisive_behind) -- ECONOMY
         # should flip UNKNOWN -> BEHIND on the very first tick and be
-        # announced in chat, with a matching structured log event.
+        # recorded only in the structured log.
         commands = FakeCommands()
         chat = FakeChat()
         bot = SimpleNamespace(
@@ -309,9 +309,7 @@ class RuntimePilotTests(unittest.IsolatedAsyncioTestCase):
         ):
             await runtime.on_step(bot, iteration=1)
 
-        self.assertEqual(len(chat.messages), 1)
-        self.assertIn("ECONOMY", chat.messages[0])
-        self.assertIn("UNKNOWN -> BEHIND", chat.messages[0])
+        self.assertEqual(chat.messages, [])
 
         belief_events = [
             event
@@ -319,7 +317,8 @@ class RuntimePilotTests(unittest.IsolatedAsyncioTestCase):
             if event["name"] == "awareness.belief_changed"
         ]
         self.assertEqual(len(belief_events), 1)
-        self.assertEqual(belief_events[0]["data"]["message"], chat.messages[0])
+        self.assertIn("ECONOMY", belief_events[0]["data"]["message"])
+        self.assertIn("UNKNOWN -> BEHIND", belief_events[0]["data"]["message"])
         logged = {event["name"] for event in runtime.logger.events}
         self.assertIn("awareness.world_belief", logged)
         self.assertIn("knowledge.enemy_model", logged)

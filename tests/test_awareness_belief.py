@@ -623,9 +623,9 @@ class AwarenessServiceChatTests(unittest.TestCase):
         self.assertLess(result.relative_strength.score, 0.5)
         self.assertIsNot(result.army.relative.raw_state, RelativePosition.AHEAD)
         self.assertIs(result.army.relative.stable_state, RelativePosition.UNKNOWN)
-        self.assertEqual(result.chat_messages, ())
+        self.assertEqual(result.belief_changes, ())
 
-    def test_chat_fires_exactly_when_stable_state_changes_and_axes_are_independent(
+    def test_change_is_reported_when_stable_state_changes_and_axes_are_independent(
         self,
     ):
         service = AwarenessService()
@@ -652,9 +652,9 @@ class AwarenessServiceChatTests(unittest.TestCase):
             )
             return service.update(AttentionSnapshot(world))
 
-        # Nothing known yet -- both axes start and stay UNKNOWN, no chat.
+        # Nothing known yet -- both axes start and stay UNKNOWN, no change.
         first = tick(10.0, own_workers=10)
-        self.assertEqual(first.chat_messages, ())
+        self.assertEqual(first.belief_changes, ())
         self.assertEqual(first.economy.relative.stable_state, RelativePosition.UNKNOWN)
         self.assertEqual(first.army.relative.stable_state, RelativePosition.UNKNOWN)
 
@@ -665,18 +665,18 @@ class AwarenessServiceChatTests(unittest.TestCase):
             own_workers=10,
             enemy_units=tuple(_enemy_worker_unit(tag) for tag in range(1, 16)),
         )
-        self.assertEqual(len(second.chat_messages), 1)
-        self.assertIn("ECONOMY", second.chat_messages[0])
-        self.assertIn("UNKNOWN -> BEHIND", second.chat_messages[0])
+        self.assertEqual(len(second.belief_changes), 1)
+        self.assertIn("ECONOMY", second.belief_changes[0])
+        self.assertIn("UNKNOWN -> BEHIND", second.belief_changes[0])
         self.assertEqual(second.army.relative.stable_state, RelativePosition.UNKNOWN)
 
-        # Unchanged world the next tick -- no new belief change, no chat.
+        # Unchanged world the next tick -- no new belief change.
         third = tick(
             21.0,
             own_workers=10,
             enemy_units=tuple(_enemy_worker_unit(tag) for tag in range(1, 16)),
         )
-        self.assertEqual(third.chat_messages, ())
+        self.assertEqual(third.belief_changes, ())
         self.assertEqual(third.economy.relative.stable_state, RelativePosition.BEHIND)
 
         # Workers dropping out of vision do not change the belief.
@@ -687,7 +687,7 @@ class AwarenessServiceChatTests(unittest.TestCase):
                 _enemy_worker_unit(tag, visible_now=False) for tag in range(1, 16)
             ),
         )
-        self.assertEqual(fourth.chat_messages, ())
+        self.assertEqual(fourth.belief_changes, ())
 
         # A real enemy army against our none -- ARMY flips on its own,
         # without re-announcing ECONOMY.
@@ -699,9 +699,9 @@ class AwarenessServiceChatTests(unittest.TestCase):
                 _enemy_combat_unit(100, supply_cost=12.0),
             ),
         )
-        self.assertEqual(len(fifth.chat_messages), 1)
-        self.assertIn("ARMY", fifth.chat_messages[0])
-        self.assertIn("UNKNOWN -> BEHIND", fifth.chat_messages[0])
+        self.assertEqual(len(fifth.belief_changes), 1)
+        self.assertIn("ARMY", fifth.belief_changes[0])
+        self.assertIn("UNKNOWN -> BEHIND", fifth.belief_changes[0])
 
     def test_an_early_even_trade_does_not_lock_the_army_behind(self):
         # The game log that motivated the estimate: one Marine against one
@@ -726,7 +726,7 @@ class AwarenessServiceChatTests(unittest.TestCase):
                 )
             )
             army_messages.extend(
-                message for message in result.chat_messages if "ARMY" in message
+                message for message in result.belief_changes if "ARMY" in message
             )
 
         self.assertIsNot(result.army.relative.stable_state, RelativePosition.BEHIND)

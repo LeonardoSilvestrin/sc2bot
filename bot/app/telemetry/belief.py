@@ -8,8 +8,8 @@ from .gate import ChangeGate
 
 class BeliefTelemetry:
     """Dumps the full economy/army belief, including *why it has not changed
-    yet* (raw vs stable, confidence) -- not just the final stable state, which
-    the chat announcements already cover."""
+    yet* (raw vs stable, confidence), alongside the transition-only
+    ``awareness.belief_changed`` log."""
 
     def __init__(self, *, logger: BotLogger) -> None:
         self._logger = logger
