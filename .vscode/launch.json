@@ -78,6 +78,21 @@
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
       "justMyCode": false
+    },
+    {
+      "name": "abrir worktree de agente",
+      "type": "node-terminal",
+      "request": "launch",
+      "cwd": "${workspaceFolder}",
+      "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"${workspaceFolder}\\_botdev\\agent.ps1\" ${input:agentName}"
+    }
+  ],
+  "inputs": [
+    {
+      "id": "agentName",
+      "type": "promptString",
+      "description": "Nome do agente (worktree agents/<nome>). Reseta pro último commit da branch atual.",
+      "default": "claude"
     }
   ]
 }
