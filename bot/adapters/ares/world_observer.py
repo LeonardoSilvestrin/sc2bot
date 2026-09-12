@@ -408,7 +408,9 @@ class AresWorldObserver:
             bot, "pending_structures", "structure_pending_counts"
         )
 
-        structure_types = set(structure_existing)
+        structure_types: set[UnitTypeId] = {
+            key for key in structure_existing if isinstance(key, UnitTypeId)
+        }
         structure_types.update(
             key for key in building_counter if isinstance(key, UnitTypeId)
         )
@@ -428,14 +430,16 @@ class AresWorldObserver:
             if self._looks_like_structure(bot, unit_type, known_structure_types):
                 structure_types.add(unit_type)
 
-        unit_types = set(unit_existing)
+        unit_types: set[UnitTypeId] = {
+            key for key in unit_existing if isinstance(key, UnitTypeId)
+        }
         unit_types.update(
             key for key in explicit_unit_pending if isinstance(key, UnitTypeId)
         )
         worker_type = self._safe_attr(bot, "worker_type")
         if isinstance(worker_type, UnitTypeId):
             unit_types.add(worker_type)
-        for structure_type in structure_existing:
+        for structure_type in structure_types:
             unit_types.update(TRAIN_INFO.get(structure_type, ()))
         for unit_type in (*build_order_types, *order_pending):
             if not self._looks_like_structure(bot, unit_type, structure_types):
