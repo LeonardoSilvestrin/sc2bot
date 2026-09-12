@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass
+from pathlib import Path
 
 from bot.adapters.ares import AresWorldObserver
 from bot.app.mission_registry import build_executor_factories
@@ -35,7 +36,12 @@ from bot.macro import MacroDiagnostics, MacroPlanner, MacroPlannerConfig
 from bot.ports.logging import BotLogger
 from bot.world.awareness import AwarenessService, SpatialModelConfig
 
-from .debug import SpatialDebugConfig, SpatialDebugView
+from .debug import (
+    SpatialDebugConfig,
+    SpatialDebugView,
+    SpatialSnapshotConfig,
+    SpatialSnapshotExporter,
+)
 from .frame import FrameProcessor
 from .opening import OpeningSelector
 from .telemetry import FrameTelemetry
@@ -67,6 +73,8 @@ def compose_bot(
     spatial_model_config: SpatialModelConfig | None = None,
     spatial_sample_spacing: int = 10,
     spatial_debug_config: SpatialDebugConfig | None = None,
+    spatial_snapshot_config: SpatialSnapshotConfig | None = None,
+    spatial_snapshot_directory: Path | None = None,
     rng: random.Random | None = None,
 ) -> BotComposition:
     rng = rng or random.Random()
@@ -168,6 +176,11 @@ def compose_bot(
             logger=logger, missions=missions, standing_planner=standing_planner
         ),
         spatial_debug=SpatialDebugView(spatial_debug_config),
+        spatial_snapshot=SpatialSnapshotExporter(
+            config=spatial_snapshot_config,
+            output_directory=spatial_snapshot_directory,
+            logger=logger,
+        ),
     )
     return BotComposition(
         opening=OpeningSelector(rng=rng),

@@ -1,9 +1,11 @@
+from pathlib import Path
+
 from ares import AresBot
 from sc2.data import Result
 
 from bot.adapters.logging import NullBotLogger
 from bot.app import BotRuntime
-from bot.app.debug import SpatialDebugConfig
+from bot.app.debug import SpatialDebugConfig, SpatialSnapshotConfig
 from bot.ports import BotLogger
 
 
@@ -13,7 +15,10 @@ class MyBot(AresBot):
         game_step_override: int | None = None,
         *,
         logger: BotLogger | None = None,
+        spatial_sample_spacing: int = 10,
         spatial_debug_config: SpatialDebugConfig | None = None,
+        spatial_snapshot_config: SpatialSnapshotConfig | None = None,
+        spatial_snapshot_directory: Path | None = None,
     ):
         """Initiate custom bot
 
@@ -27,7 +32,10 @@ class MyBot(AresBot):
         self.bot_logger = logger or NullBotLogger()
         self.runtime = BotRuntime(
             logger=self.bot_logger,
+            spatial_sample_spacing=spatial_sample_spacing,
             spatial_debug_config=spatial_debug_config,
+            spatial_snapshot_config=spatial_snapshot_config,
+            spatial_snapshot_directory=spatial_snapshot_directory,
         )
 
     async def on_start(self) -> None:

@@ -6,8 +6,10 @@ and ignored local artifacts. Runtime bot code must stay under `bot/`.
 - `architecture/`: decisions and contracts that are part of the repository.
 - `notebook/`: research notes (in Portuguese) on Ares features the bot does
   not use yet; open the matching file before starting on one of those fronts.
-- `logs/`: local JSONL logs, ignored by Git. `poetry run python run.py
-  --bot-log events` writes them; `scripts/log_viewer.html` reads them.
+- `logs/`: ignored, per-game local artifacts. `poetry run python run.py
+  --bot-log events` writes `game-<timestamp>/game.jsonl`, which
+  `scripts/log_viewer.html` reads. `--spatial-snapshot` additionally writes
+  periodic SVGs under that game's `spatial/` directory.
 - `reports/`, `tmp/`: generated analysis and scratch files, ignored by Git.
 
 The ladder entrypoint must always compose the bot with `NullBotLogger`

@@ -110,8 +110,39 @@ To display the in-game spatial/territory debug view during a local game, run:
 poetry run python run.py --spatial-view
 ```
 
-In VS Code, the same options are available in **Run and Debug** as
-`spatial play` and `logs + spatial play`.
+The view uses a denser 5-unit lattice (the normal bot uses 10), producing
+roughly four times as many map samples. Override it when needed with
+`--spatial-view-spacing 4` or a larger value for a lighter view.
+
+To write the observational SVG snapshot every 30 seconds of game time, run:
+
+```bash
+poetry run python run.py --spatial-snapshot
+```
+
+Use `--spatial-snapshot-interval 15` to change the game-time interval. This
+also opens the structured game log, and keeps both artifacts together:
+
+```text
+_botdev/logs/game-<UTC timestamp>/
+|-- game.jsonl
+`-- spatial/
+    |-- latest.svg
+    |-- territory-0030.svg
+    `-- territory-0060.svg
+```
+
+Both the offline snapshot and the in-game view are disabled by default and
+are never enabled for ladder games.
+
+In VS Code, **Run and Debug** offers these launch modes:
+
+- `sem logs nem view`
+- `só logs`
+- `logs e view`
+- `logs e snapshot SVG`
+- `logs, view e snapshot SVG`
+- `log visualizer`
 
 ## Start Developing Your Bot
 

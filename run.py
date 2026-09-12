@@ -18,7 +18,7 @@ sys.path.append("ares-sc2")
 import yaml
 
 from bot.adapters.logging import JsonlBotLogger, NullBotLogger
-from bot.app.debug import SpatialDebugConfig
+from bot.app.debug import SpatialDebugConfig, SpatialSnapshotConfig
 from bot.main import MyBot
 from ladder import run_ladder_game
 
@@ -43,6 +43,15 @@ CONFIG_FILE: str = "config.yml"
 MAP_FILE_EXT: str = "SC2Map"
 MY_BOT_NAME: str = "MyBotName"
 MY_BOT_RACE: str = "MyBotRace"
+DEFAULT_SPATIAL_SPACING = 10
+DEFAULT_SPATIAL_VIEW_SPACING = 5
+
+
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return parsed
 
 
 def parse_local_args(args=None):
@@ -57,6 +66,25 @@ def parse_local_args(args=None):
         "--spatial-view",
         action="store_true",
         help="Draw the spatial territory debug view in local games.",
+    )
+    parser.add_argument(
+        "--spatial-view-spacing",
+        type=_positive_int,
+        default=DEFAULT_SPATIAL_VIEW_SPACING,
+        metavar="UNITS",
+        help="Spacing between debug-view samples (default: 5; normal: 10).",
+    )
+    parser.add_argument(
+        "--spatial-snapshot",
+        action="store_true",
+        help="Write an offline territory SVG every 30 seconds of game time.",
+    )
+    parser.add_argument(
+        "--spatial-snapshot-interval",
+        type=float,
+        default=30.0,
+        metavar="SECONDS",
+        help="Game-time interval between offline SVG snapshots (default: 30).",
     )
     local_args, _ = parser.parse_known_args(args)
     return local_args
@@ -80,7 +108,8 @@ def main():
                 race = Race[config[MY_BOT_RACE].title()]
 
     is_ladder = "--LadderServer" in sys.argv
-    if local_args.bot_log == "events" and not is_ladder:
+    snapshots_enabled = local_args.spatial_snapshot and not is_ladder
+    if (local_args.bot_log == "events" or snapshots_enabled) and not is_ladder:
         bot_logger = JsonlBotLogger(Path("_botdev/logs"))
         print(f"Bot structured log: {bot_logger.path}")
     else:
@@ -89,11 +118,28 @@ def main():
         enabled=local_args.spatial_view,
         show_grid=True,
     )
+    spatial_sample_spacing = (
+        local_args.spatial_view_spacing
+        if local_args.spatial_view
+        else DEFAULT_SPATIAL_SPACING
+    )
+    spatial_snapshot_config = SpatialSnapshotConfig(
+        enabled=snapshots_enabled,
+        interval_seconds=local_args.spatial_snapshot_interval,
+    )
+    spatial_snapshot_directory = (
+        bot_logger.session_directory / "spatial"
+        if isinstance(bot_logger, JsonlBotLogger)
+        else None
+    )
     bot1 = Bot(
         race,
         MyBot(
             logger=bot_logger,
+            spatial_sample_spacing=spatial_sample_spacing,
             spatial_debug_config=spatial_debug_config,
+            spatial_snapshot_config=spatial_snapshot_config,
+            spatial_snapshot_directory=spatial_snapshot_directory,
         ),
         bot_name,
     )

@@ -21,7 +21,7 @@ class JsonlBotLoggerTests(unittest.TestCase):
             logger.close()
 
             lines = (
-                (Path(directory) / "pilot.jsonl")
+                (Path(directory) / "pilot" / "game.jsonl")
                 .read_text(encoding="utf-8")
                 .splitlines()
             )
@@ -38,7 +38,7 @@ class JsonlBotLoggerTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 JsonlBotLogger(root / "logs", session_name="../outside")
 
-            self.assertFalse((root / "outside.jsonl").exists())
+            self.assertFalse((root / "outside").exists())
 
     def test_does_not_append_to_an_existing_session(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -48,3 +48,11 @@ class JsonlBotLoggerTests(unittest.TestCase):
 
             with self.assertRaises(FileExistsError):
                 JsonlBotLogger(root, session_name="pilot")
+
+    def test_exposes_one_directory_for_all_game_artifacts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            logger = JsonlBotLogger(Path(directory), session_name="pilot")
+
+            self.assertEqual(logger.session_directory, Path(directory) / "pilot")
+            self.assertEqual(logger.path, logger.session_directory / "game.jsonl")
+            logger.close()

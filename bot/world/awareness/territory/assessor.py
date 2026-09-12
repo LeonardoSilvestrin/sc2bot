@@ -252,6 +252,7 @@ class TerritoryAssessor:
                 )
                 for base in bases
             ),
+            friendly_forces=tuple(sources.friendly_forces),
             frontline=frontline(samples, topology.edges),
             confidence=mean_confidence(tuple(sample.reading for sample in samples)),
             updated_at=now,

@@ -17,9 +17,11 @@ class JsonlBotLogger:
         name = session_name or f"game-{timestamp}"
         if not name.strip() or name in {".", ".."} or Path(name).name != name:
             raise ValueError("session_name must be a non-empty file name")
-        self.path = (directory / f"{name}.jsonl").resolve()
-        if self.path.parent != directory:
+        self.session_directory = (directory / name).resolve()
+        if self.session_directory.parent != directory:
             raise ValueError("session_name must stay inside the log directory")
+        self.session_directory.mkdir(exist_ok=False)
+        self.path = self.session_directory / "game.jsonl"
         self._file: TextIO = self.path.open("x", encoding="utf-8")
         self._lock = Lock()
 

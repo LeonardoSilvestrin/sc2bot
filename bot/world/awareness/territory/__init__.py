@@ -2,6 +2,7 @@ from .assessor import TerritoryAssessor
 from .config import TerritoryConfig
 from .model import (
     BaseTerritory,
+    FriendlyForce,
     PassageTerritory,
     RegionTerritory,
     TerritoryControl,
@@ -12,6 +13,7 @@ from .model import (
 
 __all__ = [
     "BaseTerritory",
+    "FriendlyForce",
     "PassageTerritory",
     "RegionTerritory",
     "TerritoryAssessor",

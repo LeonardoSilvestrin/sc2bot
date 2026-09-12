@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import random
+from pathlib import Path
 
 from bot.behavior.defense import DefenseConfig
 from bot.behavior.harass.banshee import BansheeHarassConfig
@@ -14,7 +15,7 @@ from bot.ports.logging import BotLogger
 from bot.world.awareness import SpatialModelConfig
 
 from .composition import compose_bot
-from .debug import SpatialDebugConfig
+from .debug import SpatialDebugConfig, SpatialSnapshotConfig
 
 
 class BotRuntime:
@@ -42,6 +43,8 @@ class BotRuntime:
         spatial_model_config: SpatialModelConfig | None = None,
         spatial_sample_spacing: int = 10,
         spatial_debug_config: SpatialDebugConfig | None = None,
+        spatial_snapshot_config: SpatialSnapshotConfig | None = None,
+        spatial_snapshot_directory: Path | None = None,
         rng: random.Random | None = None,
     ) -> None:
         self.logger = logger
@@ -60,6 +63,8 @@ class BotRuntime:
             spatial_model_config=spatial_model_config,
             spatial_sample_spacing=spatial_sample_spacing,
             spatial_debug_config=spatial_debug_config,
+            spatial_snapshot_config=spatial_snapshot_config,
+            spatial_snapshot_directory=spatial_snapshot_directory,
             rng=rng,
         )
         self._opening = composition.opening

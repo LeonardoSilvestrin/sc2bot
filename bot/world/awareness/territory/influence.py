@@ -18,33 +18,14 @@ from ..spatial.kernel import (
     saturate,
 )
 from .config import TerritoryConfig
-from .model import TerritoryControl, TerritoryReading
-
-
-@dataclass(frozen=True, slots=True)
-class FriendlyForce:
-    """One group of our own combat units.
-
-    Shaped like ``EnemyForceCluster`` so both sides spread influence through
-    the same ``force_influence``. Our units are seen now and exactly where
-    they are, so a friendly force never drifts and is always certain.
-    ``anti_ground_strength`` is the part of it that can fight ground units.
-    """
-
-    center: Point2
-    radius: float
-    combat_strength: float
-    anti_ground_strength: float
-    unit_count: int
-    position_uncertainty: float = 0.0
-    confidence: float = 1.0
+from .model import FriendlyForce, TerritoryControl, TerritoryReading
 
 
 @dataclass(frozen=True, slots=True)
 class InfluenceSources:
     """Everything that projects territorial influence during one update."""
 
-    friendly_forces: tuple[ForcePresence, ...] = ()
+    friendly_forces: tuple[FriendlyForce, ...] = ()
     # Our townhalls.
     friendly_sites: tuple[Point2, ...] = ()
     enemy_forces: tuple[ForcePresence, ...] = ()

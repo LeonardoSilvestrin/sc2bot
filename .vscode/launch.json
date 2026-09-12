@@ -2,18 +2,7 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "logs play",
-      "type": "debugpy",
-      "request": "launch",
-      "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
-      "program": "${workspaceFolder}\\run.py",
-      "cwd": "${workspaceFolder}",
-      "args": ["--bot-log", "events"],
-      "console": "integratedTerminal",
-      "justMyCode": false
-    },
-    {
-      "name": "play",
+      "name": "sem logs nem view",
       "type": "debugpy",
       "request": "launch",
       "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
@@ -24,29 +13,64 @@
       "justMyCode": false
     },
     {
-      "name": "spatial play",
+      "name": "só logs",
       "type": "debugpy",
       "request": "launch",
       "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
       "program": "${workspaceFolder}\\run.py",
       "cwd": "${workspaceFolder}",
-      "args": ["--bot-log", "off", "--spatial-view"],
+      "args": ["--bot-log", "events"],
       "console": "integratedTerminal",
       "justMyCode": false
     },
     {
-      "name": "logs + spatial play",
+      "name": "logs e view",
       "type": "debugpy",
       "request": "launch",
       "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
       "program": "${workspaceFolder}\\run.py",
       "cwd": "${workspaceFolder}",
-      "args": ["--bot-log", "events", "--spatial-view"],
+      "args": [
+        "--bot-log",
+        "events",
+        "--spatial-view",
+        "--spatial-view-spacing",
+        "5"
+      ],
       "console": "integratedTerminal",
       "justMyCode": false
     },
     {
-      "name": "Open Log Viewer",
+      "name": "logs e snapshot SVG",
+      "type": "debugpy",
+      "request": "launch",
+      "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "program": "${workspaceFolder}\\run.py",
+      "cwd": "${workspaceFolder}",
+      "args": ["--bot-log", "events", "--spatial-snapshot"],
+      "console": "integratedTerminal",
+      "justMyCode": false
+    },
+    {
+      "name": "logs, view e snapshot SVG",
+      "type": "debugpy",
+      "request": "launch",
+      "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "program": "${workspaceFolder}\\run.py",
+      "cwd": "${workspaceFolder}",
+      "args": [
+        "--bot-log",
+        "events",
+        "--spatial-view",
+        "--spatial-view-spacing",
+        "5",
+        "--spatial-snapshot"
+      ],
+      "console": "integratedTerminal",
+      "justMyCode": false
+    },
+    {
+      "name": "log visualizer",
       "type": "debugpy",
       "request": "launch",
       "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",

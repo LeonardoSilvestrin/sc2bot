@@ -17,7 +17,7 @@ from ares.consts import BUILD_CHOICES, CYCLE, DEBUG, TEST_OPPONENT_ID
 _OPENING_ANNOUNCEMENTS: dict[str, str] = {
     "BioThreeOneOne": "Reaper expand into Bio 3-1-1.",
     "BansheeCloak": "Reaper expand into cloaked Banshee harass.",
-    "BattleMech": "get ready baby",
+    "BattleMech": "",
 }
 
 

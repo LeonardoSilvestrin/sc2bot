@@ -43,6 +43,7 @@ from .spatial import (
 )
 from .territory import (
     BaseTerritory,
+    FriendlyForce,
     PassageTerritory,
     RegionTerritory,
     TerritoryConfig,
@@ -63,6 +64,7 @@ __all__ = [
     "BaseEstimate",
     "BaseSecurityLevel",
     "BaseTerritory",
+    "FriendlyForce",
     "EconomyBelief",
     "EconomyBeliefConfig",
     "EnemyArmyKnowledge",

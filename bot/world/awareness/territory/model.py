@@ -31,6 +31,19 @@ class TerritoryControl(Enum):
 
 
 @dataclass(frozen=True, slots=True)
+class FriendlyForce:
+    """One friendly cluster already used to calculate territorial influence."""
+
+    center: Point2
+    radius: float
+    combat_strength: float
+    anti_ground_strength: float
+    unit_count: int
+    position_uncertainty: float = 0.0
+    confidence: float = 1.0
+
+
+@dataclass(frozen=True, slots=True)
 class TerritoryReading:
     """Both sides' influence at one place, and who that says holds it.
 
@@ -149,6 +162,10 @@ class TerritorySnapshot:
     regions: tuple[RegionTerritory, ...] = field(default_factory=tuple)
     passages: tuple[PassageTerritory, ...] = field(default_factory=tuple)
     bases: tuple[BaseTerritory, ...] = field(default_factory=tuple)
+    # Exact friendly clusters consumed by this territory update. Keeping
+    # them on the immutable snapshot lets diagnostics display the calculation
+    # inputs without clustering the units a second time.
+    friendly_forces: tuple[FriendlyForce, ...] = field(default_factory=tuple)
     # Approximate points where friendly and enemy dominance meet.
     frontline: tuple[Point2, ...] = field(default_factory=tuple)
     # Mean sample confidence: how much of the map we currently know.
