@@ -232,9 +232,10 @@ where applicable (`proposal_id`, `mission_id`, `deduplication_key`,
   stable state and confidence, on change plus a ten-second heartbeat) and
   `awareness.belief_changed` (one per stable state transition).
 - Territory: `knowledge.territory` (samples and regions counted per control,
-  frontline size with a few representative points, and ground
-  access/security for every held base and every region holding an expansion
-  slot), when one of those regions changes control or security step, a base
+  mean confidence, frontline size with a few representative points, and
+  control, confidence and ground security -- plus the layered model's
+  security, kept for comparison -- for every held base and every region
+  holding an expansion slot), when one of those regions changes control or security step, a base
   changes region, or the frontline appears or disappears, plus a ten-second
   heartbeat. See [territory.md](territory.md).
 - Spatial cost: `spatial.perf` and `territory.perf`, each on a ten-second

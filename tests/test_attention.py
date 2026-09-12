@@ -146,6 +146,19 @@ class AresWorldObserverTests(unittest.TestCase):
             [("border:region:0|region:1", Point2((20.5, 5.5)))],
         )
 
+    def test_pathable_visibility_reads_the_vision_grid_under_each_sample(self):
+        observer = AresWorldObserver()
+        points = (Point2((5.5, 5.5)), Point2((15.5, 15.5)))
+        grid = np.zeros((26, 26), dtype=np.uint8)
+        grid[5, 5] = 2
+        grid[15, 15] = 1  # fogged: seen before, not now
+        bot = SimpleNamespace(
+            state=SimpleNamespace(visibility=SimpleNamespace(data_numpy=grid))
+        )
+
+        self.assertEqual(observer._pathable_visibility(bot, points), (True, False))
+        self.assertEqual(observer._pathable_visibility(SimpleNamespace(), points), ())
+
     def test_map_topology_and_traffic_routes_retry_until_ares_provides_them(self):
         observer = AresWorldObserver()
         calls = []

@@ -46,6 +46,14 @@ class TerritoryConfig:
     # A reading keeps its class until it is past a threshold by this much.
     hysteresis: float = 0.05
 
+    # --- confidence --------------------------------------------------------
+    # How long a look at a place still tells what is there: the window Ares
+    # remembers an unseen enemy unit for (``EnemyForceHeuristics.stale_after``).
+    observation_stale_after: float = 30.0
+    # Raw enemy influence that could stand anywhere unseen. Remembered enemy
+    # sources only vouch for a place where they clearly outweigh it.
+    undetected_presence: float = 0.25
+
     # --- ground access -----------------------------------------------------
     # Enemy start regions always send enemy ground forces, scouted or not.
     enemy_origin_strength: float = 1.0
@@ -61,6 +69,8 @@ class TerritoryConfig:
             "infrastructure_weight",
             "infrastructure_sigma",
             "dominance_epsilon",
+            "observation_stale_after",
+            "undetected_presence",
             "perf_heartbeat_interval",
         ):
             if getattr(self, name) <= 0.0:

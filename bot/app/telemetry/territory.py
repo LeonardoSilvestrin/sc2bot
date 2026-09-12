@@ -87,6 +87,16 @@ class TerritoryTelemetry:
                             if base.region is None
                             else round(base.region.ground_security, 2)
                         ),
+                        "layered_ground_security": (
+                            None
+                            if base.region is None
+                            else round(1.0 - base.region.layered_ground_access, 2)
+                        ),
+                        "confidence": (
+                            None
+                            if base.region is None
+                            else round(base.region.reading.confidence, 2)
+                        ),
                     }
                     for base in territory.bases
                 ],
@@ -96,7 +106,11 @@ class TerritoryTelemetry:
                         "center": _xy(region.center),
                         "control": region.control.name,
                         "dominance": round(region.reading.dominance, 2),
+                        "confidence": round(region.reading.confidence, 2),
                         "ground_security": round(region.ground_security, 2),
+                        "layered_ground_security": round(
+                            1.0 - region.layered_ground_access, 2
+                        ),
                     }
                     for region in expansion_regions
                 ],

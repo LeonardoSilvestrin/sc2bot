@@ -247,9 +247,13 @@ reachable a place is). Friendly influence comes from our army as well as our
 bases; enemy influence reuses the force clusters with their confidence and
 position uncertainty. Every sample, region and passage carries a
 `TerritoryReading` classified `FRIENDLY`, `CONTESTED`, `ENEMY` or
-`UNCONTROLLED`; a coarse `frontline` marks where dominance changes sign; and
-each region has a `ground_access` walked over the static region graph that
-`AresWorldObserver` extracts once from MapAnalyzer.
+`UNCONTROLLED`, with a `confidence` that is how well we know the enemy side
+there -- fresh vision or current enemy sources, never the mere absence of
+known enemies, so unwatched empty space is `UNCONTROLLED` at confidence 0. A
+coarse `frontline` marks where dominance changes sign, and each region has a
+`ground_access` walked over the static region graph that `AresWorldObserver`
+extracts once from MapAnalyzer, with passages held by a ground-capable army
+as the only barriers.
 
 Territory is in shadow mode: computed on a one-second cadence, tested and
 logged (`knowledge.territory`), but read by no behavior, macro or engine code

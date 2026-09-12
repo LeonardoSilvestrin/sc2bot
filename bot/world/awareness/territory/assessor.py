@@ -19,8 +19,8 @@ from .influence import (
     InfluenceSources,
     classify,
     friendly_forces,
+    mean_confidence,
     read_point,
-    weighted_confidence,
 )
 from .model import (
     BaseTerritory,
@@ -31,6 +31,7 @@ from .model import (
     TerritorySample,
     TerritorySnapshot,
 )
+from .observation import ObservationMemory
 from .topology import TerritoryTopology, build_topology, ground_access
 
 COMPONENT = "world.awareness.territory"
@@ -40,12 +41,13 @@ COMPONENT = "world.awareness.territory"
 class TerritoryAssessor:
     """Derives the territory reading on a strategic cadence.
 
-    Its two halves live at different rates. ``TerritoryTopology`` -- region
+    Its parts live at different rates. ``TerritoryTopology`` -- region
     membership, the passage graph, enemy origins, lattice neighbours -- is
     rebuilt only when the map topology changes version (identity first,
-    equality as the fallback, as in ``SpatialFieldModel``). Influence,
-    classification, the frontline and ground access are recomputed once per
-    ``update_interval``; in between the previous snapshot is returned as is.
+    equality as the fallback, as in ``SpatialFieldModel``). What we see is
+    remembered every frame. Influence, classification, the frontline and
+    ground access are recomputed once per ``update_interval``; in between
+    the previous snapshot is returned as is.
     """
 
     config: TerritoryConfig = field(default_factory=TerritoryConfig)
@@ -55,6 +57,9 @@ class TerritoryAssessor:
     last_update_ms: float = field(default=0.0, init=False)
     _topology: TerritoryTopology | None = field(default=None, init=False, repr=False)
     _snapshot: TerritorySnapshot | None = field(default=None, init=False, repr=False)
+    _observations: ObservationMemory = field(
+        default_factory=ObservationMemory, init=False, repr=False
+    )
     _updated_at: float | None = field(default=None, init=False, repr=False)
     _points_source: tuple[Point2, ...] | None = field(
         default=None, init=False, repr=False
@@ -80,6 +85,11 @@ class TerritoryAssessor:
         enemy: EnemyAwareness,
     ) -> TerritorySnapshot:
         rebuilt = self._refresh_topology(world, spatial)
+        assert self._topology is not None
+        if rebuilt:
+            self._observations.reset(len(self._topology.points))
+        # Every frame, so a glimpse between two updates still counts.
+        self._observations.record(world.map.pathable_visibility, world.time)
         if (
             not rebuilt
             and self._snapshot is not None
@@ -90,7 +100,6 @@ class TerritoryAssessor:
             return self._snapshot
 
         started = perf_counter()
-        assert self._topology is not None
         # Hysteresis follows each place's previous class; a new topology
         # re-indexes every place, so it starts over.
         previous = None if rebuilt else self._snapshot
@@ -145,9 +154,13 @@ class TerritoryAssessor:
         previous: TerritorySnapshot | None,
     ) -> TerritorySnapshot:
         config = self.config
+        now = world.time
+        stale_after = config.observation_stale_after
+        observations = self._observations
         samples_before = () if previous is None else previous.samples
         regions_before = () if previous is None else previous.regions
         passages_before = () if previous is None else previous.passages
+
         samples = tuple(
             TerritorySample(
                 position=point,
@@ -156,6 +169,7 @@ class TerritoryAssessor:
                     sources,
                     config,
                     _previous_control(samples_before, index),
+                    observations.quality(index, now, stale_after),
                 ),
                 region=topology.sample_regions[index],
             )
@@ -169,6 +183,7 @@ class TerritoryAssessor:
                 ),
                 sources,
                 _previous_control(regions_before, index),
+                observations.quality(topology.center_samples[index], now, stale_after),
             )
             for index, region in enumerate(topology.regions)
         )
@@ -178,6 +193,7 @@ class TerritoryAssessor:
                 sources,
                 config,
                 _previous_control(passages_before, index),
+                observations.quality(topology.passage_samples[index], now, stale_after),
             )
             for index, passage in enumerate(topology.passages)
         )
@@ -189,11 +205,16 @@ class TerritoryAssessor:
             enemy_presence[origin] = max(
                 enemy_presence[origin], config.enemy_origin_strength
             )
+        passes = [1.0 - reading.hold for reading in node_readings]
+        region_count = len(region_readings)
+        # Passages are the barriers; the layered walk, where regions block
+        # too, is kept alongside for comparison in shadow mode.
         access = ground_access(
             topology.adjacency,
             enemy_presence,
-            [1.0 - reading.hold for reading in node_readings],
+            [1.0] * region_count + passes[region_count:],
         )
+        layered_access = ground_access(topology.adjacency, enemy_presence, passes)
 
         regions = tuple(
             RegionTerritory(
@@ -202,6 +223,7 @@ class TerritoryAssessor:
                 expansions=region.expansions,
                 reading=region_readings[index],
                 ground_access=access[index],
+                layered_ground_access=layered_access[index],
             )
             for index, region in enumerate(topology.regions)
         )
@@ -231,8 +253,8 @@ class TerritoryAssessor:
                 for base in bases
             ),
             frontline=frontline(samples, topology.edges),
-            confidence=weighted_confidence(tuple(sample.reading for sample in samples)),
-            updated_at=world.time,
+            confidence=mean_confidence(tuple(sample.reading for sample in samples)),
+            updated_at=now,
         )
 
     def _region_reading(
@@ -241,21 +263,28 @@ class TerritoryAssessor:
         members: tuple[TerritoryReading, ...],
         sources: InfluenceSources,
         previous: TerritoryControl | None,
+        observation: float,
     ) -> TerritoryReading:
-        """A region reads as the mean of its samples; one too small to hold
-        a sample reads at its centre."""
+        """A region reads as the mean of its samples, unwatched ones included;
+        one too small to hold a sample reads at its centre."""
 
         if not members:
-            return read_point(region.center, sources, self.config, previous)
+            return read_point(
+                region.center, sources, self.config, previous, observation
+            )
+        count = len(members)
         return classify(
-            friendly=sum(reading.friendly_influence for reading in members)
-            / len(members),
-            enemy=sum(reading.enemy_influence for reading in members) / len(members),
-            confidence=weighted_confidence(members),
+            friendly=sum(reading.friendly_influence for reading in members) / count,
+            enemy=sum(reading.enemy_influence for reading in members) / count,
+            confidence=mean_confidence(members),
             config=self.config,
             previous=previous,
             friendly_military=sum(reading.friendly_military for reading in members)
-            / len(members),
+            / count,
+            friendly_ground_denial=sum(
+                reading.friendly_ground_denial for reading in members
+            )
+            / count,
         )
 
     def _maybe_log_performance(

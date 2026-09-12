@@ -294,13 +294,13 @@ class SpatialFieldModel:
     def _threat_and_confidence(
         self, point: Point2, enemy_forces: EnemyForceAwareness
     ) -> tuple[float, float]:
-        raw, confidence = force_influence(
+        influence = force_influence(
             point,
             enemy_forces,
             sigma=self.config.threat_sigma,
             full_strength=self.config.full_threat_strength,
         )
-        return saturate(raw), confidence
+        return saturate(influence.raw), influence.confidence
 
     def _choke_value(self, point: Point2, chokes: tuple[MapChoke, ...]) -> float:
         raw = sum(

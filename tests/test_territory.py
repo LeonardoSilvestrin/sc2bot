@@ -20,6 +20,9 @@ from bot.world.awareness import AwarenessService, TerritoryConfig, TerritoryCont
 from bot.world.awareness.bases import BaseAssessment, BaseAwareness, BaseSecurityLevel
 from bot.world.awareness.enemy import (
     EnemyAwareness,
+    EnemyBaseAssessment,
+    EnemyBaseAwareness,
+    EnemyBaseStatus,
     EnemyForceAwareness,
     EnemyForceCluster,
 )
@@ -46,22 +49,31 @@ def row(*xs: float, y: float = 50.0) -> tuple[Point2, ...]:
 
 
 def army(
-    position: Point2, supply: float, *, first_tag: int = 1, worker: bool = False
+    position: Point2,
+    supply: float,
+    *,
+    first_tag: int = 1,
+    worker: bool = False,
+    ground: bool = True,
 ) -> tuple[UnitSnapshot, ...]:
     """``supply`` worth of 2-supply units standing in a line centred on
-    ``position``."""
+    ``position``; ``ground=False`` makes them anti-air only."""
 
     count = max(1, round(supply / 2.0))
+    if worker:
+        unit_type = UnitTypeId.SCV
+    else:
+        unit_type = UnitTypeId.MARAUDER if ground else UnitTypeId.VIKINGFIGHTER
     return tuple(
         UnitSnapshot(
             tag=first_tag + index,
-            unit_type=UnitTypeId.SCV if worker else UnitTypeId.MARAUDER,
+            unit_type=unit_type,
             position=Point2((position.x + 0.5 * (index - (count - 1) / 2), position.y)),
             health_percentage=1.0,
-            is_flying=False,
+            is_flying=not ground,
             is_worker=worker,
-            can_attack_air=False,
-            can_attack_ground=True,
+            can_attack_air=not ground,
+            can_attack_ground=ground,
             supply_cost=supply / count,
         )
         for index in range(count)
@@ -91,9 +103,33 @@ def cluster(
     )
 
 
-def enemy(*clusters: EnemyForceCluster) -> EnemyAwareness:
+def enemy_base(position: Point2, confidence: float) -> EnemyBaseAssessment:
+    return EnemyBaseAssessment(
+        key="expansion:0",
+        position=position,
+        status=EnemyBaseStatus.CONFIRMED,
+        economic_value=0.4,
+        worker_count_estimate=0,
+        workers_counted_at=None,
+        air_defense=0.0,
+        air_defense_confidence=confidence,
+        ground_defense=0.0,
+        ground_defense_confidence=confidence,
+        last_confirmed_at=0.0,
+        last_checked_at=0.0,
+        confidence=confidence,
+        is_stale=False,
+    )
+
+
+def enemy(
+    *clusters: EnemyForceCluster, bases: tuple[EnemyBaseAssessment, ...] = ()
+) -> EnemyAwareness:
     return EnemyAwareness(
-        sightings=(), locations=(), forces=EnemyForceAwareness(clusters=clusters)
+        sightings=(),
+        locations=(),
+        bases=EnemyBaseAwareness(bases),
+        forces=EnemyForceAwareness(clusters=clusters),
     )
 
 
@@ -117,6 +153,7 @@ def world(
     passages: tuple[MapPassage, ...] = (),
     enemy_starts: tuple[Point2, ...] = (),
     own_start: Point2 = OWN_START,
+    visibility: tuple[bool, ...] = (),
 ) -> WorldFacts:
     return WorldFacts(
         iteration=int(now),
@@ -132,6 +169,7 @@ def world(
             own_start=own_start,
             enemy_starts=enemy_starts,
             pathable_points=points,
+            pathable_visibility=visibility,
             regions=regions,
             passages=passages,
         ),
@@ -186,6 +224,16 @@ CHAIN_PASSAGES = (
     MapPassage("p2", Point2((70, 50)), ("natural", "main")),
 )
 CHAIN_POINTS = row(10, 20, 40, 50, 60, 80, 90)
+
+
+def chain(own_units: tuple[UnitSnapshot, ...] = ()) -> WorldFacts:
+    return world(
+        CHAIN_POINTS,
+        own_units=own_units,
+        regions=CHAIN_REGIONS,
+        passages=CHAIN_PASSAGES,
+        enemy_starts=row(10),
+    )
 
 
 class DominanceTests(unittest.TestCase):
@@ -270,7 +318,47 @@ class FriendlyMilitaryInfluenceTests(unittest.TestCase):
         self.assertEqual(snapshot.samples[0].reading.friendly_influence, 0.0)
 
 
-class EnemyUncertaintyTests(unittest.TestCase):
+class ConfidenceTests(unittest.TestCase):
+    def test_unwatched_empty_space_is_uncontrolled_with_no_confidence(self):
+        snapshot = assess(world(row(10, 50), visibility=(True, False)))
+
+        watched, unwatched = snapshot.samples
+        self.assertEqual((watched.control, watched.reading.confidence), (U, 1.0))
+        self.assertEqual((unwatched.control, unwatched.reading.confidence), (U, 0.0))
+        self.assertAlmostEqual(snapshot.confidence, 0.5)
+
+    def test_a_look_fades_and_a_glimpse_between_updates_still_counts(self):
+        points = row(50)
+        assessor = TerritoryAssessor(TerritoryConfig(update_interval=1.0))
+
+        assess(world(points, now=10.0, visibility=(True,)), assessor=assessor)
+        faded = assess(world(points, now=25.0, visibility=(False,)), assessor=assessor)
+        forgotten = assess(world(points, now=40.0), assessor=assessor)
+        # In vision only on a frame the cadence skips.
+        assess(world(points, now=40.5, visibility=(True,)), assessor=assessor)
+        glimpsed = assess(world(points, now=41.0), assessor=assessor)
+
+        self.assertAlmostEqual(faded.samples[0].reading.confidence, 0.5)
+        self.assertEqual(forgotten.samples[0].reading.confidence, 0.0)
+        self.assertAlmostEqual(glimpsed.samples[0].reading.confidence, 1.0 - 0.5 / 30.0)
+
+    def test_a_remembered_enemy_base_vouches_for_less_than_its_own_confidence(self):
+        position = Point2((50, 50))
+
+        half = assess(
+            world((position,)),
+            enemy_awareness=enemy(bases=(enemy_base(position, 0.5),)),
+        ).samples[0]
+        sure = assess(
+            world((position,)),
+            enemy_awareness=enemy(bases=(enemy_base(position, 1.0),)),
+        ).samples[0]
+
+        self.assertIs(half.control, E)
+        self.assertGreater(half.reading.confidence, 0.0)
+        self.assertLess(half.reading.confidence, 0.5)
+        self.assertGreater(sure.reading.confidence, half.reading.confidence)
+
     def test_stale_enemy_force_reads_wider_weaker_and_less_certain(self):
         center, flank = Point2((50, 50)), Point2((80, 50))
         facts = world((center, flank))
@@ -283,6 +371,10 @@ class EnemyUncertaintyTests(unittest.TestCase):
         forgotten = assess(
             facts, enemy_awareness=enemy(cluster(center, confidence=0.0))
         )
+        watched = assess(
+            world((center, flank), visibility=(True, False)),
+            enemy_awareness=enemy(cluster(center)),
+        )
 
         self.assertLess(
             stale.samples[0].reading.enemy_influence,
@@ -292,8 +384,14 @@ class EnemyUncertaintyTests(unittest.TestCase):
             stale.samples[1].reading.enemy_influence,
             fresh.samples[1].reading.enemy_influence,
         )
-        self.assertAlmostEqual(stale.samples[0].reading.confidence, 0.4)
-        self.assertAlmostEqual(fresh.samples[0].reading.confidence, 1.0)
+        self.assertLess(
+            stale.samples[0].reading.confidence, fresh.samples[0].reading.confidence
+        )
+        # Unwatched, even a fresh army vouches only for itself, and its far
+        # tail for almost nothing.
+        self.assertLess(fresh.samples[0].reading.confidence, 1.0)
+        self.assertLess(fresh.samples[1].reading.confidence, 0.3)
+        self.assertEqual(watched.samples[0].reading.confidence, 1.0)
         self.assertEqual(forgotten.samples[0].reading.enemy_influence, 0.0)
         self.assertIs(forgotten.samples[0].control, U)
 
@@ -355,38 +453,36 @@ class GroundAccessTests(unittest.TestCase):
             self.assertAlmostEqual(actual, expected)
 
     def test_holding_the_natural_secures_the_main_behind_it(self):
-        def regions(own_units):
-            snapshot = assess(
-                world(
-                    CHAIN_POINTS,
-                    own_units=own_units,
-                    regions=CHAIN_REGIONS,
-                    passages=CHAIN_PASSAGES,
-                    enemy_starts=row(10),
-                )
-            )
-            return {region.key: region for region in snapshot.regions}
-
-        open_map = regions(())
-        held = regions(army(Point2((50, 50)), 20))
+        open_map = assess(chain()).region("main")
+        held = assess(chain(army(Point2((50, 50)), 20)))
+        natural, main = held.region("natural"), held.region("main")
+        assert open_map is not None and natural is not None and main is not None
 
         # Security emerges from topology: nothing held, nothing secure.
-        self.assertLess(open_map["main"].ground_security, 0.05)
-        self.assertEqual(held["enemy_main"].ground_security, 0.0)
-        self.assertIs(held["natural"].control, F)
-        self.assertGreater(
-            held["main"].ground_security, held["natural"].ground_security
+        self.assertLess(open_map.ground_security, 0.05)
+        enemy_main = held.region("enemy_main")
+        assert enemy_main is not None
+        self.assertEqual(enemy_main.ground_security, 0.0)
+        self.assertIs(natural.control, F)
+        self.assertGreater(main.ground_security, natural.ground_security)
+        self.assertGreater(main.ground_security, 0.8)
+
+    def test_one_army_is_one_barrier_per_passage_not_one_per_node(self):
+        snapshot = assess(chain(army(Point2((50, 50)), 20)))
+
+        first, second = snapshot.passages
+        main = snapshot.region("main")
+        assert main is not None
+        self.assertAlmostEqual(
+            main.ground_access,
+            (1.0 - first.reading.hold) * (1.0 - second.reading.hold),
         )
-        self.assertGreater(held["main"].ground_security, 0.9)
+        # The first model also counted the natural itself as a third wall.
+        self.assertLess(main.layered_ground_access, main.ground_access)
 
     def test_bases_make_regions_ours_but_block_no_ground_passage(self):
         snapshot = assess(
-            world(
-                CHAIN_POINTS,
-                regions=CHAIN_REGIONS,
-                passages=CHAIN_PASSAGES,
-                enemy_starts=row(10),
-            ),
+            chain(),
             bases=BaseAwareness(
                 (
                     own_base("base:natural", Point2((50, 50))),
@@ -397,6 +493,17 @@ class GroundAccessTests(unittest.TestCase):
 
         natural, main = snapshot.region("natural"), snapshot.region("main")
         assert natural is not None and main is not None
+        self.assertIs(natural.control, F)
+        self.assertLess(main.ground_security, 0.05)
+
+    def test_anti_air_units_are_presence_but_deny_no_ground_passage(self):
+        snapshot = assess(chain(army(Point2((50, 50)), 20, ground=False)))
+
+        natural = snapshot.at(Point2((50, 50)))
+        main = snapshot.region("main")
+        assert natural is not None and main is not None
+        self.assertGreater(natural.reading.friendly_military, 0.5)
+        self.assertEqual(natural.reading.friendly_ground_denial, 0.0)
         self.assertIs(natural.control, F)
         self.assertLess(main.ground_security, 0.05)
 
@@ -433,12 +540,7 @@ class GroundAccessTests(unittest.TestCase):
 
 class TerritoryStructureTests(unittest.TestCase):
     def test_topology_is_built_once_and_readings_follow_the_cadence(self):
-        facts = world(
-            CHAIN_POINTS,
-            regions=CHAIN_REGIONS,
-            passages=CHAIN_PASSAGES,
-            enemy_starts=row(10),
-        )
+        facts = chain()
         assessor = TerritoryAssessor(TerritoryConfig(update_interval=1.0))
 
         first = assess(facts, assessor=assessor)
@@ -484,13 +586,7 @@ class TerritoryStructureTests(unittest.TestCase):
         self.assertEqual(events[-1]["data"]["updates"], 3)
 
     def test_awareness_snapshot_places_our_bases_in_their_regions(self):
-        facts = world(
-            CHAIN_POINTS,
-            own_units=army(Point2((50, 50)), 20),
-            regions=CHAIN_REGIONS,
-            passages=CHAIN_PASSAGES,
-            enemy_starts=row(10),
-        )
+        facts = chain(army(Point2((50, 50)), 20))
 
         territory = AwarenessService().update(AttentionSnapshot(facts)).territory
 
@@ -498,7 +594,7 @@ class TerritoryStructureTests(unittest.TestCase):
         (base,) = territory.bases
         assert base.region is not None
         self.assertEqual(base.region.key, "main")
-        self.assertGreater(base.region.ground_security, 0.9)
+        self.assertGreater(base.region.ground_security, 0.8)
         self.assertIs(
             territory.region_at(Point2((52, 51))), territory.region("natural")
         )

@@ -35,18 +35,23 @@ class TerritoryReading:
     """Both sides' influence at one place, and who that says holds it.
 
     ``friendly_influence`` and ``enemy_influence`` are saturated (0..1), each
-    side's army and bases together; ``friendly_military`` is our army's part
-    alone. ``dominance`` is their normalized difference, -1 (enemy) to +1
-    (ours). ``confidence`` is how current the reading is: our side always
-    is, the enemy side is as current as the forces behind it.
+    side's army and bases together. Of ours, ``friendly_military`` is the army
+    alone and ``friendly_ground_denial`` the part of it that can fight ground
+    units. ``dominance`` is the normalized difference, -1 (enemy) to +1 (ours).
+
+    ``confidence`` is how well we know the enemy side of the reading -- ours is
+    always known. It rests on how recently we looked at the place and on how
+    current the enemy sources reaching it are, never on the mere absence of
+    known enemies: unwatched empty space is UNCONTROLLED at confidence 0.
     """
 
     friendly_influence: float = 0.0
     enemy_influence: float = 0.0
     dominance: float = 0.0
     control: TerritoryControl = TerritoryControl.UNCONTROLLED
-    confidence: float = 1.0
+    confidence: float = 0.0
     friendly_military: float = 0.0
+    friendly_ground_denial: float = 0.0
 
     @property
     def presence(self) -> float:
@@ -58,12 +63,12 @@ class TerritoryReading:
     def hold(self) -> float:
         """How firmly we hold the place against ground passage, 0..1.
 
-        Our army's influence where we dominate; nothing where the place is
-        contested or the enemy's. A base makes a place ours but stops no one,
-        so it counts toward who holds a place, never toward blocking it.
+        Our ground-capable army's influence where we dominate; nothing where
+        the place is contested or the enemy's. A base makes a place ours but
+        stops no one, and neither does a unit that only shoots air.
         """
 
-        return self.friendly_military * max(0.0, self.dominance)
+        return self.friendly_ground_denial * max(0.0, self.dominance)
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,8 +89,10 @@ class RegionTerritory:
     """One ground region: who holds it, and how exposed it is by ground.
 
     ``ground_access`` is 1.0 where an enemy ground force walks in freely and
-    0.0 where every way in is firmly held. The region's own control does not
-    shield it -- only what stands between it and the enemy does.
+    0.0 where every way in is firmly held. Only passages are barriers: a
+    region says who holds it, a passage how blocked the way through is, so
+    one army is not counted once for every node its influence reaches. The
+    region's own control never shields it.
     """
 
     key: str
@@ -93,6 +100,10 @@ class RegionTerritory:
     expansions: tuple[Point2, ...]
     reading: TerritoryReading
     ground_access: float = 1.0
+    # Shadow comparison, to drop once matches decide between the two: the
+    # same walk with regions acting as barriers too (the first model). Never
+    # above ``ground_access``.
+    layered_ground_access: float = 1.0
 
     @property
     def control(self) -> TerritoryControl:
@@ -140,8 +151,8 @@ class TerritorySnapshot:
     bases: tuple[BaseTerritory, ...] = field(default_factory=tuple)
     # Approximate points where friendly and enemy dominance meet.
     frontline: tuple[Point2, ...] = field(default_factory=tuple)
-    # Presence-weighted confidence over every sample.
-    confidence: float = 1.0
+    # Mean sample confidence: how much of the map we currently know.
+    confidence: float = 0.0
     updated_at: float = 0.0
 
     def region(self, key: str) -> RegionTerritory | None:

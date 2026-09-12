@@ -10,6 +10,7 @@ from sc2.position import Point2
 
 from bot.world.attention import MapFacts, MapPassage, MapRegion
 
+from ..spatial.kernel import distance_squared
 from .frontline import lattice_edges
 from .model import locate_region
 
@@ -37,6 +38,10 @@ class TerritoryTopology:
     # Lattice axis neighbours, for the frontline.
     edges: tuple[tuple[int, int], ...]
     slots: tuple[tuple[Point2, str], ...]
+    # The sample nearest each passage and each region centre: where our
+    # observation of a place that is not itself a sample is read.
+    passage_samples: tuple[int | None, ...]
+    center_samples: tuple[int | None, ...]
 
     def locate(self, position: Point2) -> str | None:
         return locate_region(
@@ -101,6 +106,12 @@ def build_topology(
         origins=origins,
         edges=lattice_edges(points, spacing),
         slots=slots,
+        passage_samples=tuple(
+            _nearest_sample(passage.position, points) for passage in passages
+        ),
+        center_samples=tuple(
+            _nearest_sample(region.center, points) for region in regions
+        ),
     )
 
 
@@ -112,12 +123,13 @@ def ground_access(
     """How freely an enemy ground force reaches each node, 0..1.
 
     ``sources[n]`` is enemy force already standing at node ``n`` and
-    ``passes[n]`` how freely one crosses it (1 - our hold). What leaves a
-    node is ``max(source, arrived * pass)``, and a node's access is the best
-    of what stands there and what arrives -- so its own hold never shields
-    it, only the regions and passages in front of it do. It is the widest
-    path under products of factors no greater than 1, so it settles in
-    Dijkstra order: ``O((V + E) log V)`` on tens of nodes.
+    ``passes[n]`` how freely one crosses it (1 - our hold, or 1 for a node
+    that is no barrier). What leaves a node is ``max(source, arrived *
+    pass)``, and a node's access is the best of what stands there and what
+    arrives -- so its own hold never shields it, only what lies in front of
+    it does. It is the widest path under products of factors no greater
+    than 1, so it settles in Dijkstra order: ``O((V + E) log V)`` on tens of
+    nodes.
     """
 
     count = len(adjacency)
@@ -140,4 +152,12 @@ def ground_access(
     return tuple(
         min(1.0, max(source, arrival))
         for source, arrival in zip(sources, arrived, strict=True)
+    )
+
+
+def _nearest_sample(position: Point2, points: Sequence[Point2]) -> int | None:
+    return min(
+        range(len(points)),
+        key=lambda index: distance_squared(position, points[index]),
+        default=None,
     )

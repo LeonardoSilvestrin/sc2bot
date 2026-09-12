@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Iterable
-from typing import Protocol
+from typing import NamedTuple, Protocol
 
 from sc2.position import Point2
 
@@ -38,7 +38,23 @@ class ForcePresence(Protocol):
     def combat_strength(self) -> float: ...
 
     @property
+    def anti_ground_strength(self) -> float: ...
+
+    @property
     def confidence(self) -> float: ...
+
+
+class ForceInfluence(NamedTuple):
+    """What believed forces add up to at one point, before saturation."""
+
+    # Each force's strength, scaled by its confidence and by how far it reaches.
+    raw: float
+    # Locality- and strength-weighted confidence of the forces that reach the
+    # point; 1.0 where none does.
+    confidence: float
+    # ``raw`` as if every force were seen this instant: how much the forces
+    # would weigh here, however much they are still believed.
+    evidence: float
 
 
 def saturate(value: float) -> float:
@@ -61,29 +77,32 @@ def force_influence(
     *,
     sigma: float,
     full_strength: float,
-) -> tuple[float, float]:
-    """Unsaturated influence of believed forces at ``point``, and its confidence.
+    ground_only: bool = False,
+) -> ForceInfluence:
+    """Unsaturated influence of believed forces at ``point``.
 
     Each force spreads over ``sigma`` plus its own radius and how far it may
     have moved since it was seen, and weighs ``strength * confidence /
     full_strength``: a stale force reaches wider but weaker, and fades out as
-    its confidence does. The confidence is the locality- and strength-weighted
-    mean of the forces that reach the point, or 1.0 where none does.
+    its confidence does. ``ground_only`` counts only the strength that can
+    fight ground units.
     """
 
-    raw = confidence_weight = weighted_confidence = 0.0
+    raw = evidence = confidence_weight = weighted_confidence = 0.0
     for force in forces:
+        strength = force.anti_ground_strength if ground_only else force.combat_strength
         spread = sigma + force.radius + force.position_uncertainty
         locality = kernel_squared(distance_squared(point, force.center), spread)
-        raw += force.combat_strength * force.confidence * locality / full_strength
+        raw += strength * force.confidence * locality / full_strength
+        evidence += strength * locality / full_strength
         if locality > _CONFIDENCE_LOCALITY:
-            weight = locality * max(force.combat_strength, _MIN_CONFIDENCE_STRENGTH)
+            weight = locality * max(strength, _MIN_CONFIDENCE_STRENGTH)
             confidence_weight += weight
             weighted_confidence += weight * force.confidence
     confidence = (
         weighted_confidence / confidence_weight if confidence_weight > 0.0 else 1.0
     )
-    return raw, confidence
+    return ForceInfluence(raw=raw, confidence=confidence, evidence=evidence)
 
 
 def same_version(current: tuple, cached: tuple | None) -> bool:

@@ -106,6 +106,9 @@ class AresWorldObserver:
         self._map_chokes: tuple[MapChoke, ...] = ()
         self._map_regions: tuple[MapRegion, ...] = ()
         self._map_passages: tuple[MapPassage, ...] = ()
+        self._visibility_cells: tuple[
+            tuple[Point2, ...] | None, list[int], list[int]
+        ] = (None, [], [])
         self._routing_grid = None
         self._traffic_signature: tuple[tuple[float, float], ...] | None = None
         self._traffic_routes: tuple[MapRoute, ...] = ()
@@ -1195,6 +1198,31 @@ class AresWorldObserver:
                 return False
         return True
 
+    def _pathable_visibility(
+        self, bot, points: tuple[Point2, ...]
+    ) -> tuple[bool, ...]:
+        """Which pathable samples are in vision this frame, aligned with them.
+
+        One vectorised read of the visibility grid (2 = visible now, as in
+        ``_base_location_visible``); the cells are indexed once per topology.
+        """
+
+        visibility = self._safe_attr(self._safe_attr(bot, "state"), "visibility")
+        grid = self._safe_attr(visibility, "data_numpy")
+        if grid is None or not points:
+            return ()
+        if self._visibility_cells[0] is not points:
+            self._visibility_cells = (
+                points,
+                [math.floor(point.y) for point in points],
+                [math.floor(point.x) for point in points],
+            )
+        _, rows, columns = self._visibility_cells
+        try:
+            return tuple(bool(value) for value in (grid[rows, columns] == 2))
+        except (AttributeError, IndexError, TypeError, ValueError):
+            return ()
+
     def _routing_tools(self, bot):
         """MapAnalyzer's pathfinder and static grid; ``None`` while unavailable."""
 
@@ -1347,6 +1375,7 @@ class AresWorldObserver:
                 expansions=self._expansions(bot),
                 pathable_points=pathable_points,
                 pathable_sample_spacing=float(self.spatial_sample_spacing),
+                pathable_visibility=self._pathable_visibility(bot, pathable_points),
                 chokes=map_chokes,
                 traffic_routes=self._ground_traffic_routes(bot, raw_own_structures),
                 regions=map_regions,

@@ -84,6 +84,9 @@ class MapFacts:
     # same tuples each frame, so a new tuple means a new topology version.
     pathable_points: tuple[Point2, ...] = ()
     pathable_sample_spacing: float = 10.0
+    # Whether each pathable sample is in vision this frame, aligned with
+    # ``pathable_points``; empty when the adapter cannot tell.
+    pathable_visibility: tuple[bool, ...] = ()
     chokes: tuple[MapChoke, ...] = ()
     # Ground paths from likely enemy origins to currently held bases.
     traffic_routes: tuple[MapRoute, ...] = ()
