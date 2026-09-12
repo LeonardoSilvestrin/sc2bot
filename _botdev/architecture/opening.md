@@ -1,8 +1,11 @@
 # Openings
 
-`terran_builds.yml` activates the Ares BuildOrderRunner with two openings,
-both starting from the same Reaper expand:
+`terran_builds.yml` activates the Ares BuildOrderRunner with three openings,
+all starting from the same Reaper expand:
 
+- `BattleMech` swaps the Factory onto the Barracks' Reactor for Hellions and
+  adds one cloaked Banshee, then grows into mech with the third base (below).
+  It is currently the only opening any cycle picks.
 - `BioThreeOneOne` converges on the common Bio 3-1-1 structure: three
   Barracks, one Factory, one Starport, Stim, Combat Shield, +1 Infantry
   Weapons, and two Medivacs.
@@ -19,15 +22,11 @@ race's `Cycle` list; `BuildSelection: Cycle` only actually cycles when
 picks uniformly at random from the same configured `Cycle` (the opponent id's
 entry if there is one, otherwise the enemy race's), calls
 `build_order_runner.switch_opening`, and announces the choice in game chat
-(`Plan: Reaper expand into Bio 3-1-1.` or `Plan: Reaper expand into cloaked
-Banshee harass.`). List order no longer decides anything: every race's cycle
-lists both openings, so each plays about half the time.
-
-When `config.yml` sets `Debug: True`, the lookup uses Ares' `TEST_OPPONENT_ID`
-(`test_123`) instead, whose `Cycle` is `[BansheeCloak]` -- a way to test that
-opener locally regardless of the roll. `config.yml` currently has
-`Debug: True`, with a TODO to revert it, so every game plays `BansheeCloak`
-until that is switched back.
+(for instance `Plan: Reaper expand into Hellions, a Banshee and mech.`). List
+order no longer decides anything. While the main build moves to mech, though,
+every race's cycle -- and `test_123`'s, which `config.yml`'s `Debug: True`
+selects instead -- lists only `BattleMech`, so every game plays it. Adding
+another opening back to a cycle is all it takes to roll between them again.
 
 ## Handoff to macro
 
@@ -44,6 +43,23 @@ runner reports `build_completed`, nothing is protected and `MacroPlanner` owns
 production, expansions, and composition -- see
 [macro-planner.md](macro-planner.md) for how it picks the right convergence
 goals for whichever opening actually ran.
+
+## BattleMech
+
+After the shared Reaper expand, the Barracks builds a Reactor while the
+Factory goes down. When both are finished, `addonswap factory barracksreactor`
+-- Ares' own `AddonSwap` behavior -- flies the Factory onto the Reactor and the
+Barracks to the Factory's old spot, and the Factory makes four Hellions two
+at a time. A single Starport builds its own Tech Lab for one Banshee and
+Cloaking Field, and the natural becomes an Orbital.
+
+The rest of the build is the `battle_mech()` goal set's, in
+`bot/macro/strategy/profiles.py`, under the `MECH` doctrine: Hellions,
+Cyclones, Siege Tanks and Banshees. Its structure timing is keyed on bases
+rather than on the clock -- `ProductionGoal.townhall_minimums` raises the
+Factory floor to three and the Starport floor to two once the third Command
+Center is started, and the two new Factories take Tech Labs. The Banshee raid
+runs for this opening as well (`BuildStrategicIntent`).
 
 ## BansheeCloak
 

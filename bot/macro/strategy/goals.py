@@ -48,10 +48,21 @@ class ProductionGoal:
     vespene_rate_for_first_extra: float | None = None
     vespene_rate_per_extra: float = 0.0
     minimum_utilization: float = 0.75
+    # ``(townhalls, minimum)`` pairs: a build's own "with the third base, add
+    # two Factories" timing. Townhalls count the one under construction, so
+    # the structures go down with the base rather than after it.
+    townhall_minimums: tuple[tuple[int, int], ...] = ()
 
     def __post_init__(self) -> None:
         if self.minimum < 0 or self.maximum < self.minimum:
             raise ValueError("production counts must satisfy 0 <= minimum <= maximum")
+        for townhalls, minimum in self.townhall_minimums:
+            if townhalls <= 0:
+                raise ValueError("townhall_minimums townhall counts must be positive")
+            if not self.minimum <= minimum <= self.maximum:
+                raise ValueError(
+                    "townhall_minimums must lie between minimum and maximum"
+                )
         for value in (
             self.mineral_rate_for_first_extra,
             self.vespene_rate_for_first_extra,
@@ -62,6 +73,18 @@ class ProductionGoal:
             raise ValueError("income increments must not be negative")
         if not 0.0 <= self.minimum_utilization <= 1.0:
             raise ValueError("minimum_utilization must be between zero and one")
+
+    def minimum_for(self, townhalls: int) -> int:
+        """The floor with this many townhalls, never below ``minimum``."""
+
+        return max(
+            (
+                minimum
+                for threshold, minimum in self.townhall_minimums
+                if townhalls >= threshold
+            ),
+            default=self.minimum,
+        )
 
     def target_for_income(self, *, minerals: float, vespene: float) -> int:
         """Return a bounded target; either resource stream may demand capacity."""

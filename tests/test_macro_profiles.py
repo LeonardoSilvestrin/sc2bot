@@ -49,6 +49,12 @@ class MacroConfigForOpeningTests(unittest.TestCase):
             UnitTypeId.BANSHEE, {goal.unit_type for goal in config.goals.army}
         )
 
+    def test_battle_mech_opening_resolves_the_mech_profile(self):
+        config = macro_config_for_opening("BattleMech")
+
+        self.assertEqual(config.goals.opening_name, "BattleMech")
+        self.assertIsNone(config.reference_build)
+
     def test_unknown_or_unresolved_opening_falls_back_to_the_default_profile(self):
         default = MacroPlannerConfig()
 

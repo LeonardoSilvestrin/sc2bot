@@ -47,9 +47,10 @@ def assess_capacity(
     """Decide how much production infrastructure the demand justifies.
 
     Army debt on its own is not a reason to build: existing structures have
-    to be busy first. Two floors are exempt, because neither is a reaction
-    to demand -- the strategy's own opening minimum, and the reference
-    build's "a standard game has this many by now" benchmark. Everything
+    to be busy first. Three floors are exempt, because none is a reaction
+    to demand -- the strategy's own opening minimum, the minimum it declares
+    for the number of bases taken, and the reference build's "a standard
+    game has this many by now" benchmark. Everything
     above them requires a unit actually waiting on this structure type *and*
     sustained utilization of what already exists.
     """
@@ -67,10 +68,13 @@ def assess_capacity(
             if config.reference_build is not None
             else 0
         )
-        floor = min(goal.maximum, max(goal.minimum, reference_floor))
+        townhall_floor = goal.minimum_for(economy.townhalls.total)
+        floor = min(goal.maximum, max(townhall_floor, reference_floor))
         desired = floor
         if count.total < goal.minimum:
             reason = "production_below_opening_floor"
+        elif count.total < townhall_floor:
+            reason = "production_below_townhall_floor"
         elif count.total < reference_floor:
             reason = "production_below_reference_build_benchmark"
         elif goal.structure_type not in producers_in_demand:

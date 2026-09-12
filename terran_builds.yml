@@ -13,32 +13,61 @@ BuildChoices:
     # test_123 is active if Debug: True (`config.yml`) -- use this to force a
     # specific opening for a local pilot game without touching the ladder-safe
     # cycles below (UseData: false means those always resolve to Cycle[0]).
+    #
+    # Every cycle is pinned to BattleMech while the main build moves to mech.
+    # BioThreeOneOne and BansheeCloak stay defined below, just never picked.
     test_123:
         BotName: Test
         Cycle:
-            - BansheeCloak
+            - BattleMech
     Protoss:
         BotName: Protoss
         Cycle:
-            - BioThreeOneOne
-            - BansheeCloak
+            - BattleMech
     Terran:
         BotName: Terran
         Cycle:
-            - BioThreeOneOne
-            - BansheeCloak
+            - BattleMech
     Zerg:
         BotName: Zerg
         Cycle:
-            - BioThreeOneOne
-            - BansheeCloak
+            - BattleMech
     Random:
         BotName: Random
         Cycle:
-            - BioThreeOneOne
-            - BansheeCloak
+            - BattleMech
 
 Builds:
+    # Reaper expand into mech. The Barracks builds the Reactor, and the
+    # Factory swaps onto it (Ares' `addonswap`) to double up on Hellions
+    # while a single Tech Lab Starport makes a cloaked Banshee. Nothing past
+    # that belongs here: two more Factories and the second Starport follow the
+    # third base, which is macro's call (`battle_mech()` in
+    # `bot/macro/strategy/profiles.py`).
+    BattleMech:
+        AutoSupplyAtSupply: 30
+        ConstantWorkerProductionTill: 50
+        PersistentWorker: false
+        ShouldHandleGasSteal: true
+        OpeningBuildOrder:
+            - 14 supply @ ramp
+            - 16 barracks @ ramp
+            - 16 gas
+            - 0 orbital
+            - 0 reaper
+            - 19 expand
+            - 19 barracksreactor
+            - 20 supply @ ramp
+            - 20 factory
+            - 21 gas
+            - 22 addonswap factory barracksreactor
+            - 22 starport
+            - 22 hellion *4
+            - 26 starporttechlab
+            - 28 banshee
+            - 30 bansheecloak
+            - 30 orbital
+
     # Safe TvX pilot: Reaper expand into the standard Bio 3-1-1 convergence.
     # The goal is two bases, 3 Barracks, Factory, Starport, Stim, Combat
     # Shield, +1 Infantry Weapons and the first pair of Medivacs.

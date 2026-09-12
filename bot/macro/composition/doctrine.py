@@ -48,7 +48,7 @@ class CompositionDoctrine:
         return unit_type in self.unit_types
 
 
-# What both current openings converge to. The Banshee is the BansheeCloak
+# What the Bio openings converge to. The Banshee is the BansheeCloak
 # opener's raider; Vikings are listed so the doctrine reads as Bio's full
 # toolbox, though no goal set buys them yet.
 BIO = CompositionDoctrine(
@@ -58,7 +58,8 @@ BIO = CompositionDoctrine(
     specialized=frozenset({UnitTypeId.BANSHEE}),
 )
 
-# The BattleMech target; no goal set buys within it yet.
+# What the BattleMech opening converges to. Vikings and Thors are listed so
+# the doctrine reads as Mech's full toolbox, though no goal set buys them yet.
 MECH = CompositionDoctrine(
     name="mech",
     core=frozenset({UnitTypeId.HELLION, UnitTypeId.CYCLONE, UnitTypeId.SIEGETANK}),

@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from .config import MacroPlannerConfig
-from .profiles import banshee_cloak
+from .profiles import banshee_cloak, battle_mech
 
 MACRO_PROFILES: Mapping[str, MacroPlannerConfig] = {
     "BioThreeOneOne": MacroPlannerConfig(),
@@ -11,6 +11,9 @@ MACRO_PROFILES: Mapping[str, MacroPlannerConfig] = {
     # runs without a ``reference_build`` floor -- the income/overflow scaling
     # in ``MacroPlanner`` still applies on its own.
     "BansheeCloak": MacroPlannerConfig(goals=banshee_cloak(), reference_build=None),
+    # Its structure timing is the build's own, keyed on bases taken
+    # (``ProductionGoal.townhall_minimums``), not a time benchmark.
+    "BattleMech": MacroPlannerConfig(goals=battle_mech(), reference_build=None),
 }
 
 

@@ -122,8 +122,11 @@ army only through what gets built (see [capabilities.md](capabilities.md)).
 - **`construction/capacity.py`**: `assess_capacity` decides, per
   `ProductionGoal`, how many structures are justified, and records why
   (`CapacityAssessment.reason`):
-  1. Below the goal's `minimum` or the reference-build benchmark (see below):
-     build up to that floor (`production_below_opening_floor`,
+  1. Below the goal's `minimum`, the minimum it declares for the current
+     number of townhalls (`townhall_minimums`, counting one under
+     construction), or the reference-build benchmark (see below): build up to
+     that floor (`production_below_opening_floor`,
+     `production_below_townhall_floor`,
      `production_below_reference_build_benchmark`).
   2. No owed, buildable unit this structure trains without an add-on: stay at
      the floor (`no_unit_demand_for_this_producer`, or
@@ -138,7 +141,8 @@ army only through what gets built (see [capabilities.md](capabilities.md)).
      one more per configured increment above it.
 - **`construction/addons.py`**: proposes `BUILD_ADDON` per configured
   `(addon_type, desired_count, cost)` tuple below its target -- flat counts,
-  no income scaling, and only once the opening has completed.
+  no income scaling, only once the opening has completed, and only while a
+  finished parent without an add-on exists to hold it.
 - **`production/army_demand.py` + `production/army.py`**: `army_demand` scales
   the composition until it would reach `army_supply_target` (plus the overflow
   bonus): each member wants `max(minimum, ceil(weight * cycles))`, where
@@ -159,7 +163,8 @@ profile uses `bio_three_one_one_reference()` -- one Barracks at 0:41, two at
 1:51, three at 2:17, a Factory at 4:34, a Starport at 6:12, blended from a
 recorded 3-rax opening and terrancraft's 3-1-1 framework. It only ever raises
 `assess_capacity`'s floor, and holds its last value past the final point. The
-`BansheeCloak` profile has none (`reference_build=None`).
+`BansheeCloak` and `BattleMech` profiles have none (`reference_build=None`);
+`BattleMech` keys its structure timing on townhalls instead.
 
 ### Resource-overflow pressure (`ResourceOverflowConfig`)
 

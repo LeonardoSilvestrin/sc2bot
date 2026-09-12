@@ -17,6 +17,7 @@ class BuildStrategicIntent:
 
     _CAPABILITIES_BY_OPENING = {
         "BansheeCloak": frozenset({"banshee_harass"}),
+        "BattleMech": frozenset({"banshee_harass"}),
     }
 
     def allows(self, capability: str, world: WorldFacts) -> bool:

@@ -10,10 +10,13 @@ from ares.dicts.unit_tech_requirement import UNIT_TECH_REQUIREMENT
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.ids.upgrade_id import UpgradeId
 
+from bot.engine.economy.models import ResourceCost
 from bot.macro import (
+    MECH,
     MacroGoalSet,
     ProductionGoal,
     banshee_cloak,
+    battle_mech,
     bio_three_one_one,
 )
 
@@ -35,6 +38,39 @@ def test_banshee_cloak_declares_a_banshee_led_composition():
         addon for addon, _target, _cost in goals.addons
     }
     assert UpgradeId.BANSHEESPEED in {goal.upgrade_id for goal in goals.upgrades}
+
+
+def test_battle_mech_buys_mech_and_grows_production_with_the_third_base():
+    goals = battle_mech()
+    production = {goal.structure_type: goal for goal in goals.production}
+
+    assert goals.opening_name == "BattleMech"
+    assert goals.doctrine is MECH
+    assert {goal.unit_type for goal in goals.army} == {
+        UnitTypeId.HELLION,
+        UnitTypeId.CYCLONE,
+        UnitTypeId.SIEGETANK,
+        UnitTypeId.BANSHEE,
+    }
+    assert [production[UnitTypeId.FACTORY].minimum_for(n) for n in (1, 2, 3, 4)] == [
+        1,
+        1,
+        3,
+        3,
+    ]
+    assert [production[UnitTypeId.STARPORT].minimum_for(n) for n in (2, 3)] == [1, 2]
+    assert production[UnitTypeId.BARRACKS].maximum == 1
+
+
+def test_townhall_minimums_stay_within_the_goal_bounds():
+    with pytest.raises(ValueError, match="townhall_minimums"):
+        ProductionGoal(
+            UnitTypeId.STARPORT,
+            minimum=1,
+            maximum=2,
+            cost=ResourceCost(minerals=150, vespene=100),
+            townhall_minimums=((3, 3),),
+        )
 
 
 def test_bio_three_one_one_declares_full_post_opening_convergence():
@@ -72,7 +108,7 @@ def opening_structures(opening_name: str) -> set[UnitTypeId]:
     return {unit_type for unit_type in UnitTypeId if unit_type.name in names}
 
 
-@pytest.mark.parametrize("profile", [bio_three_one_one, banshee_cloak])
+@pytest.mark.parametrize("profile", [bio_three_one_one, banshee_cloak, battle_mech])
 def test_every_composition_member_has_the_add_ons_it_needs(profile):
     """A unit whose tech never arrives is worse than a unit not wanted.
 

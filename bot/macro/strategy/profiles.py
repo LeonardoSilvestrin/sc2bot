@@ -5,7 +5,7 @@ from sc2.ids.upgrade_id import UpgradeId
 
 from bot.engine.economy.models import ResourceCost
 
-from ..composition import BIO
+from ..composition import BIO, MECH
 from .goals import (
     ArmyUnitGoal,
     MacroGoalSet,
@@ -220,6 +220,95 @@ def banshee_cloak() -> MacroGoalSet:
             UpgradeGoal(
                 UpgradeId.BANSHEESPEED,
                 ResourceCost(minerals=150, vespene=150),
+            ),
+        ),
+    )
+
+
+def battle_mech() -> MacroGoalSet:
+    """Post-opening convergence for the ``BattleMech`` opener.
+
+    The opening leaves one Factory on the Barracks' old Reactor making
+    Hellions and one Tech Lab Starport with a cloaked Banshee (see
+    ``terran_builds.yml``). The third base is what unlocks the rest -- two
+    more Factories and a second Starport -- so those are townhall floors,
+    the build's own timing, rather than income thresholds. The new Factories
+    take Tech Labs for Cyclones and Siege Tanks; the Barracks stays the one
+    that made the Reaper.
+    """
+
+    return MacroGoalSet(
+        name="battle_mech",
+        opening_name="BattleMech",
+        max_workers=70,
+        max_townhalls=4,
+        workers_per_townhall=22,
+        refineries_per_townhall=2,
+        max_refineries=8,
+        army_supply_target=110.0,
+        army=(
+            ArmyUnitGoal(
+                UnitTypeId.HELLION,
+                weight=4,
+                minimum=4,
+                cost=ResourceCost(minerals=100, supply=2.0),
+            ),
+            ArmyUnitGoal(
+                UnitTypeId.CYCLONE,
+                weight=2,
+                minimum=1,
+                cost=ResourceCost(minerals=125, vespene=50, supply=3.0),
+            ),
+            ArmyUnitGoal(
+                UnitTypeId.SIEGETANK,
+                weight=3,
+                minimum=2,
+                cost=ResourceCost(minerals=150, vespene=125, supply=3.0),
+            ),
+            ArmyUnitGoal(
+                UnitTypeId.BANSHEE,
+                weight=1,
+                minimum=1,
+                cost=ResourceCost(minerals=150, vespene=100, supply=3.0),
+            ),
+        ),
+        production=(
+            ProductionGoal(
+                UnitTypeId.BARRACKS,
+                minimum=1,
+                maximum=1,
+                cost=ResourceCost(minerals=150),
+            ),
+            ProductionGoal(
+                UnitTypeId.FACTORY,
+                minimum=1,
+                maximum=5,
+                cost=ResourceCost(minerals=150, vespene=100),
+                vespene_rate_for_first_extra=900.0,
+                vespene_rate_per_extra=450.0,
+                townhall_minimums=((3, 3),),
+            ),
+            ProductionGoal(
+                UnitTypeId.STARPORT,
+                minimum=1,
+                maximum=2,
+                cost=ResourceCost(minerals=150, vespene=100),
+                townhall_minimums=((3, 2),),
+            ),
+        ),
+        doctrine=MECH,
+        addons=(
+            # One for each Factory the third base adds; the first keeps
+            # the Reactor.
+            (
+                UnitTypeId.FACTORYTECHLAB,
+                2,
+                ResourceCost(minerals=50, vespene=25),
+            ),
+            (
+                UnitTypeId.STARPORTTECHLAB,
+                2,
+                ResourceCost(minerals=50, vespene=25),
             ),
         ),
     )

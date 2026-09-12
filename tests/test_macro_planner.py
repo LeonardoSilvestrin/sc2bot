@@ -11,6 +11,7 @@ from bot.macro import (
     MacroPlannerConfig,
     ProductionGoal,
     bio_three_one_one,
+    macro_config_for_opening,
 )
 from bot.macro.production.army_demand import army_demand
 from bot.world.attention import (
@@ -168,6 +169,61 @@ def saturated(unit_type: UnitTypeId, ready: int = 3) -> ProducerFacts:
     return ProducerFacts(
         unit_type, ready=ready, busy=ready, idle=0, utilization_20s=1.0
     )
+
+
+MECH_OPENING_STRUCTURES = {
+    UnitTypeId.REFINERY: (4, 0),
+    UnitTypeId.BARRACKS: (1, 0),
+    UnitTypeId.FACTORY: (1, 0),
+    UnitTypeId.FACTORYREACTOR: (1, 0),
+    UnitTypeId.STARPORT: (1, 0),
+    UnitTypeId.STARPORTTECHLAB: (1, 0),
+}
+
+
+def mech_proposals(attention: AttentionSnapshot):
+    planner = MacroPlanner(config=macro_config_for_opening("BattleMech"))
+    return planner.propose(attention, AwarenessService().update(attention))
+
+
+class TestBattleMechMacro:
+    def test_the_third_base_brings_two_factories_and_a_second_starport(self):
+        on_two = mech_proposals(
+            economy_attention(townhalls=(2, 0), structures=MECH_OPENING_STRUCTURES)
+        )
+        assert proposal_for(
+            on_two, EconomicActionKind.BUILD_PRODUCTION, UnitTypeId.FACTORY
+        ) is None
+        assert proposal_for(
+            on_two, EconomicActionKind.BUILD_PRODUCTION, UnitTypeId.STARPORT
+        ) is None
+
+        # The Command Center only has to be started.
+        third_started = mech_proposals(
+            economy_attention(townhalls=(2, 1), structures=MECH_OPENING_STRUCTURES)
+        )
+        for structure_type in (UnitTypeId.FACTORY, UnitTypeId.STARPORT):
+            proposal = proposal_for(
+                third_started, EconomicActionKind.BUILD_PRODUCTION, structure_type
+            )
+            assert proposal is not None
+            assert proposal.reason == "production_below_townhall_floor"
+
+    def test_an_add_on_waits_for_a_structure_that_can_hold_it(self):
+        # The only Factory holds the Reactor it took from the Barracks, so a
+        # Tech Lab has nowhere to go until the third base adds another.
+        assert proposal_for(
+            mech_proposals(economy_attention(structures=MECH_OPENING_STRUCTURES)),
+            EconomicActionKind.BUILD_ADDON,
+            UnitTypeId.FACTORYTECHLAB,
+        ) is None
+
+        with_new_factory = {**MECH_OPENING_STRUCTURES, UnitTypeId.FACTORY: (2, 0)}
+        assert proposal_for(
+            mech_proposals(economy_attention(structures=with_new_factory)),
+            EconomicActionKind.BUILD_ADDON,
+            UnitTypeId.FACTORYTECHLAB,
+        ) is not None
 
 
 class TestArmyDemand:

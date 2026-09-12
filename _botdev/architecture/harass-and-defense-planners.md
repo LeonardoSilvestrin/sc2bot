@@ -41,7 +41,8 @@ What to *buy* is not a behavior at all. Production, construction, tech and
 expansion live in `bot/macro/`, beside `bot/behavior/` rather than inside
 it, and are admitted by `bot/engine/economy` against the bank -- no unit,
 mission or squad involved. The Banshee raid reads how many Banshees exist;
-producing them is the `BansheeCloak` macro profile's decision. See
+producing them is the opening's macro profile's decision (`BansheeCloak`,
+`BattleMech`). See
 [macro-planner.md](macro-planner.md).
 
 `MissionKind` gained `HARASS`, `AIR_HARASS`, and `DEFENSE` in
@@ -245,7 +246,7 @@ nearest `SAFE` base. Recovery needs only the threat gone and every Banshee
 home -- not health back, since Banshees do not regenerate and nothing repairs
 them -- and then the raid resumes.
 
-It is written for the `BansheeCloak` opening (see
+It is written for the `BansheeCloak` and `BattleMech` openings (see
 [opening.md](opening.md)) and, in APPROACH/INFILTRATE/STRIKE, casts
 `AbilityId.BEHAVIOR_CLOAKON_BANSHEE` (via `MissionCommands.use_ability`,
 `AresMissionCommands` wrapping Ares's `UseAbility` behavior) every step

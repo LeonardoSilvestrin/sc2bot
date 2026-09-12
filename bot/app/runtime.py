@@ -51,6 +51,7 @@ from bot.world.awareness import (
 _OPENING_ANNOUNCEMENTS: dict[str, str] = {
     "BioThreeOneOne": "Plan: Reaper expand into Bio 3-1-1.",
     "BansheeCloak": "Plan: Reaper expand into cloaked Banshee harass.",
+    "BattleMech": "Plan: Reaper expand into Hellions, a Banshee and mech.",
 }
 
 

@@ -42,7 +42,7 @@ from .planner import MacroPlanner, MacroStatus
 from .strategy.config import MacroPlannerConfig, ResourceOverflowConfig
 from .strategy.goals import ArmyUnitGoal, MacroGoalSet, ProductionGoal, UpgradeGoal
 from .strategy.openings import MACRO_PROFILES, macro_config_for_opening
-from .strategy.profiles import banshee_cloak, bio_three_one_one
+from .strategy.profiles import banshee_cloak, battle_mech, bio_three_one_one
 from .strategy.reference_build import (
     ReferenceBuild,
     ReferenceBuildPoint,
@@ -67,6 +67,7 @@ __all__ = [
     "SpendPlanner",
     "UpgradeGoal",
     "banshee_cloak",
+    "battle_mech",
     "bio_three_one_one",
     "bio_three_one_one_reference",
     "macro_config_for_opening",

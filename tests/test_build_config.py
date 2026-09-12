@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 
 import yaml
+from ares.consts import BuildOrderOptions
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.ids.upgrade_id import UpgradeId
 
@@ -24,18 +25,26 @@ class TerranBuildConfigTests(unittest.TestCase):
         self.assertIs(self.config["UseData"], False)
 
     def test_commands_use_names_understood_by_ares(self):
-        special = {"supply", "worker_scout", "orbital", "gas", "expand"}
+        special = set(BuildOrderOptions.__members__)
         invalid: list[str] = []
         for name, build in self.config["Builds"].items():
             for step in build["OpeningBuildOrder"]:
-                command = step.split()[1].lower()
+                tokens = step.split("@")[0].split()
+                command = tokens[1].upper()
+                if command == BuildOrderOptions.ADDONSWAP.name:
+                    invalid.extend(
+                        f"{name}: {token}"
+                        for token in tokens[2:]
+                        if token.upper() not in UnitTypeId.__members__
+                    )
+                    continue
                 if command in special:
                     continue
                 if (
-                    command.upper() not in UnitTypeId.__members__
-                    and command.upper() not in UpgradeId.__members__
+                    command not in UnitTypeId.__members__
+                    and command not in UpgradeId.__members__
                 ):
-                    invalid.append(f"{name}: {command}")
+                    invalid.append(f"{name}: {command.lower()}")
         self.assertEqual(invalid, [])
 
     def test_opening_does_not_bypass_the_mission_scout(self):
@@ -46,9 +55,32 @@ class TerranBuildConfigTests(unittest.TestCase):
                 msg=f"{name} should not issue its own scout",
             )
 
-    def test_banshee_cloak_build_is_available_for_every_matchup_and_test(self):
+    def test_every_matchup_and_test_is_forced_to_battle_mech(self):
         for matchup in ("Protoss", "Terran", "Zerg", "Random", "test_123"):
-            self.assertIn("BansheeCloak", self.config["BuildChoices"][matchup]["Cycle"])
+            self.assertEqual(
+                self.config["BuildChoices"][matchup]["Cycle"], ["BattleMech"]
+            )
+
+    def test_battle_mech_factory_takes_the_barracks_reactor_for_hellions(self):
+        commands = [
+            step.lower() for step in self.config["Builds"]["BattleMech"]["OpeningBuildOrder"]
+        ]
+
+        def index(fragment: str) -> int:
+            return next(i for i, step in enumerate(commands) if fragment in step)
+
+        reactor = index("barracksreactor")
+        swap = index("addonswap factory barracksreactor")
+        hellions = index("hellion *4")
+        self.assertLess(reactor, swap)
+        self.assertLess(swap, hellions)
+        self.assertLess(index("starporttechlab"), index(" banshee"))
+        # The second Starport and the extra Factories follow the third base,
+        # which macro decides -- the opening builds one of each.
+        self.assertEqual(
+            sum(step.split()[1] in {"factory", "starport"} for step in commands), 2
+        )
+        self.assertFalse(any("*2" in step for step in commands))
 
     def test_banshee_cloak_uses_two_tech_lab_starports_and_banshee_speed(self):
         commands = self.config["Builds"]["BansheeCloak"]["OpeningBuildOrder"]
