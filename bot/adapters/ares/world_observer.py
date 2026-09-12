@@ -1155,4 +1155,8 @@ class AresWorldObserver:
                 own_units=raw_own_units,
                 own_structures=raw_own_structures,
             ),
+            dead_unit_tags=frozenset(
+                int(tag)
+                for tag in self._items(self._safe_attr(bot, "state"), "dead_units")
+            ),
         )

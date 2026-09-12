@@ -22,6 +22,8 @@ class WorldFacts:
     own_structures: tuple[UnitSnapshot, ...] = ()
     enemy_structures: tuple[UnitSnapshot, ...] = ()
     economy: EconomyFacts = field(default_factory=EconomyFacts)
+    # Tags the game reported dead since the previous observation, any owner.
+    dead_unit_tags: frozenset[int] = frozenset()
 
     @property
     def bases(self) -> tuple[BaseSnapshot, ...]:

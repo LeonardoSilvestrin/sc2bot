@@ -37,7 +37,13 @@ class ArmyUnitGoal:
 
 @dataclass(frozen=True, slots=True)
 class ProductionGoal:
-    """A production floor that can scale with sustained collection rates."""
+    """A production floor that can scale with sustained collection rates.
+
+    ``dynamic_growth_minimum_ready_townhalls`` gates only growth above the
+    declared floors.  This lets a build say "start the third and add two
+    Factories beside it, but do not flood beyond those three until the base is
+    actually usable".  A value of zero keeps dynamic growth always enabled.
+    """
 
     structure_type: UnitTypeId
     minimum: int
@@ -52,6 +58,7 @@ class ProductionGoal:
     # two Factories" timing. Townhalls count the one under construction, so
     # the structures go down with the base rather than after it.
     townhall_minimums: tuple[tuple[int, int], ...] = ()
+    dynamic_growth_minimum_ready_townhalls: int = 0
 
     def __post_init__(self) -> None:
         if self.minimum < 0 or self.maximum < self.minimum:
@@ -63,6 +70,10 @@ class ProductionGoal:
                 raise ValueError(
                     "townhall_minimums must lie between minimum and maximum"
                 )
+        if self.dynamic_growth_minimum_ready_townhalls < 0:
+            raise ValueError(
+                "dynamic_growth_minimum_ready_townhalls must not be negative"
+            )
         for value in (
             self.mineral_rate_for_first_extra,
             self.vespene_rate_for_first_extra,
@@ -139,8 +150,9 @@ class UpgradeGoal:
 class MacroGoalSet:
     """Configurable post-opening convergence goals for one strategy.
 
-    Concrete instances (one per opening) live in ``profiles.py``,
-    kept separate so this file doesn't grow with every new opening.
+    Concrete instances live under ``bot.macro.builds``, one folder per build,
+    so unit composition, production milestones, add-ons and upgrades can be
+    understood together without putting build policy in the generic planners.
     """
 
     name: str
@@ -186,6 +198,13 @@ class MacroGoalSet:
         production_types = tuple(goal.structure_type for goal in self.production)
         if len(set(production_types)) != len(production_types):
             raise ValueError("production goals must be unique")
+        if any(
+            goal.dynamic_growth_minimum_ready_townhalls > self.max_townhalls
+            for goal in self.production
+        ):
+            raise ValueError(
+                "production dynamic-growth milestones must not exceed max_townhalls"
+            )
         for _addon, target, _cost in self.addons:
             if target < 0:
                 raise ValueError("addon targets must not be negative")

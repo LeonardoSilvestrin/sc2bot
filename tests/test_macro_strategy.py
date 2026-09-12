@@ -59,6 +59,8 @@ def test_battle_mech_buys_mech_and_grows_production_with_the_third_base():
         3,
     ]
     assert [production[UnitTypeId.STARPORT].minimum_for(n) for n in (2, 3)] == [1, 2]
+    assert production[UnitTypeId.FACTORY].dynamic_growth_minimum_ready_townhalls == 3
+    assert production[UnitTypeId.STARPORT].dynamic_growth_minimum_ready_townhalls == 3
     assert production[UnitTypeId.BARRACKS].maximum == 1
 
 
@@ -70,6 +72,23 @@ def test_townhall_minimums_stay_within_the_goal_bounds():
             maximum=2,
             cost=ResourceCost(minerals=150, vespene=100),
             townhall_minimums=((3, 3),),
+        )
+
+
+def test_dynamic_growth_milestone_cannot_exceed_the_build_base_cap():
+    original = battle_mech()
+    factory = next(
+        goal
+        for goal in original.production
+        if goal.structure_type is UnitTypeId.FACTORY
+    )
+
+    with pytest.raises(ValueError, match="dynamic-growth milestones"):
+        replace(
+            original,
+            production=(
+                replace(factory, dynamic_growth_minimum_ready_townhalls=5),
+            ),
         )
 
 

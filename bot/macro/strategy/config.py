@@ -3,8 +3,8 @@ from dataclasses import dataclass, field
 from bot.engine.economy.models import ResourceCost
 from bot.world.awareness import MacroPosture
 
+from ..builds.bio_three_one_one import bio_three_one_one
 from .goals import MacroGoalSet
-from .profiles import bio_three_one_one
 from .reference_build import (
     ReferenceBuild,
     bio_three_one_one_reference,

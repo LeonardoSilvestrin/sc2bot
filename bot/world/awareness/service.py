@@ -6,8 +6,9 @@ from bot.world.attention import TOWNHALL_TYPES, AttentionSnapshot
 from .bases import BaseSecurityAssessor
 from .belief import (
     ArmyBeliefConfig,
+    BeliefState,
     EconomyBeliefConfig,
-    HysteresisState,
+    LossTracker,
     RelativeAssessment,
     RelativePosition,
     assess_army,
@@ -22,6 +23,8 @@ from .enemy import (
     EnemyForceTracker,
     EnemyKnowledge,
     EnemyLocationKnowledge,
+    EnemyRoster,
+    enemy_territory_coverage,
     scouting_coverage,
 )
 from .posture import PostureState, derive_macro_posture
@@ -66,6 +69,8 @@ class AwarenessService:
         self.economy_belief_config = economy_belief_config or EconomyBeliefConfig()
         self.army_belief_config = army_belief_config or ArmyBeliefConfig()
         self.enemy_knowledge = EnemyKnowledge()
+        self._enemy_roster = EnemyRoster()
+        self._loss_tracker = LossTracker()
         self._base_assessor = BaseSecurityAssessor()
         self._enemy_base_memory = EnemyBaseMemory(stale_after=enemy_base_stale_after)
         self._enemy_base_assessor = EnemyBaseAssessor(enemy_base_heuristics)
@@ -75,12 +80,14 @@ class AwarenessService:
         )
         self._location_last_observed: dict[str, float] = {}
         self._posture_state = PostureState()
-        self._economy_hysteresis = HysteresisState()
-        self._army_hysteresis = HysteresisState()
+        self._economy_state = BeliefState()
+        self._army_state = BeliefState()
 
     def update(self, attention: AttentionSnapshot) -> AwarenessSnapshot:
         world = attention.world
         sightings = self.enemy_knowledge.update(world)
+        roster = self._enemy_roster.update(sightings, dead_tags=world.dead_unit_tags)
+        losses = self._loss_tracker.update(world, enemy_died=roster.died)
         locations: list[EnemyLocationKnowledge] = []
         for observation in world.map.observations:
             if observation.visible_now:
@@ -119,41 +126,53 @@ class AwarenessService:
             and (unit.can_attack_air or unit.can_attack_ground)
         )
 
-        previous_economy_stable = self._economy_hysteresis.stable
-        previous_army_stable = self._army_hysteresis.stable
+        previous_economy_stable = self._economy_state.hysteresis.stable
+        previous_army_stable = self._army_state.hysteresis.stable
         base_observations = self._enemy_base_memory.update(world)
         coverage = scouting_coverage(base_observations)
+        scouted = any(
+            observation.last_checked_at is not None
+            for observation in base_observations
+        )
+        visibility = enemy_territory_coverage(base_observations)
         enemy_bases = self._enemy_base_assessor.update(
             observations=base_observations, sightings=sightings, now=world.time
         )
         enemy_forces = self._enemy_force_tracker.update(sightings, now=world.time)
         bases = self._base_assessor.update(world)
-        economy_belief, self._economy_hysteresis = assess_economy(
+        economy_belief, self._economy_state = assess_economy(
             world=world,
             sightings=sightings,
+            roster=roster.alive,
             base_observations=base_observations,
+            losses=losses,
             coverage=coverage,
-            now=world.time,
-            state=self._economy_hysteresis,
+            visibility=visibility,
+            scouted=scouted,
+            state=self._economy_state,
             config=self.economy_belief_config,
         )
-        army_belief, self._army_hysteresis = assess_army(
+        army_belief, self._army_state = assess_army(
             world=world,
             sightings=sightings,
-            coverage=coverage,
-            now=world.time,
-            state=self._army_hysteresis,
+            roster=roster.alive,
+            losses=losses,
+            enemy_workers=float(economy_belief.enemy.workers.estimated),
+            visibility=visibility,
+            scouted=scouted,
+            state=self._army_state,
             config=self.army_belief_config,
         )
 
-        # Relative force is a supply comparison over the remembered army,
-        # not a head count of whatever happens to be on screen this frame.
-        # Unit counts remain on the snapshot as current tactical telemetry.
+        # Relative force compares our supply with the running estimate of the
+        # enemy's, not a head count of whatever is on screen this frame. Unit
+        # counts remain on the snapshot as current tactical telemetry.
         own_strength = army_belief.own_supply
-        enemy_strength = army_belief.enemy.supply.estimated
-        strength_total = own_strength + enemy_strength
-        if strength_total > 0.0:
-            score = (own_strength - enemy_strength) / strength_total
+        enemy_supply = army_belief.enemy.supply
+        if own_strength > 0.0 or enemy_supply.known > 0.0:
+            score = (own_strength - enemy_supply.estimated) / (
+                own_strength + enemy_supply.estimated
+            )
         else:
             # Some synthetic/test observers do not provide supply costs.
             # Preserve a useful fallback without weakening live-game logic.
@@ -163,7 +182,6 @@ class AwarenessService:
                 if count_total == 0
                 else (own_combat - enemy_combat) / count_total
             )
-        strength_confidence = army_belief.relative.confidence
 
         anchors = tuple(
             structure.position
@@ -202,8 +220,6 @@ class AwarenessService:
             workers=workers,
             townhalls=townhalls,
             own_combat=own_combat,
-            strength_score=score,
-            strength_confidence=strength_confidence,
             strength_is_stably_ahead=(
                 army_belief.relative.stable_state is RelativePosition.AHEAD
             ),
@@ -236,7 +252,7 @@ class AwarenessService:
             ),
             relative_strength=RelativeStrength(
                 score=score,
-                confidence=strength_confidence,
+                confidence=army_belief.relative.confidence,
                 own_combat_units=own_combat,
                 known_enemy_combat_units=enemy_combat,
             ),
@@ -272,7 +288,8 @@ def _belief_chat_message(
         return None
     text = (
         f"[Awareness] {label}: {previous.name} -> {assessment.stable_state.name} "
-        f"(confidence={assessment.confidence:.2f})"
+        f"(p_ahead={assessment.advantage:.2f}, "
+        f"confidence={assessment.confidence:.2f})"
     )
     if assessment.reason:
         text = f"{text} | {assessment.reason}"

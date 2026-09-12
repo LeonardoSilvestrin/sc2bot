@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum, auto
 
+from .estimate import QuantityEstimate
+
 
 class RelativePosition(Enum):
     """Where we stand against the enemy on one axis (economy, army, ...)."""
@@ -15,35 +17,39 @@ class RelativePosition(Enum):
 
 @dataclass(frozen=True, slots=True)
 class RelativeBeliefConfig:
-    """Tunables for turning a noisy own-vs-enemy estimate into a stable belief.
+    """How the probability of being ahead becomes a stated position.
 
-    ``ahead_ratio``/``strong_ratio`` are read against
-    ``(own - estimated) / max(own, estimated, 1)``: e.g. 0.15 means roughly a
-    15% material edge before even considering AHEAD/BEHIND. AHEAD additionally
-    needs ``ahead_min_confidence`` because unseen enemy material can always
-    erase an apparent advantage. ``strong_ratio`` only lets a large defensive
-    (BEHIND) estimate skip the persistence window. Directly observed evidence
-    that already proves BEHIND bypasses both ratios -- see ``classify``.
+    ``advantage`` is P(ours > theirs) from ``estimate.advantage``. The doubt
+    about the enemy is already inside it, so no separate confidence gate
+    exists: an unscouted enemy reads near 0.5, i.e. EVEN. Entering a
+    position takes a clearer reading than staying in it (``*_enter`` vs
+    ``*_exit``), and a new position must hold for ``persist_seconds`` before
+    it is believed -- except BEHIND at or below ``decisive_behind``, acted on
+    at once: wrongly cautious is cheap, wrongly greedy is not.
     """
 
-    ahead_ratio: float = 0.15
-    strong_ratio: float = 0.45
-    min_confidence: float = 0.35
-    ahead_min_confidence: float = 0.60
-    observed_certainty_floor: float = 0.75
+    ahead_enter: float = 0.75
+    ahead_exit: float = 0.60
+    behind_enter: float = 0.25
+    behind_exit: float = 0.40
+    decisive_behind: float = 0.10
     persist_seconds: float = 12.0
 
     def __post_init__(self) -> None:
-        if not 0.0 < self.ahead_ratio < self.strong_ratio:
-            raise ValueError("ahead_ratio must be positive and below strong_ratio")
-        if not 0.0 <= self.min_confidence <= 1.0:
-            raise ValueError("min_confidence must be within [0, 1]")
-        if not self.min_confidence <= self.ahead_min_confidence <= 1.0:
+        if not (
+            0.0
+            <= self.decisive_behind
+            <= self.behind_enter
+            < self.behind_exit
+            <= 0.5
+            <= self.ahead_exit
+            < self.ahead_enter
+            <= 1.0
+        ):
             raise ValueError(
-                "ahead_min_confidence must be within [min_confidence, 1]"
+                "thresholds must satisfy 0 <= decisive_behind <= behind_enter"
+                " < behind_exit <= 0.5 <= ahead_exit < ahead_enter <= 1"
             )
-        if not 0.0 <= self.observed_certainty_floor <= 1.0:
-            raise ValueError("observed_certainty_floor must be within [0, 1]")
         if self.persist_seconds < 0.0:
             raise ValueError("persist_seconds must not be negative")
 
@@ -52,17 +58,17 @@ class RelativeBeliefConfig:
 class RelativeAssessment:
     """One stabilized belief: how we compare to the enemy on one axis.
 
-    ``raw_state`` is this tick's instantaneous read of the evidence;
-    ``stable_state`` is the last hysteresis-debounced, evidence-backed belief
-    (and is what gets announced in chat). An UNKNOWN raw read leaves that
-    belief in place while ``confidence`` exposes that it has gone stale.
-    ``reason`` is only populated on the tick ``stable_state`` actually changes.
+    ``raw_state`` is this tick's reading of ``advantage``; ``stable_state``
+    is the position that reading has held long enough to be believed (and
+    is what gets announced in chat). ``reason`` is only populated on the
+    tick ``stable_state`` actually changes.
     """
 
     raw_state: RelativePosition
     stable_state: RelativePosition
     confidence: float
     reason: str = ""
+    advantage: float = 0.5
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,111 +79,84 @@ class PendingTransition:
 
 @dataclass(frozen=True, slots=True)
 class HysteresisState:
-    """Bookkeeping ``advance_belief`` needs across ticks for one axis."""
+    """Bookkeeping ``advance`` needs across ticks for one axis."""
 
     stable: RelativePosition = RelativePosition.UNKNOWN
     changed_at: float = float("-inf")
     pending: PendingTransition | None = None
 
 
-def clamp01(value: float) -> float:
-    return max(0.0, min(1.0, value))
+@dataclass(frozen=True, slots=True)
+class BeliefState:
+    """Everything one axis carries from one update to the next."""
 
-
-def freshness(now: float, last_seen_at: float | None, stale_after: float) -> float:
-    """1.0 for evidence seen this instant, decaying linearly to 0 by ``stale_after``."""
-
-    if last_seen_at is None or stale_after <= 0.0:
-        return 0.0
-    age = max(0.0, now - last_seen_at)
-    return clamp01(1.0 - (age / stale_after))
+    estimate: QuantityEstimate | None = None
+    hysteresis: HysteresisState = HysteresisState()
+    # Whether the axis has ever had evidence. Before that there is nothing
+    # to compare, only an assumption, and the position stays UNKNOWN.
+    informed: bool = False
 
 
 def classify(
     *,
-    own: float,
-    estimated: float,
-    observed: float,
-    confidence: float,
+    advantage: float,
+    informed: bool,
+    state: HysteresisState,
     config: RelativeBeliefConfig,
-) -> tuple[RelativePosition, float, bool]:
-    """Fixed-threshold read of the current evidence.
+) -> tuple[RelativePosition, bool]:
+    """Read a position off the probability of being ahead.
 
-    Returns ``(raw_state, effective_confidence, is_strong_evidence)``.
-    Directly observed material already matching or exceeding our own is
-    proof, not a guess: more unseen enemy material can only make BEHIND
-    truer, never false, so it concludes BEHIND regardless of scouting
-    coverage and is always treated as strong evidence.
+    Returns ``(raw_state, decisive)``. A position already believed, or
+    already waiting to be, is kept until the reading crosses its exit
+    threshold; any other position needs its entry threshold.
     """
 
-    if observed > 0.0 and observed >= own:
-        return (
-            RelativePosition.BEHIND,
-            max(confidence, config.observed_certainty_floor),
-            True,
-        )
-
-    if confidence < config.min_confidence:
-        return RelativePosition.UNKNOWN, confidence, False
-
-    denom = max(own, estimated, 1.0)
-    ratio = (own - estimated) / denom
-    if ratio >= config.ahead_ratio:
-        if confidence < config.ahead_min_confidence:
-            return RelativePosition.UNKNOWN, confidence, False
-        # An apparent large advantage is never proof: it can just mean the
-        # rest of the enemy army has not been seen. Require persistence even
-        # when the numerical gap is very large.
-        return RelativePosition.AHEAD, confidence, False
-    if ratio <= -config.ahead_ratio:
-        return (
-            RelativePosition.BEHIND,
-            confidence,
-            abs(ratio) >= config.strong_ratio,
-        )
-    return RelativePosition.EVEN, confidence, False
+    if not informed:
+        return RelativePosition.UNKNOWN, False
+    held = {state.stable}
+    if state.pending is not None:
+        held.add(state.pending.state)
+    if RelativePosition.AHEAD in held and advantage >= config.ahead_exit:
+        position = RelativePosition.AHEAD
+    elif RelativePosition.BEHIND in held and advantage <= config.behind_exit:
+        position = RelativePosition.BEHIND
+    elif advantage >= config.ahead_enter:
+        position = RelativePosition.AHEAD
+    elif advantage <= config.behind_enter:
+        position = RelativePosition.BEHIND
+    else:
+        position = RelativePosition.EVEN
+    decisive = (
+        position is RelativePosition.BEHIND and advantage <= config.decisive_behind
+    )
+    return position, decisive
 
 
 def advance(
     *,
     now: float,
     raw_state: RelativePosition,
-    strong: bool,
+    decisive: bool,
     state: HysteresisState,
     config: RelativeBeliefConfig,
 ) -> HysteresisState:
-    """Debounce a raw-state stream into a persistent, non-flappy belief.
+    """Accept a new position once it has held for ``persist_seconds``.
 
-    A known candidate that differs from the current stable state must either
-    be strong defensive evidence (applied immediately) or persist for
-    ``config.persist_seconds`` before it is accepted. UNKNOWN is not a new
-    claim about relative strength and therefore only lowers the separately
-    reported confidence; it never replaces the stable state.
+    UNKNOWN is not a claim about relative strength and never replaces a
+    believed position.
     """
 
-    if raw_state is state.stable:
+    if raw_state is state.stable or raw_state is RelativePosition.UNKNOWN:
         return HysteresisState(stable=state.stable, changed_at=state.changed_at)
 
-    # UNKNOWN means that this observation cannot support a comparison, not
-    # that the previous comparison became false. Keep the last stable belief
-    # and let its separately reported confidence decay. This prevents every
-    # scout pass from producing AHEAD -> UNKNOWN -> AHEAD chatter.
-    if raw_state is RelativePosition.UNKNOWN:
-        return HysteresisState(stable=state.stable, changed_at=state.changed_at)
-
-    if strong:
+    if decisive:
         return HysteresisState(stable=raw_state, changed_at=now)
 
     pending = state.pending
     if pending is None or pending.state is not raw_state:
         pending = PendingTransition(state=raw_state, since=now)
-        return HysteresisState(
-            stable=state.stable, changed_at=state.changed_at, pending=pending
-        )
-
     if now - pending.since >= config.persist_seconds:
         return HysteresisState(stable=raw_state, changed_at=now)
-
     return HysteresisState(
         stable=state.stable, changed_at=state.changed_at, pending=pending
     )
@@ -186,9 +165,8 @@ def advance(
 def advance_belief(
     *,
     now: float,
-    own: float,
-    estimated: float,
-    observed: float,
+    advantage: float,
+    informed: bool,
     confidence: float,
     reason: str,
     state: HysteresisState,
@@ -196,21 +174,18 @@ def advance_belief(
 ) -> tuple[RelativeAssessment, HysteresisState]:
     """Run ``classify`` then ``advance`` and package the result for one axis."""
 
-    raw_state, effective_confidence, strong = classify(
-        own=own,
-        estimated=estimated,
-        observed=observed,
-        confidence=confidence,
-        config=config,
+    raw_state, decisive = classify(
+        advantage=advantage, informed=informed, state=state, config=config
     )
     new_state = advance(
-        now=now, raw_state=raw_state, strong=strong, state=state, config=config
+        now=now, raw_state=raw_state, decisive=decisive, state=state, config=config
     )
     changed = new_state.stable is not state.stable
     assessment = RelativeAssessment(
         raw_state=raw_state,
         stable_state=new_state.stable,
-        confidence=effective_confidence,
+        confidence=confidence,
         reason=reason if changed else "",
+        advantage=advantage,
     )
     return assessment, new_state

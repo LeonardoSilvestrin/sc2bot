@@ -4,6 +4,7 @@ from .memory import (
     EnemyBaseMemory,
     EnemyBaseObservation,
     EnemyBaseStatus,
+    enemy_territory_coverage,
     scouting_coverage,
 )
 
@@ -14,5 +15,6 @@ __all__ = [
     "EnemyBaseMemory",
     "EnemyBaseObservation",
     "EnemyBaseStatus",
+    "enemy_territory_coverage",
     "scouting_coverage",
 ]

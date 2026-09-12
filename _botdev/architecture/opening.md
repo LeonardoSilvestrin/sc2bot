@@ -54,12 +54,15 @@ at a time. A single Starport builds its own Tech Lab for one Banshee and
 Cloaking Field, and the natural becomes an Orbital.
 
 The rest of the build is the `battle_mech()` goal set's, in
-`bot/macro/strategy/profiles.py`, under the `MECH` doctrine: Hellions,
+`bot/macro/builds/battle_mech/plan.py`, under the `MECH` doctrine: Hellions,
 Cyclones, Siege Tanks and Banshees. Its structure timing is keyed on bases
 rather than on the clock -- `ProductionGoal.townhall_minimums` raises the
 Factory floor to three and the Starport floor to two once the third Command
-Center is started, and the two new Factories take Tech Labs. The Banshee raid
-runs for this opening as well (`BuildStrategicIntent`).
+Center is started, and the two new Factories take Tech Labs. Bank- and
+income-driven growth above those floors is locked until that third is ready,
+so gas saved for the expansion cannot turn into premature Factories or a
+Starport. The Banshee raid runs for this opening as well
+(`BuildStrategicIntent`).
 
 ## BansheeCloak
 
@@ -77,7 +80,7 @@ the opening pre-cloaking anything.
 
 `bot.macro.strategy.openings.macro_config_for_opening` maps
 `chosen_opening` to a matching `MacroPlannerConfig` (the `banshee_cloak()`
-goal set in `bot/macro/strategy/profiles.py`, without a reference build) so
+goal set in `bot/macro/builds/banshee_cloak/plan.py`, without a reference build) so
 post-opening macro keeps producing Banshees instead of quietly reverting to
 Bio's composition. `MacroPlanner(follow_opening=True)` performs this lookup
 the first tick `economy.opening_name` is non-empty and locks it in for the

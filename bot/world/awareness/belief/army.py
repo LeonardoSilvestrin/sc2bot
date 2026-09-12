@@ -8,13 +8,19 @@ from sc2.ids.unit_typeid import UnitTypeId
 from bot.world.attention import WorldFacts
 from bot.world.awareness.enemy import EnemySighting
 
+from .estimate import (
+    EstimateConfig,
+    advance_estimate,
+    advantage,
+    confidence,
+    roster_evidence,
+)
+from .losses import LossLedger
 from .relative import (
-    HysteresisState,
+    BeliefState,
     RelativeAssessment,
     RelativeBeliefConfig,
     advance_belief,
-    clamp01,
-    freshness,
 )
 
 
@@ -26,17 +32,21 @@ class EnemyUnitTypeCount:
 
 @dataclass(frozen=True, slots=True)
 class ArmySupplyEstimate:
+    """Enemy army supply: in view now, and believed in total."""
+
     observed: float
     estimated: float
     confidence: float
+    # Seen and not seen dying (fading slowly): ``estimated`` never drops below.
+    known: float = 0.0
+    # Spread of the part not seen, in supply.
+    uncertainty: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
 class EnemyArmyKnowledge:
     supply: ArmySupplyEstimate
-    # Known composition of the *estimated* (observed + remembered) enemy
-    # army, by unit type -- carried over from ``EnemyKnowledge`` sightings,
-    # not a new tracking mechanism.
+    # Composition of the known enemy army by unit type, from the roster.
     composition: tuple[EnemyUnitTypeCount, ...]
 
 
@@ -51,7 +61,7 @@ class ArmyBelief:
 
 @dataclass(frozen=True, slots=True)
 class ArmyBeliefConfig:
-    stale_after: float = 45.0
+    estimate: EstimateConfig = EstimateConfig()
     relative: RelativeBeliefConfig = RelativeBeliefConfig(persist_seconds=8.0)
 
 
@@ -59,43 +69,65 @@ def assess_army(
     *,
     world: WorldFacts,
     sightings: tuple[EnemySighting, ...],
-    coverage: float,
-    now: float,
-    state: HysteresisState,
+    roster: tuple[EnemySighting, ...],
+    losses: LossLedger,
+    enemy_workers: float,
+    visibility: float,
+    scouted: bool,
+    state: BeliefState,
     config: ArmyBeliefConfig,
-) -> tuple[ArmyBelief, HysteresisState]:
-    """Derive an army belief from supply, not unit counts.
+) -> tuple[ArmyBelief, BeliefState]:
+    """Compare our combat supply with a running estimate of the enemy's.
 
-    Confidence leans mainly on ``coverage`` (the same scouting-coverage
-    signal economy uses, from ``EnemyBaseMemory``) rather than how much of
-    the *estimated* army is currently visible: a couple of freshly-seen
-    units being the entirety of what we know is exactly the "few visible
-    units" case that must not read as AHEAD.
+    The enemy side is every combat unit seen and not seen dying, plus an
+    unseen remainder (see ``estimate.py``). With nothing scouted the
+    remainder assumes an enemy our size -- our supply, corrected by the
+    supply each side lost lately, minus the workers we believe it has -- and
+    drifts back to that as information goes stale, so an army out of vision
+    neither vanishes nor stays frozen at its last glimpse. How much a
+    reading counts is ``visibility`` (``enemy_territory_coverage``) times
+    how current the known army is.
     """
 
+    now = world.time
     own_supply = sum(
         unit.supply_cost
         for unit in world.own_units
         if not unit.is_worker and (unit.can_attack_air or unit.can_attack_ground)
     )
-
-    combat_sightings = tuple(
-        sighting for sighting in sightings if sighting.is_combat_unit
+    own_total = max(
+        world.supply_used, sum(unit.supply_cost for unit in world.own_units)
     )
-    observed_supply = sum(
-        sighting.supply_cost for sighting in combat_sightings if sighting.visible_now
+    combat_roster = tuple(entry for entry in roster if entry.is_combat_unit)
+    evidence = roster_evidence(
+        ((entry.supply_cost, entry.last_seen_at) for entry in combat_roster),
+        now=now,
+        config=config.estimate,
     )
-    estimated_supply = sum(sighting.supply_cost for sighting in combat_sightings)
-
-    last_seen_at = max(
-        (sighting.last_seen_at for sighting in combat_sightings), default=None
+    prior = own_total + losses.supply_trade - enemy_workers
+    estimate = advance_estimate(
+        state.estimate,
+        now=now,
+        known=evidence.known,
+        reading=evidence.known,
+        prior=prior,
+        information=visibility * evidence.freshness,
+        config=config.estimate,
+        prior_scale=own_total,
     )
-    army_freshness = freshness(now, last_seen_at, config.stale_after)
-    directly_confirmed_ratio = (
-        observed_supply / estimated_supply if estimated_supply > 0 else 0.0
-    )
-    confidence = clamp01(
-        army_freshness * (0.15 + 0.70 * coverage + 0.15 * directly_confirmed_ratio)
+    informed = state.informed or scouted or bool(combat_roster)
+    belief_confidence = confidence(estimate, config.estimate)
+    relative, hysteresis = advance_belief(
+        now=now,
+        advantage=advantage(own_supply, estimate, config.estimate),
+        informed=informed,
+        confidence=belief_confidence,
+        reason=(
+            f"own {own_supply:.0f} vs enemy ~{estimate.mean:.0f}"
+            f"±{estimate.spread:.0f} supply"
+        ),
+        state=state.hysteresis,
+        config=config.relative,
     )
 
     composition = tuple(
@@ -103,7 +135,7 @@ def assess_army(
             (
                 EnemyUnitTypeCount(unit_type=unit_type, count=count)
                 for unit_type, count in Counter(
-                    sighting.unit_type for sighting in combat_sightings
+                    entry.unit_type for entry in combat_roster
                 ).items()
             ),
             key=lambda item: item.unit_type.value,
@@ -111,28 +143,19 @@ def assess_army(
     )
     enemy = EnemyArmyKnowledge(
         supply=ArmySupplyEstimate(
-            observed=observed_supply,
-            estimated=estimated_supply,
-            confidence=confidence,
+            observed=sum(
+                sighting.supply_cost
+                for sighting in sightings
+                if sighting.is_combat_unit and sighting.visible_now
+            ),
+            estimated=estimate.mean,
+            confidence=belief_confidence,
+            known=estimate.known,
+            uncertainty=estimate.spread,
         ),
         composition=composition,
     )
-
-    reason = (
-        "enemy army sighted" if own_supply > 0 and observed_supply >= own_supply else ""
-    )
-    assessment, new_state = advance_belief(
-        now=now,
-        own=own_supply,
-        estimated=estimated_supply,
-        observed=observed_supply,
-        confidence=confidence,
-        reason=reason,
-        state=state,
-        config=config.relative,
-    )
-
     return (
-        ArmyBelief(own_supply=own_supply, enemy=enemy, relative=assessment),
-        new_state,
+        ArmyBelief(own_supply=own_supply, enemy=enemy, relative=relative),
+        BeliefState(estimate=estimate, hysteresis=hysteresis, informed=informed),
     )

@@ -14,26 +14,23 @@ from .model import CombatPosture, StandingAssessment, StandingConfig
 def derive_combat_posture(*, awareness: AwarenessSnapshot) -> CombatPosture:
     """A small, deterministic policy over already-computed Awareness signals.
 
-    No new observation is introduced here -- ``bases.threatened``,
-    The stabilized army belief and ``macro_posture`` already exist precisely
-    to answer "is something wrong right now" and "are we ahead". This only
-    has to decide which of three postures that maps to.
+    No new observation is introduced here -- ``bases.threatened``, the
+    stabilized army belief and ``macro_posture`` already exist precisely to
+    answer "is something wrong right now" and "are we ahead". The army
+    belief already weighs how sure it is, so its stable state is read as is:
+    gating it again on its confidence is what used to make this flap.
     """
 
     army = awareness.army.relative
     if (
         awareness.bases.threatened
         or awareness.macro_posture in {MacroPosture.DEFENSE, MacroPosture.RECOVERY}
-        or (
-            army.stable_state is RelativePosition.BEHIND
-            and army.confidence >= 0.35
-        )
+        or army.stable_state is RelativePosition.BEHIND
     ):
         return CombatPosture.TURTLE
 
     if (
         army.stable_state is RelativePosition.AHEAD
-        and army.confidence >= 0.60
         and awareness.threat.near_own_base_enemy_combat_units == 0
     ):
         return CombatPosture.PRESSURE

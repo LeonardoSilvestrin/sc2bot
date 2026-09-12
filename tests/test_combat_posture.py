@@ -101,14 +101,27 @@ class CombatPostureTests(unittest.TestCase):
             CombatPosture.TURTLE,
         )
 
-    def test_does_not_turtle_from_a_bad_score_with_no_confidence(self):
-        # No confidence means no real evidence of being behind yet -- an
-        # early-game score of exactly 0 with zero sightings should not
-        # trigger a turtle posture.
+    def test_does_not_turtle_while_the_army_belief_reads_even(self):
+        # An unscouted enemy reads EVEN: the belief itself carries the doubt.
         self.assertEqual(
-            derive_combat_posture(awareness=snapshot(score=-0.5, confidence=0.0)),
+            derive_combat_posture(awareness=snapshot(score=0.0, confidence=0.0)),
             CombatPosture.BALANCED,
         )
+
+    def test_a_believed_position_is_not_second_guessed_by_its_confidence(self):
+        # Gating the stable state on a separately decaying confidence is
+        # what made the posture flip every time a scout lost vision.
+        for score, expected in (
+            (-0.5, CombatPosture.TURTLE),
+            (0.5, CombatPosture.PRESSURE),
+        ):
+            with self.subTest(score=score):
+                self.assertEqual(
+                    derive_combat_posture(
+                        awareness=snapshot(score=score, confidence=0.05)
+                    ),
+                    expected,
+                )
 
     def test_pressures_when_confidently_ahead_and_safe(self):
         self.assertEqual(

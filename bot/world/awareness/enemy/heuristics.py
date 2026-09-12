@@ -25,8 +25,6 @@ def clamp01(value: float) -> float:
 def freshness(age: float, stale_after: float) -> float:
     """1.0 for evidence seen this instant, decaying linearly to 0 by ``stale_after``.
 
-    The same curve as ``belief.relative.freshness``, restated here because
-    the enemy model sits below the beliefs built on top of it.
     """
 
     if stale_after <= 0.0:

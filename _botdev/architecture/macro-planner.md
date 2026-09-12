@@ -44,7 +44,8 @@ The package is split by what a proposal buys:
 
 | Folder | Action kinds | Modules |
 | --- | --- | --- |
-| `strategy/` | -- | `goals.py`, `profiles.py`, `openings.py`, `config.py`, `reference_build.py` |
+| `builds/<build>/` | -- | one `plan.py` owning that build's composition, production milestones, add-ons and upgrades |
+| `strategy/` | -- | shared vocabulary and wiring: `goals.py`, `openings.py`, `config.py`, `reference_build.py` (`profiles.py` is a compatibility import only) |
 | `production/` | `PRODUCE_UNIT`, `PRODUCE_WORKER` | `army_demand.py` (assessment), `army.py`, `workers.py` |
 | `construction/` | `BUILD_PRODUCTION`, `BUILD_ADDON`, `PRODUCE_SUPPLY`, `BUILD_GAS` | `capacity.py` (assessment + proposer), `addons.py`, `supply.py`, `gas.py` |
 | `expansion/` | `EXPAND` | `bases.py` |
@@ -93,6 +94,12 @@ Every rule below reads `EconomyFacts` (from `WorldFacts.economy`), the
 opening's `MacroGoalSet` and `awareness.macro_posture`; `ResourceOverflowConfig`
 also reads the bank.
 
+Concrete `MacroGoalSet` values live under `bot/macro/builds/<build>/plan.py`,
+so one file answers which units, production structures, add-ons, upgrades and
+base milestones belong to that build. The root `terran_builds.yml` remains a
+thin opening-script adapter because Ares loads that exact path; ongoing build
+policy does not live there.
+
 Each `MacroGoalSet` names the `CompositionDoctrine` it buys within
 (`bot/macro/composition/`: core / support / specialized unit types; `BIO` for
 both current goal sets, `MECH` defined for BattleMech). Construction fails if
@@ -128,14 +135,19 @@ army only through what gets built (see [capabilities.md](capabilities.md)).
      that floor (`production_below_opening_floor`,
      `production_below_townhall_floor`,
      `production_below_reference_build_benchmark`).
-  2. No owed, buildable unit this structure trains without an add-on: stay at
+  2. If fewer than `dynamic_growth_minimum_ready_townhalls` bases are ready,
+     stay at that declared floor
+     (`dynamic_growth_waits_for_ready_townhall`). This gate affects only
+     income/bank-driven growth above the build's floor; a pending base can
+     still activate its explicit `townhall_minimums` milestone.
+  3. No owed, buildable unit this structure trains without an add-on: stay at
      the floor (`no_unit_demand_for_this_producer`, or
      `owed_units_need_an_add_on_not_a_building` when the owed unit needs a
      Tech Lab).
-  3. Existing producers not saturated -- any of them idle right now, or their
+  4. Existing producers not saturated -- any of them idle right now, or their
      20-second utilization below `minimum_utilization` (75%): stay at the floor
      (`existing_capacity_underutilized`).
-  4. Otherwise target `max(floor + overflow bonus, target_for_income)`, capped
+  5. Otherwise target `max(floor + overflow bonus, target_for_income)`, capped
      at `maximum`. `target_for_income` adds one structure once the sustained
      mineral or vespene collection rate crosses the goal's first threshold, and
      one more per configured increment above it.
@@ -214,7 +226,7 @@ flowchart TD
     Recent -->|yes| CandD2["candidate = DEFENSE\n(still inside the release window)"]
     Recent -->|no| NoBase{"ready townhalls == 0\nOR (time >= 90s AND workers < 8)?"}
     NoBase -->|yes| CandR["candidate = RECOVERY"]
-    NoBase -->|no| Safe{"time since last threat >= greed_safe_after (20s)\nAND army belief stably AHEAD\nAND strength.confidence >= 0.5\nAND own combat units >= 6\nAND strength.score >= 0.25?"}
+    NoBase -->|no| Safe{"time since last threat >= greed_safe_after (20s)\nAND army belief stably AHEAD\nAND own combat units >= 6?"}
     Safe -->|yes| CandG["candidate = GREED"]
     Safe -->|no| CandB["candidate = BALANCED"]
 
@@ -234,7 +246,7 @@ single unit wanders past a base.
 
 - `RESEARCH_UPGRADE` proposals: `MacroGoalSet.upgrades` and `UpgradeGoal`
   already carry declared upgrade targets and costs (see
-  `strategy/profiles.py`), and `upgrade_priority` already exists on
+  `builds/<build>/plan.py`), and `upgrade_priority` already exists on
   `MacroPlannerConfig`, but no `propose_upgrade` module reads them yet --
   upgrades are currently researched only by the static `terran_builds.yml`
   openings, not by ongoing macro convergence.

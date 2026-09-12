@@ -12,6 +12,9 @@ from bot.world.attention import TOWNHALL_TYPES, WorldFacts
 # be excluded as a candidate in the first place.
 _CONFIRM_RADIUS = 6.0
 _OWN_BASE_EXCLUSION_RADIUS = 6.0
+# Where enemy material may be that no confirmed base covers: one base not
+# found yet, and the army away from home. See `enemy_territory_coverage`.
+_UNWATCHED_PLACES = 2.0
 
 
 class EnemyBaseStatus(Enum):
@@ -121,3 +124,25 @@ def scouting_coverage(observations: tuple[EnemyBaseObservation, ...]) -> float:
         if observation.last_checked_at is not None and not observation.is_stale
     )
     return checked / len(observations)
+
+
+def enemy_territory_coverage(observations: tuple[EnemyBaseObservation, ...]) -> float:
+    """How much of the enemy's own territory was looked at lately, 0..1.
+
+    Unlike ``scouting_coverage`` this ignores slots known to be empty: an
+    empty expansion says nothing about how many workers or units the enemy
+    has somewhere else. Each confirmed base counts by how recently it was
+    checked, against the places never watched -- a base not found yet and
+    an army out on the map -- so with nothing confirmed there is no
+    information at all, and not seeing the enemy is never read as the enemy
+    having little.
+    """
+
+    confirmed = tuple(
+        observation
+        for observation in observations
+        if observation.status is EnemyBaseStatus.CONFIRMED
+    )
+    return sum(observation.confidence for observation in confirmed) / (
+        len(confirmed) + _UNWATCHED_PLACES
+    )

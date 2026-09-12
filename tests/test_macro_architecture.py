@@ -22,6 +22,16 @@ from tests.test_behavior_architecture import imported_modules
 
 BOT = Path(__file__).parents[1] / "bot"
 
+ARMY_UNIT_NAMES = (
+    "BANSHEE",
+    "CYCLONE",
+    "HELLION",
+    "MARAUDER",
+    "MARINE",
+    "MEDIVAC",
+    "SIEGETANK",
+)
+
 
 def forbidden_imports(package: Path, prefixes: tuple[str, ...]) -> list[str]:
     found: list[str] = []
@@ -76,6 +86,33 @@ class MacroBoundaryTests(unittest.TestCase):
             ),
             [],
         )
+
+    def test_generic_spend_domains_name_no_army_unit(self):
+        """Concrete composition belongs to a build plan, not an interpreter."""
+
+        found: list[str] = []
+        for folder in ("production", "construction", "expansion"):
+            for path in sorted((BOT / "macro" / folder).rglob("*.py")):
+                source = path.read_text(encoding="utf-8")
+                for unit_name in ARMY_UNIT_NAMES:
+                    if f"UnitTypeId.{unit_name}" in source:
+                        found.append(
+                            f"{path.relative_to(BOT).as_posix()}: {unit_name}"
+                        )
+        self.assertEqual(found, [])
+
+    def test_each_registered_build_owns_a_vertical_plan(self):
+        from bot.macro.strategy.openings import MACRO_PROFILES
+
+        missing = [
+            config.goals.name
+            for config in MACRO_PROFILES.values()
+            if not (
+                BOT / "macro" / "builds" / config.goals.name / "plan.py"
+            ).is_file()
+        ]
+
+        self.assertEqual(missing, [])
 
 
 class SpendContractTests(unittest.TestCase):

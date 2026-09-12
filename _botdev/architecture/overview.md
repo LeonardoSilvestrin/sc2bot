@@ -153,14 +153,29 @@ Consumers import from `bot.world.awareness` or the relevant subpackage.
 
 `AwarenessSnapshot.economy` and `.army` answer "are we ahead?" without trusting
 a single frame. Each axis compares our own number (workers; combat supply)
-with an enemy *estimate* that includes remembered units, and derives a
-confidence from evidence freshness and `scouting_coverage` -- the share of
-expansion slots looked at recently -- so an unscouted map never reads as an
-enemy with nothing. `relative.py` then debounces the raw reading into
-`stable_state` (`AHEAD`/`EVEN`/`BEHIND`/`UNKNOWN`): a new state must persist
-(15 s economy, 8 s army), `AHEAD` also needs confidence >= 0.60, an `UNKNOWN`
-reading never replaces the stable belief, and a large or directly observed
-deficit applies `BEHIND` at once.
+with a running *estimate* of the enemy's, built in three layers:
+
+1. **Evidence** -- `enemy/roster.py` keeps every mobile enemy unit seen until
+   the game reports its tag dead (`WorldFacts.dead_unit_tags`), so an army
+   walking into the fog does not vanish when Ares forgets it.
+   `belief/losses.py` books both sides' deaths into a decaying trade.
+2. **Estimate** (`belief/estimate.py`) -- the enemy quantity is `known` (the
+   roster, fading only by slow attrition) plus an unseen remainder, a normal
+   cut at zero with the believed mean. With nothing scouted the enemy is
+   assumed our size, corrected by the trade; the belief is kept as a gap from
+   that assumption, so it follows both sides' growth without lag. Information
+   is `enemy_territory_coverage` (confirmed enemy bases watched lately, against
+   a base not found and an army away) times how current the known units are;
+   an empty expansion or an army never seen is no information. A reading is
+   remembered for ~90 s and only replaced by a better one, so repeated weak
+   glimpses never add up to certainty. All rates are time constants.
+3. **Decision** (`belief/relative.py`) -- `advantage` is P(ours > theirs),
+   integrated over that remainder, so doubt is part of the number rather than
+   a separate gate. `AHEAD` needs `advantage >= 0.75` and is kept down to 0.60;
+   `BEHIND` needs `<= 0.25` and is kept up to 0.40. A new position must hold
+   (15 s economy, 8 s army), except `BEHIND` at `<= 0.10`, applied at once.
+   Before an axis has any evidence it stays `UNKNOWN`; afterwards staleness
+   degrades it toward `EVEN`, never freezes it.
 
 A stable change is announced in game chat (`[Awareness] ARMY: EVEN -> BEHIND
 ...`, logged as `awareness.belief_changed`). The army belief also feeds
@@ -271,9 +286,9 @@ bot/macro/
   planner.py           MacroPlanner: composes the domains into one tick's proposals
   diagnostics.py       macro.status / macro.idle_producer_unexplained
   proposal_helpers.py  one-step EconomicProposal builder, saturation target
-  composition/         CompositionDoctrine (BIO, MECH): what a goal set buys within
-  strategy/            goals, per-opening profiles, costs + posture priorities,
-                       reference build
+  builds/<build>/      vertical plan: units, structures, add-ons, upgrades, milestones
+  composition/         shared CompositionDoctrine vocabulary and broad bounds
+  strategy/            shared goal/config vocabulary, opening registry, reference build
   production/          PRODUCE_UNIT, PRODUCE_WORKER  (army_demand.py: assessment)
   construction/        BUILD_PRODUCTION, BUILD_ADDON, PRODUCE_SUPPLY, BUILD_GAS
                        (capacity.py: assessment)

@@ -220,8 +220,11 @@ class RuntimePilotTests(unittest.IsolatedAsyncioTestCase):
             {
                 "posture": "RECOVERY",
                 "relative_strength": {
-                    "score": 0.0,
-                    "confidence": 1.0,
+                    # One Reaper against one Marine, but 24 supply used and
+                    # nothing of the enemy watched: the enemy is assumed to
+                    # hold an army of about our supply minus its workers.
+                    "score": -0.917,
+                    "confidence": 0.0,
                     "own_combat_units": 1,
                     "known_enemy_combat_units": 1,
                 },
@@ -272,7 +275,7 @@ class RuntimePilotTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_runtime_announces_an_awareness_belief_change_in_chat(self):
         # Directly observed enemy workers outnumbering our own is hard proof
-        # (see RelativeBeliefConfig.observed_certainty_floor) -- ECONOMY
+        # (see RelativeBeliefConfig.decisive_behind) -- ECONOMY
         # should flip UNKNOWN -> BEHIND on the very first tick and be
         # announced in chat, with a matching structured log event.
         commands = FakeCommands()
@@ -763,7 +766,7 @@ class RuntimePilotTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(runner.switch_calls, ["BansheeCloak"])
         self.assertEqual(
             chat.messages,
-            ["Plan: Reaper expand into cloaked Banshee harass."],
+            ["[Build] BansheeCloak - Reaper expand into cloaked Banshee harass."],
         )
 
     async def test_on_start_announces_without_switching_when_no_build_choices(self):
@@ -782,7 +785,10 @@ class RuntimePilotTests(unittest.IsolatedAsyncioTestCase):
         await runtime.on_start(bot)
 
         self.assertEqual(runner.switch_calls, [])
-        self.assertEqual(chat.messages, ["Plan: Reaper expand into Bio 3-1-1."])
+        self.assertEqual(
+            chat.messages,
+            ["[Build] BioThreeOneOne - Reaper expand into Bio 3-1-1."],
+        )
 
     async def test_on_start_falls_back_to_a_generic_message_for_unmapped_openings(
         self,
@@ -799,7 +805,7 @@ class RuntimePilotTests(unittest.IsolatedAsyncioTestCase):
 
         await runtime.on_start(bot)
 
-        self.assertEqual(chat.messages, ["Plan: SomeFutureBuild."])
+        self.assertEqual(chat.messages, ["[Build] SomeFutureBuild"])
 
     async def test_macro_profile_switches_to_match_the_chosen_opening(self):
         # `MacroPlannerConfig` defaults to the Bio profile; once Ares resolves

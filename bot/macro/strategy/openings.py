@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
+from ..builds import banshee_cloak, battle_mech
 from .config import MacroPlannerConfig
-from .profiles import banshee_cloak, battle_mech
 
 MACRO_PROFILES: Mapping[str, MacroPlannerConfig] = {
     "BioThreeOneOne": MacroPlannerConfig(),

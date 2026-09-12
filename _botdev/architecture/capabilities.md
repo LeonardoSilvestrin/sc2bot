@@ -10,8 +10,9 @@ SHARED DOMAIN    bot/domain/               what a unit type can do
 MISSION ENGINE   bot/engine/missions/      how to use the units that exist
                  CombatRole (roles.py), UnitRequirement, UnitAllocator
 
-MACRO            bot/macro/composition/    what to produce
-                 CompositionDoctrine (BIO, MECH), MacroGoalSet.doctrine
+MACRO            bot/macro/builds/         what each build actually produces
+                 MacroGoalSet (units, structures, add-ons, milestones)
+                 bot/macro/composition/ only supplies doctrine bounds
 
 BEHAVIORS        bot/behavior/*            ask for a role, every combat unit,
                                            or a concrete unit; know no doctrine
@@ -24,7 +25,9 @@ BEHAVIORS        bot/behavior/*            ask for a role, every combat unit,
 Behavior -> role / capability requirement -> UnitAllocator
          -> every unit the bot owns -> physical eligibility -> suitability -> assignment
 
-Macro -> MacroGoalSet -> CompositionDoctrine -> what to produce
+Macro -> build plan -> MacroGoalSet -> what to produce
+                          |
+                          +-> CompositionDoctrine validates broad bounds
 ```
 
 The two flows meet only because production changes which units exist.
@@ -145,10 +148,14 @@ unit types. It has no capability, role or preference vocabulary. Every
 `MacroGoalSet` names its `doctrine`, and construction fails if an army goal
 falls outside it.
 
+It is a shared validation vocabulary, not the place to discover a concrete
+build. Exact unit ratios and every production request live together in that
+build's `bot/macro/builds/<build>/plan.py`.
+
 | Doctrine | Core | Support | Specialized | Used by |
 | --- | --- | --- | --- | --- |
 | `BIO` | Marine, Marauder, Siege Tank | Medivac, Viking | Banshee | `bio_three_one_one`, `banshee_cloak` |
-| `MECH` | Hellion, Cyclone, Siege Tank | Viking, Thor | Banshee | nothing yet (BattleMech) |
+| `MECH` | Hellion, Cyclone, Siege Tank | Viking, Thor | Banshee | `battle_mech` |
 
 ## A BIO -> MECH transition
 
@@ -180,7 +187,7 @@ Component `engine.missions.controller`:
   `replaced_by_more_suitable_unit`.
 - `standing_mission_updated` also carries `previous_supply_budget`.
 
-## Remaining debt before BattleMech
+## Remaining allocation debt
 
 - **Count-based sizing**: `DefenseConfig` still uses unit lists,
   `type_desirability` and a `desired` count (`DefenseRole.for_unit_type` too).
@@ -193,8 +200,6 @@ Component `engine.missions.controller`:
 - **No opportunity cost**: preemption compares priorities, not what the donor
   loses. A poor fit (a Tank at 0.19) can join a patrol when nothing better is
   free or preemptible.
-- **No doctrine selection**: no `MECH` goal set exists yet, and the opening
-  does not choose a doctrine.
 - **Map control sizing changed**: the patrol is now 20% of total combat supply
   (at least 6 supply), not 20% of fitting units. With Tanks in the army the
   patrol is larger than before.

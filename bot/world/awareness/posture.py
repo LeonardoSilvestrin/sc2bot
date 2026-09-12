@@ -33,8 +33,6 @@ def derive_macro_posture(
     workers: int,
     townhalls: int,
     own_combat: int,
-    strength_score: float,
-    strength_confidence: float,
     strength_is_stably_ahead: bool,
     nearby_enemy_combat: int,
     state: PostureState,
@@ -60,10 +58,10 @@ def derive_macro_posture(
         candidate = MacroPosture.RECOVERY
     elif (
         now - last_base_threat_at >= greed_safe_after
+        # The army belief only settles on AHEAD once being ahead is probable,
+        # uncertainty included; it needs no second margin or confidence gate.
         and strength_is_stably_ahead
-        and strength_confidence >= 0.5
         and own_combat >= 6
-        and strength_score >= 0.25
     ):
         candidate = MacroPosture.GREED
     else:

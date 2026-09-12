@@ -13,10 +13,10 @@ Awareness; neither imports the other.
 Split by what a proposal buys, so the intelligence for one kind of spend
 stays in one folder:
 
-    composition/    what the army is meant to be made of: the doctrine each
-                    goal set buys within (core / support / specialized)
-    strategy/       what this game converges toward: goal sets per opening,
-                    costs, posture-adjusted priorities, reference timings
+    builds/         one vertical folder per build: army composition,
+                    production milestones, add-ons and upgrades
+    composition/    shared doctrine vocabulary (core / support / specialized)
+    strategy/       shared goal/config vocabulary and reference timings
     production/     units to train: the army's supply debt, workers
     construction/   structures to build: production capacity, add-ons,
                     supply, refineries
@@ -35,6 +35,7 @@ operational need of construction, not a unit lease, and the seam where a
 worker controller would later mediate.
 """
 
+from .builds import banshee_cloak, battle_mech, bio_three_one_one
 from .composition import BIO, MECH, CompositionDoctrine
 from .contracts import SpendPlanner
 from .diagnostics import MacroDiagnostics
@@ -42,7 +43,6 @@ from .planner import MacroPlanner, MacroStatus
 from .strategy.config import MacroPlannerConfig, ResourceOverflowConfig
 from .strategy.goals import ArmyUnitGoal, MacroGoalSet, ProductionGoal, UpgradeGoal
 from .strategy.openings import MACRO_PROFILES, macro_config_for_opening
-from .strategy.profiles import banshee_cloak, battle_mech, bio_three_one_one
 from .strategy.reference_build import (
     ReferenceBuild,
     ReferenceBuildPoint,

@@ -77,6 +77,11 @@ def assess_capacity(
             reason = "production_below_townhall_floor"
         elif count.total < reference_floor:
             reason = "production_below_reference_build_benchmark"
+        elif (
+            economy.townhalls.ready
+            < goal.dynamic_growth_minimum_ready_townhalls
+        ):
+            reason = "dynamic_growth_waits_for_ready_townhall"
         elif goal.structure_type not in producers_in_demand:
             reason = (
                 "owed_units_need_an_add_on_not_a_building"

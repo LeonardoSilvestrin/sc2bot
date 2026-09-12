@@ -43,7 +43,7 @@ Builds:
     # while a single Tech Lab Starport makes a cloaked Banshee. Nothing past
     # that belongs here: two more Factories and the second Starport follow the
     # third base, which is macro's call (`battle_mech()` in
-    # `bot/macro/strategy/profiles.py`).
+    # `bot/macro/builds/battle_mech/plan.py`).
     BattleMech:
         AutoSupplyAtSupply: 30
         ConstantWorkerProductionTill: 50

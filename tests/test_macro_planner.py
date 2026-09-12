@@ -209,6 +209,68 @@ class TestBattleMechMacro:
             assert proposal is not None
             assert proposal.reason == "production_below_townhall_floor"
 
+    def test_overflow_cannot_buy_production_before_the_third(self):
+        """The expansion's bank is not permission to improvise a 2-base flood."""
+
+        attention = economy_attention(
+            townhalls=(2, 0),
+            units={},
+            structures=MECH_OPENING_STRUCTURES,
+            producers=(
+                saturated(UnitTypeId.FACTORY, ready=1),
+                saturated(UnitTypeId.STARPORT, ready=1),
+            ),
+            minerals=1_700,
+            vespene=1_200,
+        )
+        planner = MacroPlanner(config=macro_config_for_opening("BattleMech"))
+
+        proposals = planner.propose(attention, AwarenessService().update(attention))
+
+        for structure_type in (UnitTypeId.FACTORY, UnitTypeId.STARPORT):
+            assert proposal_for(
+                proposals, EconomicActionKind.BUILD_PRODUCTION, structure_type
+            ) is None
+            assessment = next(
+                item
+                for item in planner.last_status.capacity
+                if item.structure_type is structure_type
+            )
+            assert assessment.desired == 1
+            assert assessment.reason == "dynamic_growth_waits_for_ready_townhall"
+
+    def test_factory_flood_unlocks_only_after_the_third_is_ready(self):
+        structures = {
+            **MECH_OPENING_STRUCTURES,
+            UnitTypeId.FACTORY: (3, 0),
+            UnitTypeId.FACTORYTECHLAB: (2, 0),
+            UnitTypeId.STARPORT: (2, 0),
+            UnitTypeId.STARPORTTECHLAB: (2, 0),
+        }
+        attention = economy_attention(
+            townhalls=(3, 0),
+            units={},
+            structures=structures,
+            producers=(saturated(UnitTypeId.FACTORY, ready=3),),
+            vespene=1_200,
+        )
+        planner = MacroPlanner(config=macro_config_for_opening("BattleMech"))
+
+        proposals = planner.propose(attention, AwarenessService().update(attention))
+        factory = proposal_for(
+            proposals, EconomicActionKind.BUILD_PRODUCTION, UnitTypeId.FACTORY
+        )
+
+        assert factory is not None
+        assert factory.target_count == 4
+        assert factory.reason == "saturated_capacity_and_bank_overflowing"
+        assessment = next(
+            item
+            for item in planner.last_status.capacity
+            if item.structure_type is UnitTypeId.FACTORY
+        )
+        assert assessment.desired == 5
+
     def test_an_add_on_waits_for_a_structure_that_can_hold_it(self):
         # The only Factory holds the Reactor it took from the Barracks, so a
         # Tech Lab has nowhere to go until the third base adds another.

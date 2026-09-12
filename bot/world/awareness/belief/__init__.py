@@ -14,7 +14,15 @@ from .economy import (
     WorkerEstimate,
     assess_economy,
 )
+from .estimate import (
+    EstimateConfig,
+    QuantityEstimate,
+    advance_estimate,
+    advantage,
+)
+from .losses import LossLedger, LossTracker
 from .relative import (
+    BeliefState,
     HysteresisState,
     RelativeAssessment,
     RelativeBeliefConfig,
@@ -27,17 +35,24 @@ __all__ = [
     "ArmyBeliefConfig",
     "ArmySupplyEstimate",
     "BaseEstimate",
+    "BeliefState",
     "EconomyBelief",
     "EconomyBeliefConfig",
     "EnemyArmyKnowledge",
     "EnemyEconomyKnowledge",
     "EnemyUnitTypeCount",
+    "EstimateConfig",
     "HysteresisState",
+    "LossLedger",
+    "LossTracker",
+    "QuantityEstimate",
     "RelativeAssessment",
     "RelativeBeliefConfig",
     "RelativePosition",
     "WorkerEstimate",
     "advance_belief",
+    "advance_estimate",
+    "advantage",
     "assess_army",
     "assess_economy",
 ]

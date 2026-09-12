@@ -49,9 +49,9 @@ from bot.world.awareness import (
 # `_choose_and_announce_opening` re-picks from that same cycle ourselves so
 # every configured opening actually gets played.
 _OPENING_ANNOUNCEMENTS: dict[str, str] = {
-    "BioThreeOneOne": "Plan: Reaper expand into Bio 3-1-1.",
-    "BansheeCloak": "Plan: Reaper expand into cloaked Banshee harass.",
-    "BattleMech": "Plan: Reaper expand into Hellions, a Banshee and mech.",
+    "BioThreeOneOne": "Reaper expand into Bio 3-1-1.",
+    "BansheeCloak": "Reaper expand into cloaked Banshee harass.",
+    "BattleMech": "get ready baby",
 }
 
 
@@ -216,7 +216,10 @@ class BotRuntime:
             return
         chat_send = getattr(bot, "chat_send", None)
         if callable(chat_send):
-            message = _OPENING_ANNOUNCEMENTS.get(opening, f"Plan: {opening}.")
+            description = _OPENING_ANNOUNCEMENTS.get(opening)
+            message = f"[Build] {opening}"
+            if description:
+                message += f" - {description}"
             await chat_send(message)
 
     async def _announce_awareness_changes(
@@ -469,19 +472,29 @@ class BotRuntime:
                     "own_workers": economy.own_workers,
                     "own_bases": economy.own_bases,
                     "enemy_observed_workers": economy.enemy.workers.observed,
+                    "enemy_known_workers": round(economy.enemy.workers.known, 1),
                     "enemy_estimated_workers": economy.enemy.workers.estimated,
+                    "enemy_workers_uncertainty": round(
+                        economy.enemy.workers.uncertainty, 1
+                    ),
                     "enemy_confirmed_bases": economy.enemy.bases.confirmed,
                     "enemy_estimated_bases": economy.enemy.bases.estimated,
                     "raw": economy.relative.raw_state.name,
                     "stable": economy.relative.stable_state.name,
+                    "advantage": round(economy.relative.advantage, 3),
                     "confidence": round(economy.relative.confidence, 3),
                 },
                 "army": {
                     "own_supply": round(army.own_supply, 1),
                     "enemy_observed_supply": round(army.enemy.supply.observed, 1),
+                    "enemy_known_supply": round(army.enemy.supply.known, 1),
                     "enemy_estimated_supply": round(army.enemy.supply.estimated, 1),
+                    "enemy_supply_uncertainty": round(
+                        army.enemy.supply.uncertainty, 1
+                    ),
                     "raw": army.relative.raw_state.name,
                     "stable": army.relative.stable_state.name,
+                    "advantage": round(army.relative.advantage, 3),
                     "confidence": round(army.relative.confidence, 3),
                 },
             },

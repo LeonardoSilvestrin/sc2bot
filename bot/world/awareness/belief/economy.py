@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 from bot.world.attention import WorldFacts
@@ -9,13 +10,20 @@ from bot.world.awareness.enemy import (
     EnemySighting,
 )
 
+from .estimate import (
+    EstimateConfig,
+    advance_estimate,
+    advantage,
+    clamp01,
+    confidence,
+    roster_evidence,
+)
+from .losses import LossLedger
 from .relative import (
-    HysteresisState,
+    BeliefState,
     RelativeAssessment,
     RelativeBeliefConfig,
     advance_belief,
-    clamp01,
-    freshness,
 )
 
 
@@ -24,6 +32,10 @@ class WorkerEstimate:
     observed: int
     estimated: int
     confidence: float
+    # Workers seen and not seen dying (fading slowly).
+    known: float = 0.0
+    # Spread of the part not seen, in workers.
+    uncertainty: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,11 +63,14 @@ class EconomyBelief:
 
 @dataclass(frozen=True, slots=True)
 class EconomyBeliefConfig:
-    # Conservative floor for "how many workers does N confirmed enemy bases
-    # imply", used only as a lower bound alongside directly observed
-    # workers -- never as a replacement for them.
+    # How many workers a confirmed enemy base reads as. A reading of the
+    # whole, not a floor: a fresh expansion has none yet.
     assumed_workers_per_base: float = 16.0
-    worker_stale_after: float = 60.0
+    # A worker count is the economy itself, not a stand-in for it: little
+    # spread on either side, so seeing more workers than we have is decisive.
+    estimate: EstimateConfig = EstimateConfig(
+        own_relative_sd=0.05, evidence_relative_sd=0.05, noise_floor=2.0
+    )
     relative: RelativeBeliefConfig = RelativeBeliefConfig(persist_seconds=15.0)
 
 
@@ -63,104 +78,105 @@ def assess_economy(
     *,
     world: WorldFacts,
     sightings: tuple[EnemySighting, ...],
+    roster: tuple[EnemySighting, ...],
     base_observations: tuple[EnemyBaseObservation, ...],
+    losses: LossLedger,
     coverage: float,
-    now: float,
-    state: HysteresisState,
+    visibility: float,
+    scouted: bool,
+    state: BeliefState,
     config: EconomyBeliefConfig,
-) -> tuple[EconomyBelief, HysteresisState]:
-    """Derive an economy belief. Conservative on purpose: absence of vision
-    is never treated as absence of economy (see ``estimated_workers``), and
-    an AHEAD conclusion is only trusted once scouting coverage backs it (see
-    ``workers_confidence``) -- but a BEHIND conclusion already proven by
-    directly observed workers is trusted immediately, in ``classify``.
+) -> tuple[EconomyBelief, BeliefState]:
+    """Compare our workers with a running estimate of the enemy's.
+
+    The floor is every enemy worker seen and not seen dying; the reading is
+    the larger of that and what the confirmed bases imply. With nothing
+    scouted the enemy is assumed to have as many workers as we do, corrected
+    by the workers each side lost lately. See ``estimate.py``.
     """
 
+    now = world.time
     own_workers = world.economy.workers.existing
-    own_bases = len(world.bases)
-
-    worker_sightings = tuple(sighting for sighting in sightings if sighting.is_worker)
-    observed_workers = sum(1 for sighting in worker_sightings if sighting.visible_now)
-    # A worker that just walked out of vision is still remembered (Ares
-    # keeps reporting its tag) -- it must not silently stop counting until
-    # the sighting itself expires. Absence of *current* vision is not
-    # absence of economy.
-    remembered_workers = len(worker_sightings)
-    confirmed_bases = sum(
-        1
+    workers = roster_evidence(
+        ((1.0, entry.last_seen_at) for entry in roster if entry.is_worker),
+        now=now,
+        config=config.estimate,
+    )
+    confirmed = tuple(
+        observation
         for observation in base_observations
         if observation.status is EnemyBaseStatus.CONFIRMED
     )
-    projected_workers = confirmed_bases * config.assumed_workers_per_base
-    estimated_workers = max(
-        float(observed_workers), float(remembered_workers), projected_workers
-    )
+    projected = len(confirmed) * config.assumed_workers_per_base
+    if projected > workers.known:
+        last_checked = max(
+            (
+                observation.last_checked_at
+                for observation in confirmed
+                if observation.last_checked_at is not None
+            ),
+            default=None,
+        )
+        freshness = (
+            0.0
+            if last_checked is None
+            else math.exp(
+                -max(0.0, now - last_checked)
+                / config.estimate.evidence_time_constant
+            )
+        )
+    else:
+        freshness = workers.freshness
 
-    last_worker_seen_at = max(
-        (sighting.last_seen_at for sighting in worker_sightings), default=None
-    )
-    # A confirmed base is itself evidence for the workers it implies, even
-    # with no worker directly seen recently -- freshness should reflect
-    # whichever is more recent, not require a worker sighting specifically.
-    last_confirmed_base_at = max(
-        (
-            observation.last_checked_at
-            for observation in base_observations
-            if observation.status is EnemyBaseStatus.CONFIRMED
-            and observation.last_checked_at is not None
-        ),
-        default=None,
-    )
-    last_evidence_at = max(
-        (
-            timestamp
-            for timestamp in (last_worker_seen_at, last_confirmed_base_at)
-            if timestamp is not None
-        ),
-        default=None,
-    )
-    worker_freshness = freshness(now, last_evidence_at, config.worker_stale_after)
-    # Coverage dominates: without it, "no bases confirmed" and "map not
-    # scouted at all" look identical to "enemy really only has one base",
-    # which is exactly the false-AHEAD trap this pilot must avoid.
-    workers_confidence = clamp01(worker_freshness * (0.25 + 0.75 * coverage))
-    bases_confidence = clamp01(coverage)
-
-    enemy = EnemyEconomyKnowledge(
-        workers=WorkerEstimate(
-            observed=observed_workers,
-            estimated=int(round(estimated_workers)),
-            confidence=workers_confidence,
-        ),
-        bases=BaseEstimate(
-            confirmed=confirmed_bases,
-            estimated=confirmed_bases,
-            confidence=bases_confidence,
-        ),
-    )
-
-    reason = (
-        "enemy workers observed"
-        if own_workers > 0 and observed_workers >= own_workers
-        else ""
-    )
-    assessment, new_state = advance_belief(
+    prior = own_workers + losses.worker_trade
+    estimate = advance_estimate(
+        state.estimate,
         now=now,
-        own=float(own_workers),
-        estimated=estimated_workers,
-        observed=float(observed_workers),
-        confidence=workers_confidence,
-        reason=reason,
-        state=state,
+        known=workers.known,
+        reading=max(workers.known, projected),
+        prior=prior,
+        information=visibility * freshness,
+        config=config.estimate,
+    )
+    informed = state.informed or scouted or workers.known > 0.0 or bool(confirmed)
+    belief_confidence = confidence(estimate, config.estimate)
+    relative, hysteresis = advance_belief(
+        now=now,
+        advantage=advantage(float(own_workers), estimate, config.estimate),
+        informed=informed,
+        confidence=belief_confidence,
+        reason=(
+            f"own {own_workers} vs enemy ~{estimate.mean:.0f}"
+            f"±{estimate.spread:.0f} workers"
+        ),
+        state=state.hysteresis,
         config=config.relative,
     )
 
+    enemy = EnemyEconomyKnowledge(
+        workers=WorkerEstimate(
+            observed=sum(
+                1
+                for sighting in sightings
+                if sighting.is_worker and sighting.visible_now
+            ),
+            estimated=int(round(estimate.mean)),
+            confidence=belief_confidence,
+            known=estimate.known,
+            uncertainty=estimate.spread,
+        ),
+        bases=BaseEstimate(
+            confirmed=len(confirmed),
+            estimated=len(confirmed),
+            confidence=clamp01(coverage),
+        ),
+    )
     return (
         EconomyBelief(
             own_workers=own_workers,
-            own_bases=own_bases,
+            own_bases=len(world.bases),
             enemy=enemy,
-            relative=assessment,
+            relative=relative,
         ),
-        new_state,
+        BeliefState(estimate=estimate, hysteresis=hysteresis, informed=informed),
     )
