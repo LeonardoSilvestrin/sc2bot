@@ -3,6 +3,7 @@ from sc2.data import Result
 
 from bot.adapters.logging import NullBotLogger
 from bot.app import BotRuntime
+from bot.app.debug import SpatialDebugConfig
 from bot.ports import BotLogger
 
 
@@ -12,6 +13,7 @@ class MyBot(AresBot):
         game_step_override: int | None = None,
         *,
         logger: BotLogger | None = None,
+        spatial_debug_config: SpatialDebugConfig | None = None,
     ):
         """Initiate custom bot
 
@@ -23,7 +25,10 @@ class MyBot(AresBot):
         """
         super().__init__(game_step_override)
         self.bot_logger = logger or NullBotLogger()
-        self.runtime = BotRuntime(logger=self.bot_logger)
+        self.runtime = BotRuntime(
+            logger=self.bot_logger,
+            spatial_debug_config=spatial_debug_config,
+        )
 
     async def on_start(self) -> None:
         await super().on_start()

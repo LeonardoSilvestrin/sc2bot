@@ -17,6 +17,7 @@ from bot.ports.logging import BotLogger
 from bot.world.attention import AttentionService, AttentionSnapshot
 from bot.world.awareness import AwarenessService, AwarenessSnapshot
 
+from .debug import SpatialDebugView
 from .telemetry import FrameTelemetry
 
 
@@ -46,6 +47,7 @@ class FrameProcessor:
         economy: EconomyController,
         macro_diagnostics: MacroDiagnostics,
         telemetry: FrameTelemetry,
+        spatial_debug: SpatialDebugView,
     ) -> None:
         self._logger = logger
         self._world_observer = world_observer
@@ -59,6 +61,7 @@ class FrameProcessor:
         self._economy = economy
         self._macro_diagnostics = macro_diagnostics
         self._telemetry = telemetry
+        self._spatial_debug = spatial_debug
 
     async def process(self, bot, *, iteration: int) -> None:
         world = self._world_observer.world_facts(bot, iteration=iteration)
@@ -69,6 +72,8 @@ class FrameProcessor:
         await self._step_behavior(bot, attention, awareness)
         self._step_macro(bot, attention, awareness)
 
+        if self._spatial_debug.enabled:
+            self._spatial_debug.render(bot, awareness)
         self._telemetry.report(bot, attention, awareness)
 
     def _log_belief_changes(self, awareness: AwarenessSnapshot) -> None:

@@ -35,6 +35,7 @@ from bot.macro import MacroDiagnostics, MacroPlanner, MacroPlannerConfig
 from bot.ports.logging import BotLogger
 from bot.world.awareness import AwarenessService, SpatialModelConfig
 
+from .debug import SpatialDebugConfig, SpatialDebugView
 from .frame import FrameProcessor
 from .opening import OpeningSelector
 from .telemetry import FrameTelemetry
@@ -65,6 +66,7 @@ def compose_bot(
     standing_config: StandingConfig | None = None,
     spatial_model_config: SpatialModelConfig | None = None,
     spatial_sample_spacing: int = 10,
+    spatial_debug_config: SpatialDebugConfig | None = None,
     rng: random.Random | None = None,
 ) -> BotComposition:
     rng = rng or random.Random()
@@ -165,6 +167,7 @@ def compose_bot(
         telemetry=FrameTelemetry(
             logger=logger, missions=missions, standing_planner=standing_planner
         ),
+        spatial_debug=SpatialDebugView(spatial_debug_config),
     )
     return BotComposition(
         opening=OpeningSelector(rng=rng),
