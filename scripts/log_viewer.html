@@ -1042,6 +1042,9 @@ function renderEconomyPanel() {
       card.title = info.events.map((event) => `${formatTime(event.time)} ${event.status}: ${event.reason ?? ""}`).join("\n");
       card.addEventListener("click", () => {
         document.getElementById("search").value = info.actionId || info.deduplicationKey || info.id;
+        // Economic lifecycle events carry no mission_id and are mostly telemetry.
+        document.getElementById("mission-filter").value = "";
+        document.getElementById("all-events").checked = true;
         switchView("events");
       });
       el.appendChild(card);
@@ -1289,6 +1292,8 @@ function renderKnowledgePanel() {
     appendTextElement(card, "div", "meta", `strength ${phase.minStrength.toFixed(3)} .. ${phase.maxStrength.toFixed(3)} · max visible ${phase.maxVisible}`);
     card.addEventListener("click", () => {
       document.getElementById("search").value = `posture=${phase.posture}`;
+      document.getElementById("mission-filter").value = "";
+      document.getElementById("all-events").checked = true;
       switchView("events");
     });
     el.appendChild(card);
