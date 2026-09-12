@@ -43,8 +43,10 @@ CONFIG_FILE: str = "config.yml"
 MAP_FILE_EXT: str = "SC2Map"
 MY_BOT_NAME: str = "MyBotName"
 MY_BOT_RACE: str = "MyBotRace"
+# Sample grid the bot reasons over; changing it changes how the bot plays.
 DEFAULT_SPATIAL_SPACING = 2
-DEFAULT_SPATIAL_VIEW_SPACING = 2
+# Gap between markers drawn by --spatial-view; presentation only.
+DEFAULT_SPATIAL_VIEW_SPACING = 4
 
 
 def _positive_int(value: str) -> int:
@@ -72,7 +74,10 @@ def parse_local_args(args=None):
         type=_positive_int,
         default=DEFAULT_SPATIAL_VIEW_SPACING,
         metavar="UNITS",
-        help="Spacing between debug-view samples (default: 2; normal: 2).",
+        help=(
+            "Approximate gap between drawn debug markers, rounded to whole "
+            "steps of the bot's sample grid (default: %(default)s)."
+        ),
     )
     parser.add_argument(
         "--spatial-snapshot",
@@ -117,11 +122,7 @@ def main():
     spatial_debug_config = SpatialDebugConfig(
         enabled=local_args.spatial_view,
         show_grid=True,
-    )
-    spatial_sample_spacing = (
-        local_args.spatial_view_spacing
-        if local_args.spatial_view
-        else DEFAULT_SPATIAL_SPACING
+        draw_spacing=float(local_args.spatial_view_spacing),
     )
     spatial_snapshot_config = SpatialSnapshotConfig(
         enabled=snapshots_enabled,
@@ -136,7 +137,7 @@ def main():
         race,
         MyBot(
             logger=bot_logger,
-            spatial_sample_spacing=spatial_sample_spacing,
+            spatial_sample_spacing=DEFAULT_SPATIAL_SPACING,
             spatial_debug_config=spatial_debug_config,
             spatial_snapshot_config=spatial_snapshot_config,
             spatial_snapshot_directory=spatial_snapshot_directory,

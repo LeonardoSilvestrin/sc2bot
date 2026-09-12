@@ -7,8 +7,8 @@ state of its own.
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from typing import Final
+from collections.abc import Callable, Sequence
+from typing import Final, Protocol, TypeVar
 
 from sc2.position import Point2, Point3
 
@@ -31,6 +31,41 @@ CONTROL_COLORS: Final[dict[TerritoryControl, Color]] = {
 _GRID_RADIUS = 0.20
 _TERRITORY_RADIUS = 0.32
 _FRONTLINE_RADIUS = 0.65
+
+
+class _Positioned(Protocol):
+    @property
+    def position(self) -> Point2: ...
+
+
+_SampleT = TypeVar("_SampleT", bound=_Positioned)
+
+
+def thin_samples(
+    samples: Sequence[_SampleT],
+    sample_spacing: float,
+    draw_spacing: float | None,
+) -> tuple[_SampleT, ...]:
+    """The samples on a coarser lattice about ``draw_spacing`` apart.
+
+    Presentation only: the bot keeps reasoning over every sample. The stride
+    is a whole number of lattice steps, so the drawn markers stay a regular
+    grid; a ``draw_spacing`` at or below the sample spacing draws them all.
+    """
+
+    if draw_spacing is None or sample_spacing <= 0.0 or not samples:
+        return tuple(samples)
+    stride = max(1, int(draw_spacing / sample_spacing + 0.5))
+    if stride == 1:
+        return tuple(samples)
+    min_x = min(float(sample.position.x) for sample in samples)
+    min_y = min(float(sample.position.y) for sample in samples)
+    return tuple(
+        sample
+        for sample in samples
+        if round((float(sample.position.x) - min_x) / sample_spacing) % stride == 0
+        and round((float(sample.position.y) - min_y) / sample_spacing) % stride == 0
+    )
 
 
 def color_for_control(control: TerritoryControl) -> Color:
@@ -68,23 +103,32 @@ class SpatialDebugView:
         client = bot.client
         terrain_point = _terrain_point_factory(bot)
         territory = awareness.territory
+        sample_spacing = awareness.spatial.sample_spacing
+        draw_spacing = self.config.draw_spacing
+        drawn = 0
 
         # A territory marker already shows both that the sample exists and
         # its classification, so never stack a second grid sphere under it.
         if self.config.show_territory and territory.samples:
-            for territory_sample in territory.samples:
+            for territory_sample in thin_samples(
+                territory.samples, sample_spacing, draw_spacing
+            ):
                 client.debug_sphere_out(
                     terrain_point(territory_sample.position, 0.20),
                     _TERRITORY_RADIUS,
                     color_for_control(territory_sample.control),
                 )
+                drawn += 1
         elif self.config.show_grid:
-            for spatial_sample in awareness.spatial.samples:
+            for spatial_sample in thin_samples(
+                awareness.spatial.samples, sample_spacing, draw_spacing
+            ):
                 client.debug_sphere_out(
                     terrain_point(spatial_sample.position, 0.15),
                     _GRID_RADIUS,
                     GRID_COLOR,
                 )
+                drawn += 1
 
         if self.config.show_frontline:
             for point in territory.frontline:
@@ -109,7 +153,7 @@ class SpatialDebugView:
                 )
 
         client.debug_text_screen(
-            _panel_text(awareness),
+            _panel_text(awareness, drawn),
             (0.01, 0.16),
             TEXT_COLOR,
             10,
@@ -129,7 +173,7 @@ def _terrain_point_factory(bot) -> Callable[[Point2, float], Point3]:
     return point
 
 
-def _panel_text(awareness: AwarenessSnapshot) -> str:
+def _panel_text(awareness: AwarenessSnapshot, drawn: int) -> str:
     territory = awareness.territory
     counts = {
         control: territory.count(control) for control in TerritoryControl
@@ -138,6 +182,7 @@ def _panel_text(awareness: AwarenessSnapshot) -> str:
         (
             "TERRITORY DEBUG",
             f"samples: {len(territory.samples)}",
+            f"drawn: {drawn}",
             f"friendly: {counts[TerritoryControl.FRIENDLY]}",
             f"contested: {counts[TerritoryControl.CONTESTED]}",
             f"enemy: {counts[TerritoryControl.ENEMY]}",

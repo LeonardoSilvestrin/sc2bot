@@ -1,13 +1,13 @@
 import json
 from pathlib import Path
 
-from run import parse_local_args
+from run import DEFAULT_SPATIAL_VIEW_SPACING, parse_local_args
 
 
 def test_spatial_view_is_opt_in() -> None:
     defaults = parse_local_args([])
     assert not defaults.spatial_view
-    assert defaults.spatial_view_spacing == 2
+    assert defaults.spatial_view_spacing == DEFAULT_SPATIAL_VIEW_SPACING
 
     configured = parse_local_args(
         ["--spatial-view", "--spatial-view-spacing", "4"]
@@ -39,22 +39,17 @@ def test_vscode_exposes_the_supported_launcher_modes() -> None:
     configurations = launch_config["configurations"]
 
     assert [configuration["name"] for configuration in configurations] == [
-        "sem logs nem view",
-        "só logs",
-        "logs e view",
-        "logs e snapshot SVG",
-        "logs, view e snapshot SVG",
-        "log visualizer",
+        "play",
+        "play_log",
+        "play_logs_imap",
+        "play_logs_SVG",
+        "play_full_debug",
+        "log_view",
+        "open WT",
     ]
     assert configurations[0]["args"] == ["--bot-log", "off"]
     assert configurations[1]["args"] == ["--bot-log", "events"]
-    assert configurations[2]["args"] == [
-        "--bot-log",
-        "events",
-        "--spatial-view",
-        "--spatial-view-spacing",
-        "2",
-    ]
+    assert configurations[2]["args"] == ["--bot-log", "events", "--spatial-view"]
     assert configurations[3]["args"] == [
         "--bot-log",
         "events",
@@ -64,7 +59,5 @@ def test_vscode_exposes_the_supported_launcher_modes() -> None:
         "--bot-log",
         "events",
         "--spatial-view",
-        "--spatial-view-spacing",
-        "2",
         "--spatial-snapshot",
     ]

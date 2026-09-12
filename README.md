@@ -110,9 +110,11 @@ To display the in-game spatial/territory debug view during a local game, run:
 poetry run python run.py --spatial-view
 ```
 
-The view uses a denser 5-unit lattice (the normal bot uses 10), producing
-roughly four times as many map samples. Override it when needed with
-`--spatial-view-spacing 4` or a larger value for a lighter view.
+The view draws the bot's own sample grid (`DEFAULT_SPATIAL_SPACING` in
+`run.py`, 10 map units) and never changes it, so a game with the view plays
+like one without. Use `--spatial-view-spacing 20` or larger to draw fewer
+markers; the gap is rounded to whole grid steps, and a value at or below the
+grid spacing draws every sample. The SVG snapshot always shows the full grid.
 
 To write the observational SVG snapshot every 30 seconds of game time, run:
 

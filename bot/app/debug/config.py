@@ -12,6 +12,13 @@ class SpatialDebugConfig:
     show_territory: bool = True
     show_frontline: bool = True
     show_security: bool = True
+    # Approximate map-unit gap between drawn markers; None draws every sample.
+    # Presentation only: the bot's own sample grid is configured elsewhere.
+    draw_spacing: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.draw_spacing is not None and self.draw_spacing <= 0.0:
+            raise ValueError("draw_spacing must be positive")
 
 
 @dataclass(frozen=True, slots=True)

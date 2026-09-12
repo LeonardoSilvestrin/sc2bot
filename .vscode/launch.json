@@ -30,13 +30,7 @@
       "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
       "program": "${workspaceFolder}\\run.py",
       "cwd": "${workspaceFolder}",
-      "args": [
-        "--bot-log",
-        "events",
-        "--spatial-view",
-        "--spatial-view-spacing",
-        "2"
-      ],
+      "args": ["--bot-log", "events", "--spatial-view"],
       "console": "integratedTerminal",
       "justMyCode": false
     },
@@ -62,8 +56,6 @@
         "--bot-log",
         "events",
         "--spatial-view",
-        "--spatial-view-spacing",
-        "2",
         "--spatial-snapshot"
       ],
       "console": "integratedTerminal",

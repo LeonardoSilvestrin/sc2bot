@@ -2,12 +2,17 @@ from __future__ import annotations
 
 import unittest
 from copy import deepcopy
+from dataclasses import replace
 from types import SimpleNamespace
 
 from sc2.position import Point2
 
 from bot.app.debug import SpatialDebugConfig, SpatialDebugView
-from bot.app.debug.spatial_view import color_for_control, format_security_label
+from bot.app.debug.spatial_view import (
+    color_for_control,
+    format_security_label,
+    thin_samples,
+)
 from bot.world.awareness import (
     AwarenessSnapshot,
     BaseTerritory,
@@ -150,6 +155,58 @@ class SpatialDebugViewTests(unittest.TestCase):
         self.assertEqual(len(client.spheres), 1)
         self.assertEqual(client.spheres[0][2], (80, 180, 255))
         self.assertIn("samples: 0", client.screen_text[0][0])
+
+    def test_thinning_keeps_a_regular_coarser_lattice(self):
+        samples = tuple(
+            SimpleNamespace(position=Point2((5.5 + 10 * x, 5.5 + 10 * y)))
+            for y in range(4)
+            for x in range(4)
+        )
+
+        self.assertEqual(len(thin_samples(samples, 10.0, None)), 16)
+        self.assertEqual(len(thin_samples(samples, 10.0, 4.0)), 16)
+        self.assertEqual(
+            {
+                (sample.position.x, sample.position.y)
+                for sample in thin_samples(samples, 10.0, 20.0)
+            },
+            {(5.5, 5.5), (25.5, 5.5), (5.5, 25.5), (25.5, 25.5)},
+        )
+
+    def test_draw_spacing_thins_markers_but_not_the_snapshot(self):
+        base = awareness_with_territory()
+        reading = base.territory.samples[0].reading
+        samples = tuple(
+            TerritorySample(
+                Point2((5.5 + 10 * x, 5.5 + 10 * y)), reading, region="main"
+            )
+            for y in range(4)
+            for x in range(4)
+        )
+        snapshot = replace(
+            base,
+            spatial=SpatialField(samples=(), sample_spacing=10.0),
+            territory=replace(base.territory, samples=samples, frontline=()),
+        )
+        client = FakeDebugClient()
+        bot = SimpleNamespace(
+            client=client,
+            get_terrain_z_height=lambda position: 8.0,
+        )
+        view = SpatialDebugView(
+            SpatialDebugConfig(enabled=True, draw_spacing=20.0)
+        )
+
+        view.render(bot, snapshot)
+
+        self.assertEqual(len(client.spheres), 4)
+        self.assertIn("samples: 16", client.screen_text[0][0])
+        self.assertIn("drawn: 4", client.screen_text[0][0])
+        self.assertEqual(len(snapshot.territory.samples), 16)
+
+    def test_draw_spacing_must_be_positive(self):
+        with self.assertRaises(ValueError):
+            SpatialDebugConfig(draw_spacing=0.0)
 
 
 if __name__ == "__main__":
