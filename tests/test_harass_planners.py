@@ -62,7 +62,9 @@ def enemy_marine(tag: int) -> UnitSnapshot:
     )
 
 
-def enemy_anti_air(tag: int, *, position: Point2 = TARGET) -> UnitSnapshot:
+def enemy_anti_air(
+    tag: int, *, position: Point2 = TARGET, supply_cost: float = 1.0
+) -> UnitSnapshot:
     return UnitSnapshot(
         tag=tag,
         unit_type=UnitTypeId.MARINE,
@@ -73,6 +75,7 @@ def enemy_anti_air(tag: int, *, position: Point2 = TARGET) -> UnitSnapshot:
         can_attack_air=True,
         can_attack_ground=True,
         visible_now=True,
+        supply_cost=supply_cost,
     )
 
 
@@ -237,7 +240,9 @@ class BansheeHarassTests(unittest.TestCase):
 
         self.assertEqual(BansheeHarassPlanner().propose(current, awareness), ())
 
-    def test_no_proposal_while_an_anti_air_unit_is_near_the_target(self):
+    def test_no_proposal_while_enough_anti_air_is_near_the_target(self):
+        # Four Marines on the target read as an army too dangerous to launch
+        # at (see BansheeTargetHeuristics); a lone one no longer withholds.
         service = AwarenessService()
         service.update(
             attention(10.0, natural_visible=True, reapers=0, banshees=1)
@@ -247,7 +252,9 @@ class BansheeHarassTests(unittest.TestCase):
             natural_visible=False,
             reapers=0,
             banshees=1,
-            anti_air_enemies=(enemy_anti_air(8500, position=TARGET),),
+            anti_air_enemies=tuple(
+                enemy_anti_air(8500 + tag, position=TARGET) for tag in range(4)
+            ),
         )
         awareness = service.update(current)
 
@@ -337,7 +344,7 @@ class BansheeHarassTests(unittest.TestCase):
         self.assertEqual(proposal.kind, MissionKind.AIR_HARASS)
         self.assertEqual(proposal.target, TARGET)
         self.assertEqual(proposal.target_key, "enemy_natural")
-        self.assertEqual(proposal.deduplication_key, "air_harass:enemy_natural")
+        self.assertEqual(proposal.deduplication_key, "air_harass:banshee_harass")
         # Standing POSITION/RESERVE missions hold most idle units now, so
         # harass must be able to preempt them to get a raider at all.
         self.assertTrue(proposal.can_preempt)

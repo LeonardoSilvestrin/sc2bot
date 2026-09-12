@@ -164,6 +164,8 @@ class BotRuntime:
         self._last_world_signature: tuple | None = None
         self._last_world_snapshot_at: float = -999.0
         self._last_enemy_intel_signature: tuple | None = None
+        self._last_enemy_model_signature: tuple | None = None
+        self._last_enemy_model_log_at: float = -999.0
         self._last_belief_signature: tuple | None = None
         self._last_belief_log_at: float = -999.0
         self._last_standing_signature: tuple | None = None
@@ -327,6 +329,7 @@ class BotRuntime:
     def _log_world_snapshots(self, attention, awareness: AwarenessSnapshot) -> None:
         world = attention.world
         self._log_enemy_intel(awareness, game_time=world.time)
+        self._log_enemy_model(awareness, game_time=world.time)
         self._log_world_belief(awareness, game_time=world.time)
         economy = world.economy
         strength = awareness.relative_strength
@@ -565,6 +568,73 @@ class BotRuntime:
                     "duration_seconds": round(unassigned_duration, 1),
                 },
             )
+
+    def _log_enemy_model(
+        self, awareness: AwarenessSnapshot, *, game_time: float
+    ) -> None:
+        """Log where the enemy's bases and forces are believed to be.
+
+        Freshness moves every number every frame, so only a change in which
+        bases are confirmed or which cluster is the main force logs at once;
+        the numbers otherwise ride a ten-second heartbeat.
+        """
+
+        enemy = awareness.enemy
+        confirmed = enemy.bases.confirmed
+        main_force = enemy.main_force
+        main_force_id = None if main_force is None else main_force.cluster_id
+        signature = (tuple(base.key for base in confirmed), main_force_id)
+        changed = signature != self._last_enemy_model_signature
+        periodic = game_time - self._last_enemy_model_log_at >= 10.0
+        if not changed and not periodic:
+            return
+        self._last_enemy_model_signature = signature
+        self._last_enemy_model_log_at = game_time
+        self.logger.event(
+            "knowledge.enemy_model",
+            component="world.awareness.enemy",
+            game_time=game_time,
+            data={
+                "bases": [
+                    {
+                        "key": base.key,
+                        "economic_value": round(base.economic_value, 2),
+                        "workers": base.worker_count_estimate,
+                        "air_defense": round(base.air_defense, 2),
+                        "air_defense_confidence": round(
+                            base.air_defense_confidence, 2
+                        ),
+                        "ground_defense": round(base.ground_defense, 2),
+                        "ground_defense_confidence": round(
+                            base.ground_defense_confidence, 2
+                        ),
+                        "confidence": round(base.confidence, 2),
+                    }
+                    for base in confirmed
+                ],
+                "forces": [
+                    {
+                        "cluster_id": cluster.cluster_id,
+                        "center": [
+                            round(float(cluster.center.x), 1),
+                            round(float(cluster.center.y), 1),
+                        ],
+                        "radius": round(cluster.radius, 1),
+                        "position_uncertainty": round(
+                            cluster.position_uncertainty, 1
+                        ),
+                        "strength": round(cluster.combat_strength, 1),
+                        "anti_air": round(cluster.anti_air_strength, 1),
+                        "anti_ground": round(cluster.anti_ground_strength, 1),
+                        "units": cluster.unit_count,
+                        "visible_units": cluster.visible_unit_count,
+                        "confidence": round(cluster.confidence, 2),
+                    }
+                    for cluster in enemy.forces
+                ],
+                "main_force": main_force_id,
+            },
+        )
 
     def _log_enemy_intel(
         self, awareness: AwarenessSnapshot, *, game_time: float

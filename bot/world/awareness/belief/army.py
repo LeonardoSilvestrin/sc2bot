@@ -55,14 +55,6 @@ class ArmyBeliefConfig:
     relative: RelativeBeliefConfig = RelativeBeliefConfig(persist_seconds=8.0)
 
 
-def _is_combat_sighting(sighting: EnemySighting) -> bool:
-    return (
-        not sighting.is_worker
-        and not sighting.is_structure
-        and (sighting.can_attack_air or sighting.can_attack_ground)
-    )
-
-
 def assess_army(
     *,
     world: WorldFacts,
@@ -88,7 +80,7 @@ def assess_army(
     )
 
     combat_sightings = tuple(
-        sighting for sighting in sightings if _is_combat_sighting(sighting)
+        sighting for sighting in sightings if sighting.is_combat_unit
     )
     observed_supply = sum(
         sighting.supply_cost for sighting in combat_sightings if sighting.visible_now

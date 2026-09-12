@@ -5,7 +5,9 @@
 
 Each folder is self-contained: assessment, planner, executor and models for
 that raid live together, and nothing here coordinates between them --
-`MissionController` arbitrates whatever they each propose.
+`MissionController` arbitrates whatever they each propose. Both read the
+same enemy bases and force clusters from Awareness, and each ranks them as
+targets through its own heuristics.
 """
 
 from .banshee import (
@@ -17,7 +19,8 @@ from .banshee import (
     BansheeHarassPlanner,
     BansheeHarassState,
     BansheePhase,
-    BansheeTarget,
+    BansheeTargetAssessment,
+    BansheeTargetHeuristics,
 )
 from .reaper import (
     ReaperHarassAssessment,
@@ -26,7 +29,8 @@ from .reaper import (
     ReaperHarassExecutor,
     ReaperHarassPlan,
     ReaperHarassPlanner,
-    ReaperHarassTarget,
+    ReaperTargetAssessment,
+    ReaperTargetHeuristics,
 )
 
 __all__ = [
@@ -38,12 +42,14 @@ __all__ = [
     "BansheeHarassPlanner",
     "BansheeHarassState",
     "BansheePhase",
-    "BansheeTarget",
+    "BansheeTargetAssessment",
+    "BansheeTargetHeuristics",
     "ReaperHarassAssessment",
     "ReaperHarassAssessor",
     "ReaperHarassConfig",
     "ReaperHarassExecutor",
     "ReaperHarassPlan",
     "ReaperHarassPlanner",
-    "ReaperHarassTarget",
+    "ReaperTargetAssessment",
+    "ReaperTargetHeuristics",
 ]

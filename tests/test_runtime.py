@@ -317,12 +317,9 @@ class RuntimePilotTests(unittest.IsolatedAsyncioTestCase):
         ]
         self.assertEqual(len(belief_events), 1)
         self.assertEqual(belief_events[0]["data"]["message"], chat.messages[0])
-        self.assertTrue(
-            any(
-                event["name"] == "awareness.world_belief"
-                for event in runtime.logger.events
-            )
-        )
+        logged = {event["name"] for event in runtime.logger.events}
+        self.assertIn("awareness.world_belief", logged)
+        self.assertIn("knowledge.enemy_model", logged)
 
     async def test_runtime_wires_unknown_to_scout_and_new_vision_to_completion(self):
         target = Point2((80, 80))

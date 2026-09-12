@@ -18,7 +18,7 @@ A squad is created the first time `MissionController` admits a proposal whose
 | --- | --- | --- | --- |
 | `main_army` | `MAIN_ARMY` | `hold_rally:main_army` | `StandingPlanner` |
 | `map_control` | `MAP_CONTROL` | `map_control:patrol` | `MapControlPlanner` |
-| `banshee_harass` | `BANSHEE_HARASS` | `air_harass:enemy_natural` | `BansheeHarassPlanner` |
+| `banshee_harass` | `BANSHEE_HARASS` | `air_harass:banshee_harass` | `BansheeHarassPlanner` |
 
 An unknown `squad_id` gets the `MAIN_ARMY` role. A squad keeps one home key for
 life; admitting a different home key for the same squad raises.

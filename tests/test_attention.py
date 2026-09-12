@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from types import SimpleNamespace
 
+import numpy as np
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.ids.upgrade_id import UpgradeId
 from sc2.position import Point2
@@ -16,6 +17,7 @@ def unit(
     *,
     structure=False,
     memory=False,
+    snapshot=False,
     ready=True,
     idle=None,
     orders=(),
@@ -39,10 +41,57 @@ def unit(
         is_constructing_scv=False,
         is_structure=structure,
         is_memory=memory,
+        is_snapshot=snapshot,
     )
 
 
 class AresWorldObserverTests(unittest.TestCase):
+    def test_economy_counts_every_form_of_a_unit_as_the_type_it_was_built_as(self):
+        bot = SimpleNamespace(
+            time=300.0,
+            minerals=0,
+            vespene=0,
+            supply_used=10,
+            supply_cap=30,
+            units=(
+                unit(1, UnitTypeId.SIEGETANK),
+                unit(2, UnitTypeId.SIEGETANKSIEGED),
+            ),
+            structures=(
+                unit(10, UnitTypeId.SUPPLYDEPOT, structure=True),
+                unit(11, UnitTypeId.SUPPLYDEPOTLOWERED, structure=True),
+                unit(12, UnitTypeId.BARRACKS, structure=True, idle=True),
+                unit(13, UnitTypeId.BARRACKSFLYING, structure=True, idle=True),
+            ),
+            enemy_units=(),
+            enemy_structures=(),
+            enemy_start_locations=(Point2((90, 90)),),
+            start_location=Point2((10, 10)),
+            game_info=SimpleNamespace(map_center=Point2((50, 50))),
+        )
+
+        economy = AresWorldObserver().world_facts(bot, iteration=1).economy
+
+        self.assertEqual(economy.unit_count(UnitTypeId.SIEGETANK).ready, 2)
+        self.assertEqual(economy.structure_count(UnitTypeId.SUPPLYDEPOT).ready, 2)
+        barracks = economy.producer(UnitTypeId.BARRACKS)
+        # The lifted one still exists, but it cannot train anything right now.
+        self.assertEqual((barracks.ready, barracks.idle, barracks.busy), (2, 1, 1))
+
+    def test_base_location_is_visible_when_any_townhall_footprint_cell_is(self):
+        grid = np.zeros((20, 20), dtype=np.uint8)
+        bot = SimpleNamespace(
+            state=SimpleNamespace(visibility=SimpleNamespace(data_numpy=grid))
+        )
+        natural = Point2((10.5, 10.5))
+
+        grid[12, 8] = 2  # a footprint corner (x=8, y=12); the centre stays dark
+        self.assertTrue(AresWorldObserver._base_location_visible(bot, natural))
+
+        grid[12, 8] = 1  # fogged is not visible
+        grid[10, 13] = 2  # x=13 is just past the footprint
+        self.assertFalse(AresWorldObserver._base_location_visible(bot, natural))
+
     def test_builds_enemy_main_route_from_perimeter_away_from_ramp(self):
         main = Point2((90, 90))
         natural = Point2((90, 70))
@@ -111,6 +160,34 @@ class AresWorldObserverTests(unittest.TestCase):
         self.assertEqual(tuple(item.tag for item in world.own_structures), (2,))
         self.assertTrue(world.map.observation("enemy_natural").visible_now)
         self.assertTrue(world.own_units[0].available_for_mission)
+
+    def test_flags_scouted_enemy_structures_in_fog_as_not_currently_visible(self):
+        bot = SimpleNamespace(
+            time=12.0,
+            minerals=50,
+            vespene=0,
+            supply_used=12,
+            supply_cap=15,
+            units=(),
+            structures=(),
+            enemy_units=(),
+            enemy_structures=(
+                unit(5, UnitTypeId.PHOTONCANNON, structure=True),
+                unit(6, UnitTypeId.PHOTONCANNON, structure=True, snapshot=True),
+            ),
+            enemy_start_locations=(Point2((90, 90)),),
+            start_location=Point2((10, 10)),
+            game_info=SimpleNamespace(map_center=Point2((50, 50))),
+        )
+
+        world = AresWorldObserver().world_facts(bot, iteration=1)
+
+        # The game keeps reporting a scouted building in fog as a snapshot, not
+        # an Ares memory unit -- but it is just as much "last known here".
+        self.assertEqual(
+            {item.tag: item.visible_now for item in world.enemy_structures},
+            {5: True, 6: False},
+        )
 
     def test_recognizes_enemy_workers_of_any_race(self):
         bot = SimpleNamespace(

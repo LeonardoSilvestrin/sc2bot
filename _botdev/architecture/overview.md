@@ -19,7 +19,7 @@ Game / Ares
 flowchart TD
     Game["Game / Ares state"] --> Observer["AresWorldObserver\n(bot/adapters/ares)\nWorldFacts"]
     Observer --> Attention["Attention\n(bot/world/attention)\nimmutable current facts"]
-    Attention --> Awareness["Awareness\n(bot/world/awareness)\nmemory + derived beliefs\nenemy sightings and bases, base security,\neconomy/army beliefs, macro posture"]
+    Attention --> Awareness["Awareness\n(bot/world/awareness)\nmemory + derived beliefs\nenemy sightings, bases and forces, base security,\neconomy/army beliefs, macro posture"]
 
     Awareness --> Planners
     Attention --> Planners
@@ -89,8 +89,8 @@ the macro side.
   beliefs or mission bookkeeping. `AresWorldObserver` (`bot/adapters/ares`)
   is the only code that reads Ares to build them.
 - `bot/world/awareness` owns memory and derived beliefs: enemy sightings and
-  location freshness, enemy base memory, per-base security, the economy and
-  army beliefs, and the macro posture.
+  location freshness, enemy base memory and assessment, enemy force clusters,
+  per-base security, the economy and army beliefs, and the macro posture.
 - Behavior planners propose useful work. They never allocate or command units.
 - `MissionController` (`bot/engine/missions`) is the only code allowed to
   admit proposals, change mission lifecycle, transfer leases, or release
@@ -125,9 +125,14 @@ Awareness follows the same naming rule under `bot/world/awareness/`:
 explicit state/derivation names instead of repeated `models.py` files:
 
 - `enemy/` -- `knowledge.py` (sighting and location types) + `memory.py`
-  (`EnemyKnowledge`, sightings kept while Ares reports the tag), and
-  `bases.py` (`EnemyBaseMemory`: confirmed/empty/unknown per expansion slot,
-  plus `scouting_coverage`).
+  (`EnemyKnowledge`, sightings kept while Ares reports the tag); `bases/`
+  (`memory.py`: `EnemyBaseMemory`, confirmed/empty/unknown per expansion
+  slot, plus `scouting_coverage`; `assessment.py` + `assessor.py`: each
+  slot's economic value and air/ground defense); `forces/` (`cluster.py`
+  types, `clustering.py` spatial grouping, `tracking.py` cluster identity
+  and the main force); `heuristics.py`, every weight and formula those two
+  models use; and `snapshot.py` (`EnemyAwareness`, the combined enemy
+  reading). See [Enemy bases and forces](#enemy-bases-and-forces).
 - `bases/` -- `security.py` + `security_assessor.py`, the per-base threat
   reading described in [base-model.md](base-model.md).
 - `belief/` -- `economy.py` and `army.py` compare us with the enemy on one
@@ -155,6 +160,51 @@ A stable change is announced in game chat (`[Awareness] ARMY: EVEN -> BEHIND
 ...`, logged as `awareness.belief_changed`). The army belief also feeds
 `RelativeStrength` (a supply comparison, with a unit-count fallback), the
 `GREED` gate of the macro posture, and the standing army's `CombatPosture`.
+
+### Enemy bases and forces
+
+`AwarenessSnapshot.enemy` also answers "what is the enemy worth hitting, and
+where is its army?" -- as beliefs, never as a replay of the last frame. Every
+reading keeps two things apart: a value or strength, which is what we believe
+existed from the last information known, and a confidence, which is how much
+that still describes the present. Awareness does not fold one into the
+other; a behavior decides how to combine them (`economic_value * confidence`,
+or a policy that accepts older information). Consumers read them straight
+off the snapshot:
+
+- `enemy.bases` holds one `EnemyBaseAssessment` per candidate expansion slot
+  from `EnemyBaseMemory`. `economic_value` (0..1) is a confirmed base's
+  presence (0.4) plus the workers last counted there (up to 0.6 at 16), and
+  `confidence` is how recently the slot was looked at.
+  `worker_count_estimate` is recounted whenever one of that base's workers
+  is in vision, and kept after Ares forgets them. `air_defense` and
+  `ground_defense` (0..1) stay separate: every remembered defender within 12
+  tiles at its supply, a weaponed structure worth 2, and 8 reading as fully
+  defended. Each has its own `*_defense_confidence`, the value-weighted
+  freshness of the defenders behind it (over 30 s for units, 180 s for
+  structures) -- or the slot's `confidence` when none was seen, since "none
+  seen" is as current as the last look.
+- `enemy.forces` groups remembered enemy combat units -- never workers or
+  structures -- within 7 tiles of one another (single linkage) into
+  `EnemyForceCluster`s with supply-based `combat_strength`,
+  `anti_air_strength` and `anti_ground_strength`, which never decay with
+  age. `confidence` is their strength-weighted freshness over 30 s, the
+  window Ares remembers a unit for, and `position_uncertainty` grows 3 tiles
+  per second of that age. A cluster keeps its id through shared units, or by
+  reappearing near a cluster reported in the last 15 s.
+  `forces.near(position, distance)` counts each cluster's spread and
+  uncertainty.
+- `enemy.main_force` is the cluster with the highest
+  `strength * (0.35 + 0.65 * confidence)` -- the one reading Awareness
+  derives by combining the two: a large army seen a while ago still
+  outranks a small, freshly seen detachment.
+
+Every number above lives in `enemy/heuristics.py` and can be replaced through
+`AwarenessService(enemy_base_heuristics=..., enemy_force_heuristics=...)`.
+The snapshot only reports these readings; what they mean for a raid or a
+defense is left to the behavior reading them (for the raids, see
+[Target selection](harass-and-defense-planners.md#target-selection)).
+`knowledge.enemy_model` logs them.
 
 ## Scouting and active vision
 
@@ -244,8 +294,9 @@ its concrete executor in the same folder:
 | `standing/` | `StandingPlanner` | `HOLD_RALLY` | 20 | STANDING | yes |
 
 The two raids are independent behaviors rather than two `HarassOption`s
-inside one planner: each has its own cadence, gates, assessment and config.
-Banshee activation additionally requires compatible build intent. `SCOUT`
+inside one planner: each has its own cadence, gates, assessment and config,
+and each ranks every confirmed enemy base as a target through its own
+heuristics. Banshee activation additionally requires compatible build intent. `SCOUT`
 remains unit-based and is the only proposal that cannot preempt.
 
 `BotRuntime` concatenates every planner's proposals into one tuple each frame;

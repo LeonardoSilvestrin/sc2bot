@@ -6,8 +6,12 @@ unit: `MissionController` decides whether the proposal becomes a mission and
 `UnitAllocator` decides which Banshees serve it.
 
 The raid is a `MissionMode.STANDING` responsibility rather than a one-shot
-job, because every Banshee produced afterwards should join it. Re-proposing
-the same key updates the live mission's desired count in place.
+job, because every Banshee produced afterwards should join it. Its
+deduplication key names the squad, not the target, so re-proposing updates
+the live mission in place: its desired count, and its target whenever the
+planner retargets. The assessment ranks every enemy base; the planner holds
+on to the one it chose until another is clearly better
+(`BansheeTargetHeuristics.retarget_margin`).
 """
 
 from __future__ import annotations
@@ -17,25 +21,37 @@ from dataclasses import dataclass, field
 from bot.behavior.contracts import BehaviorLog
 from bot.behavior.strategy_intent import BuildStrategicIntent, StrategicIntent
 from bot.engine.missions.models import MissionMode, MissionProposal, UnitRequirement
-from bot.engine.missions.planning import ProposalCadence
+from bot.engine.missions.planning import (
+    ProposalCadence,
+    TargetChoice,
+    choose_target,
+)
 from bot.ports.logging import BotLogger
 from bot.world.attention import AttentionSnapshot
 from bot.world.awareness import AwarenessSnapshot
 
 from .assessment import BansheeHarassAssessor
-from .model import BansheeHarassAssessment, BansheeHarassConfig, BansheeHarassPlan
+from .model import (
+    BansheeHarassAssessment,
+    BansheeHarassConfig,
+    BansheeHarassPlan,
+    BansheeTargetAssessment,
+)
 
 COMPONENT = "behavior.harass.banshee"
 
 
 @dataclass(slots=True)
 class BansheeHarassPlanner:
-    """Decides whether the cloaked Banshee raid should be running."""
+    """Decides whether the cloaked Banshee raid should be running, and where."""
 
     config: BansheeHarassConfig = field(default_factory=BansheeHarassConfig)
     strategic_intent: StrategicIntent = field(default_factory=BuildStrategicIntent)
     logger: BotLogger | None = None
     planner_id: str = "banshee_harass_planner"
+    # The candidate ranking is logged whenever the target changes, and at
+    # least this often while it holds.
+    target_log_interval: float = 30.0
     _assessor: BansheeHarassAssessor = field(init=False, repr=False)
     _log: BehaviorLog = field(init=False, repr=False)
     _cadence: ProposalCadence = field(
@@ -46,6 +62,10 @@ class BansheeHarassPlanner:
     # planner to stop re-declaring the standing squad and strand every
     # Banshee it owns.
     _activated: bool = field(default=False, init=False, repr=False)
+    # The target the raid was last declared against; a retarget has to beat
+    # it by the margin.
+    _target_key: str | None = field(default=None, init=False, repr=False)
+    _target_logged_at: float = field(default=float("-inf"), init=False, repr=False)
     last_assessment: BansheeHarassAssessment | None = field(
         default=None, init=False, repr=False
     )
@@ -89,21 +109,23 @@ class BansheeHarassPlanner:
     ) -> BansheeHarassPlan | None:
         """The launch decision, as a sequence of explicit, readable gates.
 
-        Order matters only for which reason gets logged; the outcome is the
-        conjunction of all of them.
+        The target comes last: it is only chosen, held and logged once every
+        other gate lets the raid run, so the log never shows a target picked
+        for a raid that was not proposed.
         """
 
-        target = assessment.preferred_target
-        if target is None:
-            return None
         if assessment.workers < self.config.minimum_workers:
             return None
         if not assessment.build_supports_harass:
             return None
         if not assessment.has_banshees:
             return None
-        # Only the *initial* launch withholds on a defended target.
-        if not self._activated and target.is_defended:
+
+        choice = self._choose_target(assessment)
+        self._log_target(choice, assessment)
+        target = choice.target
+        self._target_key = None if target is None else target.key
+        if target is None:
             return None
 
         return BansheeHarassPlan(
@@ -113,23 +135,71 @@ class BansheeHarassPlanner:
             # built Banshees sit idle instead of joining the raid.
             desired_banshees=max(1, assessment.banshees_alive),
             priority=self.config.priority,
-            reason="enemy_worker_line_known_and_no_visible_anti_air",
+            reason=(
+                "best_ranked_banshee_target"
+                if target.viable
+                else "raid_live_without_a_viable_target"
+            ),
             readiness=assessment.readiness,
-            risk=assessment.risk,
+            risk=max(target.air_defense_risk, target.army_risk),
+        )
+
+    def _choose_target(
+        self, assessment: BansheeHarassAssessment
+    ) -> TargetChoice[BansheeTargetAssessment]:
+        """The best viable target, held until another is clearly better.
+
+        Only a viable target launches the raid. Once it is live, though,
+        running out of viable targets must not stop the standing squad from
+        being re-declared (see `_activated`), so the best of what remains is
+        chosen instead.
+        """
+
+        candidates = assessment.viable_targets
+        if not candidates and self._activated:
+            candidates = assessment.targets
+        return choose_target(
+            candidates,
+            current_key=self._target_key,
+            margin=self.config.targeting.retarget_margin,
+        )
+
+    def _log_target(
+        self,
+        choice: TargetChoice[BansheeTargetAssessment],
+        assessment: BansheeHarassAssessment,
+    ) -> None:
+        now = assessment.now
+        if (
+            not choice.change.changed
+            and now - self._target_logged_at < self.target_log_interval
+        ):
+            return
+        self._target_logged_at = now
+        self._log.event(
+            "behavior.target_selection",
+            now=now,
+            change=choice.change.name,
+            selected=None if choice.target is None else choice.target.key,
+            previous=choice.previous_key,
+            candidates=[target.summary() for target in assessment.targets],
         )
 
     def _proposal_for(self, plan: BansheeHarassPlan, now: float) -> MissionProposal:
         sequence = self._cadence.next_sequence()
         prefix = self.config.mission_kind.name.lower()
-        key = f"{prefix}:{plan.target.key}"
+        target = plan.target
         return MissionProposal(
-            proposal_id=f"{self.planner_id}:{prefix}:{plan.target.key}:{sequence}",
-            deduplication_key=key,
+            proposal_id=f"{self.planner_id}:{prefix}:{target.key}:{sequence}",
+            # Keyed by squad, not target: a retarget re-declares the same live
+            # mission rather than replacing it -- and the squad keeps its one
+            # home mission key for life.
+            deduplication_key=f"{prefix}:{self.config.squad_id}",
             planner=self.planner_id,
             kind=self.config.mission_kind,
             priority=plan.priority,
-            target_key=plan.target.key,
-            target=plan.target.position,
+            target_key=target.key,
+            target=target.position,
             reason=plan.reason,
             requirement=UnitRequirement.combat(
                 unit_types=self.config.unit_types,
@@ -139,9 +209,9 @@ class BansheeHarassPlanner:
                 minimum_health=self.config.minimum_unit_health,
             ),
             created_at=now,
-            evidence_last_observed_at=plan.target.last_observed_at,
-            evidence_age=plan.target.age,
-            evidence_stale_after=plan.target.stale_after,
+            evidence_last_observed_at=target.last_observed_at,
+            evidence_age=target.age,
+            evidence_stale_after=target.stale_after,
             timeout_seconds=self.config.mission_timeout,
             cooldown_seconds=self.config.failure_cooldown,
             # Standing missions hold most otherwise idle combat units, so the

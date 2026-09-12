@@ -6,7 +6,8 @@ from .model import (
     ReaperHarassAssessment,
     ReaperHarassConfig,
     ReaperHarassPlan,
-    ReaperHarassTarget,
+    ReaperTargetAssessment,
+    ReaperTargetHeuristics,
 )
 from .planner import ReaperHarassPlanner
 
@@ -17,5 +18,6 @@ __all__ = [
     "ReaperHarassExecutor",
     "ReaperHarassPlan",
     "ReaperHarassPlanner",
-    "ReaperHarassTarget",
+    "ReaperTargetAssessment",
+    "ReaperTargetHeuristics",
 ]

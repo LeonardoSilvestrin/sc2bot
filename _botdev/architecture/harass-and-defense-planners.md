@@ -123,45 +123,104 @@ once, each with its own mission kind and dedup key.
 flowchart TD
     Propose(["ReaperHarassPlanner / BansheeHarassPlanner .propose"]) --> Cadence{"cadence ready?\n(45 s Reaper, 8 s Banshee)"}
     Cadence -->|no| Skip["() -- nothing this tick"]
-    Cadence -->|yes| Assess["assessor.assess\nunits, targets, workers\n(Banshee: + cloak progress, anti-air, risk, readiness)"]
-    Assess --> Loc{"a configured target\nhas been observed?"}
-    Loc -->|no| Withhold["() -- withheld,\ncadence not consumed"]
-    Loc -->|yes| Workers{"own workers >= minimum_workers?\n(16 Reaper, 12 Banshee)"}
-    Workers -->|no| Withhold
+    Cadence -->|yes| Assess["assessor.assess\nunits, workers, every confirmed enemy base\nranked through the raid's own target heuristics\n(Banshee: + cloak progress, risk, readiness)"]
+    Assess --> Workers{"own workers >= minimum_workers?\n(16 Reaper, 12 Banshee)"}
+    Workers -->|no| Withhold["() -- withheld,\ncadence not consumed"]
     Workers -->|yes| Kind{"which raid?"}
     Kind -->|Reaper| Spare{"a ready, available Reaper\nat >= 50% health?"}
     Spare -->|no| Withhold
-    Spare -->|yes| Plan["Build the raid's own Plan,\nthen one MissionProposal\ndedup key = kind:target_key"]
+    Spare -->|yes| Choose{"choose_target among viable targets\n(Banshee once live: any target)\nheld unless beaten by retarget_margin"}
     Kind -->|Banshee| Intent{"chosen opening allows\nbanshee_harass?"}
     Intent -->|no| Withhold
     Intent -->|yes| Alive{"any Banshee alive?"}
     Alive -->|no| Withhold
-    Alive -->|yes| Safe{"first launch only:\nvisible anti-air unit within 15 of target?"}
-    Safe -->|yes| Withhold
-    Safe -->|no| Plan
+    Alive -->|yes| Choose
+    Choose -->|nothing| Withhold
+    Choose -->|a target| Plan["Build the raid's own Plan,\nthen one MissionProposal\ndedup key: harass:target_key /\nair_harass:banshee_harass"]
 ```
 
-| Behavior | Mission kind | Mode | Priority | min workers | ready-unit required | anti-air check |
+| Behavior | Mission kind | Mode | Priority | min workers | ready-unit required | launches at |
 | --- | --- | --- | --- | --- | --- | --- |
-| `harass/reaper` | `HARASS` | FINITE | 60 | 16 | yes (only ever 1-2 Reapers; never steal one mid-scout) | none -- tolerates local ground defenders |
-| `harass/banshee` | `AIR_HARASS` | STANDING | 62 | 12 | no (any Banshee alive; the allocator's requirement still filters readiness and 50% health at assignment) | compatible build intent; initial launch withholds on a visible anti-air unit within 15 |
+| `harass/reaper` | `HARASS` | FINITE | 60 | 16 | yes (only ever 1-2 Reapers; never steal one mid-scout) | a viable target: ground defense and anti-ground army within ceilings, light defense tolerated |
+| `harass/banshee` | `AIR_HARASS` | STANDING | 62 | 12 | no (any Banshee alive; the allocator's requirement still filters readiness and 50% health at assignment) | compatible build intent; a viable target: anti-air defense and anti-air army within ceilings (once live, any target) |
 
-Both read `awareness.enemy.location(key)` for each of `target_keys` (default
-`("enemy_natural",)`) and take the first one ever observed -- harass only
-follows up on a location something has already seen; it never guesses a
-target. The tuple exists so a second location can be added, but only the
-natural is configured today. Both are `can_preempt=True` (see "Arbitration"
-above) with dedup keys `harass:<target_key>` / `air_harass:<target_key>`.
-The Reaper raid asks for exactly one Reaper; the Banshee raid asks for every
-Banshee alive, so each new Banshee joins the standing squad.
+Both are `can_preempt=True` (see "Arbitration" above). The Reaper raid asks
+for exactly one Reaper, dedup key `harass:<target_key>`; the Banshee raid
+asks for every Banshee alive, so each new Banshee joins the standing squad,
+under the squad-scoped dedup key `air_harass:banshee_harass`.
+
+### Target selection
+
+Neither raid has a fixed target. Each assessment reads every enemy base
+Awareness has confirmed (`awareness.enemy.bases.confirmed`, any
+`expansion:<n>`) together with the force clusters that may be near it
+(`awareness.enemy.forces.near`), and turns each base into its own
+`BansheeTargetAssessment` / `ReaperTargetAssessment`, ranked by score.
+Awareness describes a base once; each raid interprets it for its unit, so
+the same base can rank first for one raid and last for the other. Every
+weight lives in `BansheeTargetHeuristics` / `ReaperTargetHeuristics`
+(`config.targeting`).
+
+```text
+Banshee score =  1.0  * opportunity          0.6 economic_value + 0.4 worker line (/16)
+               - 1.0  * air_defense_risk     air_defense at its confidence; uncovered share >= 0.25
+               - 0.1  * ground_defense       cannot shoot up: only a hint
+               - 0.8  * army_risk            anti-air in reach (full to 10, none at 45),
+                                             confidence floor 0.35, / 6 supply
+               - 0.15 * (1 - base confidence)
+        viable: air_defense_risk <= 0.4 and army_risk <= 0.5
+
+Reaper score  =  1.0  * opportunity          0.3 economic_value + 0.7 worker line (/16)
+               - 1.0  * ground_defense_risk  believed ground defense above 0.25, rescaled;
+                                             uncovered share >= 0.35
+               - 1.0  * army_risk            anti-ground in reach (full to 6, none at 25),
+                                             at confidence, above 2 supply, / 6 supply
+               - 0.05 * (1 - base confidence)
+        viable: ground_defense_risk <= 0.6 and army_risk <= 0.6
+```
+
+The score only ranks; viability is what lets a raid launch. Unknown defense
+is never read as none: the share of a reading its confidence does not cover
+is assumed to hold at least the assumed amount, while defense already seen
+never shrinks with age. A cluster counts by `EnemyForceCluster.distance_to`,
+which already allows for its spread and for how far it may have moved, so a
+split army is read part by part and a base near the main force ranks below
+an equal one across the map. Units standing at a base count in both its
+defense reading and the army term.
+
+While no base is confirmed, `fallback_target_keys` (default
+`("enemy_natural",)`) stand in once observed, scored as a base worth
+`fallback_opportunity` with unknown defense.
+
+The planner, not the assessment, holds the target. Both call
+`bot.engine.missions.planning.choose_target`, which keeps the previous
+target while it is still a candidate and nothing beats it by more than
+`retarget_margin` (0.15), and drops it at once when it is no longer one.
+Candidates are the viable targets; a live Banshee raid with none left takes
+every target instead, so the standing squad keeps being declared. What a
+retarget does follows each lifecycle:
+
+- Banshee (STANDING): the new proposal keeps the squad-scoped dedup key, so
+  `MissionController._update_standing` replaces the live proposal in place
+  (same `mission_id`, leases and squad home key), and the running executor's
+  `refresh` flies to the new target on its next step.
+- Reaper (FINITE): a live raid keeps the base it was launched at until it
+  completes, retreats or times out; the next raid is chosen from the new
+  ranking, still measured against the previous raid's base.
+
+Both planners log `behavior.target_selection` -- `change` (`SELECTED`,
+`KEPT`, `RETARGETED`, `REPLACED`, `LOST`, `NONE`), `selected`, `previous`
+and one line per candidate (`expansion:3 score=0.82 value=0.91 aa=0.12
+army_risk=0.08 confidence=0.94`) -- whenever the target changes, and at most
+every 30 s otherwise. Selection only runs once every other gate has passed.
 
 `BansheeHarassAssessment` is the raid's whole read of the world in one
 object: Banshees alive/ready/pending, cloak researched and its research
-progress (from `EconomyFacts.upgrades`/`upgrades_in_progress`), candidate
-targets with the anti-air and workers seen near each, known anti-air, the
-remembered enemy army centroid, and a `readiness`/`risk` pair. It describes
-only -- the planner's gates stay explicit booleans rather than a threshold on
-those numbers, and the assessment never sees a mission.
+progress (from `EconomyFacts.upgrades`/`upgrades_in_progress`), every
+ranked target, known anti-air, the main force's position, and a
+`readiness`/`risk` pair. It describes only -- the planner's gates stay
+explicit booleans rather than a threshold on those numbers, and the
+assessment never sees a mission.
 
 `ReaperHarassExecutor` focuses the lowest-health visible worker within
 `worker_search_radius` (16) of the target through `attack_unit`, attack-moves
@@ -202,10 +261,10 @@ Deliberately not built here either:
 
 - no detector-awareness (a defender that can only detect, not attack air --
   e.g. a lone Observer -- does not trigger disengage);
-- no static-defense awareness: both the launch gate and the in-flight
-  disengage check look only at enemy *units*, so a Missile Turret, Photon
-  Cannon or Spore Crawler at the target neither withholds the launch nor
-  triggers EVADE;
+- no static-defense reaction in flight: target ranking and the launch gate
+  read static anti-air through `air_defense`, but the in-flight disengage
+  check still looks only at visible enemy *units*, so a Missile Turret,
+  Photon Cannon or Spore Crawler at the target never triggers EVADE;
 - no energy-aware cloak scheduling (cloak is cast blindly every step; it
   simply stops taking effect once energy runs out);
 - no air pathing: `safe_path_to` routes Banshees on the ground grid (the
@@ -336,7 +395,8 @@ preemption cost` can all be expressed without reshaping the contracts.
 ## Deliberately not built in this slice
 
 - Splitting defense per base/expansion is now done, see
-  [base-model.md](base-model.md); harass is still a single worker-line target.
+  [base-model.md](base-model.md); harass targets are ranked per base too
+  (see "Target selection").
 - Worker-rush detection (an enemy worker alone is not treated as a threat).
 - Changing `MacroPlanner`: it stays outside the `MissionProposal` model, as recorded
   in [macro-planner.md](macro-planner.md).
@@ -345,7 +405,9 @@ preemption cost` can all be expressed without reshaping the contracts.
 
 - Whether Defense should eventually pull SCVs or request reinforcements instead of
   only reacting with existing combat units.
-- Whether Harass should chain multiple targets (natural, then main) instead of a
-  single fixed `target_key`.
-- Whether a defended-but-currently-unseen base should be inferred from historical
-  sightings when choosing between several harass targets.
+- Whether Harass should chain targets within one raid (natural, then main)
+  rather than re-choosing one per proposal.
+- Whether a live Reaper raid should retarget mid-mission, which would need a
+  FINITE mission to accept an in-place update.
+- Whether target selection should predict enemy army movement or weigh travel
+  distance; today it reads only the current state.

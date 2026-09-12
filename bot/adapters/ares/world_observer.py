@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from ares.consts import ALL_STRUCTURES, WORKER_TYPES
 from ares.dicts.unit_data import UNIT_DATA
 from sc2.dicts.unit_train_build_abilities import TRAIN_INFO
+from sc2.dicts.unit_unit_alias import UNIT_UNIT_ALIAS
 from sc2.ids.ability_id import AbilityId
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.ids.upgrade_id import UpgradeId
@@ -83,6 +84,9 @@ class AresWorldObserver:
     _PROTECTED_STEP_LOOKAHEAD = 2
     _PROTECTED_MINERAL_CAP = 600
     _PROTECTED_VESPENE_CAP = 400
+    # Half the side of a townhall's 5x5 footprint: the area that decides
+    # whether a base location is in vision (see `_base_location_visible`).
+    _TOWNHALL_HALF_EXTENT = 2.5
 
     def __init__(self) -> None:
         self._utilization: dict[UnitTypeId, float] = {}
@@ -341,6 +345,20 @@ class AresWorldObserver:
             min(vespene, cls._PROTECTED_VESPENE_CAP),
         )
 
+    @classmethod
+    def _counted_type(cls, unit) -> UnitTypeId | None:
+        """The type a unit is counted as: what was trained or built.
+
+        A sieged tank, a lowered depot or a lifted Barracks keeps its tag but
+        reports a different ``type_id``, so counting the raw type made macro
+        think it had lost one. python-sc2's alias table is generated from game
+        data, so no form needs listing here. ``UnitSnapshot`` keeps the exact
+        form -- behaviors do care that a tank is sieged.
+        """
+
+        unit_type = cls._safe_attr(unit, "type_id")
+        return UNIT_UNIT_ALIAS.get(unit_type, unit_type)
+
     def _economy_facts(
         self,
         bot,
@@ -348,19 +366,17 @@ class AresWorldObserver:
         own_units: tuple,
         own_structures: tuple,
     ) -> EconomyFacts:
-        unit_existing = Counter(
-            self._safe_attr(unit, "type_id") for unit in own_units
-        )
+        unit_existing = Counter(self._counted_type(unit) for unit in own_units)
         unit_ready = Counter(
-            self._safe_attr(unit, "type_id")
+            self._counted_type(unit)
             for unit in own_units
             if bool(self._safe_attr(unit, "is_ready", True))
         )
         structure_existing = Counter(
-            self._safe_attr(structure, "type_id") for structure in own_structures
+            self._counted_type(structure) for structure in own_structures
         )
         structure_ready = Counter(
-            self._safe_attr(structure, "type_id")
+            self._counted_type(structure)
             for structure in own_structures
             if bool(self._safe_attr(structure, "is_ready", True))
         )
@@ -503,6 +519,9 @@ class AresWorldObserver:
         for unit_type, count in structure_count_by_type.items():
             if unit_type not in TRAIN_INFO:
                 continue
+            # The exact type, not `_counted_type`: a lifted Barracks counts as a
+            # Barracks, but only a landed one can take an order, so a flying
+            # one reads as busy rather than idle.
             ready_producers = tuple(
                 structure
                 for structure in own_structures
@@ -668,8 +687,32 @@ class AresWorldObserver:
                 unavailable.update(int(tag) for tag in tags)
         return unavailable
 
-    @staticmethod
-    def _map_observations(bot) -> tuple[MapObservation, ...]:
+    @classmethod
+    def _base_location_visible(cls, bot, position: Point2) -> bool:
+        """Whether a townhall standing on ``position`` would be in vision now.
+
+        ``bot.is_visible`` checks the one cell under the point, but vision
+        reaching any cell of a townhall's footprint already shows it -- a scout
+        passing a base can see its Hatchery without ever seeing the centre
+        cell, and the location then never counts as observed. So the whole
+        footprint is checked. Without a visibility grid (test doubles) this
+        falls back to ``is_visible``.
+        """
+
+        visibility = cls._safe_attr(cls._safe_attr(bot, "state"), "visibility")
+        grid = cls._safe_attr(visibility, "data_numpy")
+        if grid is None:
+            is_visible = cls._safe_attr(bot, "is_visible")
+            return bool(is_visible(position)) if callable(is_visible) else False
+        extent = cls._TOWNHALL_HALF_EXTENT
+        x0 = max(0, math.floor(position.x - extent))
+        y0 = max(0, math.floor(position.y - extent))
+        x1 = math.ceil(position.x + extent)
+        y1 = math.ceil(position.y + extent)
+        return bool((grid[y0:y1, x0:x1] == 2).any())
+
+    @classmethod
+    def _map_observations(cls, bot) -> tuple[MapObservation, ...]:
         selected: list[tuple[str, Point2]] = []
         enemy_starts = tuple(bot.enemy_start_locations)
         if enemy_starts:
@@ -681,14 +724,11 @@ class AresWorldObserver:
         if enemy_natural is not None:
             selected.append(("enemy_natural", enemy_natural))
 
-        is_visible = getattr(bot, "is_visible", None)
         return tuple(
             MapObservation(
                 key=key,
                 position=position,
-                visible_now=bool(is_visible(position))
-                if callable(is_visible)
-                else False,
+                visible_now=cls._base_location_visible(bot, position),
             )
             for key, position in selected
         )
@@ -706,14 +746,11 @@ class AresWorldObserver:
             locations = tuple(getattr(bot, "expansion_locations_list", ()) or ())
         except (AssertionError, AttributeError, KeyError, RuntimeError, TypeError):
             locations = ()
-        is_visible = cls._safe_attr(bot, "is_visible")
         return tuple(
             MapObservation(
                 key=f"expansion:{index}",
                 position=position,
-                visible_now=(
-                    bool(is_visible(position)) if callable(is_visible) else False
-                ),
+                visible_now=cls._base_location_visible(bot, position),
             )
             for index, position in enumerate(locations)
         )
@@ -850,9 +887,16 @@ class AresWorldObserver:
             )
             for unit in raw_enemy_units
         )
+        # A scouted building in fog is not an Ares memory unit: the game itself
+        # keeps reporting it, as a snapshot. It means the same thing -- last
+        # known here, not seen now -- so its sighting stops looking fresh.
         enemy_structures = tuple(
             self._unit_snapshot(
-                unit, visible_now=not bool(getattr(unit, "is_memory", False))
+                unit,
+                visible_now=not (
+                    bool(getattr(unit, "is_memory", False))
+                    or bool(getattr(unit, "is_snapshot", False))
+                ),
             )
             for unit in raw_enemy_structures
         )

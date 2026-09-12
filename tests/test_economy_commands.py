@@ -18,16 +18,21 @@ from bot.engine.economy.models import (
 )
 
 
-def make_action(action_id: str = "economic-action-0001") -> EconomicAction:
+def make_action(
+    action_id: str = "economic-action-0001",
+    *,
+    kind: EconomicActionKind = EconomicActionKind.PRODUCE_WORKER,
+    target: str = "SCV",
+) -> EconomicAction:
     proposal = EconomicProposal(
-        proposal_id="worker",
+        proposal_id=target.lower(),
         planner="test",
-        kind=EconomicActionKind.PRODUCE_WORKER,
+        kind=kind,
         priority=50,
         reason="test",
         cost=ResourceCost(minerals=50, supply=1.0),
         created_at=1.0,
-        target="SCV",
+        target=target,
     )
     return EconomicAction(action_id=action_id, proposal=proposal, admitted_at=1.0)
 
@@ -49,14 +54,36 @@ class AresEconomyCommandsDispatchTests(unittest.TestCase):
         self.assertEqual(feedback.kind, EconomicFeedbackKind.WAITING)
         self.assertEqual(feedback.reason, "ares_no_progress_this_frame")
 
-    def test_progress_this_frame_returns_dispatched(self):
+    def test_accepted_construction_step_returns_dispatched(self):
         commands = AresEconomyCommands(bot=object())
+        depot = make_action(
+            kind=EconomicActionKind.PRODUCE_SUPPLY, target="SUPPLYDEPOT"
+        )
 
         with patch.object(AresEconomyCommands, "_execute", return_value=True):
-            feedback = commands.dispatch(make_action())
+            feedback = commands.dispatch(depot)
 
         self.assertEqual(feedback.kind, EconomicFeedbackKind.DISPATCHED)
         self.assertEqual(feedback.reason, "ares_command_accepted")
+
+    def test_issued_train_order_is_confirmed_rather_than_left_in_flight(self):
+        # In flight, a train waited for Attention to count `target_count`; a
+        # unit of that type dying first made that unreachable and blocked the
+        # whole type until the confirmation timeout.
+        commands = AresEconomyCommands(bot=object())
+
+        for action in (
+            make_action(),
+            make_action(kind=EconomicActionKind.PRODUCE_UNIT, target="MARINE"),
+        ):
+            with self.subTest(kind=action.proposal.kind.name):
+                with patch.object(
+                    AresEconomyCommands, "_execute", return_value=True
+                ):
+                    feedback = commands.dispatch(action)
+
+                self.assertEqual(feedback.kind, EconomicFeedbackKind.CONFIRMED)
+                self.assertEqual(feedback.reason, "ares_train_order_issued")
 
     def test_quiet_spawn_explains_that_its_producer_is_busy(self):
         structures = defaultdict(tuple)

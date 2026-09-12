@@ -20,6 +20,7 @@ from bot.behavior.harass.banshee import (
     BansheeHarassExecutor,
     BansheeHarassPlanner,
     BansheePhase,
+    BansheeTargetHeuristics,
 )
 from bot.behavior.standing import StandingPlanner
 from bot.engine.missions import (
@@ -105,6 +106,7 @@ def enemy_anti_air(tag: int, position: Point2) -> UnitSnapshot:
         can_attack_air=True,
         can_attack_ground=True,
         visible_now=True,
+        supply_cost=1.0,
     )
 
 
@@ -181,7 +183,12 @@ class AssessmentTests(unittest.TestCase):
         self.assertEqual(assessment.cloak_progress, 1.0)
         self.assertEqual(assessment.preferred_target.key, "enemy_natural")
         self.assertGreater(assessment.readiness, 0.9)
-        self.assertEqual(assessment.risk, 0.0)
+        # Nobody has looked for anti-air at the natural: it reads as the
+        # assumed amount, not as none.
+        self.assertTrue(assessment.preferred_target.is_fallback)
+        self.assertEqual(
+            assessment.risk, BansheeTargetHeuristics().assumed_air_defense
+        )
         # It produced a reading, not a commitment.
         self.assertFalse(hasattr(assessment, "mission_id"))
         self.assertNotIn("mission", assessment.log_fields())
@@ -199,17 +206,18 @@ class AssessmentTests(unittest.TestCase):
         self.assertLess(assessment.readiness, 0.2)
         self.assertEqual(assessment.log_fields()["cloak"], "30%")
 
-    def test_anti_air_at_the_target_raises_risk_and_marks_it_defended(self):
+    def test_anti_air_at_the_target_raises_risk_and_makes_it_unviable(self):
         service = AwarenessService()
         current, awareness = scouted(
             service,
             own_units=(banshee(1),),
-            enemy_units=(enemy_anti_air(900, TARGET),),
+            enemy_units=tuple(enemy_anti_air(900 + tag, TARGET) for tag in range(4)),
         )
 
         assessment = BansheeHarassAssessor().assess(current, awareness)
 
-        self.assertTrue(assessment.preferred_target.is_defended)
+        self.assertIsNone(assessment.preferred_target)
+        self.assertFalse(assessment.targets[0].viable)
         self.assertGreater(assessment.risk, 0.5)
 
 
@@ -224,7 +232,7 @@ class PlannerTests(unittest.TestCase):
         proposal = proposals[0]
         self.assertEqual(proposal.kind, MissionKind.AIR_HARASS)
         self.assertEqual(proposal.mode, MissionMode.STANDING)
-        self.assertEqual(proposal.deduplication_key, "air_harass:enemy_natural")
+        self.assertEqual(proposal.deduplication_key, "air_harass:banshee_harass")
         self.assertEqual(proposal.requirement.desired, 2)
         self.assertEqual(proposal.requirement.minimum, 0)
         self.assertEqual(proposal.squad_id, "banshee_harass")

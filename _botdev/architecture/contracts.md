@@ -5,11 +5,14 @@
 1. Attention contains only selected state observable in the current frame.
 2. Attention exposes Ares' own visible/memory distinction per enemy unit
    (`UnitSnapshot.visible_now`) instead of discarding memory units; it never leaks
-   mutable Ares objects. Awareness (`EnemyKnowledge`) owns persistent first/last-seen
+   mutable Ares objects. A scouted enemy structure in fog arrives as a game
+   snapshot rather than an Ares memory unit, and is flagged `visible_now=False`
+   the same way. Awareness (`EnemyKnowledge`) owns persistent first/last-seen
    sighting history on top of that, keeping a sighting only as long as Ares itself
    keeps reporting the tag -- once Ares drops it (confirmed destroyed, or its own
    out-of-vision memory expired), the sighting is dropped too, instead of being kept
-   forever.
+   forever. Enemy force clusters, derived from those sightings, inherit that
+   lifetime rather than inventing a longer one.
 3. Awareness describes the world. Controller state, leases, cooldowns, and mission
    status never enter Awareness. It performs no I/O either: a stable belief change
    travels as `AwarenessSnapshot.chat_messages`, and `BotRuntime` sends it.
@@ -101,7 +104,8 @@ missions in [harass-and-defense-planners.md](harass-and-defense-planners.md).
 observe current Ares state (AresWorldObserver -> WorldFacts)
 build AttentionSnapshot (AttentionService)
 update AwarenessSnapshot (AwarenessService): sightings, location freshness,
-    enemy base memory, economy/army beliefs, macro posture, base security
+    enemy base memory and assessment, enemy force clusters, economy/army
+    beliefs, macro posture, base security
 send stable belief changes to game chat (awareness.belief_changed)
 VisionService.begin_frame: expire requests, re-check visibility, read Orbital energy
 ScoutingVisionRequester.tick (may request vision)
@@ -218,6 +222,10 @@ where applicable (`proposal_id`, `mission_id`, `deduplication_key`,
   the standalone viewer can still read.
 - Enemy intel: `knowledge.enemy_intel`, on any change to the known enemy
   structures or confirmed locations.
+- Enemy model: `knowledge.enemy_model` (confirmed enemy bases with economic
+  value, workers, air/ground defense and their confidences; every force
+  cluster with strength and confidence; the main force), on a change of
+  confirmed bases or main force plus a ten-second heartbeat.
 - Beliefs: `awareness.world_belief` (economy and army beliefs with raw vs
   stable state and confidence, on change plus a ten-second heartbeat) and
   `awareness.belief_changed` (one per chat announcement).
@@ -265,7 +273,7 @@ Component names mirror the current package layout:
 | `app.runtime` | game lifecycle, build order progress |
 | `world.attention` | `observation.updated` |
 | `world.awareness` | `knowledge.updated` |
-| `world.awareness.enemy` | `knowledge.enemy_intel` |
+| `world.awareness.enemy` | `knowledge.enemy_intel`, `knowledge.enemy_model` |
 | `world.awareness.belief` | `awareness.world_belief`, `awareness.belief_changed` |
 | `engine.missions.controller` | proposals, mission lifecycle, unit leases |
 | `engine.squads.controller` | squad events |

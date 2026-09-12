@@ -27,7 +27,8 @@ class AresEconomyCommands:
     only ever produces one unit of progress (one train order, one worker sent
     to build). ``EconomyController.step`` therefore calls ``dispatch`` again
     on every tick while an action is pending. Once the adapter accepts a
-    command the action becomes in-flight and is not issued again. A ``False``
+    command the action becomes in-flight and is not issued again -- except a
+    train order, which is confirmed outright (see ``dispatch``). A ``False``
     return here means "nothing to do this frame". It is
     acknowledged as ``WAITING`` with the most useful operational reason we
     can observe; silence is reserved for an adapter that genuinely supplied
@@ -52,6 +53,22 @@ class AresEconomyCommands:
                 action_id=action.action_id,
                 kind=EconomicFeedbackKind.WAITING,
                 reason=self._waiting_reason(action),
+            )
+
+        if action.proposal.kind in {
+            EconomicActionKind.PRODUCE_WORKER,
+            EconomicActionKind.PRODUCE_UNIT,
+        }:
+            # `SpawnController` only reports progress after calling `train()`,
+            # so the purchase has already happened. Left in flight, the action
+            # would wait for Attention to count `target_count`, which never
+            # happens if a unit of that type dies first -- and until the
+            # confirmation timeout it blocks every further unit of that type,
+            # exactly when the army needs replacing.
+            return EconomicFeedback(
+                action_id=action.action_id,
+                kind=EconomicFeedbackKind.CONFIRMED,
+                reason="ares_train_order_issued",
             )
 
         return EconomicFeedback(

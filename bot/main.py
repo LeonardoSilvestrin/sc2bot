@@ -70,6 +70,6 @@ class MyBot(AresBot):
     # async def on_unit_took_damage(
     #     self, unit: Unit, amount_damage_taken: float
     # ) -> None:
-    #     await super(MyBot, self).on_unit_took_damage(unit, amount_damage_taken)
+    #     await super(MyBot, self).on_unit_took_damage(unit, amount _damage_taken)
     #
     #     # custom on_unit_took_damage logic here ...

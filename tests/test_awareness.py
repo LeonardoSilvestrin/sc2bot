@@ -202,3 +202,85 @@ class AwarenessServiceTests(unittest.TestCase):
         self.assertEqual(under_fog.age, 40.0)
         self.assertTrue(stale.is_stale)
         self.assertEqual(stale.confidence, 0.0)
+
+    def test_snapshot_exposes_enemy_bases_forces_and_main_force(self):
+        natural = Point2((80, 80))
+
+        def enemy(
+            tag: int,
+            unit_type: UnitTypeId,
+            position: Point2,
+            *,
+            worker: bool = False,
+            structure: bool = False,
+            air: bool = False,
+            ground: bool = False,
+            supply: float = 0.0,
+        ) -> UnitSnapshot:
+            return UnitSnapshot(
+                tag=tag,
+                unit_type=unit_type,
+                position=position,
+                health_percentage=1.0,
+                is_flying=False,
+                is_worker=worker,
+                can_attack_air=air,
+                can_attack_ground=ground,
+                is_structure=structure,
+                supply_cost=supply,
+            )
+
+        world = WorldFacts(
+            iteration=1,
+            time=200.0,
+            minerals=0,
+            vespene=0,
+            supply_used=0,
+            supply_cap=0,
+            own_units=(),
+            enemy_units=(
+                *(
+                    enemy(tag, UnitTypeId.DRONE, Point2((84, 80)), worker=True)
+                    for tag in range(1, 9)
+                ),
+                *(
+                    enemy(
+                        tag,
+                        UnitTypeId.ROACH,
+                        Point2((50, 40 + tag)),
+                        ground=True,
+                        supply=2.0,
+                    )
+                    for tag in range(20, 26)
+                ),
+            ),
+            enemy_structures=(
+                enemy(10, UnitTypeId.HATCHERY, natural, structure=True),
+                enemy(
+                    11,
+                    UnitTypeId.SPORECRAWLER,
+                    Point2((83, 83)),
+                    structure=True,
+                    air=True,
+                ),
+            ),
+            map=MapFacts(
+                center=Point2((50, 50)),
+                own_start=Point2((10, 10)),
+                enemy_starts=(Point2((90, 90)),),
+                expansions=(MapObservation("expansion:1", natural, True),),
+            ),
+        )
+
+        enemy_awareness = AwarenessService().update(AttentionSnapshot(world)).enemy
+
+        base = enemy_awareness.bases.get("expansion:1")
+        self.assertTrue(base.is_confirmed)
+        self.assertEqual(base.worker_count_estimate, 8)
+        self.assertAlmostEqual(base.economic_value, 0.7)
+        self.assertAlmostEqual(base.air_defense, 0.25)
+        self.assertEqual(base.ground_defense, 0.0)
+        (force,) = enemy_awareness.forces.clusters
+        self.assertEqual((force.unit_count, force.combat_strength), (6, 12.0))
+        self.assertIs(enemy_awareness.main_force, force)
+        self.assertEqual(enemy_awareness.forces.near(Point2((50, 62))), (force,))

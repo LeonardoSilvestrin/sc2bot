@@ -298,8 +298,9 @@ higher-priority reservations.
   adapter reports it dispatched (`IN_FLIGHT`; Ares is now spending the real
   resources, so the reservation is released). It is `COMPLETED` when Attention
   shows `target_count` reached -- observed confirmation wins over adapter
-  feedback for the same action -- `FAILED` when the adapter raised, and
-  `TIMED_OUT` after `dispatch_timeout_seconds` from admission while pending or
+  feedback for the same action -- or when the adapter confirms it outright,
+  `FAILED` when the adapter raised, and `TIMED_OUT` after
+  `dispatch_timeout_seconds` from admission while pending or
   `confirmation_timeout_seconds` from dispatch while in flight.
 - Repeated identical proposal outcomes are suppressed until their lifecycle
   state changes, so a proposal stuck `economic_proposal_deferred` for the same
@@ -312,9 +313,14 @@ higher-priority reservations.
   `BUILD_GAS`, `ExpansionController` for `EXPAND`, `UpgradeController` for
   `RESEARCH_UPGRADE` -- and orders add-ons on an idle bare parent directly.
   An Ares macro behavior makes one unit of progress per call, so `dispatch`
-  returns `DISPATCHED` when that step was accepted, `None` when nothing was
+  returns `DISPATCHED` when that step was accepted, `WAITING` when nothing was
   possible this frame (producer busy, no placement yet), and `FAILED` only on
-  an exception. Those Ares behaviors own worker selection, structure placement,
+  an exception. A train order (`PRODUCE_WORKER`/`PRODUCE_UNIT`) returns
+  `CONFIRMED` instead of `DISPATCHED`: `SpawnController` only reports progress
+  once it has called `train()`, so the purchase already happened. Left in
+  flight, it waited for the count to reach `target_count`, which never
+  happened if a unit of that type died in between -- and the live action then
+  blocked that whole unit type for the 60-second confirmation timeout. Those Ares behaviors own worker selection, structure placement,
   and expansion-site selection themselves. The SCV one picks is marked
   `UnitRole.BUILDING` by Ares and so reads as unavailable to missions, but it
   is never a mission lease; `MacroPlanner` only argues that the action is

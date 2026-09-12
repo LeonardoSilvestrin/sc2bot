@@ -1,7 +1,11 @@
 """PLAN: launch a single-Reaper raid when one is genuinely spare.
 
 A finite mission, not a standing one: the Reaper goes, does damage, and
-comes home or dies. Nothing should keep re-declaring it.
+comes home or dies. Nothing should keep re-declaring it, so a raid keeps the
+base it was launched at for as long as it lives. Where the *next* raid goes
+is chosen again from the assessment's ranking, holding on to the previous
+raid's base until another is clearly better
+(`ReaperTargetHeuristics.retarget_margin`).
 """
 
 from __future__ import annotations
@@ -10,13 +14,22 @@ from dataclasses import dataclass, field
 
 from bot.behavior.contracts import BehaviorLog
 from bot.engine.missions.models import MissionProposal, UnitRequirement
-from bot.engine.missions.planning import ProposalCadence
+from bot.engine.missions.planning import (
+    ProposalCadence,
+    TargetChoice,
+    choose_target,
+)
 from bot.ports.logging import BotLogger
 from bot.world.attention import AttentionSnapshot
 from bot.world.awareness import AwarenessSnapshot
 
 from .assessment import ReaperHarassAssessor
-from .model import ReaperHarassAssessment, ReaperHarassConfig, ReaperHarassPlan
+from .model import (
+    ReaperHarassAssessment,
+    ReaperHarassConfig,
+    ReaperHarassPlan,
+    ReaperTargetAssessment,
+)
 
 COMPONENT = "behavior.harass.reaper"
 
@@ -28,11 +41,18 @@ class ReaperHarassPlanner:
     config: ReaperHarassConfig = field(default_factory=ReaperHarassConfig)
     logger: BotLogger | None = None
     planner_id: str = "reaper_harass_planner"
+    # The candidate ranking is logged whenever the target changes, and at
+    # least this often while it holds.
+    target_log_interval: float = 30.0
     _assessor: ReaperHarassAssessor = field(init=False, repr=False)
     _log: BehaviorLog = field(init=False, repr=False)
     _cadence: ProposalCadence = field(
         default_factory=ProposalCadence, init=False, repr=False
     )
+    # The base the last raid was launched at; the next raid's target has to
+    # beat it by the margin.
+    _target_key: str | None = field(default=None, init=False, repr=False)
+    _target_logged_at: float = field(default=float("-inf"), init=False, repr=False)
     last_assessment: ReaperHarassAssessment | None = field(
         default=None, init=False, repr=False
     )
@@ -69,33 +89,65 @@ class ReaperHarassPlanner:
         return (self._proposal_for(plan, now),)
 
     def _plan(self, assessment: ReaperHarassAssessment) -> ReaperHarassPlan | None:
-        target = assessment.preferred_target
-        if target is None:
-            return None
         if assessment.workers < self.config.minimum_workers:
             return None
-        # Visible ground defenders are tolerated by design: a Reaper raid
-        # that waits for an empty natural never launches at all.
         if assessment.reapers_available < 1:
+            return None
+
+        # Light ground defense is tolerated by design -- a Reaper raid that
+        # waits for an empty natural never launches at all. That tolerance
+        # lives in `ReaperTargetHeuristics`: whatever it still reads as
+        # viable is a candidate.
+        choice = choose_target(
+            assessment.viable_targets,
+            current_key=self._target_key,
+            margin=self.config.targeting.retarget_margin,
+        )
+        self._log_target(choice, assessment)
+        target = choice.target
+        self._target_key = None if target is None else target.key
+        if target is None:
             return None
         return ReaperHarassPlan(
             target=target,
             priority=self.config.priority,
-            reason="enemy_worker_line_known_and_reaper_available",
+            reason="best_ranked_reaper_target",
             readiness=assessment.readiness,
+        )
+
+    def _log_target(
+        self,
+        choice: TargetChoice[ReaperTargetAssessment],
+        assessment: ReaperHarassAssessment,
+    ) -> None:
+        now = assessment.now
+        if (
+            not choice.change.changed
+            and now - self._target_logged_at < self.target_log_interval
+        ):
+            return
+        self._target_logged_at = now
+        self._log.event(
+            "behavior.target_selection",
+            now=now,
+            change=choice.change.name,
+            selected=None if choice.target is None else choice.target.key,
+            previous=choice.previous_key,
+            candidates=[target.summary() for target in assessment.targets],
         )
 
     def _proposal_for(self, plan: ReaperHarassPlan, now: float) -> MissionProposal:
         sequence = self._cadence.next_sequence()
         prefix = self.config.mission_kind.name.lower()
+        target = plan.target
         return MissionProposal(
-            proposal_id=f"{self.planner_id}:{prefix}:{plan.target.key}:{sequence}",
-            deduplication_key=f"{prefix}:{plan.target.key}",
+            proposal_id=f"{self.planner_id}:{prefix}:{target.key}:{sequence}",
+            deduplication_key=f"{prefix}:{target.key}",
             planner=self.planner_id,
             kind=self.config.mission_kind,
             priority=plan.priority,
-            target_key=plan.target.key,
-            target=plan.target.position,
+            target_key=target.key,
+            target=target.position,
             reason=plan.reason,
             requirement=UnitRequirement.combat(
                 unit_types=self.config.unit_types,
@@ -104,9 +156,9 @@ class ReaperHarassPlanner:
                 minimum_health=self.config.minimum_unit_health,
             ),
             created_at=now,
-            evidence_last_observed_at=plan.target.last_observed_at,
-            evidence_age=plan.target.age,
-            evidence_stale_after=plan.target.stale_after,
+            evidence_last_observed_at=target.last_observed_at,
+            evidence_age=target.age,
+            evidence_stale_after=target.stale_after,
             timeout_seconds=self.config.mission_timeout,
             cooldown_seconds=self.config.failure_cooldown,
             # Standing missions hold most otherwise idle combat units, so the

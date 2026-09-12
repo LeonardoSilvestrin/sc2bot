@@ -1,6 +1,6 @@
 """Cloaked Banshee harass, end to end.
 
-    assessment.py   how it reads whether a raid makes sense
+    assessment.py   how it reads whether a raid makes sense, and every target
     planner.py      how it decides to start, where, and at what priority
     executor.py     how it actually flies the Banshees
     model.py        the assessment/plan/state types all three share
@@ -14,7 +14,8 @@ from .model import (
     BansheeHarassPlan,
     BansheeHarassState,
     BansheePhase,
-    BansheeTarget,
+    BansheeTargetAssessment,
+    BansheeTargetHeuristics,
 )
 from .planner import BansheeHarassPlanner
 
@@ -27,5 +28,6 @@ __all__ = [
     "BansheeHarassPlanner",
     "BansheeHarassState",
     "BansheePhase",
-    "BansheeTarget",
+    "BansheeTargetAssessment",
+    "BansheeTargetHeuristics",
 ]

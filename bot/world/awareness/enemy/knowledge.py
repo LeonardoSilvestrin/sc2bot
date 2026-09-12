@@ -5,8 +5,6 @@ from dataclasses import dataclass
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
-from bot.world.attention import TOWNHALL_TYPES
-
 
 @dataclass(frozen=True, slots=True)
 class EnemySighting:
@@ -22,6 +20,22 @@ class EnemySighting:
     is_worker: bool = False
     supply_cost: float = 0.0
 
+    @property
+    def is_combat_unit(self) -> bool:
+        """A mobile enemy with a weapon: neither a worker nor a structure."""
+
+        return (
+            not self.is_worker
+            and not self.is_structure
+            and (self.can_attack_air or self.can_attack_ground)
+        )
+
+    @property
+    def is_static_defense(self) -> bool:
+        """A structure with a weapon of its own (cannon, spore, turret, ...)."""
+
+        return self.is_structure and (self.can_attack_air or self.can_attack_ground)
+
 
 @dataclass(frozen=True, slots=True)
 class EnemyLocationKnowledge:
@@ -34,28 +48,3 @@ class EnemyLocationKnowledge:
     confidence: float
     stale_after: float
     is_stale: bool
-
-
-@dataclass(frozen=True, slots=True)
-class EnemyAwareness:
-    sightings: tuple[EnemySighting, ...]
-    locations: tuple[EnemyLocationKnowledge, ...]
-
-    def sighting(self, tag: int) -> EnemySighting | None:
-        return next((item for item in self.sightings if item.tag == tag), None)
-
-    def location(self, key: str) -> EnemyLocationKnowledge | None:
-        return next((item for item in self.locations if item.key == key), None)
-
-    @property
-    def known_base_count(self) -> int:
-        """Count enemy townhalls retained in the current world knowledge."""
-
-        return sum(
-            sighting.is_structure and sighting.unit_type in TOWNHALL_TYPES
-            for sighting in self.sightings
-        )
-
-    @property
-    def known_structure_count(self) -> int:
-        return sum(sighting.is_structure for sighting in self.sightings)

@@ -14,7 +14,11 @@ from .belief import (
 )
 from .enemy import (
     EnemyAwareness,
+    EnemyBaseAssessor,
+    EnemyBaseHeuristics,
     EnemyBaseMemory,
+    EnemyForceHeuristics,
+    EnemyForceTracker,
     EnemyKnowledge,
     EnemyLocationKnowledge,
     scouting_coverage,
@@ -39,6 +43,8 @@ class AwarenessService:
         posture_min_hold: float = 8.0,
         greed_safe_after: float = 20.0,
         enemy_base_stale_after: float = 120.0,
+        enemy_base_heuristics: EnemyBaseHeuristics | None = None,
+        enemy_force_heuristics: EnemyForceHeuristics | None = None,
         economy_belief_config: EconomyBeliefConfig | None = None,
         army_belief_config: ArmyBeliefConfig | None = None,
     ) -> None:
@@ -58,6 +64,8 @@ class AwarenessService:
         self.enemy_knowledge = EnemyKnowledge()
         self._base_assessor = BaseSecurityAssessor()
         self._enemy_base_memory = EnemyBaseMemory(stale_after=enemy_base_stale_after)
+        self._enemy_base_assessor = EnemyBaseAssessor(enemy_base_heuristics)
+        self._enemy_force_tracker = EnemyForceTracker(enemy_force_heuristics)
         self._location_last_observed: dict[str, float] = {}
         self._posture_state = PostureState()
         self._economy_hysteresis = HysteresisState()
@@ -108,6 +116,10 @@ class AwarenessService:
         previous_army_stable = self._army_hysteresis.stable
         base_observations = self._enemy_base_memory.update(world)
         coverage = scouting_coverage(base_observations)
+        enemy_bases = self._enemy_base_assessor.update(
+            observations=base_observations, sightings=sightings, now=world.time
+        )
+        enemy_forces = self._enemy_force_tracker.update(sightings, now=world.time)
         economy_belief, self._economy_hysteresis = assess_economy(
             world=world,
             sightings=sightings,
@@ -211,6 +223,8 @@ class AwarenessService:
             enemy=EnemyAwareness(
                 sightings=sightings,
                 locations=tuple(locations),
+                bases=enemy_bases,
+                forces=enemy_forces,
             ),
             relative_strength=RelativeStrength(
                 score=score,
