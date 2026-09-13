@@ -126,10 +126,7 @@ Every event carries `reason` and, where a proposal or mission is involved:
 | `standing_mission_updated` | `standing_requirement_changed` | `previous_priority`, `previous_desired`, `previous_supply_budget` |
 | `units_assigned` | `allocator_assignment_changed` | `previous_unit_tags`, `unit_tags`, `unit_types` |
 | `units_reassigned` | `higher_priority_after_commitment_window` | `unit_tags`, `unit_types`, `from_mission_id`, `from_proposal_id`, `from_priority` |
-| `units_released` | `requirement_desired_reduced`, `replaced_by_more_suitable_unit`, or the finishing reason | `unit_tags`, `unit_types` |
-| `units_upgraded` | `clearly_more_suitable_unit_available` | `upgrades[]` {released/acquired tag, type, utility} |
-| `capability_composition_changed` | `capability_allocation` | `role`, `previous_composition`, `composition`, `new_unit_types`, `supply`, `supply_budget`, `candidates[]` |
-| `capability_no_suitable_candidates` | `capability_allocation` (once until a unit fits) | `role`, `candidates[]` |
+| `units_released` | `requirement_desired_reduced` (a shrunk size, or a unit that no longer matches its requirement), or the finishing reason | `unit_tags`, `unit_types` |
 
 ### `engine.squads.controller`
 
@@ -287,7 +284,7 @@ timeline modules in a headless Chromium-family browser.
 | Question | Read |
 | --- | --- |
 | Why is this unit here? | `units_assigned` / `units_reassigned` for its tag -> the mission's `proposal_created` reason -> that behavior's `behavior.proposed` |
-| Why did a mission never start? | `proposal_rejected`, or `mission_blocked` followed by `capability_no_suitable_candidates` |
+| Why did a mission never start? | `mission.evaluated` with `viable: false` (the policy rejected it), `proposal_rejected`, or `mission_blocked` (no unit of its requested types was free or preemptible) |
 | Why did the raid go to that base? | `behavior.target_selection` (candidate scores) and `knowledge.enemy_model` at that time |
 | Why is the bot banking? | `macro.status` (`resources`, `capacity` reasons, `tech_blocked`) and `economic_proposal_deferred` reasons |
 | Why is a Factory idle? | `macro.idle_producer_unexplained`, or `capacity.FACTORY.reason` in `macro.status` |

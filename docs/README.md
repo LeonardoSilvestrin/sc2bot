@@ -39,7 +39,6 @@ Start at level 1, go down only where the work is.
 | [world/territory.md](world/territory.md) | Control, frontline and ground security; sample control/knowledge feed the spatial field | live (regions and passages read by Strategy and Defense) |
 | **Engine (arbitration)** | | |
 | [engine/missions.md](engine/missions.md) | `MissionController`, `UnitAllocator`, proposals, lifecycle modes, preemption, executor contract, command port | live |
-| [engine/capabilities.md](engine/capabilities.md) | Unit capability profiles, suitability math, roles, capability-based allocation | live |
 | [engine/squads.md](engine/squads.md) | Persistent squad identity and temporary missions | live |
 | [engine/vision.md](engine/vision.md) | The shared active-vision service and the Scanner Sweep provider | live |
 | [engine/economy.md](engine/economy.md) | `EconomyController`: the virtual bank, admission, dispatch, confirmation, the Ares economy adapter | live |
@@ -70,7 +69,7 @@ Status words:
 ## Reading paths
 
 - **New to the codebase:** [overview](overview.md) -> [contracts](contracts.md) -> [frame-lifecycle](frame-lifecycle.md) -> [behavior/README](behavior/README.md).
-- **Changing a behavior:** [behavior/README](behavior/README.md) -> that behavior's doc -> [engine/missions](engine/missions.md) (arbitration) -> [engine/capabilities](engine/capabilities.md) if it asks for a role.
+- **Changing a behavior:** [behavior/README](behavior/README.md) -> that behavior's doc -> [engine/missions](engine/missions.md) (arbitration and unit requirements).
 - **Changing what the bot builds:** [macro/builds](macro/builds.md) -> [macro/macro-planner](macro/macro-planner.md) -> [engine/economy](engine/economy.md).
 - **Changing what the bot believes:** [world/attention](world/attention.md) -> [world/awareness](world/awareness.md) -> the reading's own doc.
 - **Understanding a game from its logs:** [logging](logging.md) (recipes at the end) -> [app](app.md) for the SVG snapshots.

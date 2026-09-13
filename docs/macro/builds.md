@@ -201,7 +201,9 @@ Declared upgrades (unused by macro): Stimpack, Hyperflight Rotors.
 ## Doctrines (`composition/doctrine.py`)
 
 A doctrine is production intent in three tiers. It bounds what a goal set may
-buy and never reaches the mission system ([engine/capabilities.md](../engine/capabilities.md#composition-doctrine-botmacrocomposition)).
+buy and never reaches the mission system: behaviors request the concrete unit
+types they can use ([engine/missions.md](../engine/missions.md#unitrequirement)),
+whatever doctrine produced them.
 
 | Doctrine | Core | Support | Specialized | Used by |
 | --- | --- | --- | --- | --- |

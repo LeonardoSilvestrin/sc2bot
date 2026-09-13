@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import ast
 import dataclasses
-import inspect
 import re
 import unittest
 from pathlib import Path
@@ -226,26 +225,34 @@ class MissionControllerGenericityTests(unittest.TestCase):
             self.assertNotIn(behavior_word, controller_source.lower())
 
 
-class CompositionIndependenceTests(unittest.TestCase):
-    """Generic behaviors state a job; only specialized ones name a unit; and
-    what macro chooses to produce never reaches the mission system."""
+class ConcreteUnitRequirementTests(unittest.TestCase):
+    """Every behavior names the units it can use; no global capability sheet
+    exists; and what macro chooses to produce never reaches the mission
+    system."""
 
     GENERIC_BEHAVIORS = (("map_control",), ("standing",))
-    SPECIALIZED_BEHAVIORS = (("harass", "banshee"), ("harass", "reaper"))
+    CAPABILITY_VOCABULARY = re.compile(
+        r"\b(CombatRole|CapabilityRequirement|CombatCapabilities|Suitability"
+        r"|UNIT_PROFILES|COMBAT_UNIT_TYPES|capabilities_for"
+        r"|score_unit_for_requirement|for_role|any_combat_unit|upgrade_margin"
+        r"|UnitUpgrade)\b"
+    )
 
-    def test_generic_behaviors_never_name_a_concrete_unit_type(self):
-        concrete = re.compile(r"UnitTypeId\.[A-Z]")
-        for parts in self.GENERIC_BEHAVIORS:
-            for path in BOT.joinpath("behavior", *parts).glob("*.py"):
-                with self.subTest(path="/".join((*parts, path.name))):
-                    self.assertIsNone(
-                        concrete.search(path.read_text(encoding="utf-8"))
-                    )
+    def test_every_behavior_requests_concrete_unit_types(self):
+        for parts in VERTICAL_BEHAVIORS:
+            source = BOT.joinpath("behavior", *parts, "planner.py").read_text(
+                encoding="utf-8"
+            )
+            with self.subTest(behavior="/".join(parts)):
+                self.assertIn("UnitRequirement.combat(", source)
 
-    def test_map_control_asks_for_a_role_and_standing_for_every_combat_unit(self):
+    def test_generic_behaviors_request_their_own_explicit_roster(self):
+        from bot.behavior.map_control.model import PATROL_UNIT_TYPES
+        from bot.behavior.standing.model import STANDING_ROSTER
+
         requests = {
-            ("map_control",): "UnitRequirement.for_role(",
-            ("standing",): "UnitRequirement.any_combat_unit(",
+            ("map_control",): "unit_types=self.config.unit_types",
+            ("standing",): "unit_types=STANDING_ROSTER",
         }
         for parts, request in requests.items():
             source = BOT.joinpath("behavior", *parts, "planner.py").read_text(
@@ -253,23 +260,39 @@ class CompositionIndependenceTests(unittest.TestCase):
             )
             with self.subTest(behavior="/".join(parts)):
                 self.assertIn(request, source)
-                self.assertNotIn("UnitRequirement.combat(", source)
+        for roster in (PATROL_UNIT_TYPES, STANDING_ROSTER):
+            self.assertTrue(roster)
+            self.assertTrue(all(isinstance(item, UnitTypeId) for item in roster))
 
-    def test_specialized_behaviors_still_ask_for_their_own_unit(self):
-        for parts in self.SPECIALIZED_BEHAVIORS:
-            source = BOT.joinpath("behavior", *parts, "planner.py").read_text(
-                encoding="utf-8"
-            )
-            with self.subTest(behavior="/".join(parts)):
-                self.assertIn("UnitRequirement.combat(", source)
-                self.assertNotIn("for_role", source)
-                self.assertNotIn("any_combat_unit", source)
+    def test_specialized_behaviors_ask_for_their_own_unit(self):
         self.assertEqual(
             BansheeHarassConfig().unit_types, frozenset({UnitTypeId.BANSHEE})
         )
         self.assertEqual(
             ReaperHarassConfig().unit_types, frozenset({UnitTypeId.REAPER})
         )
+
+    def test_no_capability_vocabulary_survives_anywhere_in_the_bot(self):
+        found = [
+            f"{path.relative_to(BOT).as_posix()}: {match.group(0)}"
+            for path in sorted(BOT.rglob("*.py"))
+            for match in self.CAPABILITY_VOCABULARY.finditer(
+                path.read_text(encoding="utf-8")
+            )
+        ]
+
+        self.assertEqual(found, [])
+        for gone in ("engine/missions/roles.py", "engine/missions/capability_log.py"):
+            self.assertFalse((BOT / gone).exists(), gone)
+
+    def test_the_mission_engine_names_no_unit_type(self):
+        """The allocator enforces what a behavior asked for; it holds no list
+        of its own."""
+
+        concrete = re.compile(r"UnitTypeId\.[A-Z]")
+        for path in (BOT / "engine" / "missions").rglob("*.py"):
+            with self.subTest(path=path.relative_to(BOT).as_posix()):
+                self.assertIsNone(concrete.search(path.read_text(encoding="utf-8")))
 
     def test_generic_behaviors_know_no_doctrine(self):
         for parts in self.GENERIC_BEHAVIORS:
@@ -291,12 +314,9 @@ class CompositionIndependenceTests(unittest.TestCase):
         for path in (BOT / "engine").rglob("*.py"):
             with self.subTest(path=path.relative_to(BOT).as_posix()):
                 self.assertNotIn("doctrine", path.read_text(encoding="utf-8").lower())
-        self.assertNotIn(
-            "doctrine", inspect.signature(UnitRequirement.for_role).parameters
-        )
         self.assertFalse(
             {field.name for field in dataclasses.fields(UnitRequirement)}
-            & {"preferred_unit_types", "doctrine"}
+            & {"preferred_unit_types", "doctrine", "capability"}
         )
 
     def test_doctrine_is_defined_and_used_only_by_macro(self):
@@ -309,15 +329,6 @@ class CompositionIndependenceTests(unittest.TestCase):
                     "CompositionDoctrine", path.read_text(encoding="utf-8")
                 )
         self.assertFalse((BOT / "combat").exists())
-
-    def test_the_shared_domain_depends_on_nothing_and_holds_no_policy(self):
-        for path in (BOT / "domain").glob("*.py"):
-            source = path.read_text(encoding="utf-8")
-            with self.subTest(path=path.name):
-                for name in imported_modules(path):
-                    self.assertFalse(name.startswith("bot"), name)
-                for policy in ("CombatRole", "CompositionDoctrine", "UnitRequirement"):
-                    self.assertNotIn(policy, source)
 
 
 class UnitUtilityContractTests(unittest.TestCase):

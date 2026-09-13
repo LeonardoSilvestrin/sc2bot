@@ -5,11 +5,11 @@ its anchor, and this claims a share of it. It only declares the squad once
 the army is large enough that taking a fifth of it still leaves a real army
 at home.
 
-It asks for a role (`CombatRole.MOBILE_CONTROL`) and a share of the army's
-combat supply -- never for a unit type or a head count. Every combat unit is
-scored against the role, so whatever the army is made of -- Marines,
-Hellions, Cyclones, or all three while production shifts -- competes for the
-patrol on suitability alone, without this file changing.
+It asks for the units its patrol was written for (``PATROL_UNIT_TYPES``:
+Cyclones, then Hellions, then Marines and Marauders), sized as a share of the
+whole army's combat supply rather than a head count. Tanks stay on the line
+and Reapers and Banshees with their raids: a unit type the patrol cannot use
+is never requested, whatever the army is made of.
 
 Two decisions, each pricing its factors once (``evaluate_sample``):
 
@@ -409,7 +409,7 @@ class MapControlPlanner:
             plan,
             now=assessment.now,
             planner=self.planner_id,
-            role=self.config.role.name,
+            unit_types=sorted(unit_type.name for unit_type in self.config.unit_types),
         )
 
     def _candidate_for(self, plan: MapControlPlan, now: float) -> MissionCandidate:
@@ -424,12 +424,13 @@ class MapControlPlanner:
                 target_key=DEDUPLICATION_KEY,
                 target=plan.anchor,
                 reason="persistent_map_control_share_available",
-                requirement=UnitRequirement.for_role(
-                    self.config.role,
+                requirement=UnitRequirement.combat(
+                    unit_types=self.config.unit_types,
                     desired=plan.desired_units,
                     # The standing mission survives full defense preemption.
                     minimum=0,
                     minimum_health=self.config.minimum_unit_health,
+                    type_desirability=self.config.type_desirability,
                     supply_budget=plan.supply_budget,
                 ),
                 created_at=now,

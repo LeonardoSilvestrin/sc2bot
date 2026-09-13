@@ -9,9 +9,9 @@ from sc2.position import Point2
 from bot.engine.missions.models import UnitRequirement
 from bot.world.attention import UnitSnapshot
 
-# Suitability is a coarse heuristic: utilities closer than this rank as equal,
-# so distance decides between a Marine and a Marauder that fit a role almost
-# identically instead of the third decimal sending the far one across the map.
+# A behavior's per-type preference is a coarse ranking: utilities closer than
+# this rank as equal, so distance decides between two units it values almost
+# the same instead of the third decimal sending the far one across the map.
 UTILITY_RESOLUTION = 0.05
 
 # Only absorbs float noise in budgets such as `10 * 0.2`.
@@ -26,23 +26,12 @@ class UnitTransfer:
 
 
 @dataclass(frozen=True, slots=True)
-class UnitUpgrade:
-    """A held unit swapped out for a clearly more suitable one."""
-
-    released_tag: int
-    acquired_tag: int
-    released_utility: float
-    acquired_utility: float
-
-
-@dataclass(frozen=True, slots=True)
 class AllocationResult:
     assigned_tags: tuple[int, ...]
     requirements_satisfied: bool
     transfers: tuple[UnitTransfer, ...] = ()
-    # Every lease the mission gives up, upgrades' swapped-out units included.
+    # Every lease the mission gives up this allocation.
     released_tags: tuple[int, ...] = ()
-    upgrades: tuple[UnitUpgrade, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,27 +55,23 @@ class UnitAllocator:
     """Exclusive unit leases with deterministic, hysteretic preemption.
 
     Candidates are every unit the bot owns. Hard constraints
-    (``UnitRequirement.matches``, zero utility) decide who is one, utility
-    decides which is taken first, and the requirement's size -- ``desired``
-    units, and ``supply_budget`` when set -- decides how many. The allocator
-    knows no unit list beyond what an identity requirement names, and nothing
-    about what is being produced.
+    (``UnitRequirement.matches``, zero utility) decide who is one, the
+    requesting behavior's utility decides which is taken first, and the
+    requirement's size -- ``desired`` units, and ``supply_budget`` when set --
+    decides how many. The allocator knows no unit list beyond what a
+    requirement names, and nothing about what is being produced.
 
-    A held unit is never displaced for a marginally better one: only a
-    capability-based mission that is already full may swap its least
-    suitable unit, and only for a candidate it could preempt anyway whose
-    utility is higher by at least ``upgrade_margin``.
+    A held unit is never displaced for a better one: a mission keeps what it
+    holds while the unit still matches its requirement, and only takes more
+    when it has room. Every ordering is total -- utility band, distance and
+    health, then tag -- so the same units in any input order give the same
+    allocation.
     """
 
-    def __init__(
-        self, *, preemption_margin: int = 10, upgrade_margin: float = 0.15
-    ) -> None:
+    def __init__(self, *, preemption_margin: int = 10) -> None:
         if preemption_margin < 1:
             raise ValueError("preemption_margin must be positive")
-        if upgrade_margin <= 0.0:
-            raise ValueError("upgrade_margin must be positive")
         self.preemption_margin = preemption_margin
-        self.upgrade_margin = upgrade_margin
         self._units: dict[int, UnitSnapshot] = {}
         self._leases: dict[int, UnitLease] = {}
 
@@ -154,9 +139,10 @@ class UnitAllocator:
     ) -> list[UnitSnapshot]:
         """Take ``ranked`` units in order while the requirement has room.
 
-        One at a time on purpose: today each unit's utility is its
-        standalone suitability, fixed by the ranking; this loop is where its
-        worth *given the units already taken* would be evaluated instead.
+        One at a time on purpose: today each unit's utility is its type's
+        standalone value to the requesting behavior, fixed by the ranking;
+        this loop is where its worth *given the units already taken* would be
+        evaluated instead.
         """
 
         count, supply = len(held), _supply(held)
@@ -182,13 +168,12 @@ class UnitAllocator:
         preferred_tags: frozenset[int] = frozenset(),
         preemption_cost: float = 0.0,
     ) -> AllocationResult:
-        capability_based = requirement.capability is not None
         currently_assigned = self.assigned_units(mission_id)
         identity_matched = sorted(
             (unit for unit in currently_assigned if requirement.matches_identity(unit)),
             key=lambda unit: (
-                # A shrinking capability mission keeps its best-suited units.
-                -self._ranked_utility(requirement, unit) if capability_based else 0,
+                # A shrinking mission keeps the units its behavior values most.
+                -self._ranked_utility(requirement, unit),
                 self._score(unit, objective),
             ),
         )
@@ -196,8 +181,7 @@ class UnitAllocator:
         existing_tags = {unit.tag for unit in existing}
         # A shrunk size (or a unit that no longer matches identity) must give
         # up its excess leases immediately -- not linger until some other
-        # mission happens to preempt them (see DispositionPlanner posture
-        # transitions, e.g. PRESSURE -> BALANCED).
+        # mission happens to preempt them.
         released = [
             unit.tag for unit in currently_assigned if unit.tag not in existing_tags
         ]
@@ -241,21 +225,6 @@ class UnitAllocator:
 
         candidates = sorted((*free, *preemptible), key=candidate_key)
         acquired = self._fill(requirement, candidates, held=existing)
-        upgrades: tuple[UnitUpgrade, ...] = ()
-        if capability_based and not self._has_room(
-            requirement, count=len(existing), supply=_supply(existing)
-        ):
-            existing, swaps = self._upgrades(
-                requirement,
-                held=existing,
-                # Only units it could preempt: their donor ranks lower, so it
-                # allocates later this same tick and can take back the unit
-                # this swap releases instead of leaving it ownerless.
-                candidates=sorted(preemptible, key=candidate_key),
-            )
-            upgrades = tuple(swaps)
-            released.extend(upgrade.released_tag for upgrade in upgrades)
-            acquired = [self._units[upgrade.acquired_tag] for upgrade in upgrades]
 
         selected = [*existing, *acquired]
         transfers: list[UnitTransfer] = []
@@ -294,57 +263,7 @@ class UnitAllocator:
             requirements_satisfied=len(selected) >= requirement.minimum,
             transfers=tuple(transfers),
             released_tags=tuple(sorted(released)),
-            upgrades=upgrades,
         )
-
-    def _upgrades(
-        self,
-        requirement: UnitRequirement,
-        *,
-        held: list[UnitSnapshot],
-        candidates: list[UnitSnapshot],
-    ) -> tuple[list[UnitSnapshot], list[UnitUpgrade]]:
-        """Swap the least suitable held units for clearly better candidates.
-
-        Each swap raises the mission's utility by at least ``upgrade_margin``,
-        so a sequence of them always ends, and small score differences --
-        Marine against Marauder -- never move a unit at all. A swap may raise
-        the supply held past a budget; the next allocation trims the surplus
-        from the least suitable end.
-        """
-
-        kept = sorted(
-            held,
-            key=lambda unit: (requirement.utility_for(unit), -unit.tag),
-            reverse=True,
-        )
-        incoming: list[UnitSnapshot] = []
-        swaps: list[UnitUpgrade] = []
-        for candidate in candidates:
-            if not kept:
-                break
-            worst = kept[-1]
-            if not self._has_room(
-                requirement,
-                count=len(kept) - 1 + len(incoming),
-                supply=_supply(kept) - worst.supply_cost + _supply(incoming),
-            ):
-                # Over budget even without it: surplus to trim, not to swap.
-                break
-            gain = requirement.utility_for(candidate) - requirement.utility_for(worst)
-            if gain < self.upgrade_margin:
-                continue
-            kept.pop()
-            incoming.append(candidate)
-            swaps.append(
-                UnitUpgrade(
-                    released_tag=worst.tag,
-                    acquired_tag=candidate.tag,
-                    released_utility=requirement.utility_for(worst),
-                    acquired_utility=requirement.utility_for(candidate),
-                )
-            )
-        return kept, swaps
 
     def release_mission(self, mission_id: str) -> tuple[int, ...]:
         tags = self.assigned_tags(mission_id)

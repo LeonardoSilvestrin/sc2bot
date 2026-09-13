@@ -14,7 +14,7 @@ Source: `bot/behavior/map_control/` (`model.py`, `assessment.py`,
 
 | Field | Meaning |
 | --- | --- |
-| `combat_units` | ready combat units (`bot.domain.is_combat_unit`) at 70% health or more |
+| `combat_units` | ready armed non-worker units -- physical facts: a weapon that hits ground or air -- at 70% health or more, whatever their type |
 | `combat_supply` | their total supply |
 | `started` | game time past `start_after` (0) |
 
@@ -46,12 +46,16 @@ desired       = max(1, combat_units)            a count cap only; the budget bin
 
 A fixed `desired_units` in the config replaces the budget, for experiments.
 
-**Requirement.** `UnitRequirement.for_role(CombatRole.MOBILE_CONTROL,
-desired, minimum=0, minimum_health=0.7, supply_budget)`: never unit types.
-The allocator scores every owned unit against the role and fills the budget
-with the best-suited ones -- Marines and Marauders in a Bio army, Hellions and
-Cyclones in a Mech army, and a mix while production shifts, swapped for better
-fits as they appear ([engine/capabilities.md](../engine/capabilities.md)).
+**Requirement.** `UnitRequirement.combat(unit_types=PATROL_UNIT_TYPES,
+desired, minimum=0, minimum_health=0.7, type_desirability, supply_budget)`.
+The patrol names the units it was written for: ground units that fight on the
+move with no siege or transform to manage, because its loop walks pathable
+samples, its pathing is the ground grid and its retreat reads ground threats
+-- Cyclones, Hellions, Marines and Marauders. Its own preference fills the
+budget: Cyclone 1.0, Hellion 0.9, Marine and Marauder 0.6, equal preferences
+going by distance. Tanks stay on the line and Reapers and Banshees with their
+raids; a unit type patrols only once it is added to the roster. A held unit
+is never swapped out for a better one.
 
 **Proposal.**
 
@@ -218,7 +222,8 @@ their supply rather than backfilling.
 | | `proposal_cadence` | 15 s |
 | | `mission_timeout`, `failure_cooldown` | 3600 s, 15 s |
 | | `commitment_seconds` | 1 s |
-| Size | `role` | `MOBILE_CONTROL` |
+| Size | `unit_types` | Cyclone, Hellion, Marine, Marauder (`PATROL_UNIT_TYPES`) |
+| | `type_desirability` | Cyclone 1.0, Hellion 0.9, Marine 0.6, Marauder 0.6 |
 | | `force_ratio` | 0.2 of combat supply |
 | | `minimum_force_supply` | 6 |
 | | `desired_units` | `None` (a fixed count replaces the budget) |

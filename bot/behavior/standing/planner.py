@@ -1,19 +1,19 @@
 """PLAN: where does the heart of the army sit when nothing needs it?
 
-This is the default behavior. Every combat unit no more specific mission has
-claimed should end up owned by this one, so that no unit is ever commanded
-by two behaviors at once and none is left ownerless. It proposes a
+This is the default behavior. Every military unit no more specific mission
+has claimed should end up owned by this one, so that no unit is ever
+commanded by two behaviors at once and none is left ownerless. It proposes a
 ``MissionMode.STANDING`` responsibility: re-proposing the same key updates
 the live mission's anchor and desired count in place (see
 ``MissionController._update_standing``) rather than tearing the mission down
 and rebuilding it, so a posture change reshapes the army without churning
 leases.
 
-It asks for no role and scores nothing: it claims every combat unit
-(``UnitRequirement.any_combat_unit``), so a surviving Marine, a new Cyclone
-and a Thor all rest here until something with a real job takes them. Nor is
-it an opportunity: its candidate carries fallback signals, which the Mission
-Policy ranks at a fixed floor beneath every real one.
+It claims every unit on its explicit roster (``STANDING_ROSTER``), all worth
+the same, so a surviving Marine, a new Cyclone and a Thor all rest here until
+something with a real job takes them. Nor is it an opportunity: its candidate
+carries fallback signals, which the Mission Policy ranks at a fixed floor
+beneath every viable one.
 
 Where the army waits follows Strategy: on the way into the home base
 Strategy most wants protected. It is still not a defense -- it answers
@@ -46,6 +46,7 @@ from .model import (
     DEDUPLICATION_KEY,
     MISSION_KIND,
     SQUAD_ID,
+    STANDING_ROSTER,
     CombatPosture,
     StandingAssessment,
     StandingConfig,
@@ -107,10 +108,10 @@ class StandingPlanner:
     def _plan(
         self, assessment: StandingAssessment, spatial: SpatialStrategySnapshot
     ) -> StandingPlan:
-        """Choose the anchor; the core army asks for every combat unit.
+        """Choose the anchor; the core army asks for every roster unit.
 
         Asking for all of them, rather than a share, is what makes this the
-        fallback owner. The Mission Policy ranks every real opportunity (map
+        fallback owner. The Mission Policy ranks every viable opportunity (map
         control, defense, harass) at least the allocator's preemption margin
         above this one, so each still takes what it needs and this can never
         take those units back -- it only holds whatever nobody else does. A
@@ -247,7 +248,8 @@ class StandingPlanner:
                 target_key=DEDUPLICATION_KEY,
                 target=plan.anchor,
                 reason="main_army_holds_latest_expansion_rally",
-                requirement=UnitRequirement.any_combat_unit(
+                requirement=UnitRequirement.combat(
+                    unit_types=STANDING_ROSTER,
                     desired=plan.core_count,
                     # Holding zero units is idle, not failed: everything above
                     # this behavior may legitimately take the whole army.

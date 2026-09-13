@@ -4,11 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from bot.domain import is_combat_unit
 from bot.world.attention import AttentionSnapshot
 from bot.world.awareness import AwarenessSnapshot, RelativePosition
 
-from .model import CombatPosture, StandingAssessment, StandingConfig
+from .model import STANDING_ROSTER, CombatPosture, StandingAssessment, StandingConfig
 
 
 def derive_combat_posture(*, awareness: AwarenessSnapshot) -> CombatPosture:
@@ -53,7 +52,7 @@ class StandingAssessor:
             )
         )
         combat_units = sum(
-            is_combat_unit(unit.unit_type)
+            unit.unit_type in STANDING_ROSTER
             and unit.is_ready
             and unit.health_percentage >= self.config.minimum_unit_health
             for unit in world.own_units

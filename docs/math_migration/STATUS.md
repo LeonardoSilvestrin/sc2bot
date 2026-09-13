@@ -6,58 +6,56 @@ migration. Rules: [PRINCIPLES.md](PRINCIPLES.md).
 
 ## Last completed commit
 
-`feat: make decision traces causally reproducible` (Stage 2).
+`refactor: use behavior-owned unit requirements` (Stage 3).
 
 ## Completed stages
 
-- **Stage 0 -- control objective integration** (`9b70838`). The unfinished
-  consumer migration was already committed by the user as `ffce62d` (18
-  files, +757/-106), so the worktree was clean; this stage finished it on top
-  instead of rewriting it. `ControlMatch` (alignment >= 0.5) replaces the
-  loose objective id/alignment pair; Map Control's anchor score is split into
-  `local_value`, `caution` and `strategic_value`, and its opportunity is the
-  local value alone.
-- **Stage 1 -- explicit mission viability** (`25dba8d`). `evaluate_mission`
-  returns a `MissionEvaluation` with raw/final utility, floor, `viable`,
-  reason, and a priority only when viable (`is_viable`: utility > 0). Rejected
-  candidates never reach `MissionController`; a rejected standing
-  responsibility is withdrawn through `declared_planners`. Docs lost every
-  fixed per-kind priority.
-- **Stage 2 -- causally reproducible decision trace.**
-  - JSONL envelope on every record: `schema` (2), `run`, `seq`, `iteration`
-    (null outside a frame), exact `game_time`. The port gained
-    `begin_frame`/`end_frame`; `FrameProcessor` brackets each frame.
-  - Strict JSON: no `default=str`. A record that is not strict JSON becomes a
-    `logging.record_rejected` fault record naming the event and the error.
-    The test `FakeLogger` enforces strict JSON for every event any test emits.
-  - `game.started` records the opening actually played, build identity
-    (commit/branch from git's files, or explicitly unknown), a fingerprint of
-    every decision-critical configuration plus one per config, and the RNG
-    seed with its source (`generated`, `configured`, `external`).
-  - `StrategicContext.revision`: increments only when intent or the control
-    objective set changes materially. `StrategyRuntime.record_context()`
-    persists the exact, complete context (objective, assessments with
-    contributions, inputs, intent, every objective) once per revision as
-    `strategy.context`; the frame calls it before the first policy decision.
-  - `mission.evaluated` cites `context_revision`, `policy_model`
-    (`linear_utility_v1`) and `policy_config` (fingerprint); decision values
-    are logged at machine precision.
-  - `map_control.spatial_candidates` adds candidate count, pool, rejection
-    counts, runner-up, winning margin and an order-free candidate-set
-    fingerprint.
-  - `mission.progressed` on a change of an active mission's
-    (outcome, reason); a raising or NaN `preemption_cost()` logs
-    `mission.preemption_cost_failed` (first failure, then at most every 30 s
-    with the suppressed count) before reading as 0.
-  - Joinable causal-chain tests against a real JSONL file: context ->
-    evaluation -> admission -> assignment -> progress, and context ->
-    rejected evaluation -> nothing in the engine.
+- **Stage 0 -- control objective integration** (`9b70838`). The user's WIP
+  was already committed as `ffce62d`; finished on top. `ControlMatch`
+  (alignment >= 0.5); Map Control's anchor score split into `local_value`,
+  `caution`, `strategic_value`, opportunity from local value alone.
+- **Stage 1 -- explicit mission viability** (`25dba8d`). `MissionEvaluation`
+  with raw/final utility, floor, `viable`, reason, priority only when viable
+  (`is_viable`: utility > 0). Rejected candidates never reach the engine; a
+  rejected standing responsibility is withdrawn via `declared_planners`.
+- **Stage 2 -- causally reproducible decision trace** (`a80e313`). JSONL
+  envelope (schema, run, seq, iteration, exact game time), strict JSON with a
+  loud rejection record, enriched `game.started` (opening, build, config
+  fingerprints, seed), `StrategicContext.revision` persisted as
+  `strategy.context` before the first decision citing it, provenance on
+  `mission.evaluated`, spatial selection summary, `mission.progressed`,
+  logged `preemption_cost` faults, joinable causal-chain tests.
+- **Stage 3 -- behavior-owned unit requirements.**
+  - Removed: `CombatCapabilities`, `Capability`, `CapabilityRequirement`,
+    `Suitability`, `UNIT_PROFILES`, `COMBAT_UNIT_TYPES`, `is_combat_unit`
+    (`bot/domain/capabilities.py`, `profiles.py`); `CombatRole`
+    (`engine/missions/roles.py`); `CapabilityAllocationLog`
+    (`capability_log.py`); `UnitRequirement.capability`, `for_role`,
+    `any_combat_unit`; allocator upgrades (`UnitUpgrade`, `upgrade_margin`);
+    the `units_upgraded` / `capability_*` events;
+    `docs/engine/capabilities.md`; `tests/test_combat_capabilities.py` and
+    `tests/test_capability_allocation.py` (still-valid scenarios moved to
+    `tests/test_unit_requirements.py`).
+  - Kept: exclusive leases, minimum/desired counts, health/readiness/
+    availability filters, supply budgets, per-type desirability, deterministic
+    ordering, commitment windows, preemption and lifecycle cleanup.
+  - Rosters: Standing's explicit `STANDING_ROSTER` (exactly the previous
+    combat set: no unit loses its owner); Map Control's `PATROL_UNIT_TYPES`
+    (Cyclone, Hellion, Marine, Marauder -- the ground units its loop, ground
+    pathing and ground-threat retreat were written for) with a local
+    preference Cyclone 1.0, Hellion 0.9, Marine/Marauder 0.6; raids, scout
+    and Defense unchanged. `type_desirability` may only price requested types.
+  - Map Control sizes its share from the whole army counted by physical facts
+    (armed, not a worker), not from a profile table.
+  - A test fails when a registered build's army contains a type with no
+    roster decision (Standing roster or declared unarmed support).
 
 ## Tests and tooling
 
-At Stage 2 (Windows, project `.venv`, Python 3.12):
+At Stage 3 (Windows, project `.venv`, Python 3.12):
 
-- `pytest`: 839 passed.
+- `pytest`: 816 passed (the capability test files were replaced by a smaller
+  concrete-requirement suite).
 - `ruff check bot tests`: clean.
 - `mypy bot`: clean.
 - `git diff --check`: clean.
@@ -67,40 +65,36 @@ pytest/ruff/mypy).
 
 ## Architectural decisions
 
-- `ControlMatch` and its threshold live in `bot.strategy.mission_policy`, so
-  "an objective id implies a meaningful alignment" is a contract invariant.
-- Map Control pulls its anchor with objective importance, not gap (the gap
-  shrinks as the patrol arrives); the policy prices importance x gap.
-- Contract 16 was already relaxed in `ffce62d`: only macro and the mission
-  engine are kept out of territory.
-- Viability threshold stays 0.0 behind `is_viable`; no evidence yet for a
-  higher semantic minimum.
-- Rejected standing work is withdrawn through the existing standing
-  reconciliation; the engine only receives planner ids.
-- The envelope is the writer's job (adapter), frame scoping the port's; no
-  event sourcing. A serialization fault is written, not raised, so a bad
-  record cannot stop a match, and never coerced.
-- Context revisions are assigned in `bot.app` by exact dataclass equality of
-  intent and objectives; Strategy's core stays hash- and I/O-free. The
-  context is persisted lazily, before the first decision that cites it, so
-  unreferenced revisions cost nothing.
-- Configuration fingerprints and build identity live in
-  `bot/app/run_identity.py`; unsupported config values are refused, not
-  stringified. Build identity reads git files, never a subprocess.
+- `ControlMatch` and its threshold are Strategy contract invariants.
+- Map Control pulls its anchor with objective importance, not gap.
+- Viability threshold stays 0.0 behind `is_viable`.
+- Rejected standing work is withdrawn through existing standing
+  reconciliation; the engine receives planner ids only.
+- The JSONL envelope is the writer's job, frame scoping the port's; a
+  serialization fault is written, never raised or coerced.
+- Context revisions are assigned in `bot.app` by exact equality and persisted
+  lazily before first use.
+- No preferred/optional unit contract was introduced: a concrete roster plus a
+  local per-type preference expresses every current behavior.
+- Allocator shrink order now honors the requesting behavior's preference for
+  every requirement (it used to apply only to capability requirements);
+  equal preferences still go by distance, health and tag.
+- `bot/domain` survives Stage 3 only as the home of the legacy `MacroPosture`
+  enum; Stage 4 deletes it.
 
 ## Known issues
 
+- Behavior change: a held unit is no longer swapped for a better one. After a
+  Bio -> Mech transition the patrol keeps its Marines until they die or the
+  patrol shrinks, instead of upgrading to Cyclones.
+- Map Control no longer requests Siege Tanks, Reapers or Banshees even when
+  nothing else is available; the patrol can stay empty in such an army.
 - A live FINITE mission is not withdrawn when its re-declared candidate is
-  rejected; it runs to its own end or timeout.
-- Build identity does not detect uncommitted changes.
-- While macro follows the opening, `configs.macro` fingerprints `None`; the
-  opening name in `game.started` determines the profile.
-- State summaries (observation, knowledge, standing, macro status, behavior
-  plans) still round for readability; decision records do not.
-- The log viewer does not yet display the envelope, `strategy.context`,
-  `mission.evaluated`, `mission.progressed` or the spatial summary fields.
-- Map Control and Standing still use the capability/role system in
-  `bot/domain` (Stage 3).
+  rejected.
+- Build identity does not detect uncommitted changes; while macro follows the
+  opening, `configs.macro` fingerprints `None`.
+- State summaries still round; the log viewer does not display the new
+  records.
 - `AwarenessSnapshot.macro_posture` transports macro policy through
   Awareness (Stage 4).
 - `MissionController` orders equal priorities by `admitted_at` only (Stage 5).
@@ -117,9 +111,8 @@ pytest/ruff/mypy).
 
 ## Next stage
 
-Stage 3 -- replace the RPG capability model with behavior-owned concrete unit
-requirements: remove `CombatCapabilities`, `CapabilityRequirement`,
-`Suitability`, unit profiles, `CombatRole` and capability allocation
-diagnostics/upgrades; each behavior names its supported unit types; keep
-leases, counts, supply budgets, per-type desirability, commitment and
-preemption.
+Stage 4 -- remove prescriptive state from Awareness and delete `bot/domain`:
+drop `AwarenessSnapshot.macro_posture`; transport macro posture explicitly
+from the app to `MacroPlanner`; move posture reporting out of
+`knowledge.updated`; add architecture tests (no prescriptive Awareness
+fields, layer import boundaries, no `bot/domain`).

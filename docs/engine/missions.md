@@ -6,9 +6,8 @@ deliberately generic -- it never names a mission kind or a behavior (rule 6
 in [contracts.md](../contracts.md)).
 
 Source: `bot/engine/missions/` (`models.py`, `controller.py`,
-`allocator.py`, `board.py`, `execution.py`, `planning.py`, `roles.py`,
-`capability_log.py`), `bot/ports/mission_commands.py`,
-`bot/adapters/ares/mission_commands.py`.
+`allocator.py`, `board.py`, `execution.py`, `planning.py`),
+`bot/ports/mission_commands.py`, `bot/adapters/ares/mission_commands.py`.
 
 ## Vocabulary
 
@@ -40,11 +39,14 @@ positive, cooldown and commitment not negative.
 
 ### `UnitRequirement`
 
-Which units qualify, what each is worth to the mission, and how many.
+Which units qualify, what each is worth to the requesting behavior, and how
+many. The behavior names the concrete unit types its planner and executor
+know how to use; the allocator enforces that and never infers what a type is
+good for.
 
 | Field | Default | Meaning |
 | --- | --- | --- |
-| `unit_types` | required | eligible types, for an identity requirement; empty for a capability requirement |
+| `unit_types` | required | the requested types; never empty |
 | `desired` | required | at most this many units (> 0) |
 | `minimum` | required | fewer than this and the mission cannot run (0..desired) |
 | `flying` | `None` | require flying or ground |
@@ -53,27 +55,30 @@ Which units qualify, what each is worth to the mission, and how many.
 | `exclude_resource_carriers`, `exclude_constructors` | `False` | never pull a worker mid-return or mid-build |
 | `require_available` | `True` | `UnitSnapshot.available_for_mission` (ignored for preemption) |
 | `desirability` | 1.0 | baseline utility of a matching unit |
-| `type_desirability` | `()` | per-type utility overrides, `(type, value)` pairs |
-| `capability` | `None` | a `CapabilityRequirement`; utility becomes suitability |
+| `type_desirability` | `()` | per-type utility overrides, `(type, value)` pairs; may only price requested types |
 | `supply_budget` | `None` | stop acquiring once held supply reaches this |
 
-- `utility_for(unit)`: suitability for a capability requirement, otherwise
-  the type override or `desirability`. Zero means never requested.
-- `matches_identity(unit)`: flying constraint, then admitted suitability
-  (capability) or membership in `unit_types`. Used to keep an existing lease.
+- `utility_for(unit)`: the type override, otherwise `desirability`. Zero means
+  never requested.
+- `matches_identity(unit)`: the flying constraint and membership in
+  `unit_types`. Used to keep an existing lease.
 - `matches(unit)`: identity, health, readiness, worker exclusions,
   availability.
 
-Three constructors are what planners use:
+Planners build it with `UnitRequirement.combat(unit_types=, desired=,
+minimum=, minimum_health=, desirability=, type_desirability=,
+supply_budget=)`, which also excludes resource carriers and constructors.
+Each behavior owns its roster:
 
-| Constructor | For | Candidates | Utility |
-| --- | --- | --- | --- |
-| `UnitRequirement.combat(unit_types=, desired=, minimum=, ...)` | behaviors whose identity is a unit (raids, scout, defense) | the named types | `desirability` / `type_desirability` |
-| `UnitRequirement.for_role(role, desired=, minimum=, supply_budget=)` | generic jobs (map control) | every owned unit the role admits | suitability |
-| `UnitRequirement.any_combat_unit(desired=, minimum=)` | the fallback owner (standing) | `COMBAT_UNIT_TYPES` | 1.0 |
+| Behavior | `unit_types` | Preference |
+| --- | --- | --- |
+| standing (fallback owner) | `STANDING_ROSTER`: Marine, Marauder, Reaper, Hellion, Hellbat, Cyclone, Siege Tank, Thor, Viking and Banshee, every mode of each | none |
+| map control | `PATROL_UNIT_TYPES`: Cyclone, Hellion, Marine, Marauder | Cyclone 1.0, Hellion 0.9, Marine and Marauder 0.6 |
+| defense | Marine, Marauder, Reaper, Siege Tank (both modes), Banshee | by what is attacking ([behavior/defense.md](../behavior/defense.md)) |
+| Reaper raid, Banshee raid | Reaper; Banshee | none |
+| scouting | Reaper, or an SCV when no Reaper is alive | none |
 
-All three exclude resource carriers and constructors. Capabilities and roles
-are in [capabilities.md](capabilities.md).
+A new unit type reaches a behavior only by being added to its roster.
 
 ### Kinds, modes and status
 
@@ -107,8 +112,8 @@ finished; `MissionSnapshot` is its immutable view for telemetry.
        requirement = squads.effective_requirement (a home squad shrinks while members are away;
                      None when nothing is left to ask for -> keep current leases, satisfied)
        allocation  = allocator.allocate(...)
-       apply transfers, releases and upgrades; log units_*
-       squads.allocation_changed; capability composition log
+       apply transfers and releases; log units_*
+       squads.allocation_changed
        not satisfied: FAILED all_assigned_units_lost if started with zero units, else BLOCKED
        satisfied: advance the executor
 ```
@@ -205,7 +210,7 @@ leases of units that no longer exist.
 
 ```text
 1  keep:     current leases whose unit still matches the requirement's identity, filled up to the size
-             (a capability requirement keeps its best-suited units); the rest are released
+             in order of the behavior's preference, then distance; the rest are released
 2  free:     unleased units with matches(unit) and utility > 0
 3  preemptible (only if can_preempt):
              units leased by another mission where
@@ -220,12 +225,9 @@ leases of units that no longer exist.
                      -> tag
 6  fill:     take ranked candidates one at a time while count < desired
              and (no budget or held supply < budget); the last unit may overshoot the budget
-7  upgrade (capability requirements already full):
-             swap the least suitable held unit for a preemptible candidate whose utility is higher
-             by at least 0.15; stop when even without that unit there would be no room
-8  write leases for newly acquired units (with this mission's priority, commitment window and
+7  write leases for newly acquired units (with this mission's priority, commitment window and
    preemption cost); refresh the preemption cost on units already held
-9  satisfied = held >= minimum
+8  satisfied = held >= minimum
 ```
 
 Notes:
@@ -233,12 +235,13 @@ Notes:
 - Preemption is not gated on the recipient being below its minimum: a
   mission at its minimum still preempts toward `desired` when the margin and
   commitment window allow.
-- The 0.05 utility band is the heuristic's precision: a Marine and a Marauder
-  that fit a role almost equally are chosen by distance, not by the third
-  decimal.
-- Upgrades only take units the mission could preempt anyway, whose donor ranks
-  lower and allocates later the same tick, so the swapped-out unit is picked up
-  instead of left ownerless.
+- The 0.05 utility band is the precision of a behavior's per-type
+  preference: two units it values almost equally (a Marine and a Marauder for
+  the patrol) are chosen by distance, not by the third decimal.
+- A held unit is never displaced for a better one: a mission only takes more
+  units while it has room.
+- Every ordering ends in the unit tag, so the same units in any input order
+  give the same allocation.
 
 ```mermaid
 flowchart TD
@@ -314,17 +317,6 @@ port using the new owner, before the recipient's executor runs.
   without any margin when it is no longer a candidate; ties go to the earlier
   candidate. `TargetChange`: `NONE`, `SELECTED`, `KEPT`, `RETARGETED`,
   `REPLACED`, `LOST`. Used by both raids.
-
-## Capability allocation log (`capability_log.py`)
-
-For capability-based missions only, after each allocation:
-
-- `capability_composition_changed` when the mission's count by unit type
-  changes, with the role, both compositions, new types, held supply, budget,
-  and one line per profiled unit type owned (`count`, `utility`,
-  `suitability`, `coverage`, `floor_factor`, `rejection`, raw capabilities).
-- `capability_no_suitable_candidates` once when no owned unit fits the role,
-  until one does.
 
 ## Known gaps
 

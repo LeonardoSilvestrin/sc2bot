@@ -86,7 +86,7 @@ class SquadController:
         units: tuple[UnitSnapshot, ...],
         now: float,
     ) -> None:
-        """Bind a capability request to a compatible squad, if one exists.
+        """Bind a defense request to a compatible squad, if one exists.
 
         Defense remains expressed solely as a UnitRequirement. This method
         evaluates the registered squads and does not require DefensePlanner to

@@ -16,7 +16,7 @@ from bot.behavior.map_control import (
     max_local_value,
     score_spatial_sample,
 )
-from bot.engine.missions import CombatRole, MissionKind
+from bot.engine.missions import MissionKind
 from bot.strategy import (
     MINIMUM_CONTROL_ALIGNMENT,
     ControlObjective,
@@ -251,11 +251,12 @@ class MapControlPlannerTests(unittest.TestCase):
         self.assertEqual(proposal.requirement.supply_budget, 1.2)
         self.assertEqual(proposal.requirement.desired, 6)
         self.assertEqual(proposal.requirement.minimum, 0)
-        # A role, not a unit list.
-        self.assertIs(
-            proposal.requirement.capability, CombatRole.MOBILE_CONTROL.requirement
+        # The patrol's own roster and preference, never another behavior's.
+        config = MapControlConfig()
+        self.assertEqual(proposal.requirement.unit_types, config.unit_types)
+        self.assertEqual(
+            proposal.requirement.type_desirability, config.type_desirability
         )
-        self.assertEqual(proposal.requirement.unit_types, frozenset())
         self.assertGreaterEqual(
             proposal.priority, MissionPolicyConfig().minimum_priority
         )
@@ -997,7 +998,14 @@ class MapControlAssessmentTests(unittest.TestCase):
     def test_counts_every_combat_unit_healthy_enough_to_roam(self):
         extra = (
             marine(20, health=0.5),
-            replace(marine(21), unit_type=UnitTypeId.MEDIVAC, supply_cost=2.0),
+            replace(
+                marine(21),
+                unit_type=UnitTypeId.MEDIVAC,
+                supply_cost=2.0,
+                is_flying=True,
+                can_attack_air=False,
+                can_attack_ground=False,
+            ),
             replace(marine(22), unit_type=UnitTypeId.SIEGETANK, supply_cost=3.0),
         )
         current, state = attention(30.0, marines=8, extra=extra), awareness(30.0)

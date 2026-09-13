@@ -210,10 +210,7 @@ def compose_bot(
         "spatial_policy": strategy.spatial_config,
         "legacy_macro_posture": strategy.legacy_posture.config,
         "mission_policy": mission_ranker.config,
-        "allocator": {
-            "preemption_margin": missions.allocator.preemption_margin,
-            "upgrade_margin": missions.allocator.upgrade_margin,
-        },
+        "allocator": {"preemption_margin": missions.allocator.preemption_margin},
         "intel": intel_config,
         "scouting_vision": scouting_vision_config,
         "vision_service": vision_service_config,

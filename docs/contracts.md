@@ -11,18 +11,18 @@ detail (admission, allocation, loss and cleanup) is in
 Allowed imports, top to bottom. Anything not listed is not allowed.
 
 ```text
-bot.domain            nothing from bot
+bot.domain            nothing from bot (only the legacy MacroPosture enum)
 bot.ports             nothing from bot (type-only imports of engine models)
 bot.world.attention   nothing from bot
-bot.world.awareness   world.attention, ports.logging
+bot.world.awareness   world.attention, ports.logging, domain (legacy posture)
 bot.strategy          the standard library and domain (legacy posture); its
                       boundary modules (awareness_adapter, spatial/policy) also
                       world.awareness
 bot.engine.services   world.attention, ports
-bot.engine.missions   domain, world, engine.services, engine.squads, ports
+bot.engine.missions   world, engine.services, engine.squads, ports
 bot.engine.squads     engine.missions (models, allocator), world.attention, ports
 bot.engine.economy    world.attention, ports
-bot.behavior          engine.missions, engine.services, world, domain, ports,
+bot.behavior          engine.missions, engine.services, world, ports,
                       strategy contracts (MissionSignals, ControlMatch,
                       StrategicActivity, StrategicContext, ControlObjective,
                       ControlTargetKind, SpatialStrategySnapshot)
@@ -41,8 +41,6 @@ flowchart TD
     macro --> economy["bot.engine.economy"]
     missions --> squads["bot.engine.squads"]
     missions --> services
-    missions --> domain["bot.domain"]
-    behavior --> domain
     behavior --> awareness["bot.world.awareness"]
     macro --> awareness
     missions --> awareness
@@ -73,8 +71,8 @@ Each rule names what enforces it. "Review" means no test does yet.
 | 10 | **Behavior and macro stay apart.** `bot.behavior` never imports `bot.macro` or `bot.engine.economy`. `bot.macro` never imports `ares`, `bot.adapters`, `bot.app`, `bot.behavior`, `bot.engine.missions` or `bot.engine.squads`. Neither engine imports `bot.macro`; `bot.engine.economy` never imports missions or squads. The generic spend folders (`production/`, `construction/`, `expansion/`) name no army unit; each registered build owns `builds/<name>/plan.py`. | `test_macro_architecture.py` |
 | 11 | **`EconomyController` alone spends.** It admits, reserves and dispatches through `EconomyCommands`. The SCV that lays a structure is picked by the Ares behavior; Ares marks it `UnitRole.BUILDING`, which Attention reports as unavailable for missions. That is builder selection, never a lease. | `test_economy_controller.py` |
 | 12 | **Shared capabilities are services.** They live in `bot/engine/services` and reach behaviors as `BehaviorServices` (planners at construction, executors as `context.services`). A behavior asks for an outcome -- vision at a position, with urgency and TTL -- and never names the provider. `bot.engine` never imports `bot.behavior`. | `test_behavior_architecture.py`, `test_vision_consumers.py` |
-| 13 | **The domain is a leaf; doctrine is macro's.** `bot/domain` imports nothing from `bot` and contains no `CombatRole`, `CompositionDoctrine` or `UnitRequirement`. `CompositionDoctrine` appears only under `bot/macro`; the mission engine never mentions doctrine. | `test_behavior_architecture.py` (`CompositionIndependenceTests`) |
-| 14 | **Generic behaviors state a job.** `standing/` and `map_control/` name no `UnitTypeId` and no doctrine; map control asks `UnitRequirement.for_role(...)`, standing asks `UnitRequirement.any_combat_unit(...)`. Specialized raids ask for their own unit with `UnitRequirement.combat(...)`. | `test_behavior_architecture.py` (`CompositionIndependenceTests`) |
+| 13 | **Doctrine is macro's.** `CompositionDoctrine` appears only under `bot/macro`; the mission engine never mentions doctrine, and `UnitRequirement` has no doctrine, preference-list or capability field. | `test_behavior_architecture.py` (`ConcreteUnitRequirementTests`) |
+| 14 | **Behaviors request the concrete units they can use.** Every planner builds its requirement with `UnitRequirement.combat(unit_types=...)` from its own roster: Standing's explicit `STANDING_ROSTER`, Map Control's `PATROL_UNIT_TYPES`, each raid its own unit, Defense its defender set. Per-type preference is local (`type_desirability`) and may only price requested types. No global capability sheet, role or suitability exists, and the mission engine names no unit type. A type a registered build produces is on Standing's roster or explicitly declared unarmed support. | `test_behavior_architecture.py` (`ConcreteUnitRequirementTests`), `test_unit_requirements.py` |
 | 15 | **Every behavior is a vertical folder** holding exactly `__init__.py`, `model.py`, `assessment.py`, `planner.py`, `executor.py`. | `test_behavior_architecture.py` (`BehaviorShapeTests`) |
 | 16 | **Territory types stay out of macro and the mission engine.** No module under `bot/macro` or `bot/engine` mentions `.territory` or a `*Territory*` name. Strategy's `spatial/policy.py` derives control objectives from regions and passages; behaviors may read the topology for tactics (Defense holds the passage into an attacked base's region); Awareness projects generic sample control/knowledge onto `SpatialField`; `bot/app` may read the full snapshot for telemetry/debug. | `test_territory.py` (`ConsumerTests`) |
 | 17 | **Strategy is pure and consumed only through its contracts.** Its core (`model`, `config`, `scoring`, `hysteresis`, `director`, `intent`, `mission_policy`, `posture`) imports only itself, `bot.domain` and the standard library; only `awareness_adapter.py` and `spatial/policy.py` read Awareness; nothing in it reaches behavior, engine, macro, app or adapters, or performs I/O. Only `bot/app/strategy_runtime.py` drives the director; behaviors import only the context and signal contracts and never read the objective; only `bot/app/mission_ranking.py` prices candidates; the engine never names a strategic concept. | `test_strategy_architecture.py`, `test_decision_pipeline_architecture.py` |

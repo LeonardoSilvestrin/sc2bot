@@ -6,12 +6,6 @@ from enum import Enum, auto
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
-from bot.domain import (
-    COMBAT_UNIT_TYPES,
-    CapabilityRequirement,
-    score_unit_for_requirement,
-)
-from bot.engine.missions.roles import CombatRole
 from bot.world.attention import UnitSnapshot
 
 
@@ -19,23 +13,14 @@ from bot.world.attention import UnitSnapshot
 class UnitRequirement:
     """Unit needs declared by a proposal and enforced by the allocator.
 
-    Which units qualify, and what each is worth to the mission -- the "how
-    useful is this unit *to me, right now*" that priority alone cannot
-    express -- is declared one of two ways:
-
-    - By identity: ``unit_types`` names them, and ``desirability`` with its
-      per-type override table prices them, filled in by a planner that knows
-      its matchup (Mutalisks over the main make a Banshee worth exactly
-      nothing to the defense). For behaviors whose identity is a unit, and
-      for the fallback owner (``any_combat_unit``).
-    - By capability: ``capability`` (see ``for_role``) and no unit list at
-      all. Every unit the bot owns is scored, and utility is its suitability
-      -- a pure function of its type's capability profile, blind to what is
-      being produced.
-
-    Either way ``UnitAllocator`` only ranks by utility and refuses to request
-    a unit whose utility is zero, so it never learns a matchup table, a unit
-    list or a build.
+    The requesting behavior names the concrete unit types its planner and
+    executor know how to use (``unit_types``) and, when it prefers some over
+    others, prices them: ``desirability`` for every requested type, overridden
+    per type by ``type_desirability`` -- a defense facing Mutalisks values a
+    Banshee at exactly nothing. ``UnitAllocator`` enforces the requirement
+    (identity, health, readiness, availability, size) and ranks by that
+    utility; it never infers what a unit type is good for, and never requests
+    a unit whose utility is zero.
 
     Size is ``desired`` units, bounded by ``supply_budget`` as well when set,
     so a request need not assume every unit weighs the same: two Cyclones and
@@ -51,32 +36,23 @@ class UnitRequirement:
     exclude_resource_carriers: bool = False
     exclude_constructors: bool = False
     require_available: bool = True
-    # Baseline utility of any matching unit, 0.0 (never request) to 1.0.
+    # Baseline utility of any requested unit, 0.0 (never request) to 1.0.
     desirability: float = 1.0
     # Per-unit-type overrides of `desirability`, as (type, utility) pairs --
     # a tuple rather than a Mapping so the requirement stays hashable and
     # comparable, which `_update_standing` relies on to detect real change.
     type_desirability: tuple[tuple[UnitTypeId, float], ...] = ()
-    # Capability-based matching, mutually exclusive with the three above.
-    capability: CapabilityRequirement | None = None
     # Stop acquiring once the units held reach this much supply (the last one
     # may overshoot); `desired` still caps the count.
     supply_budget: float | None = None
 
     def __post_init__(self) -> None:
-        if self.capability is None:
-            if not self.unit_types:
-                raise ValueError("unit_types must not be empty")
-        else:
-            if self.unit_types:
-                raise ValueError(
-                    "a capability requirement names no unit types: every unit "
-                    "is scored against it"
-                )
-            if self.desirability != 1.0 or self.type_desirability:
-                raise ValueError(
-                    "capability requirements derive utility from suitability"
-                )
+        if not self.unit_types:
+            raise ValueError("unit_types must not be empty")
+        if any(
+            unit_type not in self.unit_types for unit_type, _ in self.type_desirability
+        ):
+            raise ValueError("type_desirability may only price requested unit types")
         if self.minimum < 0 or self.desired <= 0 or self.minimum > self.desired:
             raise ValueError("expected 0 <= minimum <= desired and desired > 0")
         if self.supply_budget is not None and self.supply_budget <= 0.0:
@@ -91,8 +67,6 @@ class UnitRequirement:
     def utility_for(self, unit: UnitSnapshot) -> float:
         """How much this mission wants *this* unit, 0.0 meaning not at all."""
 
-        if self.capability is not None:
-            return score_unit_for_requirement(unit.unit_type, self.capability).score
         for unit_type, value in self.type_desirability:
             if unit.unit_type == unit_type:
                 return value
@@ -113,18 +87,10 @@ class UnitRequirement:
         )
 
     def matches_identity(self, unit: UnitSnapshot) -> bool:
-        """Stable constraints used to retain an existing mission lease.
-
-        For a capability requirement that is the unit type being admitted:
-        profiled, physically able to do the job and scoring above zero.
-        """
+        """Stable constraints used to retain an existing mission lease."""
 
         if self.flying is not None and unit.is_flying != self.flying:
             return False
-        if self.capability is not None:
-            return score_unit_for_requirement(
-                unit.unit_type, self.capability
-            ).admitted
         return unit.unit_type in self.unit_types
 
     @classmethod
@@ -137,6 +103,7 @@ class UnitRequirement:
         minimum_health: float = 0.0,
         desirability: float = 1.0,
         type_desirability: tuple[tuple[UnitTypeId, float], ...] = (),
+        supply_budget: float | None = None,
     ) -> UnitRequirement:
         """A requirement for a mobile combat/utility mission.
 
@@ -155,55 +122,7 @@ class UnitRequirement:
             exclude_constructors=True,
             desirability=desirability,
             type_desirability=type_desirability,
-        )
-
-    @classmethod
-    def for_role(
-        cls,
-        role: CombatRole,
-        *,
-        desired: int,
-        minimum: int,
-        minimum_health: float = 0.0,
-        supply_budget: float | None = None,
-    ) -> UnitRequirement:
-        """A generic combat mission's request: a job, not a unit list.
-
-        Carries the role's capability requirement plus the physical and
-        ownership constraints every mobile combat mission shares (the same
-        worker exclusions as ``combat``). Whatever units exist -- produced
-        under any build -- are scored against it.
-        """
-
-        return cls(
-            unit_types=frozenset(),
-            desired=desired,
-            minimum=minimum,
-            minimum_health=minimum_health,
-            exclude_resource_carriers=True,
-            exclude_constructors=True,
-            capability=role.requirement,
             supply_budget=supply_budget,
-        )
-
-    @classmethod
-    def any_combat_unit(
-        cls, *, desired: int, minimum: int, minimum_health: float = 0.0
-    ) -> UnitRequirement:
-        """Every combat unit, all worth the same: the fallback owner's claim.
-
-        Not a role -- there is no job to score against, only "a military
-        asset no more specific mission is using". Combat units are the
-        profiled ones (``bot.domain.COMBAT_UNIT_TYPES``), so a Thor or a
-        Viking belongs as soon as it exists and a Medivac or an SCV never
-        does, whichever build produced them.
-        """
-
-        return cls.combat(
-            unit_types=COMBAT_UNIT_TYPES,
-            desired=desired,
-            minimum=minimum,
-            minimum_health=minimum_health,
         )
 
 

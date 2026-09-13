@@ -19,7 +19,7 @@ behavior/standing/
 | Squad | Share | Home mission | Priority |
 | --- | --- | --- | --- |
 | `main_army` | every combat unit no higher-priority mission holds | `HOLD_RALLY` | 20, the Mission Policy's fixed fallback |
-| `map_control` | 20% of combat supply, best `MOBILE_CONTROL` fits, preempted from `main_army` ([map-control.md](map-control.md)) | `MAP_CONTROL` | the policy's rank when viable (30..100); not proposed when worth nothing |
+| `map_control` | 20% of combat supply, filled from its own roster (Cyclone, Hellion, Marine, Marauder), preempted from `main_army` ([map-control.md](map-control.md)) | `MAP_CONTROL` | the policy's rank when viable (30..100); not proposed when worth nothing |
 
 ## Assess
 
@@ -29,7 +29,7 @@ behavior/standing/
   for expansion order until construction timestamps exist;
 - the ids of threatened bases;
 - `pressure`: `threat.near_own_base_enemy_combat_units`;
-- `combat_units`: ready combat units (`bot.domain.is_combat_unit`) at or above
+- `combat_units`: ready units of `STANDING_ROSTER` at or above
   `minimum_unit_health` (0, so every ready one).
 
 `derive_combat_posture` maps Awareness onto a `CombatPosture`. It is
@@ -87,16 +87,18 @@ The proposal:
 | `squad_id` | `main_army` |
 | `target` | the anchor |
 | `reason` | `main_army_holds_latest_expansion_rally` |
-| requirement | `UnitRequirement.any_combat_unit(desired=core_count, minimum=0, minimum_health=0)` |
+| requirement | `UnitRequirement.combat(unit_types=STANDING_ROSTER, desired=core_count, minimum=0, minimum_health=0)` |
 | `can_preempt`, `commitment_seconds` | yes, 2 s |
 | `timeout_seconds`, `cooldown_seconds` | 3600 (never applied to standing), 5 |
 
-Standing asks for no role and scores nothing: every type in
-`bot.domain.COMBAT_UNIT_TYPES` at utility 1.0. A surviving Marine, a new
-Cyclone, a Thor, a Viking or a Banshee between raids all rest here until
-something with a real job takes them. SCVs, Medivacs and other unprofiled
-units never do. What macro is producing does not matter here
-([engine/capabilities.md](../engine/capabilities.md)).
+Standing scores nothing: every type on its explicit `STANDING_ROSTER` at
+utility 1.0 -- Marine, Marauder, Reaper, Hellion, Hellbat, Cyclone, Siege Tank,
+Thor, Viking and Banshee, every mode of each. A surviving Marine, a new
+Cyclone, a Thor or a Banshee between raids all rest here until something with
+a real job takes them. SCVs and unarmed support (Medivacs) never do. A type a
+build starts producing joins only by an explicit roster decision:
+`tests/test_unit_requirements.py` fails while a registered build's army holds
+a type that is neither on the roster nor declared support.
 
 The planner logs `behavior.assessed` (decision `hold`) and
 `behavior.proposed` only when the anchor, the core count or the posture
@@ -121,10 +123,10 @@ needs it, `MissionController` transfers the lease; when that mission ends the
 unit is released and Standing reacquires it. This is what keeps two behaviors
 from commanding the same unit.
 
-Standing asks for every combat unit rather than a share, which is what makes
+Standing asks for every roster unit rather than a share, which is what makes
 it the fallback. Whatever no higher-priority mission holds is picked up on the
 next allocation: units from before map control has enough army to start,
-units a temporary mission released, units a patrol upgrade swapped out.
+units a temporary mission released, units a shrinking patrol gave back.
 Every viable mission allowed to preempt (map control, defense, both raids)
 outranks Standing by at least the allocator's margin, so it takes its share
 and Standing can never take it back; a candidate the Mission Policy rejects

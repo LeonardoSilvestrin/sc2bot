@@ -132,9 +132,9 @@ Details in [engine/missions.md](engine/missions.md).
         cancel on timeout (FINITE) or objective observed before start
         bind a DEFENSE mission to a compatible squad
         effective requirement (home squads shrink while members are away)
-        UnitAllocator.allocate               leases, preemption, upgrades
-        apply transfers, releases, upgrades; log them
-        squad membership update, capability composition log
+        UnitAllocator.allocate               leases, preemption
+        apply transfers and releases; log them
+        squad membership update
         requirement unsatisfied -> BLOCKED (or FAILED if started with zero units)
         otherwise: build executor on first start, refresh(mission), step(context)
         COMPLETED / FAILED result -> finish: release leases, start cooldown

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from typing import Any
 
+from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
 from bot.engine.missions.models import MissionKind
@@ -31,15 +32,15 @@ class StandingConfig:
     """Thresholds for the standing army behavior.
 
     The core army is the fallback owner: the Mission Policy ranks it at its
-    fixed fallback floor, below every real opportunity by at least the
+    fixed fallback floor, below every viable opportunity by at least the
     allocator's preemption margin, so a standing slot is always freely
     preemptible. Where the army waits follows Strategy's home control
     objectives; the anchor fraction is only the last resort without them.
 
-    Which units belong to the core army is not configured here: every combat
-    unit no more specific mission is using, whatever produced it. Specialized
-    behaviors (the Banshee raid) take theirs back through ordinary
-    preemption.
+    Which units belong to the core army is ``STANDING_ROSTER``, not a
+    setting: every unit of those types no more specific mission is using.
+    Specialized behaviors (the Banshee raid) take theirs back through
+    ordinary preemption.
     """
 
     proposal_cadence: float = 5.0
@@ -90,6 +91,7 @@ class StandingAssessment:
     bases: tuple[BaseAssessment, ...]
     threatened_base_ids: tuple[str, ...]
     pressure: int
+    # Ready units of the standing roster, at or above the health floor.
     combat_units: int
     own_start: Point2
 
@@ -117,7 +119,7 @@ class StandingPlan:
 
     anchor: Point2
     anchor_reason: str
-    # Every combat unit, not a share: this is the fallback owner, so whatever
+    # Every roster unit, not a share: this is the fallback owner, so whatever
     # no higher-priority mission holds belongs here. A cardinality, not a
     # force size -- "all of them" is exact whatever each unit weighs.
     core_count: int
@@ -139,3 +141,27 @@ class StandingPlan:
 MISSION_KIND = MissionKind.HOLD_RALLY
 SQUAD_ID = "main_army"
 DEDUPLICATION_KEY = "hold_rally:main_army"
+
+# The fallback owner's roster: every military unit type this bot fields that
+# the standing executor can park on an anchor. Every build's army belongs
+# here, and so do the types a unit can turn into (a sieged Tank, a landed
+# Viking) so a mode change never orphans it. Unarmed support (Medivacs) and
+# workers never do. A newly produced unit type joins only by an explicit
+# decision here -- until then Standing does not claim it.
+STANDING_ROSTER: frozenset[UnitTypeId] = frozenset(
+    {
+        UnitTypeId.MARINE,
+        UnitTypeId.MARAUDER,
+        UnitTypeId.REAPER,
+        UnitTypeId.HELLION,
+        UnitTypeId.HELLIONTANK,
+        UnitTypeId.CYCLONE,
+        UnitTypeId.SIEGETANK,
+        UnitTypeId.SIEGETANKSIEGED,
+        UnitTypeId.THOR,
+        UnitTypeId.THORAP,
+        UnitTypeId.VIKINGFIGHTER,
+        UnitTypeId.VIKINGASSAULT,
+        UnitTypeId.BANSHEE,
+    }
+)

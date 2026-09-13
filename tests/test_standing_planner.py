@@ -8,7 +8,7 @@ from sc2.position import Point2
 
 from bot.app.mission_ranking import rank_candidates
 from bot.behavior.standing import StandingConfig, StandingPlanner
-from bot.domain import COMBAT_UNIT_TYPES
+from bot.behavior.standing.model import STANDING_ROSTER
 from bot.engine.missions import MissionKind, MissionMode
 from bot.strategy import (
     ControlTargetKind,
@@ -134,8 +134,7 @@ class CoreArmyStandingTests(unittest.TestCase):
 
         proposal = rank_candidates(StandingPlanner().propose(attention, awareness))[0]
 
-        self.assertIsNone(proposal.requirement.capability)
-        self.assertEqual(proposal.requirement.unit_types, COMBAT_UNIT_TYPES)
+        self.assertEqual(proposal.requirement.unit_types, STANDING_ROSTER)
         self.assertEqual(proposal.requirement.desired, 8)
 
     def test_assessment_reports_what_the_plan_was_decided_from(self):

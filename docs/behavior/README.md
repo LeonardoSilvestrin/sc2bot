@@ -47,8 +47,8 @@ Six behaviors, wired by `compose_bot` in this order.
 | [harass/reaper](harass.md#reaper-raid) | `ReaperHarassPlanner` -> `ReaperHarassExecutor` | `HARASS` | policy | FINITE | `harass:<target>` | -- | 1 Reaper, health >= 0.5 | yes |
 | [harass/banshee](harass.md#banshee-raid) | `BansheeHarassPlanner` -> `BansheeHarassExecutor` | `AIR_HARASS` | policy | STANDING | `air_harass:banshee_harass` | `banshee_harass` | every Banshee alive, minimum 0, health >= 0.5 | yes |
 | [defense](defense.md) | `DefensePlanner` -> `DefendBaseExecutor` | `DEFENSE` | policy (urgency floor) | FINITE | `defense:<base_id>` | bound to a compatible squad | 1..6 of Marine, Marauder, Reaper, Siege Tank, Banshee, health >= 0.3, preference by attack type | yes |
-| [map_control](map-control.md) | `MapControlPlanner` -> `MapControlExecutor` | `MAP_CONTROL` | policy | STANDING | `map_control:patrol` | `map_control` | role `MOBILE_CONTROL`, 20% of combat supply, health >= 0.7, minimum 0 | yes |
-| [standing](standing.md) | `StandingPlanner` -> `StandingExecutor` | `HOLD_RALLY` | 20 (fallback) | STANDING | `hold_rally:main_army` | `main_army` | every combat unit, minimum 0 | yes |
+| [map_control](map-control.md) | `MapControlPlanner` -> `MapControlExecutor` | `MAP_CONTROL` | policy | STANDING | `map_control:patrol` | `map_control` | Cyclone, Hellion, Marine, Marauder (in that preference), 20% of combat supply, health >= 0.7, minimum 0 | yes |
+| [standing](standing.md) | `StandingPlanner` -> `StandingExecutor` | `HOLD_RALLY` | 20 (fallback) | STANDING | `hold_rally:main_army` | `main_army` | every unit on `STANDING_ROSTER`, minimum 0 | yes |
 
 "policy": the planner describes the work as `MissionSignals` and the Mission
 Policy evaluates it under the current intent. A viable candidate is proposed
@@ -104,9 +104,9 @@ units: `path_to`, `safe_path_to`, `attack_move`, `attack_unit`,
    `log_fields()`.
 3. `planner.py`: use `ProposalCadence`; build stable ids
    (`<planner_id>:...:<sequence>`), a deduplication key, a reason, and a
-   requirement from `UnitRequirement.combat`, `for_role` or `any_combat_unit`.
-   A generic job asks for a role; only a behavior whose identity is a unit
-   names it.
+   requirement from `UnitRequirement.combat(unit_types=...)` naming exactly
+   the unit types its planner and executor know how to use, with a local
+   `type_desirability` only when it prefers some over others.
 4. `executor.py`: subclass `MissionExecutor`; implement `refresh` for a
    standing mission, `preemption_cost` if interrupting it is expensive.
 5. Add a `MissionKind` if needed and register its factory in

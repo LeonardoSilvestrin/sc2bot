@@ -108,7 +108,7 @@ a unit tag, mission or squad.
 | `bot/ports` | Protocols: `MissionCommands`, `EconomyCommands`, `VisionCommands`, `BotLogger` | -- | -- | holds logic |
 | `bot/world/attention` | Immutable facts of one frame | -- | `AttentionSnapshot` | remembers or infers |
 | `bot/world/awareness` | Memory and beliefs | Attention | `AwarenessSnapshot` | knows missions, leases or cooldowns |
-| `bot/domain` | Static unit knowledge: capability profiles, suitability math | -- | `Suitability` | imports anything from `bot`, holds policy |
+| `bot/domain` | Temporary: only the legacy `MacroPosture` enum, until macro policy stops travelling through Awareness | -- | `MacroPosture` | holds unit profiles, capabilities or any other policy |
 | `bot/behavior` | Six vertical behaviors: assess, plan, execute | Attention, Awareness | `MissionProposal`s, commands for leased units, vision requests | allocates units, proposes spend |
 | `bot/engine/missions` | Mission admission, lifecycle, unit leases | proposals, own units | `Mission`s, `MissionContext` | names a behavior or mission kind |
 | `bot/engine/squads` | Persistent squad identity | allocations | preferred tags | owns or commands units |
@@ -130,7 +130,6 @@ The rules behind this table, and the tests that keep it true, are in
 | Strategy | live | objective, intent and control objectives reach planners as `StrategicContext`; the Mission Policy ranks every mission candidate; macro still reads the legacy posture ([strategy.md](strategy.md)) |
 | Standing army, map control, defense, Reaper harass, Banshee harass, scouting | live | [behavior/README.md](behavior/README.md) |
 | Defense roles (Tanks siege on an anchor, everything else screens) | pilot | inside `DefendBaseExecutor` only ([behavior/defense.md](behavior/defense.md)) |
-| `CombatRole.SIEGE_ANCHOR` | defined, unused | no behavior asks for it yet |
 | Active vision | live | one provider, Scanner Sweep ([engine/vision.md](engine/vision.md)) |
 | Macro and economy | live | upgrades are vocabulary only: research comes from the opening YAML ([macro/macro-planner.md](macro/macro-planner.md)) |
 | Openings | live | every cycle is pinned to `BattleMech` ([macro/builds.md](macro/builds.md)) |
@@ -181,9 +180,8 @@ These are the choices every layer follows; each component doc shows how.
 | FINITE / STANDING | A one-shot mission, or a responsibility re-declared every cadence and updated in place. |
 | Lease | Exclusive ownership of one unit by one mission, held by `UnitAllocator`. |
 | Preemption | A higher-priority mission taking a leased unit: needs priority >= owner priority + margin (10) + the owner's preemption cost, after the owner's commitment window. |
-| Utility | How much a mission wants one particular unit, 0..1. Zero means never requested. |
-| Suitability | Capability-based utility: how well a unit type's profile fits a role. |
-| Role | A job described as a capability requirement (`MOBILE_CONTROL`, `SIEGE_ANCHOR`), never a unit list. |
+| Utility | How much the requesting behavior wants one particular unit, 0..1: its own per-type preference. Zero means never requested. |
+| Roster | The concrete unit types a behavior requests because its planner and executor know how to use them (`STANDING_ROSTER`, `PATROL_UNIT_TYPES`, each raid's unit, Defense's defenders). |
 | Squad | Persistent identity of units that belong together (`main_army`, `map_control`, `banshee_harass`). |
 | Cadence | The minimum time between two proposals from one planner. |
 | Goal set | A build's convergence targets: army composition, production structures, add-ons, upgrades (`MacroGoalSet`). |

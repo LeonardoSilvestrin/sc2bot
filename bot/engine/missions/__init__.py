@@ -17,10 +17,8 @@ from .models import (
     MissionStatus,
     UnitRequirement,
 )
-from .roles import CombatRole
 
 __all__ = [
-    "CombatRole",
     "Mission",
     "MissionBoard",
     "MissionContext",

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from bot.behavior.standing import StandingPlanner
-from bot.domain import is_combat_unit
+from bot.behavior.standing.model import STANDING_ROSTER
 from bot.engine.missions import MissionController
 from bot.ports.logging import BotLogger
 from bot.world.attention import AttentionSnapshot
@@ -19,7 +19,7 @@ class StandingTelemetry:
     truth: ownership itself still lives only in ``UnitAllocator``.
     """
 
-    # How long an eligible combat unit may sit without any mission owning it
+    # How long an eligible roster unit may sit without any mission owning it
     # before it is worth a distinct log line -- the standing behavior is the
     # default owner, so this should not normally happen at all.
     _UNASSIGNED_WARNING_AFTER = 15.0
@@ -53,10 +53,11 @@ class StandingTelemetry:
                     len(mission.assigned_unit_tags),
                 )
 
+        # Eligible means the fallback owner should hold it: a roster unit.
         unassigned_tags = tuple(
             unit.tag
             for unit in world.own_units
-            if is_combat_unit(unit.unit_type)
+            if unit.unit_type in STANDING_ROSTER
             and unit.available_for_mission
             and self._missions.allocator.owner_of(unit.tag) is None
         )

@@ -6,12 +6,29 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from typing import Any
 
+from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
 from bot.engine.missions.models import MissionKind
-from bot.engine.missions.roles import CombatRole
 from bot.strategy import ControlMatch, MissionSignals
 from bot.world.awareness.spatial import SpatialFieldSample
+
+# The units the patrol was written for: ground units that fight on the move,
+# with no siege or transform to manage -- its loop walks pathable samples, its
+# pathing is the ground grid and its retreat reads ground threats. Tanks hold
+# lines, Reapers and Banshees belong to their raids, and air or support units
+# are never asked for. A new unit type patrols only once it is added here.
+PATROL_UNIT_TYPES: frozenset[UnitTypeId] = frozenset(
+    {UnitTypeId.CYCLONE, UnitTypeId.HELLION, UnitTypeId.MARINE, UnitTypeId.MARAUDER}
+)
+# The patrol's own preference among them: the mobile units that also answer
+# air first, then Hellions, then infantry.
+PATROL_TYPE_DESIRABILITY: tuple[tuple[UnitTypeId, float], ...] = (
+    (UnitTypeId.CYCLONE, 1.0),
+    (UnitTypeId.HELLION, 0.9),
+    (UnitTypeId.MARINE, 0.6),
+    (UnitTypeId.MARAUDER, 0.6),
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,9 +39,9 @@ class MapControlConfig:
     proposal_cadence: float = 15.0
     mission_timeout: float = 3600.0
     failure_cooldown: float = 15.0
-    # What the patrol is for, not what it is made of: every combat unit is
-    # scored against the role, and the best-suited ones patrol.
-    role: CombatRole = CombatRole.MOBILE_CONTROL
+    # Which units patrol, and which the patrol would rather have.
+    unit_types: frozenset[UnitTypeId] = PATROL_UNIT_TYPES
+    type_desirability: tuple[tuple[UnitTypeId, float], ...] = PATROL_TYPE_DESIRABILITY
     # The patrol's share of the army, measured in combat supply.
     force_ratio: float = 0.2
     # Below this much combat supply a share would leave no real army at home.
