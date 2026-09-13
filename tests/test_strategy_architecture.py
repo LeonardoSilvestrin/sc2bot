@@ -53,23 +53,35 @@ def is_within(name: str, prefix: str) -> bool:
     return name == prefix or name.startswith(f"{prefix}.")
 
 
+# The pure core: scoring, direction, intent and mission ranking. Everything
+# else in bot.strategy is boundary -- it carries positions or reads Awareness.
+PURE_CORE = (
+    "config",
+    "director",
+    "hysteresis",
+    "intent",
+    "mission_policy",
+    "model",
+    "posture",
+    "scoring",
+)
+
+
 class PurityTests(unittest.TestCase):
     def test_strategy_core_imports_only_itself_domain_contracts_and_stdlib(self):
+        core = {f"bot.strategy.{name}" for name in PURE_CORE}
         found = [
             f"{path.relative_to(BOT).as_posix()}: {name}"
-            for path in sorted(STRATEGY.rglob("*.py"))
-            if path.name != "awareness_adapter.py"
+            for name_ in PURE_CORE
+            for path in (STRATEGY / f"{name_}.py",)
             for name in sorted(imported_modules(path))
-            if not is_within(name, "bot.strategy")
-            and not any(
-                is_within(name, allowed) or name.startswith(f"{allowed}.")
-                for allowed in ALLOWED_IMPORTS
-            )
+            if not any(is_within(name, module) for module in core)
+            and not any(is_within(name, allowed) for allowed in ALLOWED_IMPORTS)
         ]
 
         self.assertEqual(found, [])
 
-    def test_only_the_named_adapter_imports_awareness(self):
+    def test_only_the_named_boundary_modules_import_awareness(self):
         consumers = [
             path.relative_to(STRATEGY).as_posix()
             for path in sorted(STRATEGY.rglob("*.py"))
@@ -79,7 +91,24 @@ class PurityTests(unittest.TestCase):
             )
         ]
 
-        self.assertEqual(consumers, ["awareness_adapter.py"])
+        self.assertEqual(consumers, ["awareness_adapter.py", "spatial/policy.py"])
+
+    def test_strategy_never_reaches_downstream(self):
+        downstream = (
+            "bot.behavior",
+            "bot.engine",
+            "bot.app",
+            "bot.macro",
+            "bot.adapters",
+        )
+        found = [
+            f"{path.relative_to(BOT).as_posix()}: {name}"
+            for path in sorted(STRATEGY.rglob("*.py"))
+            for name in sorted(imported_modules(path))
+            if any(is_within(name, prefix) for prefix in downstream)
+        ]
+
+        self.assertEqual(found, [])
 
     def test_strategy_performs_no_io(self):
         found = [
@@ -102,6 +131,7 @@ class ConsumerTests(unittest.TestCase):
             "StrategyInputs",
             "StrategySnapshot",
             "build_strategy_inputs",
+            "derive_control_objectives",
             "derive_intent",
         }
         consumers: list[str] = []

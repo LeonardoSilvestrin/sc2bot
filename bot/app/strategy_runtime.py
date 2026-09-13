@@ -8,10 +8,12 @@ from bot.ports.logging import BotLogger
 from bot.strategy import (
     IntentConfig,
     MacroPostureDirector,
+    SpatialPolicyConfig,
     StrategicContext,
     StrategicDirector,
     StrategySnapshot,
     build_strategy_inputs,
+    derive_control_objectives,
     derive_intent,
 )
 from bot.world.awareness import AwarenessSnapshot, RelativePosition
@@ -24,14 +26,17 @@ class StrategyRuntime:
     """Update Strategy once per frame and publish what behaviors consume.
 
     Each new ``StrategySnapshot`` becomes the frame's ``StrategicContext``:
-    the intent planners and the Mission Policy read. The returned Awareness
-    copy still carries the legacy ``MacroPosture`` macro depends on; that
-    field is compatibility transport only.
+    the intent, and the control objectives that intent asks for over the
+    Awareness snapshot it was computed from -- what planners and the Mission
+    Policy read. The returned Awareness copy still carries the legacy
+    ``MacroPosture`` macro depends on; that field is compatibility transport
+    only.
     """
 
     logger: BotLogger
     director: StrategicDirector = field(default_factory=StrategicDirector)
     intent_config: IntentConfig = field(default_factory=IntentConfig)
+    spatial_config: SpatialPolicyConfig = field(default_factory=SpatialPolicyConfig)
     legacy_posture: MacroPostureDirector = field(
         default_factory=MacroPostureDirector
     )
@@ -57,8 +62,12 @@ class StrategyRuntime:
             build_strategy_inputs(awareness), awareness.updated_at
         )
         if strategy is not previous:
+            intent = derive_intent(strategy, self.intent_config)
             self._context = StrategicContext(
-                intent=derive_intent(strategy, self.intent_config),
+                intent=intent,
+                spatial=derive_control_objectives(
+                    intent, awareness, self.spatial_config
+                ),
                 updated_at=strategy.game_time,
             )
         posture = self.legacy_posture.update(

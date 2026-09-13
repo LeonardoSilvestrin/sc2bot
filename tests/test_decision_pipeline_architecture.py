@@ -117,6 +117,34 @@ class PriorityOwnershipTests(unittest.TestCase):
         self.assertEqual(pricers, ["app/mission_ranking.py"])
 
 
+class AwarenessDescriptiveTests(unittest.TestCase):
+    """Awareness says where control exists, never where it is wanted."""
+
+    def test_awareness_types_carry_no_prescription(self):
+        prescriptive = re.compile(r"desired|importance|priority|objective|intent")
+        found = [
+            f"{relative(path)}: {cls.name}.{node.target.id}"
+            for path in sorted((BOT / "world" / "awareness").rglob("*.py"))
+            for cls in ast.walk(parse(path))
+            if isinstance(cls, ast.ClassDef)
+            for node in cls.body
+            if isinstance(node, ast.AnnAssign)
+            and isinstance(node.target, ast.Name)
+            and prescriptive.search(node.target.id.lower())
+        ]
+
+        self.assertEqual(found, [])
+
+    def test_awareness_never_imports_strategy(self):
+        found = [
+            relative(path)
+            for path in sorted((BOT / "world").rglob("*.py"))
+            if any(name.startswith("bot.strategy") for name in imported_modules(path))
+        ]
+
+        self.assertEqual(found, [])
+
+
 class EngineBlindnessTests(unittest.TestCase):
     """The engine receives a number and a requirement, nothing strategic."""
 

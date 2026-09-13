@@ -45,10 +45,19 @@ from .scoring import (
     score_stabilize,
     score_take_map_control,
 )
+from .spatial import (
+    ControlObjective,
+    ControlTargetKind,
+    SpatialPolicyConfig,
+    SpatialStrategySnapshot,
+    derive_control_objectives,
+)
 
 __all__ = [
     "BuildAdvantageWeights",
     "ControlNeed",
+    "ControlObjective",
+    "ControlTargetKind",
     "IntentConfig",
     "MacroPosture",
     "MacroPostureConfig",
@@ -62,6 +71,8 @@ __all__ = [
     "PressureWeights",
     "RecoverWeights",
     "ScoreContribution",
+    "SpatialPolicyConfig",
+    "SpatialStrategySnapshot",
     "StabilizeWeights",
     "StrategicActivity",
     "StrategicContext",
@@ -75,6 +86,7 @@ __all__ = [
     "assess_objectives",
     "build_strategy_inputs",
     "decision_confidence",
+    "derive_control_objectives",
     "derive_intent",
     "score_build_advantage",
     "score_pressure",
