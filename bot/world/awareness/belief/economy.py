@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from bot.world.attention import WorldFacts
+from bot.world.attention import TOWNHALL_TYPES, WorldFacts
 from bot.world.awareness.enemy import (
     EnemyBaseObservation,
     EnemyBaseStatus,
@@ -181,7 +181,12 @@ def assess_economy(
     return (
         EconomyBelief(
             own_workers=own_workers,
-            own_bases=len(world.bases),
+            own_bases=sum(
+                structure.is_ready
+                and not structure.is_flying
+                and structure.unit_type in TOWNHALL_TYPES
+                for structure in world.own_structures
+            ),
             enemy=enemy,
             relative=relative,
         ),

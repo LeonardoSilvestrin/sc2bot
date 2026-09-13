@@ -16,8 +16,8 @@ from bot.engine.missions.execution import (
 )
 from bot.engine.missions.models import Mission
 from bot.ports.logging import BotLogger
+from bot.strategy import MacroPosture
 from bot.world.attention import UnitSnapshot
-from bot.world.awareness import MacroPosture
 from bot.world.awareness.bases import BaseSecurityLevel
 from bot.world.awareness.spatial import SpatialField
 

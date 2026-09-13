@@ -5,8 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from bot.domain import is_combat_unit
+from bot.strategy import MacroPosture
 from bot.world.attention import AttentionSnapshot, UnitSnapshot
-from bot.world.awareness import AwarenessSnapshot, MacroPosture
+from bot.world.awareness import AwarenessSnapshot
 
 from .model import MapControlAssessment, MapControlConfig
 

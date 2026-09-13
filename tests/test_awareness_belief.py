@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import unittest
+from dataclasses import replace
 from itertools import pairwise
 
 from sc2.ids.unit_typeid import UnitTypeId
@@ -394,6 +395,7 @@ class EconomyBeliefTests(unittest.TestCase):
         belief, _ = self.assess(world)
 
         self.assertEqual(belief.enemy.workers.estimated, 45)
+        self.assertEqual(belief.own_bases, 0)
         self.assertEqual(belief.enemy.bases.confidence, 0.0)
         self.assertIs(belief.relative.raw_state, RelativePosition.EVEN)
 
@@ -509,15 +511,29 @@ class ArmyBeliefTests(unittest.TestCase):
             belief.enemy.supply.estimated, belief.enemy.supply.known
         )
 
-    def test_not_having_seen_an_army_is_no_evidence_that_it_is_small(self):
+    def test_worker_projection_cannot_mechanically_shrink_the_army_prior(self):
         army = tuple(own_unit(tag, supply_cost=2.0) for tag in range(10))
 
-        belief, _ = self.assess(
-            self.world(army, supply_used=60.0), enemy_workers=30.0, visibility=1.0
+        smaller_economy, _ = self.assess(
+            self.world(army, supply_used=60.0), enemy_workers=16.0, visibility=1.0
+        )
+        larger_economy, _ = self.assess(
+            self.world(army, supply_used=60.0), enemy_workers=32.0, visibility=1.0
         )
 
-        # Our 60 supply minus the 30 workers believed on their side.
-        self.assertAlmostEqual(belief.enemy.supply.estimated, 30.0)
+        self.assertAlmostEqual(smaller_economy.enemy.supply.estimated, 20.0)
+        self.assertAlmostEqual(larger_economy.enemy.supply.estimated, 20.0)
+
+    def test_scouting_without_military_evidence_preserves_unknown(self):
+        world = self.world((), supply_used=30.0)
+
+        first, state = self.assess(world, scouted=True)
+        later, _ = self.assess(
+            replace(world, time=120.0), scouted=True, state=state
+        )
+
+        self.assertIs(first.relative.raw_state, RelativePosition.UNKNOWN)
+        self.assertIs(later.relative.stable_state, RelativePosition.UNKNOWN)
 
 
 def _enemy_worker_unit(tag: int, *, visible_now: bool = True) -> UnitSnapshot:

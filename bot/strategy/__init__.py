@@ -1,10 +1,15 @@
 """The strategic layer: which objective should dominate right now.
 
-Pure and runtime-free: it reads ``StrategyInputs`` and returns a
-``StrategySnapshot``. Shadow mode -- nothing consumes it yet. See
+The scoring/director core is pure and runtime-free: it reads ``StrategyInputs``
+and returns a
+``StrategySnapshot``. The runtime updates it in shadow mode; gameplay does
+not consume its objective yet. See
 ``docs/strategy.md``.
 """
 
+from bot.domain.posture import MacroPosture
+
+from .awareness_adapter import build_strategy_inputs
 from .config import (
     BuildAdvantageWeights,
     PressureWeights,
@@ -22,6 +27,7 @@ from .model import (
     StrategyInputs,
     StrategySnapshot,
 )
+from .posture import MacroPostureConfig, MacroPostureDirector, MacroPostureState
 from .scoring import (
     assess_objectives,
     score_build_advantage,
@@ -33,6 +39,10 @@ from .scoring import (
 
 __all__ = [
     "BuildAdvantageWeights",
+    "MacroPosture",
+    "MacroPostureConfig",
+    "MacroPostureDirector",
+    "MacroPostureState",
     "ObjectiveAssessment",
     "ObjectiveState",
     "PressureWeights",
@@ -46,6 +56,7 @@ __all__ = [
     "StrategySnapshot",
     "TakeMapControlWeights",
     "assess_objectives",
+    "build_strategy_inputs",
     "decision_confidence",
     "score_build_advantage",
     "score_pressure",

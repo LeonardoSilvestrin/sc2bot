@@ -18,6 +18,7 @@ from bot.world.attention import AttentionService, AttentionSnapshot
 from bot.world.awareness import AwarenessService, AwarenessSnapshot
 
 from .debug import SpatialDebugView, SpatialSnapshotExporter
+from .strategy_shadow import StrategyShadow
 from .telemetry import FrameTelemetry
 
 
@@ -48,6 +49,7 @@ class FrameProcessor:
         telemetry: FrameTelemetry,
         spatial_debug: SpatialDebugView,
         spatial_snapshot: SpatialSnapshotExporter | None = None,
+        strategy_shadow: StrategyShadow | None = None,
     ) -> None:
         self._logger = logger
         self._world_observer = world_observer
@@ -63,12 +65,15 @@ class FrameProcessor:
         self._telemetry = telemetry
         self._spatial_debug = spatial_debug
         self._spatial_snapshot = spatial_snapshot
+        self._strategy_shadow = strategy_shadow
 
     async def process(self, bot, *, iteration: int) -> None:
         world = self._world_observer.world_facts(bot, iteration=iteration)
         attention = AttentionService.build(world=world)
         awareness = self._awareness.update(attention)
         self._log_belief_changes(awareness)
+        if self._strategy_shadow is not None:
+            awareness = self._strategy_shadow.update(awareness)
 
         await self._step_behavior(bot, attention, awareness)
         self._step_macro(bot, attention, awareness)

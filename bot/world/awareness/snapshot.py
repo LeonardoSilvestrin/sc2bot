@@ -77,6 +77,9 @@ class AwarenessSnapshot:
     relative_strength: RelativeStrength
     threat: ThreatAssessment
     updated_at: float
+    # Deprecated compatibility transport. AwarenessService never derives or
+    # sets strategic posture; the Strategy-side shadow coordinator populates
+    # this copy before current behavior/macro consumers run.
     macro_posture: MacroPosture = MacroPosture.BALANCED
     bases: BaseAwareness = field(default_factory=BaseAwareness)
     economy: EconomyBelief = field(default_factory=_default_economy_belief)

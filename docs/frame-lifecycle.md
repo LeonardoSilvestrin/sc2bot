@@ -100,11 +100,14 @@ Each reading is built from the ones above it. Details in
  j  BaseSecurityAssessor.update   threat vs protection per own base
  k  assess_economy, assess_army   beliefs: estimate + P(ahead) + hysteresis
  l  RelativeStrength, ThreatAssessment
- m  derive_macro_posture          DEFENSE / BALANCED / GREED / RECOVERY
- n  belief_changes                one message per stable-state change
- o  SpatialFieldModel.update      friendly, threat, choke, route values (cached components)
- p  TerritoryAssessor.update      control, frontline, ground access (1 s cadence)
+ m  belief_changes                one message per stable-state change
+ n  SpatialFieldModel.update      friendly, threat, choke, route values (cached components)
+ o  TerritoryAssessor.update      control, frontline, ground access (1 s cadence)
 ```
+
+After Awareness returns, `StrategyShadow` translates the snapshot, updates
+`StrategicDirector`, emits cadenced `strategy.updated` telemetry, and derives
+the legacy macro posture that existing consumers still receive.
 
 ## Step 10: inside `MissionController.tick`
 
@@ -193,8 +196,8 @@ Every constant that turns elapsed time into forgetting or waiting.
 | Belief: sighting evidence / attrition | τ 20 s / τ 300 s | `EstimateConfig` |
 | Loss trade recovery | τ 120 s | `LossTracker` |
 | Stable belief must hold | economy 15 s, army 8 s | `RelativeBeliefConfig.persist_seconds` |
-| Macro posture: DEFENSE release / GREED safe / minimum hold | 10 s / 20 s / 8 s | `AwarenessService` |
-| RECOVERY by low workers | after 90 s game time, under 8 workers | `derive_macro_posture` |
+| Legacy macro posture: DEFENSE release / GREED safe / minimum hold | 10 s / 20 s / 8 s | `MacroPostureDirector` |
+| Legacy RECOVERY by low workers | after 90 s game time, under 8 workers | `MacroPostureDirector` |
 | Producer utilization window | 20 s | `AresWorldObserver` |
 | Economic action dispatch / confirmation timeout | 5 s / 60 s | `EconomicProposal` |
 | Scan cooldown | 15 s within 13 tiles | `VisionServiceConfig` |

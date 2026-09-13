@@ -309,31 +309,14 @@ data (synthetic tests), it falls back to visible unit counts.
 | `near_own_base_enemy_units` | visible enemy units within 28 of a ready, landed own structure (or our start) |
 | `near_own_base_enemy_combat_units` | the armed non-workers among them |
 
-## Macro posture
+## Legacy macro posture compatibility
 
-`derive_macro_posture` (`posture.py`) says how risky spending is right now.
-It is policy computed inside Awareness because macro, map control and the
-standing army all read it.
-
-```mermaid
-flowchart TD
-    Start(["every update"]) --> Nearby{"a visible armed non-worker enemy<br/>within 28 of a ready ground structure?"}
-    Nearby -->|yes| D1["candidate DEFENSE<br/>last_base_threat_at = now"]
-    Nearby -->|no| Recent{"now - last_base_threat_at < 10 s?"}
-    Recent -->|yes| D2["candidate DEFENSE"]
-    Recent -->|no| NoBase{"no ready ground townhall,<br/>or time >= 90 s with fewer than 8 workers?"}
-    NoBase -->|yes| R["candidate RECOVERY"]
-    NoBase -->|no| Safe{"20 s since the last threat,<br/>army stably AHEAD,<br/>at least 6 own combat units?"}
-    Safe -->|yes| G["candidate GREED"]
-    Safe -->|no| B["candidate BALANCED"]
-    D1 & D2 & R & G & B --> Hold{"candidate is DEFENSE or RECOVERY,<br/>or current posture held >= 8 s?"}
-    Hold -->|yes| Switch["posture = candidate"]
-    Hold -->|no| Keep["keep posture"]
-```
-
-Danger wins at once; leaving it, or moving between `BALANCED` and `GREED`,
-waits for the minimum hold. The game starts `BALANCED`. What each posture does
-to spending is in [macro/macro-planner.md](../macro/macro-planner.md#posture-adjusted-priorities).
+Awareness no longer derives macro posture. `AwarenessSnapshot.macro_posture`
+is a deprecated transport slot retained while existing macro, map-control and
+standing consumers are migrated. After Awareness returns, Strategy's
+`MacroPostureDirector` evaluates the unchanged compatibility policy and the
+app copies that value into the slot. New strategic interpretation is exposed
+separately through the shadow `StrategySnapshot`.
 
 ## Known gaps
 

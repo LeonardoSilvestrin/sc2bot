@@ -220,10 +220,10 @@ class RuntimePilotTests(unittest.IsolatedAsyncioTestCase):
             {
                 "posture": "RECOVERY",
                 "relative_strength": {
-                    # One Reaper against one Marine, but 24 supply used and
-                    # nothing of the enemy watched: the enemy is assumed to
-                    # hold an army of about our supply minus its workers.
-                    "score": -0.917,
+                    # One Reaper against one Marine and no military coverage:
+                    # the military prior mirrors our known army. Projected
+                    # enemy workers no longer shrink that prior.
+                    "score": 0.0,
                     "confidence": 0.0,
                     "own_combat_units": 1,
                     "known_enemy_combat_units": 1,

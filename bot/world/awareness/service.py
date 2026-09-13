@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 from bot.ports.logging import BotLogger
-from bot.world.attention import TOWNHALL_TYPES, AttentionSnapshot
+from bot.world.attention import AttentionSnapshot
 
 from .bases import BaseSecurityAssessor
 from .belief import (
@@ -29,7 +29,6 @@ from .enemy import (
     enemy_territory_coverage,
     scouting_coverage,
 )
-from .posture import PostureState, derive_macro_posture
 from .snapshot import (
     AwarenessSnapshot,
     RelativeStrength,
@@ -65,11 +64,11 @@ class AwarenessService:
             raise ValueError("own_base_threat_radius must be positive")
         if min(defense_release_after, posture_min_hold, greed_safe_after) < 0.0:
             raise ValueError("posture timings must not be negative")
+        # Kept as accepted constructor arguments for source compatibility.
+        # Strategic posture is now owned and configured by bot.strategy;
+        # Awareness deliberately does not retain or evaluate these values.
         self.location_stale_after = float(location_stale_after)
         self.own_base_threat_radius = float(own_base_threat_radius)
-        self.defense_release_after = float(defense_release_after)
-        self.posture_min_hold = float(posture_min_hold)
-        self.greed_safe_after = float(greed_safe_after)
         self.economy_belief_config = economy_belief_config or EconomyBeliefConfig()
         self.army_belief_config = army_belief_config or ArmyBeliefConfig()
         self.enemy_knowledge = EnemyKnowledge()
@@ -86,7 +85,6 @@ class AwarenessService:
             territory_config or TerritoryConfig(), logger=logger
         )
         self._location_last_observed: dict[str, float] = {}
-        self._posture_state = PostureState()
         self._economy_state = BeliefState()
         self._army_state = BeliefState()
         self._projected_spatial_key: tuple[int, int] | None = None
@@ -217,28 +215,6 @@ class AwarenessService:
             and (unit.can_attack_air or unit.can_attack_ground)
             for unit in world.enemy_units
         )
-        workers = sum(unit.is_worker for unit in world.own_units)
-        townhalls = sum(
-            structure.is_ready
-            and not structure.is_flying
-            and structure.unit_type in TOWNHALL_TYPES
-            for structure in world.own_structures
-        )
-        self._posture_state = derive_macro_posture(
-            now=world.time,
-            workers=workers,
-            townhalls=townhalls,
-            own_combat=own_combat,
-            strength_is_stably_ahead=(
-                army_belief.relative.stable_state is RelativePosition.AHEAD
-            ),
-            nearby_enemy_combat=len(nearby_combat),
-            state=self._posture_state,
-            defense_release_after=self.defense_release_after,
-            greed_safe_after=self.greed_safe_after,
-            posture_min_hold=self.posture_min_hold,
-        )
-
         belief_changes = tuple(
             message
             for message in (
@@ -309,7 +285,6 @@ class AwarenessService:
                 near_own_base_enemy_combat_units=len(nearby_combat),
             ),
             updated_at=world.time,
-            macro_posture=self._posture_state.posture,
             bases=bases,
             economy=economy_belief,
             army=army_belief,

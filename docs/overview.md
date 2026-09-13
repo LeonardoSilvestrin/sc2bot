@@ -103,7 +103,7 @@ a unit tag, mission or squad.
 | `bot/engine/services` | Capabilities shared by behaviors (active vision) | requests, Attention | vision request results, scans | knows who asked |
 | `bot/macro` | What to buy | Attention, Awareness | `EconomicProposal`s, `MacroStatus` | names a unit tag, mission or squad |
 | `bot/engine/economy` | Spend admission against a virtual bank | proposals, Attention | `EconomicAction`s | knows units, missions or production policy |
-| `bot/strategy` | Strategic objective scoring (shadow, not wired) | `StrategyInputs` | `StrategySnapshot` | imports anything but the standard library |
+| `bot/strategy` | Strategic objective scoring (wired in shadow mode) | `AwarenessSnapshot` at its one adapter; otherwise `StrategyInputs` | `StrategySnapshot`; temporary legacy posture | performs runtime I/O or issues commands |
 | `bot/app` | Wiring, frame order, telemetry, debug views | everything | logs, debug drawings, SVGs | holds game rules |
 
 The rules behind this table, and the tests that keep it true, are in
@@ -115,7 +115,7 @@ The rules behind this table, and the tests that keep it true, are in
 | --- | --- | --- |
 | Attention, enemy memory, enemy bases and forces, beliefs, macro posture, base security, spatial field | live | [world/awareness.md](world/awareness.md), [world/spatial-field.md](world/spatial-field.md) |
 | Territory (control, frontline, ground security) | sample projection live; regions shadow | computed every second, logged and drawn; bounded sample control/knowledge is projected onto the generic spatial field for Map Control, while no behavior reads territory types or the region graph ([world/territory.md](world/territory.md)) |
-| Strategy | shadow, not wired | pure library with tests; `compose_bot` never builds it and nothing logs it ([strategy.md](strategy.md)) |
+| Strategy | shadow, wired | `compose_bot` updates and logs it; no behavior or macro consumer reads the new objective ([strategy.md](strategy.md)) |
 | Standing army, map control, defense, Reaper harass, Banshee harass, scouting | live | [behavior/README.md](behavior/README.md) |
 | Defense roles (Tanks siege on an anchor, everything else screens) | pilot | inside `DefendBaseExecutor` only ([behavior/defense.md](behavior/defense.md)) |
 | `CombatRole.SIEGE_ANCHOR` | defined, unused | no behavior asks for it yet |

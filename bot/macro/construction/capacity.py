@@ -5,8 +5,8 @@ from dataclasses import dataclass
 from sc2.ids.unit_typeid import UnitTypeId
 
 from bot.engine.economy.models import EconomicActionKind, EconomicProposal
+from bot.strategy import MacroPosture
 from bot.world.attention import EconomyFacts, ProducerFacts
-from bot.world.awareness import MacroPosture
 
 from ..production.army_demand import ArmyDemand
 from ..proposal_helpers import build_proposal

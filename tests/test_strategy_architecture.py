@@ -1,8 +1,8 @@
 """Strategy stays a pure layer, and stays in shadow mode.
 
-These fail when ``bot.strategy`` starts reaching for the runtime, Awareness,
-Ares or I/O, and when anything in the bot starts consuming it -- wiring a
-consumer is a deliberate change that deletes ``ShadowModeTests``.
+The scoring/director core remains runtime-free. The one named adapter may
+read Awareness, and the app may update/log snapshots in shadow mode, but no
+gameplay module may consume the new objective yet.
 """
 
 from __future__ import annotations
@@ -15,7 +15,15 @@ BOT = Path(__file__).resolve().parents[1] / "bot"
 STRATEGY = BOT / "strategy"
 
 # Everything bot.strategy may import besides itself.
-ALLOWED_IMPORTS = {"__future__", "collections.abc", "dataclasses", "enum", "math"}
+ALLOWED_IMPORTS = {
+    "__future__",
+    "bot.domain",
+    "collections.abc",
+    "dataclasses",
+    "enum",
+    "math",
+    "statistics",
+}
 IO_CALLS = {"open", "print", "input", "exec", "eval"}
 
 
@@ -44,10 +52,11 @@ def is_within(name: str, prefix: str) -> bool:
 
 
 class PurityTests(unittest.TestCase):
-    def test_strategy_imports_only_itself_and_the_standard_library(self):
+    def test_strategy_core_imports_only_itself_domain_contracts_and_stdlib(self):
         found = [
             f"{path.relative_to(BOT).as_posix()}: {name}"
             for path in sorted(STRATEGY.rglob("*.py"))
+            if path.name != "awareness_adapter.py"
             for name in sorted(imported_modules(path))
             if not is_within(name, "bot.strategy")
             and not any(
@@ -57,6 +66,18 @@ class PurityTests(unittest.TestCase):
         ]
 
         self.assertEqual(found, [])
+
+    def test_only_the_named_adapter_imports_awareness(self):
+        consumers = [
+            path.relative_to(STRATEGY).as_posix()
+            for path in sorted(STRATEGY.rglob("*.py"))
+            if any(
+                is_within(name, "bot.world.awareness")
+                for name in imported_modules(path)
+            )
+        ]
+
+        self.assertEqual(consumers, ["awareness_adapter.py"])
 
     def test_strategy_performs_no_io(self):
         found = [
@@ -72,13 +93,37 @@ class PurityTests(unittest.TestCase):
 
 
 class ShadowModeTests(unittest.TestCase):
-    def test_nothing_in_the_bot_consumes_strategy_yet(self):
+    def test_only_the_shadow_coordinator_consumes_the_new_strategy_api(self):
+        strategic_names = {
+            "StrategicDirector",
+            "StrategicObjective",
+            "StrategyInputs",
+            "StrategySnapshot",
+            "build_strategy_inputs",
+        }
+        consumers: list[str] = []
+        for path in sorted(BOT.rglob("*.py")):
+            if STRATEGY in path.parents:
+                continue
+            tree = ast.parse(path.read_text(encoding="utf-8-sig"))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.ImportFrom):
+                    continue
+                if node.module != "bot.strategy":
+                    continue
+                if strategic_names.intersection(alias.name for alias in node.names):
+                    consumers.append(path.relative_to(BOT).as_posix())
+
+        self.assertEqual(consumers, ["app/strategy_shadow.py"])
+
+    def test_awareness_never_imports_strategy(self):
         consumers = [
-            f"{path.relative_to(BOT).as_posix()}: {name}"
-            for path in sorted(BOT.rglob("*.py"))
-            if STRATEGY not in path.parents
-            for name in sorted(imported_modules(path))
-            if is_within(name, "bot.strategy")
+            path.relative_to(BOT).as_posix()
+            for path in sorted((BOT / "world" / "awareness").rglob("*.py"))
+            if any(
+                is_within(name, "bot.strategy")
+                for name in imported_modules(path)
+            )
         ]
 
         self.assertEqual(consumers, [])

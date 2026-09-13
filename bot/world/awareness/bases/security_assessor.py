@@ -26,9 +26,9 @@ class BaseSecurityAssessor:
     """Scores threat vs protection around each held base, every frame.
 
     Stateless on purpose for this first cut: everything is recomputed from
-    currently visible units, no memory of past frames. Hysteresis similar to
-    ``AwarenessService``'s ``MacroPosture`` (avoid flapping between security
-    levels) can be layered on later without changing ``BaseAssessment``.
+    currently visible units, no memory of past frames. Observational
+    hysteresis (to avoid flapping between security levels) can be layered on
+    later without changing ``BaseAssessment``.
     """
 
     proximity_radius: float = 25.0

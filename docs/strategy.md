@@ -9,34 +9,30 @@ It decides a **direction**, never an execution. It says "PRESSURE", never
 "attack the enemy third with the main army".
 
 Source: `bot/strategy/` (`model.py`, `config.py`, `scoring.py`,
-`hysteresis.py`, `director.py`).
+`hysteresis.py`, `director.py`, `awareness_adapter.py`, `posture.py`).
 
-**Shadow mode, not wired.** Strategy is a pure layer with no producer and no
-consumer yet: `compose_bot` never builds a `StrategicDirector`, nothing builds
-`StrategyInputs` from Awareness, nothing in the bot reads a
-`StrategySnapshot`, and nothing logs one (the planned `strategy.updated`
-event is described in [logging.md](logging.md#planned-strategydirector); the
-log viewer already has a track waiting for it). `tests/test_strategy_architecture.py`
-(`ShadowModeTests`) fails if any `bot/` module outside `bot/strategy/`
-imports it, so wiring a consumer is a deliberate change: delete that guard
-when it happens. Every weight below is a first guess, left untuned until
-shadow-mode logs show where it is wrong.
+**Shadow mode, wired but not controlling gameplay.** `compose_bot` builds the
+director; `awareness_adapter.py` is the single Awareness-to-Strategy boundary;
+and `app/strategy_shadow.py` updates and logs `StrategySnapshot`. No behavior
+or macro planner receives the new objective yet. Every weight below remains a
+first guess until match logs show where it is wrong.
 
 ```text
-Awareness
-    |
-[adapter, not built yet]
-    v
-StrategyInputs --> scoring --> hysteresis --> StrategySnapshot
-                   \_______ StrategicDirector _______/
-    |
-[consumers, not built yet]
+AwarenessSnapshot --> awareness_adapter --> StrategyInputs
+                                              |
+                                              v
+                                      StrategicDirector
+                                              |
+                                              v
+                                      StrategySnapshot
+                                      (shadow log only)
 ```
 
-`bot.strategy` imports only itself and the standard library (`dataclasses`,
-`enum`, `math`, `collections.abc`), performs no I/O and knows no runtime,
-Ares, Attention, Awareness or behavior. It is fully testable with synthetic
-inputs. `bot.macro.strategy` is unrelated: macro's goal/opening vocabulary.
+The scoring/director core imports only itself, shared domain contracts and the
+standard library, performs no I/O and knows no runtime, Ares, Attention,
+Awareness or behavior. Only `awareness_adapter.py` imports Awareness. Runtime
+coordination and logging live in `bot.app`. `bot.macro.strategy` remains
+unrelated: it is macro's goal/opening vocabulary.
 
 | Module | Holds |
 | --- | --- |
@@ -45,6 +41,8 @@ inputs. `bot.macro.strategy` is unrelated: macro's goal/opening vocabulary.
 | `scoring.py` | `score_stabilize` ... `score_pressure`, `assess_objectives` |
 | `hysteresis.py` | `ObjectiveState`, `select_objective`, `decision_confidence` |
 | `director.py` | `StrategicDirector`, the only stateful piece |
+| `awareness_adapter.py` | the sole translation from `AwarenessSnapshot` to `StrategyInputs` |
+| `posture.py` | temporary owner of the legacy `MacroPosture` policy used by existing consumers |
 
 ## Inputs
 
@@ -220,28 +218,28 @@ Strategy decides direction, not execution. It has no:
 
 - target position, target base, attack target or coordinates;
 - army allocation, squads, missions or unit counts;
-- production recommendation, build order or macro posture;
+- production recommendation or build order;
 - map control percentage or territory model of its own;
 - `FINISH` objective, matchup-specific strategy;
 - rule engine, GOAP, MCTS, behavior tree or ML;
-- logging, telemetry or runtime integration;
-- adapter from Awareness.
+- logging or telemetry (the app owns those).
 
-## Future integration: Awareness -> Strategy
+## Awareness -> Strategy adapter
 
-A future adapter will build `StrategyInputs` from `AwarenessSnapshot`, keeping
-`StrategyInputs` itself unaware of Awareness. Plausible first mappings, all
-to be validated against shadow-mode logs:
+`build_strategy_inputs` builds `StrategyInputs` from `AwarenessSnapshot`,
+keeping the model/director unaware of Awareness. Current mappings are:
 
 | Signal | Candidate source |
 | --- | --- |
 | `military_edge` | `2 * army.relative.advantage - 1` |
 | `economic_edge` | `2 * economy.relative.advantage - 1` |
-| `territory_edge` | mean `dominance` of the territory regions, weighted by value |
+| `territory_edge` | mean sample `dominance`, discounted by local confidence |
 | `immediate_threat` | `bases` security (`THREATENED`/`CRITICAL`) and `threat.near_own_base_enemy_combat_units` |
 | `base_exposure` | `1 - ground_security` of the held bases' territory regions |
-| `knowledge_confidence` | `territory.confidence` combined with the army/economy belief confidences |
+| `knowledge_confidence` | mean territory, army and economy confidence |
 
-Then, in order: run the director in shadow mode inside the frame lifecycle and
-log snapshot changes; tune weights from those logs; only then let a first
-consumer read the objective, deleting `ShadowModeTests`.
+The app logs the first result, objective transitions and periodic samples as
+`strategy.updated`. The new objective has no gameplay consumer. Existing
+consumers temporarily keep receiving `MacroPosture`; its unchanged policy now
+lives in Strategy and is copied into the deprecated Awareness snapshot field
+only for compatibility.

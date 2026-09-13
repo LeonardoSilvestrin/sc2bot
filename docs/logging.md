@@ -201,13 +201,13 @@ Each behavior logs under its own component through `BehaviorLog`:
 | Banshee raid | `ASSEMBLE`, `APPROACH`, `INFILTRATE`, `STRIKE`, `EVADE`, `REPOSITION` |
 | defense | roles `SIEGE_ANCHOR`, `SCREEN`; Tank phases `MOVING_TO_ANCHOR`, `SIEGING`, `SIEGED`, `REPOSITIONING`, `UNSIEGING` |
 
-### Planned: `strategy.director`
+### `strategy.director`
 
-Strategy logs nothing yet ([strategy.md](strategy.md)). When the director runs
-in shadow mode it should log `strategy.updated` mirroring `StrategySnapshot`:
+In shadow mode it logs `strategy.updated` on the first update, objective
+transitions, and a periodic cadence. The event mirrors `StrategySnapshot`:
 `objective`, `previous_objective`, `leader`, `confidence`,
 `time_in_objective`, `inputs` (the six signals), `scores` (objective ->
-score) and `shadow`. The viewer already has a track for it and treats every
+score), `reason` and `shadow`. The viewer has a track for it and treats every
 objective not marked `shadow: false` as shadow.
 
 ## The log viewer

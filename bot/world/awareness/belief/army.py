@@ -81,10 +81,12 @@ def assess_army(
 
     The enemy side is every combat unit seen and not seen dying, plus an
     unseen remainder (see ``estimate.py``). With nothing scouted the
-    remainder assumes an enemy our size -- our supply, corrected by the
-    supply each side lost lately, minus the workers we believe it has -- and
-    drifts back to that as information goes stale, so an army out of vision
-    neither vanishes nor stays frozen at its last glimpse. How much a
+    remainder assumes an enemy army our size, corrected by the combat supply
+    each side lost lately, and drifts back to that as information goes stale,
+    so an army out of vision neither vanishes nor stays frozen at its last
+    glimpse. The military prior is deliberately independent of the projected
+    enemy worker count: finding an expansion must not make its army disappear.
+    How much a
     reading counts is ``visibility`` (``enemy_territory_coverage``) times
     how current the known army is.
     """
@@ -106,7 +108,13 @@ def assess_army(
         now=now,
         config=config.estimate,
     )
-    prior = own_total + losses.supply_trade - enemy_workers
+    # ``LossLedger.supply_trade`` includes workers. Remove their trade to get
+    # the combat-supply comparison, then anchor the prior on our known army.
+    # ``enemy_workers`` remains in the signature for compatibility with older
+    # callers; economy projection is not military evidence.
+    _ = enemy_workers
+    combat_supply_trade = losses.supply_trade - losses.worker_trade
+    prior = own_supply + combat_supply_trade
     estimate = advance_estimate(
         state.estimate,
         now=now,
@@ -115,9 +123,14 @@ def assess_army(
         prior=prior,
         information=visibility * evidence.freshness,
         config=config.estimate,
-        prior_scale=own_total,
+        prior_scale=max(own_total, own_supply),
     )
-    informed = state.informed or scouted or bool(combat_roster)
+    # A checked expansion is economy/territory evidence, not military
+    # evidence. Preserve UNKNOWN until an enemy combat unit has actually
+    # entered memory; otherwise a map visit plus an even prior eventually
+    # asserted EVEN with zero military information.
+    _ = scouted
+    informed = state.informed or bool(combat_roster)
     belief_confidence = confidence(estimate, config.estimate)
     relative, hysteresis = advance_belief(
         now=now,

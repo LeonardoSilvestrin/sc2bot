@@ -290,22 +290,28 @@ class SpatialSnapshotExporterTests(unittest.TestCase):
             self.assertFalse(output.exists())
 
     def test_game_time_interval_is_respected(self):
-        writer = RecordingWriter()
-        exporter = SpatialSnapshotExporter(
-            config=SpatialSnapshotConfig(enabled=True, interval_seconds=30),
-            output_directory=Path("spatial"),
-            logger=FakeLogger(),
-            writer=writer,
-        )
+        with tempfile.TemporaryDirectory() as directory:
+            writer = RecordingWriter()
+            exporter = SpatialSnapshotExporter(
+                config=SpatialSnapshotConfig(enabled=True, interval_seconds=30),
+                output_directory=Path(directory) / "spatial",
+                logger=FakeLogger(),
+                writer=writer,
+            )
 
-        self.assertFalse(exporter.capture(*snapshots(29.9)))
-        self.assertTrue(exporter.capture(*snapshots(30.0)))
-        self.assertFalse(exporter.capture(*snapshots(59.9)))
-        self.assertTrue(exporter.capture(*snapshots(60.0)))
-        self.assertEqual(
-            [path.name for path, _ in writer.writes],
-            ["territory-0030.svg", "latest.svg", "territory-0060.svg", "latest.svg"],
-        )
+            self.assertFalse(exporter.capture(*snapshots(29.9)))
+            self.assertTrue(exporter.capture(*snapshots(30.0)))
+            self.assertFalse(exporter.capture(*snapshots(59.9)))
+            self.assertTrue(exporter.capture(*snapshots(60.0)))
+            self.assertEqual(
+                [path.name for path, _ in writer.writes],
+                [
+                    "territory-0030.svg",
+                    "latest.svg",
+                    "territory-0060.svg",
+                    "latest.svg",
+                ],
+            )
 
     def test_latest_svg_is_updated(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -329,17 +335,20 @@ class SpatialSnapshotExporterTests(unittest.TestCase):
             )
 
     def test_filesystem_error_is_logged_and_does_not_escape(self):
-        logger = FakeLogger()
-        exporter = SpatialSnapshotExporter(
-            config=SpatialSnapshotConfig(enabled=True),
-            output_directory=Path("spatial"),
-            logger=logger,
-            writer=FailingWriter(),
-        )
+        with tempfile.TemporaryDirectory() as directory:
+            logger = FakeLogger()
+            exporter = SpatialSnapshotExporter(
+                config=SpatialSnapshotConfig(enabled=True),
+                output_directory=Path(directory) / "spatial",
+                logger=logger,
+                writer=FailingWriter(),
+            )
 
-        self.assertFalse(exporter.capture(*snapshots()))
-        self.assertEqual(logger.events[-1]["name"], "debug.spatial_snapshot_failed")
-        self.assertIn("disk full", logger.events[-1]["data"]["error"])
+            self.assertFalse(exporter.capture(*snapshots()))
+            self.assertEqual(
+                logger.events[-1]["name"], "debug.spatial_snapshot_failed"
+            )
+            self.assertIn("disk full", logger.events[-1]["data"]["error"])
 
     def test_config_rejects_non_positive_interval(self):
         with self.assertRaises(ValueError):

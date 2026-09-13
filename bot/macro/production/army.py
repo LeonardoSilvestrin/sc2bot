@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from bot.engine.economy.models import EconomicActionKind, EconomicProposal
-from bot.world.awareness import MacroPosture
+from bot.strategy import MacroPosture
 
 from ..proposal_helpers import build_proposal
 from ..strategy.config import MacroPlannerConfig
