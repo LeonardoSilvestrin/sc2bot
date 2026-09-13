@@ -23,6 +23,7 @@ ALLOWED_IMPORTS = {
     "enum",
     "math",
     "statistics",
+    "typing",
 }
 IO_CALLS = {"open", "print", "input", "exec", "eval"}
 
