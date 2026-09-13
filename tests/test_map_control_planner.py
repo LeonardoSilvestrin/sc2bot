@@ -6,6 +6,7 @@ from dataclasses import replace
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
+from bot.app.mission_ranking import rank_candidates
 from bot.behavior.map_control import (
     MapControlAssessor,
     MapControlConfig,
@@ -13,6 +14,7 @@ from bot.behavior.map_control import (
     score_spatial_sample,
 )
 from bot.engine.missions import CombatRole, MissionKind
+from bot.strategy import MissionPolicyConfig
 from bot.world.attention import (
     AttentionSnapshot,
     MapFacts,
@@ -170,7 +172,8 @@ class MapControlPlannerTests(unittest.TestCase):
         planner = MapControlPlanner()
 
         self.assertEqual(
-            planner.propose(attention(0.0, marines=5), awareness(0.0)), ()
+            rank_candidates(planner.propose(attention(0.0, marines=5), awareness(0.0))),
+            (),
         )
 
     def test_persistent_responsibility_is_declared_during_danger(self):
@@ -178,9 +181,11 @@ class MapControlPlannerTests(unittest.TestCase):
 
         self.assertEqual(
             len(
-                planner.propose(
-                    attention(180.0),
-                    awareness(180.0, posture=MacroPosture.DEFENSE),
+                rank_candidates(
+                    planner.propose(
+                        attention(180.0),
+                        awareness(180.0, posture=MacroPosture.DEFENSE),
+                    )
                 )
             ),
             1,
@@ -189,7 +194,7 @@ class MapControlPlannerTests(unittest.TestCase):
     def test_proposes_a_persistent_twenty_percent_patrol(self):
         planner = MapControlPlanner()
 
-        proposals = planner.propose(attention(180.0), awareness(180.0))
+        proposals = rank_candidates(planner.propose(attention(180.0), awareness(180.0)))
 
         self.assertEqual(len(proposals), 1)
         proposal = proposals[0]
@@ -205,7 +210,9 @@ class MapControlPlannerTests(unittest.TestCase):
             proposal.requirement.capability, CombatRole.MOBILE_CONTROL.requirement
         )
         self.assertEqual(proposal.requirement.unit_types, frozenset())
-        self.assertEqual(proposal.priority, 40)
+        self.assertGreaterEqual(
+            proposal.priority, MissionPolicyConfig().minimum_priority
+        )
         # Standing POSITION/RESERVE missions hold most idle units now, so
         # map control must be able to preempt them to get its squad at all.
         self.assertTrue(proposal.can_preempt)
@@ -215,7 +222,9 @@ class MapControlPlannerTests(unittest.TestCase):
     def test_a_fixed_unit_count_override_sizes_by_count(self):
         planner = MapControlPlanner(config=MapControlConfig(desired_units=3))
 
-        proposal = planner.propose(attention(180.0), awareness(180.0))[0]
+        proposal = rank_candidates(planner.propose(attention(180.0), awareness(180.0)))[
+            0
+        ]
 
         self.assertEqual(proposal.requirement.desired, 3)
         self.assertIsNone(proposal.requirement.supply_budget)
@@ -223,8 +232,12 @@ class MapControlPlannerTests(unittest.TestCase):
     def test_respects_proposal_cadence(self):
         planner = MapControlPlanner()
 
-        self.assertEqual(len(planner.propose(attention(180.0), awareness(180.0))), 1)
-        self.assertEqual(planner.propose(attention(181.0), awareness(181.0)), ())
+        self.assertEqual(
+            len(rank_candidates(planner.propose(attention(180.0), awareness(180.0)))), 1
+        )
+        self.assertEqual(
+            rank_candidates(planner.propose(attention(181.0), awareness(181.0))), ()
+        )
 
     def test_hysteresis_ignores_small_gain_then_accepts_material_retarget(self):
         first, second = Point2((30, 30)), Point2((50, 50))
@@ -244,29 +257,35 @@ class MapControlPlannerTests(unittest.TestCase):
         )
         planner = MapControlPlanner(config=config)
 
-        initial = planner.propose(
-            attention(0.0),
-            self.spatial_awareness(
-                0.0,
-                SpatialFieldSample(first, friendly_value=0.47),
-                SpatialFieldSample(second, friendly_value=0.30),
-            ),
+        initial = rank_candidates(
+            planner.propose(
+                attention(0.0),
+                self.spatial_awareness(
+                    0.0,
+                    SpatialFieldSample(first, friendly_value=0.47),
+                    SpatialFieldSample(second, friendly_value=0.30),
+                ),
+            )
         )[0]
-        small_gain = planner.propose(
-            attention(1.0),
-            self.spatial_awareness(
-                1.0,
-                SpatialFieldSample(first, friendly_value=0.47),
-                SpatialFieldSample(second, friendly_value=0.45),
-            ),
+        small_gain = rank_candidates(
+            planner.propose(
+                attention(1.0),
+                self.spatial_awareness(
+                    1.0,
+                    SpatialFieldSample(first, friendly_value=0.47),
+                    SpatialFieldSample(second, friendly_value=0.45),
+                ),
+            )
         )[0]
-        material_gain = planner.propose(
-            attention(2.0),
-            self.spatial_awareness(
-                2.0,
-                SpatialFieldSample(first, friendly_value=0.70),
-                SpatialFieldSample(second, friendly_value=0.45),
-            ),
+        material_gain = rank_candidates(
+            planner.propose(
+                attention(2.0),
+                self.spatial_awareness(
+                    2.0,
+                    SpatialFieldSample(first, friendly_value=0.70),
+                    SpatialFieldSample(second, friendly_value=0.45),
+                ),
+            )
         )[0]
 
         self.assertEqual(initial.target, first)
@@ -304,16 +323,20 @@ class MapControlPlannerTests(unittest.TestCase):
             )
 
         coarse = MapControlPlanner(config=config)
-        coarse.propose(attention(0.0), spatial_state(0.0, 10.0, 0.45, 0.2))
+        rank_candidates(
+            coarse.propose(attention(0.0), spatial_state(0.0, 10.0, 0.45, 0.2))
+        )
         # One step on a 10-cell grid: the patrol region already covers it.
-        coarse_retarget = coarse.propose(
-            attention(1.0), spatial_state(1.0, 10.0, 0.2, 0.45)
+        coarse_retarget = rank_candidates(
+            coarse.propose(attention(1.0), spatial_state(1.0, 10.0, 0.2, 0.45))
         )[0]
         fine = MapControlPlanner(config=config)
-        fine.propose(attention(0.0), spatial_state(0.0, 5.0, 0.45, 0.2))
+        rank_candidates(
+            fine.propose(attention(0.0), spatial_state(0.0, 5.0, 0.45, 0.2))
+        )
         # The same ten units are two steps on a 5-cell grid: a real move.
-        fine_retarget = fine.propose(
-            attention(1.0), spatial_state(1.0, 5.0, 0.2, 0.45)
+        fine_retarget = rank_candidates(
+            fine.propose(attention(1.0), spatial_state(1.0, 5.0, 0.2, 0.45))
         )[0]
 
         self.assertEqual(coarse_retarget.target, current)
@@ -324,18 +347,20 @@ class MapControlPlannerTests(unittest.TestCase):
         planner = MapControlPlanner(logger=logger)
         point = Point2((35, 35))
 
-        planner.propose(
-            attention(10.0),
-            self.spatial_awareness(
-                10.0,
-                SpatialFieldSample(
-                    point,
-                    friendly_value=0.7,
-                    choke_value=0.8,
-                    route_value=0.9,
-                    enemy_threat=0.1,
+        rank_candidates(
+            planner.propose(
+                attention(10.0),
+                self.spatial_awareness(
+                    10.0,
+                    SpatialFieldSample(
+                        point,
+                        friendly_value=0.7,
+                        choke_value=0.8,
+                        route_value=0.9,
+                        enemy_threat=0.1,
+                    ),
                 ),
-            ),
+            )
         )
 
         event = next(
@@ -391,7 +416,9 @@ class MapControlPlannerTests(unittest.TestCase):
             ),
         )
 
-        proposal = MapControlPlanner().propose(attention(10.0), state)[0]
+        proposal = rank_candidates(MapControlPlanner().propose(attention(10.0), state))[
+            0
+        ]
 
         self.assertEqual(proposal.target, valid_position)
 
@@ -440,7 +467,9 @@ class MapControlPlannerTests(unittest.TestCase):
             ),
         )
 
-        proposal = MapControlPlanner().propose(attention(10.0), state)[0]
+        proposal = rank_candidates(MapControlPlanner().propose(attention(10.0), state))[
+            0
+        ]
 
         self.assertEqual(proposal.target, choke)
         self.assertNotEqual(proposal.target, deep)
@@ -453,29 +482,33 @@ class MapControlPlannerTests(unittest.TestCase):
             config=MapControlConfig(proposal_cadence=1.0)
         )
 
-        initial = planner.propose(
-            attention(0.0),
-            self.spatial_awareness(
-                0.0,
-                SpatialFieldSample(
-                    first, friendly_value=0.45, knowledge_confidence=1.0
+        initial = rank_candidates(
+            planner.propose(
+                attention(0.0),
+                self.spatial_awareness(
+                    0.0,
+                    SpatialFieldSample(
+                        first, friendly_value=0.45, knowledge_confidence=1.0
+                    ),
+                    SpatialFieldSample(
+                        second, friendly_value=0.05, knowledge_confidence=0.5
+                    ),
                 ),
-                SpatialFieldSample(
-                    second, friendly_value=0.05, knowledge_confidence=0.5
-                ),
-            ),
+            )
         )[0]
-        advanced = planner.propose(
-            attention(1.0),
-            self.spatial_awareness(
-                1.0,
-                SpatialFieldSample(
-                    first, friendly_value=0.95, knowledge_confidence=1.0
+        advanced = rank_candidates(
+            planner.propose(
+                attention(1.0),
+                self.spatial_awareness(
+                    1.0,
+                    SpatialFieldSample(
+                        first, friendly_value=0.95, knowledge_confidence=1.0
+                    ),
+                    SpatialFieldSample(
+                        second, friendly_value=0.45, knowledge_confidence=0.8
+                    ),
                 ),
-                SpatialFieldSample(
-                    second, friendly_value=0.45, knowledge_confidence=0.8
-                ),
-            ),
+            )
         )[0]
 
         self.assertEqual(initial.target, first)
@@ -487,33 +520,37 @@ class MapControlPlannerTests(unittest.TestCase):
         planner = MapControlPlanner(
             config=MapControlConfig(proposal_cadence=1.0), logger=logger
         )
-        planner.propose(
-            attention(0.0),
-            self.spatial_awareness(
-                0.0,
-                SpatialFieldSample(
-                    current, friendly_value=0.45, knowledge_confidence=1.0
+        rank_candidates(
+            planner.propose(
+                attention(0.0),
+                self.spatial_awareness(
+                    0.0,
+                    SpatialFieldSample(
+                        current, friendly_value=0.45, knowledge_confidence=1.0
+                    ),
+                    SpatialFieldSample(
+                        alternative, friendly_value=0.35, knowledge_confidence=1.0
+                    ),
                 ),
-                SpatialFieldSample(
-                    alternative, friendly_value=0.35, knowledge_confidence=1.0
-                ),
-            ),
+            )
         )
 
-        proposal = planner.propose(
-            attention(1.0),
-            self.spatial_awareness(
-                1.0,
-                SpatialFieldSample(
-                    current,
-                    friendly_value=0.45,
-                    enemy_threat=0.9,
-                    knowledge_confidence=1.0,
+        proposal = rank_candidates(
+            planner.propose(
+                attention(1.0),
+                self.spatial_awareness(
+                    1.0,
+                    SpatialFieldSample(
+                        current,
+                        friendly_value=0.45,
+                        enemy_threat=0.9,
+                        knowledge_confidence=1.0,
+                    ),
+                    SpatialFieldSample(
+                        alternative, friendly_value=0.45, knowledge_confidence=1.0
+                    ),
                 ),
-                SpatialFieldSample(
-                    alternative, friendly_value=0.45, knowledge_confidence=1.0
-                ),
-            ),
+            )
         )[0]
 
         self.assertEqual(proposal.target, alternative)
@@ -552,7 +589,7 @@ class MapControlAssessmentTests(unittest.TestCase):
         current, state = attention(30.0, marines=4, extra=tanks), awareness(30.0)
         planner = MapControlPlanner()
 
-        proposals = planner.propose(current, state)
+        proposals = rank_candidates(planner.propose(current, state))
 
         self.assertEqual(len(proposals), 1)
         # Four Marines and two Tanks are ten supply, not six heads.
@@ -565,7 +602,7 @@ class MapControlAssessmentTests(unittest.TestCase):
         current, state = attention(30.0, marines=3), awareness(30.0)
         planner = MapControlPlanner()
 
-        self.assertEqual(planner.propose(current, state), ())
+        self.assertEqual(rank_candidates(planner.propose(current, state)), ())
         self.assertIsNone(planner.last_plan)
         self.assertEqual(planner.last_assessment.combat_supply, 3.0)
 

@@ -75,9 +75,10 @@ class BansheeHarassExecutor(MissionExecutor):
         """Banshees already inside the worker line are expensive to recall.
 
         Flying out or regrouping, they cost nothing extra -- take them. The
-        striking cost is deliberately small enough that a threatened base
-        (DEFENSE, priority 85) still wins them; it only stops a same-tier
-        mission from pulling the raid apart at its most valuable moment.
+        striking cost is deliberately small enough that a base under real
+        attack, which the Mission Policy ranks near the top of the scale,
+        still wins them; it only stops a mission of similar rank from pulling
+        the raid apart at its most valuable moment.
         """
 
         if self.state.phase in {BansheePhase.INFILTRATE, BansheePhase.STRIKE}:

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from bot.behavior.contracts import BehaviorLog
+from bot.behavior.contracts import UNRANKED_PRIORITY, BehaviorLog, MissionCandidate
 from bot.engine.missions.models import MissionProposal, UnitRequirement
 from bot.engine.missions.planning import (
     ProposalCadence,
@@ -20,6 +20,7 @@ from bot.engine.missions.planning import (
     choose_target,
 )
 from bot.ports.logging import BotLogger
+from bot.strategy import MissionSignals, StrategicActivity, StrategicContext
 from bot.world.attention import AttentionSnapshot
 from bot.world.awareness import AwarenessSnapshot
 
@@ -66,7 +67,8 @@ class ReaperHarassPlanner:
         self,
         attention: AttentionSnapshot,
         awareness: AwarenessSnapshot,
-    ) -> tuple[MissionProposal, ...]:
+        strategy: StrategicContext | None = None,
+    ) -> tuple[MissionCandidate, ...]:
         now = attention.world.time
         if not self._cadence.ready(now, self.config.proposal_cadence):
             return ()
@@ -86,7 +88,7 @@ class ReaperHarassPlanner:
         self._cadence.mark(now)
         self.last_plan = plan
         self._log.proposed(plan, now=now, planner=self.planner_id)
-        return (self._proposal_for(plan, now),)
+        return (self._candidate_for(plan, now),)
 
     def _plan(self, assessment: ReaperHarassAssessment) -> ReaperHarassPlan | None:
         if assessment.workers < self.config.minimum_workers:
@@ -108,11 +110,19 @@ class ReaperHarassPlanner:
         self._target_key = None if target is None else target.key
         if target is None:
             return None
+        reason = "best_ranked_reaper_target"
         return ReaperHarassPlan(
             target=target,
-            priority=self.config.priority,
-            reason="best_ranked_reaper_target",
+            reason=reason,
             readiness=assessment.readiness,
+            signals=MissionSignals(
+                activity=StrategicActivity.HARASS,
+                opportunity=_clamp01(target.economic_opportunity),
+                urgency=self.config.raid_urgency * _clamp01(assessment.readiness),
+                risk=_clamp01(max(target.ground_defense_risk, target.army_risk)),
+                information_gain=1.0 - _clamp01(target.information_confidence),
+                reason=reason,
+            ),
         )
 
     def _log_target(
@@ -136,33 +146,40 @@ class ReaperHarassPlanner:
             candidates=[target.summary() for target in assessment.targets],
         )
 
-    def _proposal_for(self, plan: ReaperHarassPlan, now: float) -> MissionProposal:
+    def _candidate_for(self, plan: ReaperHarassPlan, now: float) -> MissionCandidate:
         sequence = self._cadence.next_sequence()
         prefix = self.config.mission_kind.name.lower()
         target = plan.target
-        return MissionProposal(
-            proposal_id=f"{self.planner_id}:{prefix}:{target.key}:{sequence}",
-            deduplication_key=f"{prefix}:{target.key}",
-            planner=self.planner_id,
-            kind=self.config.mission_kind,
-            priority=plan.priority,
-            target_key=target.key,
-            target=target.position,
-            reason=plan.reason,
-            requirement=UnitRequirement.combat(
-                unit_types=self.config.unit_types,
-                desired=1,
-                minimum=1,
-                minimum_health=self.config.minimum_unit_health,
+        return MissionCandidate(
+            draft=MissionProposal(
+                proposal_id=f"{self.planner_id}:{prefix}:{target.key}:{sequence}",
+                deduplication_key=f"{prefix}:{target.key}",
+                planner=self.planner_id,
+                kind=self.config.mission_kind,
+                priority=UNRANKED_PRIORITY,
+                target_key=target.key,
+                target=target.position,
+                reason=plan.reason,
+                requirement=UnitRequirement.combat(
+                    unit_types=self.config.unit_types,
+                    desired=1,
+                    minimum=1,
+                    minimum_health=self.config.minimum_unit_health,
+                ),
+                created_at=now,
+                evidence_last_observed_at=target.last_observed_at,
+                evidence_age=target.age,
+                evidence_stale_after=target.stale_after,
+                timeout_seconds=self.config.mission_timeout,
+                cooldown_seconds=self.config.failure_cooldown,
+                # Standing missions hold most otherwise idle combat units, so
+                # the raid must be able to preempt one just to get a Reaper.
+                can_preempt=True,
+                commitment_seconds=self.config.commitment_seconds,
             ),
-            created_at=now,
-            evidence_last_observed_at=target.last_observed_at,
-            evidence_age=target.age,
-            evidence_stale_after=target.stale_after,
-            timeout_seconds=self.config.mission_timeout,
-            cooldown_seconds=self.config.failure_cooldown,
-            # Standing missions hold most otherwise idle combat units, so the
-            # raid must be able to preempt one just to get a Reaper at all.
-            can_preempt=True,
-            commitment_seconds=self.config.commitment_seconds,
+            signals=plan.signals,
         )
+
+
+def _clamp01(value: float) -> float:
+    return max(0.0, min(1.0, value))

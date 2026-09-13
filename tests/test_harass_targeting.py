@@ -17,6 +17,7 @@ from typing import Any
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
+from bot.app.mission_ranking import rank_candidates
 from bot.app.mission_registry import build_executor_factories
 from bot.behavior.harass.banshee import (
     BansheeHarassAssessment,
@@ -613,7 +614,7 @@ class BansheeRetargetingTests(unittest.IsolatedAsyncioTestCase):
         planner = BansheeHarassPlanner(logger=logger)
 
         proposals = [
-            planner.propose(attention(now), world(now))[0]
+            rank_candidates(planner.propose(attention(now), world(now)))[0]
             for now, world in self.TIMELINE
         ]
 
@@ -655,9 +656,15 @@ class BansheeRetargetingTests(unittest.IsolatedAsyncioTestCase):
                 bases=(enemy_base("expansion:3", WEST, air_defense=air_defense),),
             )
 
-        self.assertEqual(planner.propose(attention(100.0), west(100.0, 0.75)), ())
-        (launched,) = planner.propose(attention(101.0), west(101.0, 0.0))
-        (still_live,) = planner.propose(attention(109.0), west(109.0, 0.75))
+        self.assertEqual(
+            rank_candidates(planner.propose(attention(100.0), west(100.0, 0.75))), ()
+        )
+        (launched,) = rank_candidates(
+            planner.propose(attention(101.0), west(101.0, 0.0))
+        )
+        (still_live,) = rank_candidates(
+            planner.propose(attention(109.0), west(109.0, 0.75))
+        )
 
         self.assertEqual(
             (launched.target_key, launched.reason),
@@ -671,10 +678,16 @@ class BansheeRetargetingTests(unittest.IsolatedAsyncioTestCase):
     def test_losing_the_only_target_is_logged_once(self):
         logger = FakeLogger()
         planner = BansheeHarassPlanner(logger=logger)
-        planner.propose(attention(100.0), west_richer(100.0))
+        rank_candidates(planner.propose(attention(100.0), west_richer(100.0)))
 
-        self.assertEqual(planner.propose(attention(108.0), enemy_model(now=108.0)), ())
-        self.assertEqual(planner.propose(attention(109.0), enemy_model(now=109.0)), ())
+        self.assertEqual(
+            rank_candidates(planner.propose(attention(108.0), enemy_model(now=108.0))),
+            (),
+        )
+        self.assertEqual(
+            rank_candidates(planner.propose(attention(109.0), enemy_model(now=109.0))),
+            (),
+        )
 
         decisions = target_decisions(logger)
         self.assertEqual(
@@ -699,7 +712,7 @@ class BansheeRetargetingTests(unittest.IsolatedAsyncioTestCase):
             await controller.tick(
                 attention=current,
                 awareness=world,
-                proposals=planner.propose(current, world),
+                proposals=rank_candidates(planner.propose(current, world)),
                 commands=commands,
             )
 
@@ -739,7 +752,8 @@ class ReaperRetargetingTests(unittest.TestCase):
         )
 
         proposals = [
-            planner.propose(attention(now), world(now))[0] for now, world in timeline
+            rank_candidates(planner.propose(attention(now), world(now)))[0]
+            for now, world in timeline
         ]
 
         self.assertEqual(
@@ -808,7 +822,7 @@ class EndToEndTests(unittest.TestCase):
         )
         for planner in planners:
             with self.subTest(planner=planner.planner_id):
-                (proposal,) = planner.propose(current, world)
+                (proposal,) = rank_candidates(planner.propose(current, world))
                 self.assertEqual(
                     (proposal.target_key, proposal.target), ("expansion:1", third)
                 )

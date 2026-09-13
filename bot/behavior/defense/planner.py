@@ -1,12 +1,16 @@
-"""PLAN: one defense mission per threatened base.
+"""PLAN: one defense candidate per threatened base.
 
-A base only gets a proposal once its security drops to THREATENED or
+A base only gets a candidate once its security drops to THREATENED or
 CRITICAL, so several bases under attack at the same time get independent
 missions instead of competing for a single global "own_base" slot, and a
 base that already has enough defenders nearby does not pull reinforcements
 it does not need. Requested unit count grows with how outnumbered the base's
 current defenders are; which defenders are asked for first depends on what
 is attacking.
+
+What this planner reports is the attack: how urgent and how decisive a
+defense is here. What the base is worth, and how the defense ranks against a
+raid or a patrol, is Strategy's -- the Mission Policy applies both.
 """
 
 from __future__ import annotations
@@ -16,7 +20,7 @@ from dataclasses import dataclass, field
 
 from sc2.ids.unit_typeid import UnitTypeId
 
-from bot.behavior.contracts import BehaviorLog
+from bot.behavior.contracts import UNRANKED_PRIORITY, BehaviorLog, MissionCandidate
 from bot.engine.missions.models import MissionProposal, UnitRequirement
 from bot.engine.missions.planning import ProposalCadence
 from bot.engine.services import (
@@ -25,6 +29,7 @@ from bot.engine.services import (
     VisionUrgency,
 )
 from bot.ports.logging import BotLogger
+from bot.strategy import MissionSignals, StrategicActivity, StrategicContext
 from bot.world.attention import AttentionSnapshot
 from bot.world.awareness import AwarenessSnapshot
 
@@ -36,7 +41,7 @@ COMPONENT = "behavior.defense"
 
 @dataclass(slots=True)
 class DefensePlanner:
-    """Proposes one defense mission per currently threatened base."""
+    """Proposes one defense candidate per currently threatened base."""
 
     config: DefenseConfig = field(default_factory=DefenseConfig)
     logger: BotLogger | None = None
@@ -65,7 +70,8 @@ class DefensePlanner:
         self,
         attention: AttentionSnapshot,
         awareness: AwarenessSnapshot,
-    ) -> tuple[MissionProposal, ...]:
+        strategy: StrategicContext | None = None,
+    ) -> tuple[MissionCandidate, ...]:
         now = attention.world.time
         self.last_vision_result = self._request_vision_for_remembered_threat(
             attention, awareness
@@ -87,7 +93,7 @@ class DefensePlanner:
         self._log.assessed(assessment, now=now, decision="propose")
         for plan in plans:
             self._log.proposed(plan, now=now, planner=self.planner_id)
-        return tuple(self._proposal_for(plan, now) for plan in plans)
+        return tuple(self._candidate_for(plan, now) for plan in plans)
 
     def _request_vision_for_remembered_threat(
         self,
@@ -129,23 +135,45 @@ class DefensePlanner:
         )
 
     def _plan(self, base: ThreatenedBase) -> DefensePlan:
+        reason = (
+            "base_undefended_against_observed_threat"
+            if base.is_critical
+            else "base_outnumbered_by_observed_threat"
+        )
         return DefensePlan(
             base=base,
             desired_units=min(
                 self.config.max_desired_units,
                 max(self.config.minimum_units, math.ceil(base.gap)),
             ),
-            priority=(
-                self.config.critical_priority
-                if base.is_critical
-                else self.config.threatened_priority
-            ),
-            reason=(
-                "base_undefended_against_observed_threat"
-                if base.is_critical
-                else "base_outnumbered_by_observed_threat"
-            ),
+            reason=reason,
+            signals=self._signals(base, reason),
             type_desirability=self._type_desirability(base),
+        )
+
+    def _signals(self, base: ThreatenedBase, reason: str) -> MissionSignals:
+        """How pressing and how decisive defending this base is, locally.
+
+        Urgency is the attack itself: an undefended base is losing something
+        now (1.0); a covered one grows more urgent the more the attack
+        outweighs its cover. Reinforcing matters most, and costs most, where
+        the base is most outweighed.
+        """
+
+        config = self.config
+        balance = base.balance
+        urgency = (
+            1.0
+            if base.is_critical
+            else config.threatened_urgency
+            + (1.0 - config.threatened_urgency) * balance
+        )
+        return MissionSignals(
+            activity=StrategicActivity.DEFENSE,
+            opportunity=balance,
+            urgency=urgency,
+            risk=config.engagement_risk * balance,
+            reason=reason,
         )
 
     def _type_desirability(
@@ -165,28 +193,31 @@ class DefensePlanner:
             return self.config.air_only_threat_desirability
         return ()
 
-    def _proposal_for(self, plan: DefensePlan, now: float) -> MissionProposal:
+    def _candidate_for(self, plan: DefensePlan, now: float) -> MissionCandidate:
         sequence = self._cadence.next_sequence()
         base_id = plan.base.base_id
-        return MissionProposal(
-            proposal_id=f"{self.planner_id}:defense:{base_id}:{sequence}",
-            deduplication_key=f"defense:{base_id}",
-            planner=self.planner_id,
-            kind=self.config.mission_kind,
-            priority=plan.priority,
-            target_key=base_id,
-            target=plan.target,
-            reason=plan.reason,
-            requirement=UnitRequirement.combat(
-                unit_types=self.config.unit_types,
-                desired=plan.desired_units,
-                minimum=self.config.minimum_units,
-                minimum_health=self.config.minimum_unit_health,
-                type_desirability=plan.type_desirability,
+        return MissionCandidate(
+            draft=MissionProposal(
+                proposal_id=f"{self.planner_id}:defense:{base_id}:{sequence}",
+                deduplication_key=f"defense:{base_id}",
+                planner=self.planner_id,
+                kind=self.config.mission_kind,
+                priority=UNRANKED_PRIORITY,
+                target_key=base_id,
+                target=plan.target,
+                reason=plan.reason,
+                requirement=UnitRequirement.combat(
+                    unit_types=self.config.unit_types,
+                    desired=plan.desired_units,
+                    minimum=self.config.minimum_units,
+                    minimum_health=self.config.minimum_unit_health,
+                    type_desirability=plan.type_desirability,
+                ),
+                created_at=now,
+                timeout_seconds=self.config.mission_timeout,
+                cooldown_seconds=self.config.failure_cooldown,
+                can_preempt=True,
+                commitment_seconds=self.config.commitment_seconds,
             ),
-            created_at=now,
-            timeout_seconds=self.config.mission_timeout,
-            cooldown_seconds=self.config.failure_cooldown,
-            can_preempt=True,
-            commitment_seconds=self.config.commitment_seconds,
+            signals=plan.signals,
         )

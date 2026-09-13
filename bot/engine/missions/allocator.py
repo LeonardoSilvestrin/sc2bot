@@ -274,11 +274,18 @@ class UnitAllocator:
                     protected_until=now + commitment_seconds,
                     preemption_cost=preemption_cost,
                 )
-            elif self._leases[unit.tag].preemption_cost != preemption_cost:
+            elif (
+                self._leases[unit.tag].preemption_cost != preemption_cost
+                or self._leases[unit.tag].priority != priority
+            ):
                 # The owner's own cost changes as it progresses (ASSEMBLE ->
-                # STRIKE); refresh it without disturbing the commitment window.
+                # STRIKE), and a live mission's priority changes when it is
+                # re-ranked; a lease must defend with the current values, so
+                # refresh both without disturbing the commitment window.
                 self._leases[unit.tag] = replace(
-                    self._leases[unit.tag], preemption_cost=preemption_cost
+                    self._leases[unit.tag],
+                    priority=priority,
+                    preemption_cost=preemption_cost,
                 )
 
         assigned = tuple(sorted(unit.tag for unit in selected))

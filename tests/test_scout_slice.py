@@ -9,6 +9,7 @@ from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
 from bot.adapters.ares.mission_commands import AresMissionCommands
+from bot.app.mission_ranking import rank_candidates
 from bot.app.mission_registry import DEFAULT_EXECUTOR_FACTORIES
 from bot.behavior.scouting import IntelPlanner
 from bot.engine.missions import (
@@ -91,7 +92,7 @@ class ScoutVerticalSliceTests(unittest.IsolatedAsyncioTestCase):
         service = AwarenessService()
         current = attention(10, visible=False)
         awareness = service.update(current)
-        proposal = IntelPlanner().propose(current, awareness)[0]
+        proposal = rank_candidates(IntelPlanner().propose(current, awareness))[0]
         default_factory = DEFAULT_EXECUTOR_FACTORIES[proposal.kind]
         controller = MissionController(
             logger=FakeLogger(),
@@ -136,7 +137,7 @@ class ScoutVerticalSliceTests(unittest.IsolatedAsyncioTestCase):
         current = attention(10, visible=False, reapers=2)
         awareness = service.update(current)
         proposal = replace(
-            IntelPlanner().propose(current, awareness)[0],
+            rank_candidates(IntelPlanner().propose(current, awareness))[0],
             timeout_seconds=2,
             requirement=UnitRequirement(
                 unit_types=frozenset({UnitTypeId.REAPER}),
@@ -178,7 +179,7 @@ class ScoutVerticalSliceTests(unittest.IsolatedAsyncioTestCase):
         await controller.tick(
             attention=current,
             awareness=awareness,
-            proposals=IntelPlanner().propose(current, awareness),
+            proposals=rank_candidates(IntelPlanner().propose(current, awareness)),
             commands=commands,
         )
         old = controller.snapshots()[0]
@@ -216,7 +217,7 @@ class ScoutVerticalSliceTests(unittest.IsolatedAsyncioTestCase):
                 current = attention(10, visible=False, reapers=2)
                 awareness = service.update(current)
                 proposal = replace(
-                    IntelPlanner().propose(current, awareness)[0],
+                    rank_candidates(IntelPlanner().propose(current, awareness))[0],
                     requirement=UnitRequirement(
                         unit_types=frozenset({UnitTypeId.REAPER}),
                         desired=2,
@@ -271,7 +272,7 @@ class ScoutVerticalSliceTests(unittest.IsolatedAsyncioTestCase):
                     current = attention(10, visible=False)
                     awareness = service.update(current)
                     proposal = replace(
-                        IntelPlanner().propose(current, awareness)[0],
+                        rank_candidates(IntelPlanner().propose(current, awareness))[0],
                         timeout_seconds=1,
                         requirement=UnitRequirement(
                             unit_types=frozenset({unit_type}),
@@ -334,7 +335,7 @@ class ScoutVerticalSliceTests(unittest.IsolatedAsyncioTestCase):
         commands = FakeCommands()
         current = attention(10, visible=False)
         awareness = service.update(current)
-        proposal = IntelPlanner().propose(current, awareness)[0]
+        proposal = rank_candidates(IntelPlanner().propose(current, awareness))[0]
         await controller.tick(
             attention=current,
             awareness=awareness,
@@ -375,7 +376,7 @@ class ScoutVerticalSliceTests(unittest.IsolatedAsyncioTestCase):
         planner = IntelPlanner()
         current = attention(10.0, visible=False)
         awareness = service.update(current)
-        first = planner.propose(current, awareness)[0]
+        first = rank_candidates(planner.propose(current, awareness))[0]
         duplicate = replace(first, proposal_id=f"{first.proposal_id}:duplicate")
         controller = MissionController(
             logger=logger, executor_factories=DEFAULT_EXECUTOR_FACTORIES
@@ -405,7 +406,7 @@ class ScoutVerticalSliceTests(unittest.IsolatedAsyncioTestCase):
 
         first_attention = attention(10.0, visible=False)
         first_awareness = awareness_service.update(first_attention)
-        proposals = planner.propose(first_attention, first_awareness)
+        proposals = rank_candidates(planner.propose(first_attention, first_awareness))
         await controller.tick(
             attention=first_attention,
             awareness=first_awareness,
@@ -423,7 +424,9 @@ class ScoutVerticalSliceTests(unittest.IsolatedAsyncioTestCase):
         await controller.tick(
             attention=refreshed_attention,
             awareness=refreshed_awareness,
-            proposals=planner.propose(refreshed_attention, refreshed_awareness),
+            proposals=rank_candidates(
+                planner.propose(refreshed_attention, refreshed_awareness)
+            ),
             commands=commands,
         )
 
@@ -460,7 +463,7 @@ class ScoutVerticalSliceTests(unittest.IsolatedAsyncioTestCase):
         # to the controller. Planner and allocator remain distinct responsibilities.
         rich_attention = attention(10.0, visible=False)
         awareness = awareness_service.update(rich_attention)
-        proposal = planner.propose(rich_attention, awareness)
+        proposal = rank_candidates(planner.propose(rich_attention, awareness))
         empty_attention = attention(10.0, visible=False, workers=0, reapers=0)
         controller = MissionController(
             logger=logger, executor_factories=DEFAULT_EXECUTOR_FACTORIES
@@ -494,7 +497,7 @@ class ScoutVerticalSliceTests(unittest.IsolatedAsyncioTestCase):
         await controller.tick(
             attention=current,
             awareness=awareness,
-            proposals=planner.propose(current, awareness),
+            proposals=rank_candidates(planner.propose(current, awareness)),
             commands=commands,
         )
 
@@ -518,7 +521,7 @@ class ScoutVerticalSliceTests(unittest.IsolatedAsyncioTestCase):
         await controller.tick(
             attention=current,
             awareness=awareness,
-            proposals=planner.propose(current, awareness),
+            proposals=rank_candidates(planner.propose(current, awareness)),
             commands=commands,
         )
 

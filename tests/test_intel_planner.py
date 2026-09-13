@@ -4,6 +4,7 @@ import unittest
 
 from sc2.ids.unit_typeid import UnitTypeId
 
+from bot.app.mission_ranking import rank_candidates
 from bot.behavior.scouting import IntelAssessor, IntelPlanner
 from bot.world.awareness import AwarenessService
 from tests.test_scout_slice import attention
@@ -14,13 +15,17 @@ class IntelPlannerTests(unittest.TestCase):
         observed = attention(10.0, visible=False, workers=15)
         awareness = AwarenessService().update(observed)
 
-        self.assertEqual(IntelPlanner().propose(observed, awareness), ())
+        self.assertEqual(
+            rank_candidates(IntelPlanner().propose(observed, awareness)), ()
+        )
 
     def test_does_not_propose_when_information_is_fresh(self):
         observed = attention(10.0, visible=True)
         awareness = AwarenessService().update(observed)
 
-        self.assertEqual(IntelPlanner().propose(observed, awareness), ())
+        self.assertEqual(
+            rank_candidates(IntelPlanner().propose(observed, awareness)), ()
+        )
 
     def test_repeat_scout_waits_until_periodic_phase(self):
         service = AwarenessService(location_stale_after=90.0)
@@ -31,8 +36,10 @@ class IntelPlannerTests(unittest.TestCase):
         periodic = attention(240.0, visible=False)
         periodic_awareness = service.update(periodic)
 
-        self.assertEqual(planner.propose(stale_early, stale_early_awareness), ())
-        proposals = planner.propose(periodic, periodic_awareness)
+        self.assertEqual(
+            rank_candidates(planner.propose(stale_early, stale_early_awareness)), ()
+        )
+        proposals = rank_candidates(planner.propose(periodic, periodic_awareness))
         self.assertEqual(len(proposals), 1)
         self.assertEqual(proposals[0].reason, "enemy_natural_information_stale")
 
@@ -40,7 +47,7 @@ class IntelPlannerTests(unittest.TestCase):
         observed = attention(10.0, visible=False, reapers=0)
         awareness = AwarenessService().update(observed)
 
-        proposals = IntelPlanner().propose(observed, awareness)
+        proposals = rank_candidates(IntelPlanner().propose(observed, awareness))
 
         self.assertEqual(len(proposals), 1)
         self.assertEqual(
@@ -51,7 +58,7 @@ class IntelPlannerTests(unittest.TestCase):
         observed = attention(10.0, visible=False, reapers=1)
         awareness = AwarenessService().update(observed)
 
-        proposals = IntelPlanner().propose(observed, awareness)
+        proposals = rank_candidates(IntelPlanner().propose(observed, awareness))
 
         self.assertEqual(len(proposals), 1)
         self.assertEqual(
@@ -94,7 +101,7 @@ class IntelAssessmentTests(unittest.TestCase):
         awareness = AwarenessService().update(observed)
         planner = IntelPlanner()
 
-        proposals = planner.propose(observed, awareness)
+        proposals = rank_candidates(planner.propose(observed, awareness))
 
         self.assertEqual(len(proposals), 1)
         self.assertEqual(planner.last_plan.reason, proposals[0].reason)

@@ -11,7 +11,9 @@ leases.
 
 It asks for no role and scores nothing: it claims every combat unit
 (``UnitRequirement.any_combat_unit``), so a surviving Marine, a new Cyclone
-and a Thor all rest here until something with a real job takes them.
+and a Thor all rest here until something with a real job takes them. Nor is
+it an opportunity: its candidate carries fallback signals, which the Mission
+Policy ranks at a fixed floor beneath every real one.
 """
 
 from __future__ import annotations
@@ -20,10 +22,11 @@ from dataclasses import dataclass, field
 
 from sc2.position import Point2
 
-from bot.behavior.contracts import BehaviorLog
+from bot.behavior.contracts import UNRANKED_PRIORITY, BehaviorLog, MissionCandidate
 from bot.engine.missions.models import MissionMode, MissionProposal, UnitRequirement
 from bot.engine.missions.planning import ProposalCadence
 from bot.ports.logging import BotLogger
+from bot.strategy import MissionSignals, StrategicContext
 from bot.world.attention import AttentionSnapshot
 from bot.world.awareness import AwarenessSnapshot
 
@@ -69,7 +72,8 @@ class StandingPlanner:
         self,
         attention: AttentionSnapshot,
         awareness: AwarenessSnapshot,
-    ) -> tuple[MissionProposal, ...]:
+        strategy: StrategicContext | None = None,
+    ) -> tuple[MissionCandidate, ...]:
         now = attention.world.time
         if not self._cadence.ready(now, self.config.proposal_cadence):
             return ()
@@ -83,24 +87,22 @@ class StandingPlanner:
         plan = self._plan(assessment)
         self._log_plan_change(plan, assessment, previous_posture=previous_posture)
         self.last_plan = plan
-        return (self._proposal_for(plan, now),)
+        return (self._candidate_for(plan, now),)
 
     def _plan(self, assessment: StandingAssessment) -> StandingPlan:
         """Choose the anchor; the core army asks for every combat unit.
 
         Asking for all of them, rather than a share, is what makes this the
-        fallback owner. Every mission allowed to preempt (map control,
-        defense, harass) outranks this one by at least the allocator's
-        preemption margin, so each still takes what it needs and this can
-        never take those units back -- it only holds whatever nobody else
-        does. A fixed share left the remainder ownerless whenever map control
-        was not running to claim it.
+        fallback owner. The Mission Policy ranks every real opportunity (map
+        control, defense, harass) at least the allocator's preemption margin
+        above this one, so each still takes what it needs and this can never
+        take those units back -- it only holds whatever nobody else does. A
+        fixed share left the remainder ownerless whenever map control was not
+        running to claim it.
 
         The anchor is deliberately unsophisticated for now: the army sits
         most of the way from the previous base toward the newest one, which
-        is where an attack arrives first. Posture does not move the anchor
-        yet -- that is the obvious next step, and this shape is what makes it
-        a one-line change instead of a restructure.
+        is where an attack arrives first.
         """
 
         anchor, reason = self._anchor(assessment)
@@ -110,7 +112,6 @@ class StandingPlanner:
             # `UnitRequirement` needs desired > 0; with no army yet the claim
             # simply idles (minimum=0).
             core_count=max(1, assessment.combat_units),
-            priority=self.config.priority,
         )
 
     def _anchor(self, assessment: StandingAssessment) -> tuple[Point2, str]:
@@ -166,29 +167,32 @@ class StandingPlanner:
             ),
         )
 
-    def _proposal_for(self, plan: StandingPlan, now: float) -> MissionProposal:
+    def _candidate_for(self, plan: StandingPlan, now: float) -> MissionCandidate:
         sequence = self._cadence.next_sequence()
-        return MissionProposal(
-            proposal_id=f"{self.planner_id}:{SQUAD_ID}:{sequence}",
-            deduplication_key=DEDUPLICATION_KEY,
-            planner=self.planner_id,
-            kind=MISSION_KIND,
-            priority=plan.priority,
-            target_key=DEDUPLICATION_KEY,
-            target=plan.anchor,
-            reason="main_army_holds_latest_expansion_rally",
-            requirement=UnitRequirement.any_combat_unit(
-                desired=plan.core_count,
-                # Holding zero units is idle, not failed: everything above
-                # this behavior may legitimately take the whole army.
-                minimum=0,
-                minimum_health=self.config.minimum_unit_health,
+        return MissionCandidate(
+            draft=MissionProposal(
+                proposal_id=f"{self.planner_id}:{SQUAD_ID}:{sequence}",
+                deduplication_key=DEDUPLICATION_KEY,
+                planner=self.planner_id,
+                kind=MISSION_KIND,
+                priority=UNRANKED_PRIORITY,
+                target_key=DEDUPLICATION_KEY,
+                target=plan.anchor,
+                reason="main_army_holds_latest_expansion_rally",
+                requirement=UnitRequirement.any_combat_unit(
+                    desired=plan.core_count,
+                    # Holding zero units is idle, not failed: everything above
+                    # this behavior may legitimately take the whole army.
+                    minimum=0,
+                    minimum_health=self.config.minimum_unit_health,
+                ),
+                created_at=now,
+                timeout_seconds=self.config.mission_timeout,
+                cooldown_seconds=self.config.cooldown_seconds,
+                can_preempt=True,
+                commitment_seconds=self.config.commitment_seconds,
+                mode=MissionMode.STANDING,
+                squad_id=SQUAD_ID,
             ),
-            created_at=now,
-            timeout_seconds=self.config.mission_timeout,
-            cooldown_seconds=self.config.cooldown_seconds,
-            can_preempt=True,
-            commitment_seconds=self.config.commitment_seconds,
-            mode=MissionMode.STANDING,
-            squad_id=SQUAD_ID,
+            signals=MissionSignals.fallback(plan.anchor_reason),
         )

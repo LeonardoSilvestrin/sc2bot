@@ -5,6 +5,7 @@ from dataclasses import replace
 
 from sc2.position import Point2
 
+from bot.app.strategy_runtime import StrategyRuntime
 from bot.app.strategy_shadow import StrategyShadow
 from bot.strategy import (
     MacroPosture,
@@ -14,6 +15,7 @@ from bot.strategy import (
     StrategicObjective,
     StrategyConfig,
     build_strategy_inputs,
+    derive_intent,
 )
 from bot.world.awareness import (
     AwarenessSnapshot,
@@ -193,21 +195,32 @@ class AwarenessAdapterTests(unittest.TestCase):
         self.assertIs(result.objective, StrategicObjective.RECOVER)
 
 
-class ShadowStrategyTests(unittest.TestCase):
-    def test_shadow_mode_logs_but_does_not_publish_the_new_objective(self):
+class StrategyRuntimeTests(unittest.TestCase):
+    def test_runtime_logs_the_objective_and_publishes_its_intent(self):
         logger = FakeLogger()
-        runner = StrategyShadow(logger=logger)
+        runner = StrategyRuntime(logger=logger)
         awareness = snapshot(near_base_combat=1)
 
         compatible = runner.update(awareness)
 
         self.assertIsNotNone(runner.snapshot)
+        self.assertEqual(runner.context.intent, derive_intent(runner.snapshot))
+        self.assertEqual(runner.context.updated_at, awareness.updated_at)
         self.assertIs(compatible.macro_posture, MacroPosture.DEFENSE)
         self.assertIs(awareness.macro_posture, MacroPosture.BALANCED)
         event = logger.events[0]
         self.assertEqual(event["name"], "strategy.updated")
-        self.assertEqual(event["data"]["mode"], "shadow")
+        self.assertEqual(event["data"]["mode"], "live")
+        self.assertFalse(event["data"]["shadow"])
         self.assertIn("scores", event["data"])
+
+    def test_the_context_is_neutral_before_the_first_update(self):
+        self.assertEqual(
+            StrategyRuntime(logger=FakeLogger()).context.intent, derive_intent(None)
+        )
+
+    def test_the_deprecated_shadow_name_is_the_runtime(self):
+        self.assertIs(StrategyShadow, StrategyRuntime)
 
     def test_legacy_posture_policy_keeps_its_defense_release_hysteresis(self):
         director = MacroPostureDirector(

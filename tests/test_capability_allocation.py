@@ -10,6 +10,7 @@ from typing import Any
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
+from bot.app.mission_ranking import rank_candidates
 from bot.app.mission_registry import DEFAULT_EXECUTOR_FACTORIES
 from bot.behavior.map_control import MapControlConfig, MapControlPlanner
 from bot.behavior.standing import StandingPlanner
@@ -513,7 +514,7 @@ class ControllerHarness(unittest.IsolatedAsyncioTestCase):
         planned = tuple(
             proposal
             for planner in planners
-            for proposal in planner.propose(current, awareness)
+            for proposal in rank_candidates(planner.propose(current, awareness))
         )
         await controller.tick(
             attention=current,

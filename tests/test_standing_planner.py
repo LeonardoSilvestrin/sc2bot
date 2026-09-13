@@ -6,6 +6,7 @@ from dataclasses import replace
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
+from bot.app.mission_ranking import rank_candidates
 from bot.behavior.standing import StandingPlanner
 from bot.domain import COMBAT_UNIT_TYPES
 from bot.engine.missions import MissionKind, MissionMode
@@ -83,7 +84,7 @@ class CoreArmyStandingTests(unittest.TestCase):
     def test_declares_one_persistent_main_army_claiming_every_combat_unit(self):
         attention, awareness = current(10.0, count=10)
 
-        proposals = StandingPlanner().propose(attention, awareness)
+        proposals = rank_candidates(StandingPlanner().propose(attention, awareness))
 
         self.assertEqual(len(proposals), 1)
         proposal = proposals[0]
@@ -100,7 +101,7 @@ class CoreArmyStandingTests(unittest.TestCase):
         newest = townhall(102, Point2((40, 40)))
         attention, awareness = current(10.0, bases=(newest, main, natural))
 
-        proposal = StandingPlanner().propose(attention, awareness)[0]
+        proposal = rank_candidates(StandingPlanner().propose(attention, awareness))[0]
 
         self.assertEqual(proposal.target, Point2((34.4, 34.4)))
 
@@ -121,7 +122,7 @@ class CoreArmyStandingTests(unittest.TestCase):
             )
         )
 
-        proposal = StandingPlanner().propose(attention, awareness)[0]
+        proposal = rank_candidates(StandingPlanner().propose(attention, awareness))[0]
 
         self.assertIsNone(proposal.requirement.capability)
         self.assertEqual(proposal.requirement.unit_types, COMBAT_UNIT_TYPES)
@@ -131,7 +132,7 @@ class CoreArmyStandingTests(unittest.TestCase):
         attention, awareness = current(10.0, count=10)
         planner = StandingPlanner()
 
-        planner.propose(attention, awareness)
+        rank_candidates(planner.propose(attention, awareness))
 
         assessment = planner.last_assessment
         plan = planner.last_plan
@@ -145,11 +146,11 @@ class CoreArmyStandingTests(unittest.TestCase):
         planner = StandingPlanner(logger=logger)
         main = townhall(100, MAP.own_start)
         first, awareness = current(10.0, bases=(main,))
-        planner.propose(first, awareness)
+        rank_candidates(planner.propose(first, awareness))
 
         newest = townhall(101, Point2((40, 40)))
         second, awareness = current(20.0, bases=(main, newest))
-        planner.propose(second, awareness)
+        rank_candidates(planner.propose(second, awareness))
 
         anchors = [
             event["data"]
@@ -168,7 +169,7 @@ class CoreArmyStandingTests(unittest.TestCase):
         planner = StandingPlanner(logger=logger)
         for now in (10.0, 20.0, 30.0):
             attention, awareness = current(now, count=10)
-            planner.propose(attention, awareness)
+            rank_candidates(planner.propose(attention, awareness))
 
         proposed = [e for e in logger.events if e["name"] == "behavior.proposed"]
         self.assertEqual(len(proposed), 1)
@@ -176,15 +177,15 @@ class CoreArmyStandingTests(unittest.TestCase):
     def test_keeps_the_same_dedup_key_across_cadence_ticks(self):
         planner = StandingPlanner()
         first, awareness = current(10.0)
-        first_proposal = planner.propose(first, awareness)[0]
+        first_proposal = rank_candidates(planner.propose(first, awareness))[0]
         second, awareness = current(16.0)
-        second_proposal = planner.propose(second, awareness)[0]
+        second_proposal = rank_candidates(planner.propose(second, awareness))[0]
 
         self.assertEqual(
             first_proposal.deduplication_key,
             second_proposal.deduplication_key,
         )
-        self.assertEqual(planner.propose(second, awareness), ())
+        self.assertEqual(rank_candidates(planner.propose(second, awareness)), ())
 
 
 if __name__ == "__main__":

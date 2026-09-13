@@ -10,6 +10,7 @@ from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
 from bot.engine.missions.models import MissionKind
+from bot.strategy import MissionSignals
 from bot.world.awareness.bases import BaseAssessment, BaseSecurityLevel
 
 _DEFAULT_DEFENDER_TYPES: frozenset[UnitTypeId] = frozenset(
@@ -56,8 +57,6 @@ class DefenseConfig:
     """Thresholds for defense proposals, one per threatened base."""
 
     proposal_cadence: float = 5.0
-    threatened_priority: int = 85
-    critical_priority: int = 95
     mission_timeout: float = 120.0
     failure_cooldown: float = 10.0
     unit_types: frozenset[UnitTypeId] = field(
@@ -69,6 +68,15 @@ class DefenseConfig:
     commitment_seconds: float = 3.0
     remembered_threat_max_age: float = 12.0
     vision_request_ttl: float = 6.0
+
+    # --- opportunity signals ----------------------------------------------
+    # Local readings only; what the base is worth, and how a defense ranks
+    # against everything else, is Strategy's (see `DefensePlanner._signals`).
+    # Urgency of a base some defender already covers, rising toward 1.0 as the
+    # attack outweighs that cover; an undefended base is 1.0 outright.
+    threatened_urgency: float = 0.55
+    # Risk to the defenders, scaled by how outweighed the base is.
+    engagement_risk: float = 0.4
 
     # --- defender preference ------------------------------------------------
     # Used when anything attacking the base is on the ground.
@@ -103,12 +111,9 @@ class DefenseConfig:
     def __post_init__(self) -> None:
         if self.proposal_cadence <= 0.0:
             raise ValueError("proposal_cadence must be positive")
-        if not 0 <= self.threatened_priority <= 100:
-            raise ValueError("threatened_priority must be between 0 and 100")
-        if not 0 <= self.critical_priority <= 100:
-            raise ValueError("critical_priority must be between 0 and 100")
-        if self.critical_priority < self.threatened_priority:
-            raise ValueError("critical_priority must be >= threatened_priority")
+        for name in ("threatened_urgency", "engagement_risk"):
+            if not 0.0 <= getattr(self, name) <= 1.0:
+                raise ValueError(f"{name} must be between 0 and 1")
         if self.mission_timeout <= 0.0:
             raise ValueError("mission_timeout must be positive")
         if self.failure_cooldown < 0.0:
@@ -173,6 +178,15 @@ class ThreatenedBase:
 
         return self.base.threat_score - self.base.protection_score
 
+    @property
+    def balance(self) -> float:
+        """The attack's share of everything at the base, 0 (no threat) .. 1
+        (nothing defends it)."""
+
+        threat = max(0.0, self.base.threat_score)
+        total = threat + max(0.0, self.base.protection_score)
+        return 0.0 if total <= 0.0 else threat / total
+
 
 @dataclass(frozen=True, slots=True)
 class DefenseAssessment:
@@ -206,8 +220,9 @@ class DefensePlan:
 
     base: ThreatenedBase
     desired_units: int
-    priority: int
     reason: str
+    # The local reading the Mission Policy ranks this defense from.
+    signals: MissionSignals
     # Which defender types this attack makes worth pulling.
     type_desirability: tuple[tuple[UnitTypeId, float], ...] = ()
 
@@ -219,7 +234,7 @@ class DefensePlan:
         return {
             "base_id": self.base.base_id,
             "desired_units": self.desired_units,
-            "priority": self.priority,
+            **self.signals.log_fields(),
             "reason": self.reason,
             "critical": self.base.is_critical,
             "ground_threats": self.base.ground_threats,

@@ -5,6 +5,7 @@ import unittest
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
+from bot.app.mission_ranking import rank_candidates
 from bot.app.mission_registry import DEFAULT_EXECUTOR_FACTORIES
 from bot.behavior.standing import StandingPlanner
 from bot.engine.missions import (
@@ -101,7 +102,7 @@ class SquadLifecycleTests(unittest.IsolatedAsyncioTestCase):
         await controller.tick(
             attention=current,
             awareness=aware,
-            proposals=planner.propose(current, aware),
+            proposals=rank_candidates(planner.propose(current, aware)),
             commands=commands,
         )
         home = controller.board.live_for_key("hold_rally:main_army")

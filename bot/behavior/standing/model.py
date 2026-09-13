@@ -33,8 +33,9 @@ class CombatPosture(Enum):
 class StandingConfig:
     """Thresholds for the standing army behavior.
 
-    The core army's priority stays below ``MAP_CONTROL`` (40) and every
-    active tactical mission, so a standing slot is always freely
+    The core army is the fallback owner: the Mission Policy ranks it at its
+    fixed fallback floor, below every real opportunity by at least the
+    allocator's preemption margin, so a standing slot is always freely
     preemptible. The anchor fraction is a deliberately small, deterministic
     policy knob rather than a composition system.
 
@@ -52,8 +53,6 @@ class StandingConfig:
     arrival_radius: float = 4.0
     anchor_fraction_to_newest_base: float = 0.72
 
-    priority: int = 20
-
     def __post_init__(self) -> None:
         if self.proposal_cadence <= 0.0:
             raise ValueError("proposal_cadence must be positive")
@@ -69,8 +68,6 @@ class StandingConfig:
             raise ValueError("arrival_radius must be positive")
         if not 0.0 <= self.anchor_fraction_to_newest_base <= 1.0:
             raise ValueError("anchor_fraction_to_newest_base must be between 0 and 1")
-        if not 0 <= self.priority <= 100:
-            raise ValueError("priority must be between 0 and 100")
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,14 +112,12 @@ class StandingPlan:
     # no higher-priority mission holds belongs here. A cardinality, not a
     # force size -- "all of them" is exact whatever each unit weighs.
     core_count: int
-    priority: int
 
     def log_fields(self) -> dict[str, Any]:
         return {
             "anchor": [round(float(self.anchor.x), 1), round(float(self.anchor.y), 1)],
             "anchor_reason": self.anchor_reason,
             "core_count": self.core_count,
-            "priority": self.priority,
         }
 
 

@@ -43,8 +43,9 @@ from .debug import (
     SpatialSnapshotExporter,
 )
 from .frame import FrameProcessor
+from .mission_ranking import MissionRanker
 from .opening import OpeningSelector
-from .strategy_shadow import StrategyShadow
+from .strategy_runtime import StrategyRuntime
 from .telemetry import FrameTelemetry
 
 
@@ -56,7 +57,7 @@ class BotComposition:
     # (tests, debugging); `frame` is what drives them.
     missions: MissionController
     macro_planner: MacroPlanner
-    strategy: StrategyShadow
+    strategy: StrategyRuntime
 
 
 def compose_bot(
@@ -161,7 +162,7 @@ def compose_bot(
     )
     economy = EconomyController(logger=logger)
     macro_diagnostics = MacroDiagnostics(logger=logger)
-    strategy = StrategyShadow(logger=logger)
+    strategy = StrategyRuntime(logger=logger)
 
     frame = FrameProcessor(
         logger=logger,
@@ -184,7 +185,8 @@ def compose_bot(
             output_directory=spatial_snapshot_directory,
             logger=logger,
         ),
-        strategy_shadow=strategy,
+        strategy=strategy,
+        mission_ranker=MissionRanker(logger=logger),
     )
     return BotComposition(
         opening=OpeningSelector(rng=rng),

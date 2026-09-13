@@ -6,6 +6,7 @@ from dataclasses import replace
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
+from bot.app.mission_ranking import rank_candidates
 from bot.app.mission_registry import DEFAULT_EXECUTOR_FACTORIES
 from bot.behavior.map_control import MapControlConfig, MapControlPlanner
 from bot.behavior.standing import StandingPlanner
@@ -249,7 +250,7 @@ class StandingOwnershipTests(unittest.IsolatedAsyncioTestCase):
         await controller.tick(
             attention=current,
             awareness=awareness,
-            proposals=disposition.propose(current, awareness),
+            proposals=rank_candidates(disposition.propose(current, awareness)),
             commands=commands,
         )
 
@@ -283,7 +284,7 @@ class HarassPreemptsPositioningTests(unittest.IsolatedAsyncioTestCase):
         await controller.tick(
             attention=current,
             awareness=awareness,
-            proposals=disposition.propose(current, awareness),
+            proposals=rank_candidates(disposition.propose(current, awareness)),
             commands=commands,
         )
         self.assertTrue(
@@ -328,7 +329,7 @@ class DefensePreemptsStandingAndHarassTests(unittest.IsolatedAsyncioTestCase):
         await controller.tick(
             attention=current,
             awareness=awareness,
-            proposals=disposition.propose(current, awareness),
+            proposals=rank_candidates(disposition.propose(current, awareness)),
             commands=commands,
         )
 
@@ -394,7 +395,7 @@ class ReturnToStandingAfterFiniteMissionEndsTests(unittest.IsolatedAsyncioTestCa
         await controller.tick(
             attention=current,
             awareness=awareness,
-            proposals=disposition.propose(current, awareness),
+            proposals=rank_candidates(disposition.propose(current, awareness)),
             commands=commands,
         )
 
@@ -531,7 +532,7 @@ class CrossPlannerPreemptionFromPositionTests(unittest.IsolatedAsyncioTestCase):
         await controller.tick(
             attention=current,
             awareness=awareness,
-            proposals=disposition.propose(current, awareness),
+            proposals=rank_candidates(disposition.propose(current, awareness)),
             commands=commands,
         )
         self.assertTrue(
@@ -576,7 +577,7 @@ class CrossPlannerPreemptionFromPositionTests(unittest.IsolatedAsyncioTestCase):
         await controller.tick(
             attention=current,
             awareness=awareness,
-            proposals=disposition.propose(current, awareness),
+            proposals=rank_candidates(disposition.propose(current, awareness)),
             commands=commands,
         )
         self.assertTrue(
@@ -688,8 +689,8 @@ class ProportionalStandingSquadsTests(unittest.IsolatedAsyncioTestCase):
             attention=current,
             awareness=awareness,
             proposals=(
-                *map_control.propose(current, awareness),
-                *disposition.propose(current, awareness),
+                *rank_candidates(map_control.propose(current, awareness)),
+                *rank_candidates(disposition.propose(current, awareness)),
             ),
             commands=commands,
         )
@@ -720,7 +721,7 @@ class StandingFallbackOwnershipTests(unittest.IsolatedAsyncioTestCase):
         planned = tuple(
             proposal
             for planner in planners
-            for proposal in planner.propose(current, awareness)
+            for proposal in rank_candidates(planner.propose(current, awareness))
         )
         await controller.tick(
             attention=current,

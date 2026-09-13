@@ -1,9 +1,9 @@
-"""PLAN: given the assessment, should we raid, where, and how badly?
+"""PLAN: given the assessment, should we raid, where, and how good is it?
 
-The planner owns the strategic loop for this behavior. It runs on its own
-slow cadence, produces at most one `MissionProposal`, and never touches a
-unit: `MissionController` decides whether the proposal becomes a mission and
-`UnitAllocator` decides which Banshees serve it.
+The planner owns the launch loop for this behavior. It runs on its own slow
+cadence, produces at most one `MissionCandidate`, and never touches a unit:
+the Mission Policy ranks the candidate, `MissionController` decides whether
+it becomes a mission and `UnitAllocator` decides which Banshees serve it.
 
 The raid is a `MissionMode.STANDING` responsibility rather than a one-shot
 job, because every Banshee produced afterwards should join it. Its
@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from bot.behavior.contracts import BehaviorLog
+from bot.behavior.contracts import UNRANKED_PRIORITY, BehaviorLog, MissionCandidate
 from bot.behavior.opening_intent import BuildOpeningIntent, OpeningIntent
 from bot.engine.missions.models import MissionMode, MissionProposal, UnitRequirement
 from bot.engine.missions.planning import (
@@ -27,6 +27,7 @@ from bot.engine.missions.planning import (
     choose_target,
 )
 from bot.ports.logging import BotLogger
+from bot.strategy import MissionSignals, StrategicActivity, StrategicContext
 from bot.world.attention import AttentionSnapshot
 from bot.world.awareness import AwarenessSnapshot
 
@@ -81,7 +82,8 @@ class BansheeHarassPlanner:
         self,
         attention: AttentionSnapshot,
         awareness: AwarenessSnapshot,
-    ) -> tuple[MissionProposal, ...]:
+        strategy: StrategicContext | None = None,
+    ) -> tuple[MissionCandidate, ...]:
         now = attention.world.time
         if not self._cadence.ready(now, self.config.proposal_cadence):
             return ()
@@ -102,7 +104,7 @@ class BansheeHarassPlanner:
         self._activated = True
         self.last_plan = plan
         self._log.proposed(plan, now=now, planner=self.planner_id)
-        return (self._proposal_for(plan, now),)
+        return (self._candidate_for(plan, now),)
 
     def _plan(
         self, assessment: BansheeHarassAssessment
@@ -128,20 +130,29 @@ class BansheeHarassPlanner:
         if target is None:
             return None
 
+        reason = (
+            "best_ranked_banshee_target"
+            if target.viable
+            else "raid_live_without_a_viable_target"
+        )
+        risk = _clamp01(max(target.air_defense_risk, target.army_risk))
         return BansheeHarassPlan(
             target=target,
             # The squad must keep pulling in every Banshee produced, not just
             # the one that triggered the first proposal -- otherwise freshly
             # built Banshees sit idle instead of joining the raid.
             desired_banshees=max(1, assessment.banshees_alive),
-            priority=self.config.priority,
-            reason=(
-                "best_ranked_banshee_target"
-                if target.viable
-                else "raid_live_without_a_viable_target"
-            ),
+            reason=reason,
             readiness=assessment.readiness,
-            risk=max(target.air_defense_risk, target.army_risk),
+            risk=risk,
+            signals=MissionSignals(
+                activity=StrategicActivity.HARASS,
+                opportunity=_clamp01(target.economic_opportunity),
+                urgency=self.config.raid_urgency * _clamp01(assessment.readiness),
+                risk=risk,
+                information_gain=1.0 - _clamp01(target.information_confidence),
+                reason=reason,
+            ),
         )
 
     def _choose_target(
@@ -185,39 +196,48 @@ class BansheeHarassPlanner:
             candidates=[target.summary() for target in assessment.targets],
         )
 
-    def _proposal_for(self, plan: BansheeHarassPlan, now: float) -> MissionProposal:
+    def _candidate_for(
+        self, plan: BansheeHarassPlan, now: float
+    ) -> MissionCandidate:
         sequence = self._cadence.next_sequence()
         prefix = self.config.mission_kind.name.lower()
         target = plan.target
-        return MissionProposal(
-            proposal_id=f"{self.planner_id}:{prefix}:{target.key}:{sequence}",
-            # Keyed by squad, not target: a retarget re-declares the same live
-            # mission rather than replacing it -- and the squad keeps its one
-            # home mission key for life.
-            deduplication_key=f"{prefix}:{self.config.squad_id}",
-            planner=self.planner_id,
-            kind=self.config.mission_kind,
-            priority=plan.priority,
-            target_key=target.key,
-            target=target.position,
-            reason=plan.reason,
-            requirement=UnitRequirement.combat(
-                unit_types=self.config.unit_types,
-                desired=plan.desired_banshees,
-                # A standing squad holding zero units is idle, not failed.
-                minimum=0,
-                minimum_health=self.config.minimum_unit_health,
+        return MissionCandidate(
+            draft=MissionProposal(
+                proposal_id=f"{self.planner_id}:{prefix}:{target.key}:{sequence}",
+                # Keyed by squad, not target: a retarget re-declares the same
+                # live mission rather than replacing it -- and the squad keeps
+                # its one home mission key for life.
+                deduplication_key=f"{prefix}:{self.config.squad_id}",
+                planner=self.planner_id,
+                kind=self.config.mission_kind,
+                priority=UNRANKED_PRIORITY,
+                target_key=target.key,
+                target=target.position,
+                reason=plan.reason,
+                requirement=UnitRequirement.combat(
+                    unit_types=self.config.unit_types,
+                    desired=plan.desired_banshees,
+                    # A standing squad holding zero units is idle, not failed.
+                    minimum=0,
+                    minimum_health=self.config.minimum_unit_health,
+                ),
+                created_at=now,
+                evidence_last_observed_at=target.last_observed_at,
+                evidence_age=target.age,
+                evidence_stale_after=target.stale_after,
+                timeout_seconds=self.config.mission_timeout,
+                cooldown_seconds=self.config.failure_cooldown,
+                # Standing missions hold most otherwise idle combat units, so
+                # the raid must be able to preempt them.
+                can_preempt=True,
+                commitment_seconds=self.config.commitment_seconds,
+                mode=MissionMode.STANDING,
+                squad_id=self.config.squad_id,
             ),
-            created_at=now,
-            evidence_last_observed_at=target.last_observed_at,
-            evidence_age=target.age,
-            evidence_stale_after=target.stale_after,
-            timeout_seconds=self.config.mission_timeout,
-            cooldown_seconds=self.config.failure_cooldown,
-            # Standing missions hold most otherwise idle combat units, so the
-            # raid must be able to preempt them. DEFENSE still outranks it.
-            can_preempt=True,
-            commitment_seconds=self.config.commitment_seconds,
-            mode=MissionMode.STANDING,
-            squad_id=self.config.squad_id,
+            signals=plan.signals,
         )
+
+
+def _clamp01(value: float) -> float:
+    return max(0.0, min(1.0, value))

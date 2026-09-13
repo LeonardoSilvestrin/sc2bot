@@ -26,9 +26,13 @@ class FrameProcessorOrderTests(unittest.IsolatedAsyncioTestCase):
             def __init__(self, name: str) -> None:
                 self.name = name
 
-            def propose(self, attention, awareness):
+            def propose(self, attention, awareness, strategy=None):
                 calls.append(f"propose:{self.name}")
                 return (f"proposal:{self.name}",)
+
+        def rank(candidates, strategy):
+            calls.append("mission_ranker.rank")
+            return candidates
 
         async def missions_tick(**kwargs):
             calls.append("missions.tick")
@@ -66,6 +70,7 @@ class FrameProcessorOrderTests(unittest.IsolatedAsyncioTestCase):
             spatial_debug=SimpleNamespace(
                 enabled=True, render=record("spatial_debug.render")
             ),
+            mission_ranker=SimpleNamespace(rank=rank),
         )
 
         with (
@@ -88,6 +93,7 @@ class FrameProcessorOrderTests(unittest.IsolatedAsyncioTestCase):
                 "scouting_vision.tick",
                 "propose:intel",
                 "propose:standing",
+                "mission_ranker.rank",
                 "vision.resolve",
                 "register_baseline_behaviors",
                 "missions.tick",

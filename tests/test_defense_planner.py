@@ -6,6 +6,7 @@ from dataclasses import replace
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
+from bot.app.mission_ranking import rank_candidates
 from bot.behavior.defense import DefenseAssessor, DefensePlanner
 from bot.engine.missions import MissionKind, UnitRequirement
 from bot.engine.missions.allocator import UnitAllocator
@@ -108,13 +109,17 @@ class DefensePlannerTests(unittest.TestCase):
         current = attention(10.0)
         awareness = AwarenessService().update(current)
 
-        self.assertEqual(DefensePlanner().propose(current, awareness), ())
+        self.assertEqual(
+            rank_candidates(DefensePlanner().propose(current, awareness)), ()
+        )
 
     def test_no_proposal_for_an_enemy_worker_alone(self):
         current = attention(10.0, enemy_units=(enemy_worker(1, Point2((12, 10))),))
         awareness = AwarenessService().update(current)
 
-        self.assertEqual(DefensePlanner().propose(current, awareness), ())
+        self.assertEqual(
+            rank_candidates(DefensePlanner().propose(current, awareness)), ()
+        )
 
     def test_no_proposal_for_a_threat_outside_the_detection_radius(self):
         current = attention(
@@ -122,7 +127,9 @@ class DefensePlannerTests(unittest.TestCase):
         )
         awareness = AwarenessService().update(current)
 
-        self.assertEqual(DefensePlanner().propose(current, awareness), ())
+        self.assertEqual(
+            rank_candidates(DefensePlanner().propose(current, awareness)), ()
+        )
 
     def test_no_proposal_for_a_threat_that_is_not_currently_visible(self):
         current = attention(
@@ -131,13 +138,15 @@ class DefensePlannerTests(unittest.TestCase):
         )
         awareness = AwarenessService().update(current)
 
-        self.assertEqual(DefensePlanner().propose(current, awareness), ())
+        self.assertEqual(
+            rank_candidates(DefensePlanner().propose(current, awareness)), ()
+        )
 
     def test_proposes_defense_for_a_combat_threat_near_own_start(self):
         current = attention(10.0, enemy_units=(enemy_marine(1, Point2((12, 10))),))
         awareness = AwarenessService().update(current)
 
-        proposals = DefensePlanner().propose(current, awareness)
+        proposals = rank_candidates(DefensePlanner().propose(current, awareness))
 
         self.assertEqual(len(proposals), 1)
         proposal = proposals[0]
@@ -176,7 +185,7 @@ class DefensePlannerTests(unittest.TestCase):
         )
         awareness = AwarenessService().update(current)
 
-        proposals = DefensePlanner().propose(current, awareness)
+        proposals = rank_candidates(DefensePlanner().propose(current, awareness))
 
         self.assertEqual(len(proposals), 1)
         self.assertEqual(proposals[0].target, Point2((41, 40)))
@@ -191,7 +200,7 @@ class DefensePlannerTests(unittest.TestCase):
         )
         awareness = AwarenessService().update(current)
 
-        proposals = DefensePlanner().propose(current, awareness)
+        proposals = rank_candidates(DefensePlanner().propose(current, awareness))
 
         self.assertEqual(len(proposals), 1)
         self.assertEqual(proposals[0].target, Point2((11, 10)))
@@ -210,7 +219,7 @@ class DefensePlannerTests(unittest.TestCase):
         )
         awareness = AwarenessService().update(current)
 
-        proposals = DefensePlanner().propose(current, awareness)
+        proposals = rank_candidates(DefensePlanner().propose(current, awareness))
 
         self.assertEqual(len(proposals), 2)
         dedup_keys = {proposal.deduplication_key for proposal in proposals}
@@ -227,7 +236,7 @@ class DefensePlannerTests(unittest.TestCase):
         )
         awareness = AwarenessService().update(current)
 
-        proposals = DefensePlanner().propose(current, awareness)
+        proposals = rank_candidates(DefensePlanner().propose(current, awareness))
 
         self.assertEqual(len(proposals), 1)
         self.assertEqual(proposals[0].deduplication_key, "defense:base:10")
@@ -264,7 +273,7 @@ class DefensePlannerTests(unittest.TestCase):
         )
         awareness = AwarenessService().update(current)
 
-        proposals = DefensePlanner().propose(current, awareness)
+        proposals = rank_candidates(DefensePlanner().propose(current, awareness))
         by_key = {proposal.deduplication_key: proposal for proposal in proposals}
 
         self.assertLess(
@@ -275,11 +284,19 @@ class DefensePlannerTests(unittest.TestCase):
         planner = DefensePlanner()
         first = attention(10.0, enemy_units=(enemy_marine(1, Point2((12, 10))),))
         self.assertEqual(
-            len(planner.propose(first, AwarenessService().update(first))), 1
+            len(
+                rank_candidates(
+                    planner.propose(first, AwarenessService().update(first))
+                )
+            ),
+            1,
         )
 
         second = attention(11.0, enemy_units=(enemy_marine(1, Point2((12, 10))),))
-        self.assertEqual(planner.propose(second, AwarenessService().update(second)), ())
+        self.assertEqual(
+            rank_candidates(planner.propose(second, AwarenessService().update(second))),
+            (),
+        )
 
 
 def enemy_mutalisk(tag: int, position: Point2) -> UnitSnapshot:
@@ -343,20 +360,20 @@ class DefenseAssessmentTests(unittest.TestCase):
         awareness = AwarenessService().update(current)
         planner = DefensePlanner(logger=FakeLogger())
 
-        proposals = planner.propose(current, awareness)
+        proposals = rank_candidates(planner.propose(current, awareness))
 
         self.assertEqual(len(proposals), 1)
         plan = planner.last_plans[0]
         self.assertEqual(plan.desired_units, proposals[0].requirement.desired)
         self.assertTrue(plan.base.is_critical)
-        self.assertEqual(plan.priority, 95)
+        self.assertEqual(plan.signals.urgency, 1.0)
 
     def test_logs_the_assessment_and_every_plan(self):
         logger = FakeLogger()
         current = attention(10.0, enemy_units=(enemy_marine(1, Point2((12, 10))),))
         awareness = AwarenessService().update(current)
 
-        DefensePlanner(logger=logger).propose(current, awareness)
+        rank_candidates(DefensePlanner(logger=logger).propose(current, awareness))
 
         names = [event["name"] for event in logger.events]
         self.assertIn("behavior.assessed", names)
@@ -377,8 +394,8 @@ class DefenderPreferenceTests(unittest.TestCase):
 
     def requirement_against(self, *enemies: UnitSnapshot) -> UnitRequirement:
         current = attention(10.0, enemy_units=enemies)
-        proposals = DefensePlanner().propose(
-            current, AwarenessService().update(current)
+        proposals = rank_candidates(
+            DefensePlanner().propose(current, AwarenessService().update(current))
         )
         self.assertEqual(len(proposals), 1)
         return proposals[0].requirement
@@ -436,8 +453,10 @@ class DefenderPreferenceTests(unittest.TestCase):
             10.0, enemy_units=(enemy_mutalisk(1, Point2((12, 10))),)
         )
 
-        DefensePlanner(logger=logger).propose(
-            current, AwarenessService().update(current)
+        rank_candidates(
+            DefensePlanner(logger=logger).propose(
+                current, AwarenessService().update(current)
+            )
         )
 
         proposed = next(

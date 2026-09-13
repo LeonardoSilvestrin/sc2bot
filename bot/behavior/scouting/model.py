@@ -10,6 +10,7 @@ from sc2.position import Point2
 
 from bot.engine.missions.models import MissionKind
 from bot.engine.services import VisionRequestResult, VisionUrgency
+from bot.strategy import MissionSignals
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,7 +22,6 @@ class IntelConfig:
     minimum_workers: int = 16
     repeat_scouts_after: float = 240.0
     proposal_cadence: float = 65.0
-    priority: int = 65
     mission_timeout: float = 105.0
     failure_cooldown: float = 18.0
     unit_types: frozenset[UnitTypeId] = field(
@@ -31,6 +31,16 @@ class IntelConfig:
         default_factory=lambda: frozenset({UnitTypeId.SCV})
     )
     minimum_unit_health: float = 0.70
+
+    # --- opportunity signals (local; the Mission Policy ranks them) --------
+    # How well the scout we would send does the job: the preferred unit, or
+    # the fallback worker whose trip also costs mining.
+    preferred_scout_opportunity: float = 0.7
+    fallback_scout_opportunity: float = 0.4
+    # Danger to a lone scout at the enemy's location.
+    scout_risk: float = 0.25
+    # Information decays: a stale answer is mildly urgent, never an emergency.
+    stale_urgency: float = 0.15
 
     # --- tactics ----------------------------------------------------------
     arrival_radius: float = 4.0
@@ -45,8 +55,16 @@ class IntelConfig:
             raise ValueError("freshness and cadence must be positive")
         if self.minimum_workers < 1 or self.repeat_scouts_after < 0.0:
             raise ValueError("invalid economic scout gate")
-        if not 0 <= self.priority <= 100 or self.mission_timeout <= 0.0:
-            raise ValueError("invalid priority or mission timeout")
+        if self.mission_timeout <= 0.0:
+            raise ValueError("mission_timeout must be positive")
+        for name in (
+            "preferred_scout_opportunity",
+            "fallback_scout_opportunity",
+            "scout_risk",
+            "stale_urgency",
+        ):
+            if not 0.0 <= getattr(self, name) <= 1.0:
+                raise ValueError(f"{name} must be between 0 and 1")
         if self.failure_cooldown < 0.0:
             raise ValueError("failure_cooldown must not be negative")
         if not self.unit_types:
@@ -107,14 +125,15 @@ class ScoutPlan:
 
     target: ScoutTarget
     unit_types: frozenset[UnitTypeId]
-    priority: int
     reason: str
+    # The local reading the Mission Policy ranks this scout from.
+    signals: MissionSignals
 
     def log_fields(self) -> dict[str, Any]:
         return {
             "target": self.target.key,
             "unit_types": sorted(item.name for item in self.unit_types),
-            "priority": self.priority,
+            **self.signals.log_fields(),
             "reason": self.reason,
         }
 

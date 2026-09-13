@@ -17,6 +17,7 @@ from .config import (
     StrategyConfig,
     TakeMapControlWeights,
 )
+from .context import StrategicContext
 from .director import StrategicDirector
 from .hysteresis import ObjectiveState, decision_confidence, select_objective
 from .intent import IntentConfig, StrategicActivity, StrategicIntent, derive_intent
@@ -63,6 +64,7 @@ __all__ = [
     "ScoreContribution",
     "StabilizeWeights",
     "StrategicActivity",
+    "StrategicContext",
     "StrategicDirector",
     "StrategicIntent",
     "StrategicObjective",

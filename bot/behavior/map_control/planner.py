@@ -18,10 +18,11 @@ from dataclasses import dataclass, field, replace
 
 from sc2.position import Point2
 
-from bot.behavior.contracts import BehaviorLog
+from bot.behavior.contracts import UNRANKED_PRIORITY, BehaviorLog, MissionCandidate
 from bot.engine.missions.models import MissionMode, MissionProposal, UnitRequirement
 from bot.engine.missions.planning import ProposalCadence
 from bot.ports.logging import BotLogger
+from bot.strategy import MissionSignals, StrategicActivity, StrategicContext
 from bot.world.attention import AttentionSnapshot
 from bot.world.awareness import AwarenessSnapshot
 from bot.world.awareness.spatial import SpatialFieldSample
@@ -67,7 +68,8 @@ class MapControlPlanner:
         self,
         attention: AttentionSnapshot,
         awareness: AwarenessSnapshot,
-    ) -> tuple[MissionProposal, ...]:
+        strategy: StrategicContext | None = None,
+    ) -> tuple[MissionCandidate, ...]:
         now = attention.world.time
         if now < self.config.start_after:
             return ()
@@ -81,13 +83,42 @@ class MapControlPlanner:
             return ()
 
         self._cadence.mark(now)
-        plan = self._plan(self._spatial_anchor(attention, awareness), assessment)
+        selected = self._select_anchor(attention, awareness)
+        anchor = (
+            attention.world.map.center if selected is None else selected.sample.position
+        )
+        plan = self._plan(anchor, assessment, self._signals(selected))
         self._log_plan_change(plan, assessment)
         self.last_plan = plan
-        return (self._proposal_for(plan, now),)
+        return (self._candidate_for(plan, now),)
+
+    def _signals(self, selected: MapControlCandidate | None) -> MissionSignals:
+        """The chosen anchor, read as an opportunity.
+
+        Opportunity is its spatial score against the best a sample could
+        reach; risk is the enemy threat or control standing on it; what
+        patrolling there would teach us is how little we know of it.
+        """
+
+        if selected is None:
+            return MissionSignals(
+                activity=StrategicActivity.MAP_CONTROL,
+                reason="no_spatial_field_holding_map_center",
+            )
+        sample = selected.sample
+        return MissionSignals(
+            activity=StrategicActivity.MAP_CONTROL,
+            opportunity=_clamp01(selected.score / max_spatial_score(self.config)),
+            risk=_clamp01(max(sample.enemy_threat, sample.enemy_control)),
+            information_gain=_clamp01(selected.unknown_risk),
+            reason=selected.reason,
+        )
 
     def _plan(
-        self, anchor: Point2, assessment: MapControlAssessment
+        self,
+        anchor: Point2,
+        assessment: MapControlAssessment,
+        signals: MissionSignals,
     ) -> MapControlPlan:
         """Size the patrol as a share of the army's supply, not its head count.
 
@@ -101,7 +132,7 @@ class MapControlPlanner:
                 anchor=anchor,
                 desired_units=self.config.desired_units,
                 supply_budget=None,
-                priority=self.config.priority,
+                signals=signals,
             )
         return MapControlPlan(
             anchor=anchor,
@@ -109,12 +140,12 @@ class MapControlPlanner:
             supply_budget=round(
                 assessment.combat_supply * self.config.force_ratio, 2
             ),
-            priority=self.config.priority,
+            signals=signals,
         )
 
-    def _spatial_anchor(
+    def _select_anchor(
         self, attention: AttentionSnapshot, awareness: AwarenessSnapshot
-    ) -> Point2:
+    ) -> MapControlCandidate | None:
         all_samples = awareness.spatial.candidates
         samples = tuple(
             sample
@@ -129,7 +160,7 @@ class MapControlPlanner:
             samples = all_samples
         if not samples:
             self.last_candidates = ()
-            return attention.world.map.center
+            return None
 
         lattice = _lattice_index(samples, awareness.spatial.sample_spacing)
         candidates = tuple(
@@ -256,7 +287,7 @@ class MapControlPlanner:
                 ),
                 reason=switch_reason,
             )
-        return selected.sample.position
+        return selected
 
     def _candidate(
         self,
@@ -318,7 +349,12 @@ class MapControlPlanner:
     ) -> None:
         """Only speak up when the squad's size or anchor actually moves."""
 
-        if self.last_plan == plan:
+        previous = self.last_plan
+        if previous is not None and (
+            previous.anchor,
+            previous.desired_units,
+            previous.supply_budget,
+        ) == (plan.anchor, plan.desired_units, plan.supply_budget):
             return
         self._log.assessed(assessment, now=assessment.now, decision="propose")
         self._log.proposed(
@@ -328,35 +364,52 @@ class MapControlPlanner:
             role=self.config.role.name,
         )
 
-    def _proposal_for(self, plan: MapControlPlan, now: float) -> MissionProposal:
+    def _candidate_for(self, plan: MapControlPlan, now: float) -> MissionCandidate:
         sequence = self._cadence.next_sequence()
-        return MissionProposal(
-            proposal_id=f"{self.planner_id}:{sequence}",
-            deduplication_key=DEDUPLICATION_KEY,
-            planner=self.planner_id,
-            kind=self.config.mission_kind,
-            priority=plan.priority,
-            target_key=DEDUPLICATION_KEY,
-            target=plan.anchor,
-            reason="persistent_map_control_share_available",
-            requirement=UnitRequirement.for_role(
-                self.config.role,
-                desired=plan.desired_units,
-                # The standing mission survives full defense preemption.
-                minimum=0,
-                minimum_health=self.config.minimum_unit_health,
-                supply_budget=plan.supply_budget,
+        return MissionCandidate(
+            draft=MissionProposal(
+                proposal_id=f"{self.planner_id}:{sequence}",
+                deduplication_key=DEDUPLICATION_KEY,
+                planner=self.planner_id,
+                kind=self.config.mission_kind,
+                priority=UNRANKED_PRIORITY,
+                target_key=DEDUPLICATION_KEY,
+                target=plan.anchor,
+                reason="persistent_map_control_share_available",
+                requirement=UnitRequirement.for_role(
+                    self.config.role,
+                    desired=plan.desired_units,
+                    # The standing mission survives full defense preemption.
+                    minimum=0,
+                    minimum_health=self.config.minimum_unit_health,
+                    supply_budget=plan.supply_budget,
+                ),
+                created_at=now,
+                timeout_seconds=self.config.mission_timeout,
+                cooldown_seconds=self.config.failure_cooldown,
+                # The core army holds most combat units, so map control must
+                # be able to acquire its smaller standing share from it.
+                can_preempt=True,
+                commitment_seconds=self.config.commitment_seconds,
+                mode=MissionMode.STANDING,
+                squad_id=self.config.squad_id,
             ),
-            created_at=now,
-            timeout_seconds=self.config.mission_timeout,
-            cooldown_seconds=self.config.failure_cooldown,
-            # The core army holds most combat units, so map control must be
-            # able to acquire its smaller standing share from it.
-            can_preempt=True,
-            commitment_seconds=self.config.commitment_seconds,
-            mode=MissionMode.STANDING,
-            squad_id=self.config.squad_id,
+            signals=plan.signals,
         )
+
+
+def max_spatial_score(config: MapControlConfig) -> float:
+    """The highest score a sample could reach: every reward at full value
+    and no penalty."""
+
+    return max(
+        config.friendly_weight
+        + config.frontier_weight
+        + config.advancement_weight
+        + config.choke_weight
+        + config.route_weight,
+        1e-6,
+    )
 
 
 def score_spatial_sample(
@@ -478,3 +531,7 @@ def _lattice_neighbours(
 
 def _xy(point: Point2) -> list[float]:
     return [round(float(point.x), 1), round(float(point.y), 1)]
+
+
+def _clamp01(value: float) -> float:
+    return max(0.0, min(1.0, value))

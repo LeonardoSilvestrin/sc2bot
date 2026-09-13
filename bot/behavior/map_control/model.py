@@ -10,6 +10,7 @@ from sc2.position import Point2
 
 from bot.engine.missions.models import MissionKind
 from bot.engine.missions.roles import CombatRole
+from bot.strategy import MissionSignals
 from bot.world.awareness.spatial import SpatialFieldSample
 
 
@@ -19,7 +20,6 @@ class MapControlConfig:
 
     start_after: float = 0.0
     proposal_cadence: float = 15.0
-    priority: int = 40
     mission_timeout: float = 3600.0
     failure_cooldown: float = 15.0
     # What the patrol is for, not what it is made of: every combat unit is
@@ -79,8 +79,6 @@ class MapControlConfig:
             raise ValueError("start_after must not be negative")
         if self.proposal_cadence <= 0.0:
             raise ValueError("proposal_cadence must be positive")
-        if not 0 <= self.priority <= 100:
-            raise ValueError("priority must be between 0 and 100")
         if self.mission_timeout <= 0.0:
             raise ValueError("mission_timeout must be positive")
         if self.failure_cooldown < 0.0:
@@ -171,14 +169,15 @@ class MapControlPlan:
     # budget is what binds.
     desired_units: int
     supply_budget: float | None
-    priority: int
+    # The local reading the Mission Policy ranks this patrol from.
+    signals: MissionSignals
 
     def log_fields(self) -> dict[str, Any]:
         return {
             "anchor": [round(float(self.anchor.x), 1), round(float(self.anchor.y), 1)],
             "desired_units": self.desired_units,
             "supply_budget": self.supply_budget,
-            "priority": self.priority,
+            **self.signals.log_fields(),
         }
 
 

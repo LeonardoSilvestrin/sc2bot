@@ -1,8 +1,8 @@
-"""Strategy stays a pure layer, and stays in shadow mode.
+"""Strategy stays a pure layer, and only the runtime drives it.
 
 The scoring/director core remains runtime-free. The one named adapter may
-read Awareness, and the app may update/log snapshots in shadow mode, but no
-gameplay module may consume the new objective yet.
+read Awareness; the app runtime updates the director and publishes its
+intent. Gameplay reads that intent, never the objective itself.
 """
 
 from __future__ import annotations
@@ -94,14 +94,15 @@ class PurityTests(unittest.TestCase):
         self.assertEqual(found, [])
 
 
-class ShadowModeTests(unittest.TestCase):
-    def test_only_the_shadow_coordinator_consumes_the_new_strategy_api(self):
+class ConsumerTests(unittest.TestCase):
+    def test_only_the_runtime_drives_the_director(self):
         strategic_names = {
             "StrategicDirector",
             "StrategicObjective",
             "StrategyInputs",
             "StrategySnapshot",
             "build_strategy_inputs",
+            "derive_intent",
         }
         consumers: list[str] = []
         for path in sorted(BOT.rglob("*.py")):
@@ -116,7 +117,7 @@ class ShadowModeTests(unittest.TestCase):
                 if strategic_names.intersection(alias.name for alias in node.names):
                     consumers.append(path.relative_to(BOT).as_posix())
 
-        self.assertEqual(consumers, ["app/strategy_shadow.py"])
+        self.assertEqual(consumers, ["app/strategy_runtime.py"])
 
     def test_awareness_never_imports_strategy(self):
         consumers = [

@@ -6,6 +6,7 @@ from unittest.mock import Mock
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
+from bot.app.mission_ranking import rank_candidates
 from bot.behavior.defense import DefensePlanner
 from bot.behavior.scouting import ScoutingVisionRequester
 from bot.engine.missions import MissionContext
@@ -143,8 +144,10 @@ class VisionConsumerTests(unittest.TestCase):
         awareness_service = AwarenessService()
         awareness_service.update(visible)
 
-        DefensePlanner(services=services).propose(
-            hidden, awareness_service.update(hidden)
+        rank_candidates(
+            DefensePlanner(services=services).propose(
+                hidden, awareness_service.update(hidden)
+            )
         )
 
         vision.request.assert_called_once_with(

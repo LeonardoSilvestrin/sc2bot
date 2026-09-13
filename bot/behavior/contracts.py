@@ -7,7 +7,7 @@ the vocabulary so that opening any behavior folder answers the same
 questions in the same order.
 
     ASSESS    what is the situation, seen through this behavior's lens?
-    PLAN      given that, what do we want, at what priority, with what units?
+    PLAN      given that, which concrete opportunities exist, with what units?
     EXECUTE   how do we make it happen this frame?
 
 A behavior small enough not to need four files may collapse them; what it
@@ -15,18 +15,23 @@ may not do is blur the responsibilities. In particular an assessment only
 *describes* -- it never takes ownership of a unit or creates a mission --
 and a planner only *proposes* -- `MissionController` alone admits.
 
+A planner does not rank its proposals either. It describes each opportunity
+in local `MissionSignals`, and the Mission Policy (`bot.strategy`) puts every
+behavior's candidates on one priority scale before the engine sees them.
+
 Everything here is about units already on the map. Deciding what to buy is
 a different contract with a different controller: see `bot.macro.contracts`.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Protocol, runtime_checkable
 
 from bot.engine.missions.execution import MissionContext, MissionResult
 from bot.engine.missions.models import MissionProposal
 from bot.ports.logging import BotLogger
+from bot.strategy import MissionSignals, StrategicContext
 from bot.world.attention import AttentionSnapshot
 from bot.world.awareness import AwarenessSnapshot
 
@@ -55,15 +60,48 @@ class BehaviorAssessor(Protocol):
         ...
 
 
+# The priority every draft carries until the Mission Policy ranks it.
+UNRANKED_PRIORITY = 0
+
+
+@dataclass(frozen=True, slots=True)
+class MissionCandidate:
+    """One concrete opportunity a planner found, before it is ranked.
+
+    ``draft`` is the whole mission the planner would run -- target, units,
+    lifecycle -- with its priority left at ``UNRANKED_PRIORITY``. How much it
+    is worth against every other behavior's opportunities is not the
+    planner's call: ``bot.app.mission_ranking`` scores ``signals`` under the
+    current strategy and hands the engine ``ranked(priority)``.
+    """
+
+    draft: MissionProposal
+    signals: MissionSignals
+
+    def __post_init__(self) -> None:
+        if self.draft.priority != UNRANKED_PRIORITY:
+            raise ValueError("a planner must not rank its own proposal")
+
+    def ranked(self, priority: int) -> MissionProposal:
+        return replace(self.draft, priority=priority)
+
+
 @runtime_checkable
 class BehaviorPlanner(Protocol):
-    """Turns an assessment into zero or more mission proposals."""
+    """Turns an assessment into zero or more mission candidates.
+
+    ``strategy`` is what Strategy currently wants; ``None`` reads as the
+    neutral context (tests, tools).
+    """
 
     planner_id: str
 
     def propose(
-        self, attention: AttentionSnapshot, awareness: AwarenessSnapshot
-    ) -> tuple[MissionProposal, ...]:
+        self,
+        attention: AttentionSnapshot,
+        awareness: AwarenessSnapshot,
+        strategy: StrategicContext | None = None,
+    ) -> tuple[MissionCandidate, ...]:
         ...
 
 
@@ -119,9 +157,11 @@ class BehaviorLog:
 
 
 __all__ = [
+    "UNRANKED_PRIORITY",
     "BehaviorAssessment",
     "BehaviorAssessor",
     "BehaviorExecutor",
     "BehaviorLog",
     "BehaviorPlanner",
+    "MissionCandidate",
 ]

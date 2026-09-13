@@ -18,6 +18,7 @@ from sc2.ids.upgrade_id import UpgradeId
 from sc2.position import Point2
 
 from bot.engine.missions.models import MissionKind
+from bot.strategy import MissionSignals
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,7 +131,6 @@ class BansheeHarassConfig:
     # current, so a freshly produced Banshee joins the raid within a few
     # seconds instead of waiting out a long cadence.
     proposal_cadence: float = 8.0
-    priority: int = 62
     mission_timeout: float = 70.0
     failure_cooldown: float = 30.0
     minimum_unit_health: float = 0.5
@@ -142,6 +142,10 @@ class BansheeHarassConfig:
     # the raid still starts with one Banshee, this only says when it reads
     # as fully assembled.
     preferred_squad_size: int = 2
+    # How pressing a fully ready raid is -- the window before detection
+    # arrives -- as a local signal, scaled by readiness. The Mission Policy
+    # decides what that is worth.
+    raid_urgency: float = 0.2
 
     # --- targeting: where the raid flies ----------------------------------
     targeting: BansheeTargetHeuristics = field(
@@ -159,9 +163,9 @@ class BansheeHarassConfig:
     infiltration_radius: float = 12.0
     retreat_health: float = 0.45
     # What it costs to pull these Banshees off the raid right now, added to
-    # the allocator's preemption margin. Deliberately smaller than the gap
-    # between AIR_HARASS (62) and DEFENSE (85): a base under attack still
-    # wins the Banshees mid-strike, a same-tier mission no longer does.
+    # the allocator's preemption margin. Deliberately small on the Mission
+    # Policy's scale: a base under real attack (urgency near 1) still wins
+    # the Banshees mid-strike, a mission of similar rank no longer does.
     strike_preemption_cost: float = 5.0
 
     mission_kind: MissionKind = MissionKind.AIR_HARASS
@@ -176,8 +180,8 @@ class BansheeHarassConfig:
             raise ValueError("minimum_workers must be at least 1")
         if self.proposal_cadence <= 0.0:
             raise ValueError("proposal_cadence must be positive")
-        if not 0 <= self.priority <= 100:
-            raise ValueError("priority must be between 0 and 100")
+        if not 0.0 <= self.raid_urgency <= 1.0:
+            raise ValueError("raid_urgency must be between 0 and 1")
         if self.mission_timeout <= 0.0:
             raise ValueError("mission_timeout must be positive")
         if self.failure_cooldown < 0.0:
@@ -313,10 +317,11 @@ class BansheeHarassPlan:
 
     target: BansheeTargetAssessment
     desired_banshees: int
-    priority: int
     reason: str
     readiness: float
     risk: float
+    # The local reading the Mission Policy ranks this raid from.
+    signals: MissionSignals
 
     def log_fields(self) -> dict[str, Any]:
         return {
@@ -324,7 +329,7 @@ class BansheeHarassPlan:
             "target_score": round(self.target.score, 2),
             "target_viable": self.target.viable,
             "desired_banshees": self.desired_banshees,
-            "priority": self.priority,
+            **self.signals.log_fields(),
             "reason": self.reason,
             "readiness": round(self.readiness, 2),
             "risk": round(self.risk, 2),

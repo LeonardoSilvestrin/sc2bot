@@ -111,6 +111,30 @@ class CrossBehaviorRankingTests(unittest.TestCase):
 
         self.assertGreater(harass.priority, defense.priority)
 
+    def test_the_default_state_keeps_a_raid_above_the_patrol_by_the_margin(self):
+        """Banshees and Reapers also suit the patrol's role: a ready raid of
+        the same local quality must still be able to take them back."""
+
+        raid = MissionSignals(
+            activity=StrategicActivity.HARASS,
+            opportunity=0.7,
+            urgency=0.2,
+            risk=0.2,
+            information_gain=0.3,
+        )
+        patrol = MissionSignals(
+            activity=StrategicActivity.MAP_CONTROL,
+            opportunity=0.7,
+            risk=0.1,
+            information_gain=0.3,
+        )
+
+        self.assertGreaterEqual(
+            score_mission(raid, BUILD).priority,
+            score_mission(patrol, BUILD).priority
+            + UnitAllocator().preemption_margin,
+        )
+
     def test_the_same_pair_flips_when_strategy_stabilizes(self):
         harass = score_mission(good_harass(), STABILIZE)
         defense = score_mission(low_urgency_defense(), STABILIZE)
@@ -135,6 +159,9 @@ class CrossBehaviorRankingTests(unittest.TestCase):
         )
 
     def test_urgency_raises_utility_more_strongly_than_opportunity(self):
+        """Linearly at a typical desirability, and past the emergency point
+        regardless of it (see the floor tests)."""
+
         base = MissionSignals(activity=StrategicActivity.DEFENSE, opportunity=0.5)
         opportune = MissionSignals(activity=StrategicActivity.DEFENSE, opportunity=0.8)
         urgent = MissionSignals(

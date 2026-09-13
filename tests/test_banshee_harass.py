@@ -13,6 +13,7 @@ from sc2.ids.unit_typeid import UnitTypeId
 from sc2.ids.upgrade_id import UpgradeId
 from sc2.position import Point2
 
+from bot.app.mission_ranking import rank_candidates
 from bot.app.mission_registry import build_executor_factories
 from bot.behavior.harass.banshee import (
     BansheeHarassAssessor,
@@ -226,7 +227,7 @@ class PlannerTests(unittest.TestCase):
         service = AwarenessService()
         current, awareness = scouted(service, own_units=(banshee(1), banshee(2)))
 
-        proposals = BansheeHarassPlanner().propose(current, awareness)
+        proposals = rank_candidates(BansheeHarassPlanner().propose(current, awareness))
 
         self.assertEqual(len(proposals), 1)
         proposal = proposals[0]
@@ -241,7 +242,9 @@ class PlannerTests(unittest.TestCase):
         service = AwarenessService()
         current, awareness = scouted(service)
 
-        self.assertEqual(BansheeHarassPlanner().propose(current, awareness), ())
+        self.assertEqual(
+            rank_candidates(BansheeHarassPlanner().propose(current, awareness)), ()
+        )
 
     def test_withholds_while_the_build_does_not_call_for_the_raid(self):
         service = AwarenessService()
@@ -249,7 +252,9 @@ class PlannerTests(unittest.TestCase):
             service, own_units=(banshee(1),), opening="BioThreeOneOne"
         )
 
-        self.assertEqual(BansheeHarassPlanner().propose(current, awareness), ())
+        self.assertEqual(
+            rank_candidates(BansheeHarassPlanner().propose(current, awareness)), ()
+        )
 
     def test_records_its_assessment_and_plan_for_the_log(self):
         logger = FakeLogger()
@@ -257,7 +262,7 @@ class PlannerTests(unittest.TestCase):
         current, awareness = scouted(service, own_units=(banshee(1),))
         planner = BansheeHarassPlanner(logger=logger)
 
-        planner.propose(current, awareness)
+        rank_candidates(planner.propose(current, awareness))
 
         self.assertIsNotNone(planner.last_assessment)
         self.assertIsNotNone(planner.last_plan)
@@ -529,7 +534,9 @@ class OwnershipTests(unittest.IsolatedAsyncioTestCase):
         await controller.tick(
             attention=current,
             awareness=awareness,
-            proposals=BansheeHarassPlanner().propose(current, awareness),
+            proposals=rank_candidates(
+                BansheeHarassPlanner().propose(current, awareness)
+            ),
             commands=commands,
         )
 
@@ -552,7 +559,9 @@ class OwnershipTests(unittest.IsolatedAsyncioTestCase):
         await controller.tick(
             attention=current,
             awareness=awareness,
-            proposals=BansheeHarassPlanner().propose(current, awareness),
+            proposals=rank_candidates(
+                BansheeHarassPlanner().propose(current, awareness)
+            ),
             commands=commands,
         )
         raid = controller.board.live()[0]
@@ -591,7 +600,9 @@ class OwnershipTests(unittest.IsolatedAsyncioTestCase):
         await controller.tick(
             attention=current,
             awareness=awareness,
-            proposals=BansheeHarassPlanner().propose(current, awareness),
+            proposals=rank_candidates(
+                BansheeHarassPlanner().propose(current, awareness)
+            ),
             commands=commands,
         )
 
@@ -632,7 +643,7 @@ class OwnershipTests(unittest.IsolatedAsyncioTestCase):
         await controller.tick(
             attention=current,
             awareness=awareness,
-            proposals=planner.propose(current, awareness),
+            proposals=rank_candidates(planner.propose(current, awareness)),
             commands=commands,
         )
         raid = controller.board.live()[0]
@@ -656,7 +667,7 @@ class OwnershipTests(unittest.IsolatedAsyncioTestCase):
         await controller.tick(
             attention=back,
             awareness=back_awareness,
-            proposals=planner.propose(back, back_awareness),
+            proposals=rank_candidates(planner.propose(back, back_awareness)),
             commands=commands,
         )
         self.assertEqual(defense.status, MissionStatus.COMPLETED)
@@ -677,7 +688,7 @@ class OwnershipTests(unittest.IsolatedAsyncioTestCase):
         await controller.tick(
             attention=current,
             awareness=awareness,
-            proposals=standing.propose(current, awareness),
+            proposals=rank_candidates(standing.propose(current, awareness)),
             commands=commands,
         )
         standing_mission = controller.board.live()[0]
@@ -705,7 +716,7 @@ class OwnershipTests(unittest.IsolatedAsyncioTestCase):
         await controller.tick(
             attention=current,
             awareness=awareness,
-            proposals=planner.propose(current, awareness),
+            proposals=rank_candidates(planner.propose(current, awareness)),
             commands=commands,
         )
         commands.commands.clear()
@@ -713,7 +724,7 @@ class OwnershipTests(unittest.IsolatedAsyncioTestCase):
         # One second later the planner's cadence is not ready...
         soon = attention(21.0, own_units=(banshee(1, Point2((50, 50))),))
         soon_awareness = service.update(soon)
-        self.assertEqual(planner.propose(soon, soon_awareness), ())
+        self.assertEqual(rank_candidates(planner.propose(soon, soon_awareness)), ())
 
         # ...but the mission still steps its executor and issues commands.
         await controller.tick(

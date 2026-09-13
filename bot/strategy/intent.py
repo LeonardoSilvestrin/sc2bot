@@ -98,17 +98,19 @@ class IntentConfig:
     recover: StrategicIntent = field(
         default_factory=lambda: StrategicIntent(
             defense=0.75,
-            map_control=0.25,
+            map_control=0.20,
             harass=0.25,
             information=0.55,
             risk_tolerance=0.25,
         )
     )
+    # Harass clearly over map control: the relation the old fixed priorities
+    # (raids 60-62 over the patrol's 40) encoded for the common state.
     build_advantage: StrategicIntent = field(
         default_factory=lambda: StrategicIntent(
             defense=0.60,
-            map_control=0.35,
-            harass=0.55,
+            map_control=0.25,
+            harass=0.65,
             information=0.55,
             risk_tolerance=0.40,
         )

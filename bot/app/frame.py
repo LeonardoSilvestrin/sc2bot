@@ -14,11 +14,13 @@ from bot.engine.missions import MissionController
 from bot.engine.services import BehaviorServices, VisionService
 from bot.macro import MacroDiagnostics, MacroPlanner
 from bot.ports.logging import BotLogger
+from bot.strategy import StrategicContext
 from bot.world.attention import AttentionService, AttentionSnapshot
 from bot.world.awareness import AwarenessService, AwarenessSnapshot
 
 from .debug import SpatialDebugView, SpatialSnapshotExporter
-from .strategy_shadow import StrategyShadow
+from .mission_ranking import MissionRanker
+from .strategy_runtime import StrategyRuntime
 from .telemetry import FrameTelemetry
 
 
@@ -49,7 +51,8 @@ class FrameProcessor:
         telemetry: FrameTelemetry,
         spatial_debug: SpatialDebugView,
         spatial_snapshot: SpatialSnapshotExporter | None = None,
-        strategy_shadow: StrategyShadow | None = None,
+        strategy: StrategyRuntime | None = None,
+        mission_ranker: MissionRanker | None = None,
     ) -> None:
         self._logger = logger
         self._world_observer = world_observer
@@ -65,17 +68,20 @@ class FrameProcessor:
         self._telemetry = telemetry
         self._spatial_debug = spatial_debug
         self._spatial_snapshot = spatial_snapshot
-        self._strategy_shadow = strategy_shadow
+        self._strategy = strategy
+        self._mission_ranker = mission_ranker or MissionRanker(logger=logger)
 
     async def process(self, bot, *, iteration: int) -> None:
         world = self._world_observer.world_facts(bot, iteration=iteration)
         attention = AttentionService.build(world=world)
         awareness = self._awareness.update(attention)
         self._log_belief_changes(awareness)
-        if self._strategy_shadow is not None:
-            awareness = self._strategy_shadow.update(awareness)
+        strategy: StrategicContext | None = None
+        if self._strategy is not None:
+            awareness = self._strategy.update(awareness)
+            strategy = self._strategy.context
 
-        await self._step_behavior(bot, attention, awareness)
+        await self._step_behavior(bot, attention, awareness, strategy)
         self._step_macro(bot, attention, awareness)
 
         if self._spatial_debug.enabled:
@@ -96,7 +102,11 @@ class FrameProcessor:
             )
 
     async def _step_behavior(
-        self, bot, attention: AttentionSnapshot, awareness: AwarenessSnapshot
+        self,
+        bot,
+        attention: AttentionSnapshot,
+        awareness: AwarenessSnapshot,
+        strategy: StrategicContext | None,
     ) -> None:
         # Shared capabilities collect needs from every behavior before
         # choosing how to satisfy them once for the frame.
@@ -104,11 +114,14 @@ class FrameProcessor:
         self._scouting_vision.tick(attention, awareness)
 
         # Behavior: units already on the map, owned through missions.
-        proposals = tuple(
-            proposal
+        # Planners find opportunities; the Mission Policy ranks all of them
+        # on one scale before the engine arbitrates units.
+        candidates = tuple(
+            candidate
             for planner in self._mission_planners
-            for proposal in planner.propose(attention, awareness)
+            for candidate in planner.propose(attention, awareness, strategy)
         )
+        proposals = self._mission_ranker.rank(candidates, strategy)
         self._vision.resolve()
         register_baseline_behaviors(bot)
         commands = AresMissionCommands(bot, self._missions.allocator)

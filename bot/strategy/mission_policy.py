@@ -128,12 +128,12 @@ class MissionPolicyConfig:
     # Scaled by the served objective's importance, gap and the alignment.
     control_weight: float = 0.25
     # Share of the value an activity Strategy does not want at all keeps.
-    desirability_floor: float = 0.25
+    desirability_floor: float = 0.15
     # How much of the utility the (desirability-scaled) value can reach.
-    value_share: float = 0.70
+    value_share: float = 0.85
 
     # --- urgency -----------------------------------------------------------
-    urgency_weight: float = 0.30
+    urgency_weight: float = 0.45
     # Above this urgency a floor rises, independent of strategic preference:
     # a stale preference never buries an obvious emergency ...
     emergency_urgency: float = 0.5

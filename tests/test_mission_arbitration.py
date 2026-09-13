@@ -6,6 +6,7 @@ from dataclasses import replace
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
+from bot.app.mission_ranking import rank_candidates
 from bot.app.mission_registry import DEFAULT_EXECUTOR_FACTORIES
 from bot.behavior.defense import DefensePlanner
 from bot.behavior.harass import ReaperHarassPlanner
@@ -45,7 +46,7 @@ class HarassDeduplicationTests(unittest.IsolatedAsyncioTestCase):
         service.update(attention(10.0, visible=True))
         current = attention(20.0, visible=False)
         awareness = service.update(current)
-        first = ReaperHarassPlanner().propose(current, awareness)[0]
+        first = rank_candidates(ReaperHarassPlanner().propose(current, awareness))[0]
         duplicate = replace(first, proposal_id=f"{first.proposal_id}:duplicate")
 
         await controller.tick(
@@ -74,7 +75,7 @@ class DefensePreemptionTests(unittest.IsolatedAsyncioTestCase):
 
         current = attention(10.0, visible=False)
         awareness = service.update(current)
-        scout_proposal = IntelPlanner().propose(current, awareness)[0]
+        scout_proposal = rank_candidates(IntelPlanner().propose(current, awareness))[0]
         await controller.tick(
             attention=current,
             awareness=awareness,
@@ -94,7 +95,9 @@ class DefensePreemptionTests(unittest.IsolatedAsyncioTestCase):
             ),
         )
         threat_awareness = service.update(threatened)
-        defense_proposal = DefensePlanner().propose(threatened, threat_awareness)[0]
+        defense_proposal = rank_candidates(
+            DefensePlanner().propose(threatened, threat_awareness)
+        )[0]
 
         await controller.tick(
             attention=threatened,

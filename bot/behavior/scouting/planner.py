@@ -9,11 +9,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from bot.behavior.contracts import BehaviorLog
+from bot.behavior.contracts import UNRANKED_PRIORITY, BehaviorLog, MissionCandidate
 from bot.engine.missions.models import MissionProposal, UnitRequirement
 from bot.engine.missions.planning import ProposalCadence
 from bot.engine.services import BehaviorServices, VisionRequestResult
 from bot.ports.logging import BotLogger
+from bot.strategy import MissionSignals, StrategicActivity, StrategicContext
 from bot.world.attention import AttentionSnapshot
 from bot.world.awareness import AwarenessSnapshot
 
@@ -26,6 +27,7 @@ from .model import (
     ScoutingVisionDecision,
     ScoutingVisionPlan,
     ScoutPlan,
+    ScoutTarget,
 )
 
 COMPONENT = "behavior.scouting"
@@ -56,7 +58,8 @@ class IntelPlanner:
         self,
         attention: AttentionSnapshot,
         awareness: AwarenessSnapshot,
-    ) -> tuple[MissionProposal, ...]:
+        strategy: StrategicContext | None = None,
+    ) -> tuple[MissionCandidate, ...]:
         now = attention.world.time
         assessment = self._assessor.assess(attention, awareness)
         self.last_assessment = assessment
@@ -72,7 +75,7 @@ class IntelPlanner:
         self.last_plan = plan
         self._log.assessed(assessment, now=now, decision="propose")
         self._log.proposed(plan, now=now, planner=self.planner_id)
-        return (self._proposal_for(plan, now),)
+        return (self._candidate_for(plan, now),)
 
     def _plan(self, assessment: IntelAssessment) -> ScoutPlan | None:
         target = assessment.target
@@ -89,44 +92,68 @@ class IntelPlanner:
             return None
         if not assessment.scout_unit_types:
             return None
+        reason = (
+            f"{target.key}_information_unknown"
+            if target.never_seen
+            else f"{target.key}_information_stale"
+        )
         return ScoutPlan(
             target=target,
             unit_types=assessment.scout_unit_types,
-            priority=self.config.priority,
-            reason=(
-                f"{target.key}_information_unknown"
-                if target.never_seen
-                else f"{target.key}_information_stale"
+            reason=reason,
+            signals=MissionSignals(
+                activity=StrategicActivity.INFORMATION,
+                opportunity=(
+                    self.config.preferred_scout_opportunity
+                    if assessment.preferred_scout_alive
+                    else self.config.fallback_scout_opportunity
+                ),
+                urgency=self.config.stale_urgency,
+                risk=self.config.scout_risk,
+                information_gain=_information_gain(target),
+                reason=reason,
             ),
         )
 
-    def _proposal_for(self, plan: ScoutPlan, now: float) -> MissionProposal:
+    def _candidate_for(self, plan: ScoutPlan, now: float) -> MissionCandidate:
         sequence = self._cadence.next_sequence()
         key = plan.target.key
-        return MissionProposal(
-            proposal_id=f"{self.planner_id}:scout:{key}:{sequence}",
-            deduplication_key=f"scout:{key}",
-            planner=self.planner_id,
-            kind=self.config.mission_kind,
-            priority=plan.priority,
-            target_key=key,
-            target=plan.target.position,
-            reason=plan.reason,
-            requirement=UnitRequirement.combat(
-                unit_types=plan.unit_types,
-                desired=1,
-                minimum=1,
-                minimum_health=self.config.minimum_unit_health,
+        return MissionCandidate(
+            draft=MissionProposal(
+                proposal_id=f"{self.planner_id}:scout:{key}:{sequence}",
+                deduplication_key=f"scout:{key}",
+                planner=self.planner_id,
+                kind=self.config.mission_kind,
+                priority=UNRANKED_PRIORITY,
+                target_key=key,
+                target=plan.target.position,
+                reason=plan.reason,
+                requirement=UnitRequirement.combat(
+                    unit_types=plan.unit_types,
+                    desired=1,
+                    minimum=1,
+                    minimum_health=self.config.minimum_unit_health,
+                ),
+                created_at=now,
+                evidence_last_observed_at=plan.target.last_observed_at,
+                evidence_age=plan.target.age,
+                evidence_stale_after=plan.target.stale_after,
+                timeout_seconds=self.config.mission_timeout,
+                cooldown_seconds=self.config.failure_cooldown,
+                can_preempt=False,
+                commitment_seconds=5.0,
             ),
-            created_at=now,
-            evidence_last_observed_at=plan.target.last_observed_at,
-            evidence_age=plan.target.age,
-            evidence_stale_after=plan.target.stale_after,
-            timeout_seconds=self.config.mission_timeout,
-            cooldown_seconds=self.config.failure_cooldown,
-            can_preempt=False,
-            commitment_seconds=5.0,
+            signals=plan.signals,
         )
+
+
+def _information_gain(target: ScoutTarget) -> float:
+    """Never seen is everything to learn; a stale look grows toward it,
+    half-way at the moment it goes stale and fully at twice that age."""
+
+    if target.never_seen or target.age is None:
+        return 1.0
+    return min(1.0, max(0.0, target.age / (2.0 * max(target.stale_after, 1e-6))))
 
 
 @dataclass(slots=True)

@@ -9,6 +9,7 @@ from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
 from bot.engine.missions.models import MissionKind
+from bot.strategy import MissionSignals
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,11 +122,13 @@ class ReaperHarassConfig:
     )
     minimum_workers: int = 16
     proposal_cadence: float = 45.0
-    priority: int = 60
     mission_timeout: float = 60.0
     failure_cooldown: float = 30.0
     minimum_unit_health: float = 0.5
     commitment_seconds: float = 5.0
+    # How pressing a ready raid is, as a local signal scaled by readiness.
+    # The Mission Policy decides what that is worth.
+    raid_urgency: float = 0.2
 
     # --- targeting ----------------------------------------------------------
     targeting: ReaperTargetHeuristics = field(default_factory=ReaperTargetHeuristics)
@@ -152,8 +155,8 @@ class ReaperHarassConfig:
             raise ValueError("minimum_workers must be at least 1")
         if self.proposal_cadence <= 0.0:
             raise ValueError("proposal_cadence must be positive")
-        if not 0 <= self.priority <= 100:
-            raise ValueError("priority must be between 0 and 100")
+        if not 0.0 <= self.raid_urgency <= 1.0:
+            raise ValueError("raid_urgency must be between 0 and 1")
         if self.mission_timeout <= 0.0:
             raise ValueError("mission_timeout must be positive")
         if self.failure_cooldown < 0.0:
@@ -245,15 +248,16 @@ class ReaperHarassAssessment:
 @dataclass(frozen=True, slots=True)
 class ReaperHarassPlan:
     target: ReaperTargetAssessment
-    priority: int
     reason: str
     readiness: float
+    # The local reading the Mission Policy ranks this raid from.
+    signals: MissionSignals
 
     def log_fields(self) -> dict[str, Any]:
         return {
             "target": self.target.key,
             "target_score": round(self.target.score, 2),
-            "priority": self.priority,
+            **self.signals.log_fields(),
             "reason": self.reason,
             "readiness": round(self.readiness, 2),
         }

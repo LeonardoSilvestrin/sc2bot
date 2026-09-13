@@ -5,6 +5,7 @@ import unittest
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
+from bot.app.mission_ranking import rank_candidates
 from bot.app.mission_registry import DEFAULT_EXECUTOR_FACTORIES
 from bot.behavior.defense import DefendBaseExecutor
 from bot.behavior.harass import BansheeHarassExecutor, ReaperHarassExecutor
@@ -48,7 +49,7 @@ class ExecutorRegistryTests(unittest.IsolatedAsyncioTestCase):
         await controller.tick(
             attention=current,
             awareness=awareness,
-            proposals=IntelPlanner().propose(current, awareness),
+            proposals=rank_candidates(IntelPlanner().propose(current, awareness)),
             commands=commands,
         )
         mission = controller.snapshots()[0]
@@ -71,7 +72,7 @@ class ExecutorRegistryTests(unittest.IsolatedAsyncioTestCase):
         )
         current = attention(10.0, visible=False)
         awareness = AwarenessService().update(current)
-        proposals = IntelPlanner().propose(current, awareness)
+        proposals = rank_candidates(IntelPlanner().propose(current, awareness))
 
         await controller.tick(
             attention=current,
@@ -88,7 +89,7 @@ class ExecutorRegistryTests(unittest.IsolatedAsyncioTestCase):
         controller = MissionController(logger=FakeLogger(), executor_factories={})
         current = attention(10.0, visible=False)
         awareness = AwarenessService().update(current)
-        proposals = IntelPlanner().propose(current, awareness)
+        proposals = rank_candidates(IntelPlanner().propose(current, awareness))
 
         logger = controller.logger
         await controller.tick(
