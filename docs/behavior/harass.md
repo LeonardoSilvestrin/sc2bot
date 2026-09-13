@@ -11,7 +11,7 @@ Source: `bot/behavior/harass/reaper/`, `bot/behavior/harass/banshee/`
 
 | | Reaper raid | Banshee raid |
 | --- | --- | --- |
-| Kind, priority, mode | `HARASS`, 60, FINITE | `AIR_HARASS`, 62, STANDING |
+| Kind, priority, mode | `HARASS`, ranked by the Mission Policy, FINITE | `AIR_HARASS`, ranked by the Mission Policy, STANDING |
 | Deduplication key | `harass:<target_key>` | `air_harass:banshee_harass` (the squad) |
 | Units | exactly 1 Reaper | every Banshee alive (squad `banshee_harass`) |
 | Cadence | 45 s | 8 s |
@@ -219,9 +219,10 @@ stateDiagram-v2
   -- not health back, since Banshees do not regenerate and nothing repairs
   them. Then the raid resumes.
 - **Preemption cost.** `preemption_cost()` is 5 in INFILTRATE and STRIKE, 0
-  otherwise. Small enough that `DEFENSE` (85) still takes striking Banshees
-  (85 >= 62 + 10 + 5), large enough that nothing near the raid's priority
-  pulls it apart at its most valuable moment.
+  otherwise. It is added to the allocator's margin (10), so a mission must
+  rank 15 above the raid to take striking Banshees: an urgent defense, whose
+  emergency floor puts it near the top, still does; nothing ranked near the
+  raid pulls it apart at its most valuable moment.
 - Being standing and squad-backed, the raid never completes or times out, and
   defense preemption leaves the executor in ASSEMBLE waiting for the same
   members.
@@ -234,7 +235,7 @@ stateDiagram-v2
 | --- | --- |
 | `unit_types` | Reaper |
 | `minimum_workers` | 16 |
-| `proposal_cadence`, `priority` | 45 s, 60 |
+| `proposal_cadence` | 45 s |
 | `mission_timeout`, `failure_cooldown` | 60 s, 30 s |
 | `minimum_unit_health`, `commitment_seconds` | 0.5, 5 s |
 | `fallback_target_keys` | `("enemy_natural",)` |
@@ -248,7 +249,7 @@ stateDiagram-v2
 | --- | --- |
 | `unit_types` | Banshee |
 | `minimum_workers` | 12 |
-| `proposal_cadence`, `priority` | 8 s, 62 |
+| `proposal_cadence` | 8 s |
 | `mission_timeout`, `failure_cooldown` | 70 s (not applied to standing), 30 s |
 | `minimum_unit_health`, `commitment_seconds` | 0.5, 5 s |
 | `opening_capability`, `cloak_upgrade` | `banshee_harass`, `BANSHEECLOAK` |

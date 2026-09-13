@@ -28,17 +28,29 @@ class FrameProcessorOrderTests(unittest.IsolatedAsyncioTestCase):
 
             def propose(self, attention, awareness, strategy=None):
                 calls.append(f"propose:{self.name}")
-                return (f"proposal:{self.name}",)
+                return (
+                    SimpleNamespace(
+                        name=f"proposal:{self.name}",
+                        draft=SimpleNamespace(planner=self.name),
+                    ),
+                )
 
         def rank(candidates, strategy):
             calls.append("mission_ranker.rank")
-            return candidates
+            # The policy rejects the scout: only standing reaches the engine.
+            return tuple(
+                candidate.name
+                for candidate in candidates
+                if candidate.draft.planner != "intel"
+            )
 
         async def missions_tick(**kwargs):
             calls.append("missions.tick")
             proposals.append(kwargs["proposals"])
+            declared.append(kwargs["declared_planners"])
 
         proposals: list[tuple] = []
+        declared: list[frozenset[str]] = []
         logger = FakeLogger()
         processor = FrameProcessor(
             logger=logger,
@@ -104,7 +116,10 @@ class FrameProcessorOrderTests(unittest.IsolatedAsyncioTestCase):
                 "telemetry.report",
             ],
         )
-        self.assertEqual(proposals, [("proposal:intel", "proposal:standing")])
+        # Only what the policy kept reaches the engine, but every planner that
+        # declared work is named, so a withdrawn standing slot is reconciled.
+        self.assertEqual(proposals, [("proposal:standing",)])
+        self.assertEqual(declared, [frozenset({"intel", "standing"})])
         self.assertEqual(
             [event["name"] for event in logger.events], ["awareness.belief_changed"]
         )

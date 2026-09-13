@@ -212,13 +212,18 @@ has a track for it; an older log without `shadow: false` is shown as shadow.
 
 ### `strategy.mission_policy`
 
-`MissionRanker` logs two events together, whenever a deduplication key's
-signals or priority change and at least every 30 s:
+`MissionRanker` logs one `mission.evaluated` for every candidate it
+evaluates, viable or rejected. It is never change-gated: planners propose
+seconds apart, so it is one line per decision. `proposal_id` joins it to the
+controller's `proposal_*` and mission events; a rejected candidate has no
+controller event at all.
 
-| Event | Data |
+| Field | Meaning |
 | --- | --- |
-| `mission.candidate` | `planner`, `proposal_id`, `deduplication_key`, `mission_kind`, `target_key`, `target`; the planner's `MissionSignals`: `activity`, `opportunity`, `urgency`, `risk`, `information_gain`, `control_objective` and `control_alignment` (both `null` without a `ControlMatch`), `signal_reason` |
-| `mission.ranked` | the same identifiers; the `MissionRanking` terms: `utility`, `priority`, `strategic_desirability`, `opportunity_contribution`, `information_contribution`, `control_contribution`, `urgency_contribution`, `risk_penalty`, `urgency_floor`, `floor_applied` |
+| `proposal_id`, `deduplication_key`, `planner`, `mission_kind`, `target_key`, `target` | the candidate's identity |
+| `viable`, `reason`, `priority` | the verdict. `reason` is `fallback_owner`, `viable_positive_utility`, `viable_by_urgency_floor`, `rejected_negative_raw_utility` or `rejected_utility_not_above_minimum`; `priority` is `null` when rejected |
+| `signals` | the planner's `MissionSignals`: `activity`, `opportunity`, `urgency`, `risk`, `information_gain`, `control_objective` and `control_alignment` (both `null` without a `ControlMatch`), `signal_reason` |
+| `evaluation` | the `MissionEvaluation` the verdict came from: `utility`, `raw_utility`, `urgency_floor`, `floor_applied`, `opportunity_contribution`, `information_contribution`, `control_contribution`, `urgency_contribution`, `risk_penalty`, and the Strategy inputs it read: `strategic_desirability`, `information_desire`, `risk_tolerance`, `control_importance`, `control_gap` (`null` where not read) |
 
 ## The log viewer
 

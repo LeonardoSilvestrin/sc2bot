@@ -62,7 +62,17 @@ class MissionController:
         proposals: tuple[MissionProposal, ...],
         commands: MissionCommands,
         services: BehaviorServices | None = None,
+        declared_planners: frozenset[str] = frozenset(),
     ) -> None:
+        """Admit ``proposals``, reconcile standing work, allocate and step.
+
+        ``declared_planners`` names every planner that declared work this
+        tick even if none of it arrived as a proposal (it was not worth
+        executing). Such a planner's live standing missions are reconciled
+        against the proposals that did arrive, exactly like a planner that
+        proposed a different set.
+        """
+
         now = attention.world.time
         self.allocator.sync(attention.world.own_units)
         self.squads.sync(attention.world.own_units, now=now)
@@ -86,7 +96,7 @@ class MissionController:
                 )
         for proposal in proposals:
             self._consider(proposal, now)
-        self._reconcile_standing_missions(proposals, now, commands)
+        self._reconcile_standing_missions(proposals, declared_planners, now, commands)
 
         missions = sorted(
             self.board.live(),
@@ -456,23 +466,25 @@ class MissionController:
     def _reconcile_standing_missions(
         self,
         proposals: tuple[MissionProposal, ...],
+        declared_planners: frozenset[str],
         now: float,
         commands: MissionCommands,
     ) -> None:
         """End a standing mission its planner stopped declaring this cycle.
 
         A planner re-declares its full set of STANDING responsibilities
-        every time it proposes at all (see ``DispositionPlanner.propose``,
-        which always emits the reserve proposal alongside whichever slots
-        currently apply) -- so if a planner proposed *something* this tick
-        but omitted a key that has a live standing mission, that slot was
-        deliberately dropped (e.g. ``forward`` outside PRESSURE/BALANCED)
-        and must be torn down now, not left to time out. A planner that did
-        not propose *anything* this tick (its cadence was not ready) leaves
-        its existing standing missions alone -- silence is not omission.
+        every time it proposes at all -- so if a planner declared
+        *something* this tick but no proposal arrived for a key that has a
+        live standing mission, that slot was dropped, or judged not worth
+        executing, and must be torn down now rather than left running at its
+        old priority. A planner that declared nothing this tick (its cadence
+        was not ready, or it withheld) leaves its standing missions alone --
+        silence is not omission.
         """
 
-        proposed_keys_by_planner: dict[str, set[str]] = {}
+        proposed_keys_by_planner: dict[str, set[str]] = {
+            planner: set() for planner in declared_planners
+        }
         for proposal in proposals:
             if proposal.mode is MissionMode.STANDING:
                 proposed_keys_by_planner.setdefault(proposal.planner, set()).add(

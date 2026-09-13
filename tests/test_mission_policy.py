@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+import itertools
 import math
 import unittest
+from dataclasses import replace
 
 from bot.engine.missions.allocator import UnitAllocator
 from bot.strategy import (
+    FALLBACK_OWNER,
     MINIMUM_CONTROL_ALIGNMENT,
+    REJECTED_NEGATIVE_RAW_UTILITY,
+    REJECTED_UTILITY_NOT_ABOVE_MINIMUM,
+    VIABLE_BY_URGENCY_FLOOR,
+    VIABLE_POSITIVE_UTILITY,
     ControlMatch,
     ControlNeed,
     IntentConfig,
@@ -16,7 +23,8 @@ from bot.strategy import (
     StrategicActivity,
     StrategicIntent,
     StrategicObjective,
-    score_mission,
+    evaluate_mission,
+    is_viable,
     to_priority,
 )
 
@@ -110,13 +118,13 @@ class ControlMatchContractTests(unittest.TestCase):
         )
 
         self.assertEqual(
-            score_mission(unmatched, BUILD, need=need).control_contribution, 0.0
+            evaluate_mission(unmatched, BUILD, need=need).control_contribution, 0.0
         )
         self.assertGreater(
-            score_mission(matched, BUILD, need=need).control_contribution, 0.0
+            evaluate_mission(matched, BUILD, need=need).control_contribution, 0.0
         )
         # A match to an objective the context no longer holds prices nothing.
-        self.assertEqual(score_mission(matched, BUILD).control_contribution, 0.0)
+        self.assertEqual(evaluate_mission(matched, BUILD).control_contribution, 0.0)
 
     def test_signals_carry_no_priority(self):
         self.assertNotIn("priority", MissionSignals.__dataclass_fields__)
@@ -126,8 +134,8 @@ class CrossBehaviorRankingTests(unittest.TestCase):
     def test_critical_defense_outranks_harass_even_under_pressure(self):
         """A stale aggressive preference never buries an obvious emergency."""
 
-        defense = score_mission(critical_defense(), PRESSURE)
-        harass = score_mission(good_harass(), PRESSURE)
+        defense = evaluate_mission(critical_defense(), PRESSURE)
+        harass = evaluate_mission(good_harass(), PRESSURE)
 
         self.assertGreater(defense.priority, harass.priority)
         self.assertTrue(defense.floor_applied)
@@ -137,8 +145,10 @@ class CrossBehaviorRankingTests(unittest.TestCase):
         """Mid-strike Banshees add their executor cost to the margin; a base
         under full attack still takes them."""
 
-        defense = score_mission(critical_defense(), with_intent(PRESSURE, defense=0.0))
-        harass = score_mission(
+        defense = evaluate_mission(
+            critical_defense(), with_intent(PRESSURE, defense=0.0)
+        )
+        harass = evaluate_mission(
             MissionSignals(
                 activity=StrategicActivity.HARASS, opportunity=1.0, urgency=0.5
             ),
@@ -151,8 +161,8 @@ class CrossBehaviorRankingTests(unittest.TestCase):
         )
 
     def test_good_harass_outranks_low_urgency_defense_when_strategy_presses(self):
-        harass = score_mission(good_harass(), PRESSURE)
-        defense = score_mission(low_urgency_defense(), PRESSURE)
+        harass = evaluate_mission(good_harass(), PRESSURE)
+        defense = evaluate_mission(low_urgency_defense(), PRESSURE)
 
         self.assertGreater(harass.priority, defense.priority)
 
@@ -175,22 +185,22 @@ class CrossBehaviorRankingTests(unittest.TestCase):
         )
 
         self.assertGreaterEqual(
-            score_mission(raid, BUILD).priority,
-            score_mission(patrol, BUILD).priority
+            evaluate_mission(raid, BUILD).priority,
+            evaluate_mission(patrol, BUILD).priority
             + UnitAllocator().preemption_margin,
         )
 
     def test_the_same_pair_flips_when_strategy_stabilizes(self):
-        harass = score_mission(good_harass(), STABILIZE)
-        defense = score_mission(low_urgency_defense(), STABILIZE)
+        harass = evaluate_mission(good_harass(), STABILIZE)
+        defense = evaluate_mission(low_urgency_defense(), STABILIZE)
 
         self.assertGreater(defense.priority, harass.priority)
 
     def test_higher_strategic_desirability_raises_utility(self):
         signals = good_harass()
 
-        low = score_mission(signals, with_intent(BUILD, harass=0.1))
-        high = score_mission(signals, with_intent(BUILD, harass=0.9))
+        low = evaluate_mission(signals, with_intent(BUILD, harass=0.1))
+        high = evaluate_mission(signals, with_intent(BUILD, harass=0.9))
 
         self.assertGreater(high.utility, low.utility)
         self.assertGreater(high.strategic_desirability, low.strategic_desirability)
@@ -200,7 +210,8 @@ class CrossBehaviorRankingTests(unittest.TestCase):
         strong = MissionSignals(activity=StrategicActivity.HARASS, opportunity=0.8)
 
         self.assertGreater(
-            score_mission(strong, BUILD).utility, score_mission(weak, BUILD).utility
+            evaluate_mission(strong, BUILD).utility,
+            evaluate_mission(weak, BUILD).utility,
         )
 
     def test_urgency_raises_utility_more_strongly_than_opportunity(self):
@@ -213,15 +224,15 @@ class CrossBehaviorRankingTests(unittest.TestCase):
             activity=StrategicActivity.DEFENSE, opportunity=0.5, urgency=0.3
         )
 
-        start = score_mission(base, BUILD).utility
+        start = evaluate_mission(base, BUILD).utility
         self.assertGreater(
-            score_mission(urgent, BUILD).utility - start,
-            score_mission(opportune, BUILD).utility - start,
+            evaluate_mission(urgent, BUILD).utility - start,
+            evaluate_mission(opportune, BUILD).utility - start,
         )
 
     def test_the_emergency_floor_is_continuous_in_urgency(self):
         utilities = [
-            score_mission(
+            evaluate_mission(
                 MissionSignals(activity=StrategicActivity.DEFENSE, urgency=value),
                 with_intent(PRESSURE, defense=0.0),
             ).utility
@@ -249,12 +260,12 @@ class CrossBehaviorRankingTests(unittest.TestCase):
         incurious = with_intent(BUILD, information=0.1)
 
         self.assertGreater(
-            score_mission(stale, curious).utility,
-            score_mission(fresh, curious).utility,
+            evaluate_mission(stale, curious).utility,
+            evaluate_mission(fresh, curious).utility,
         )
         self.assertGreater(
-            score_mission(stale, curious).utility,
-            score_mission(stale, incurious).utility,
+            evaluate_mission(stale, curious).utility,
+            evaluate_mission(stale, incurious).utility,
         )
 
     def test_information_gain_also_raises_map_control_utility(self):
@@ -269,8 +280,8 @@ class CrossBehaviorRankingTests(unittest.TestCase):
         control = PROFILES.profile(StrategicObjective.TAKE_MAP_CONTROL)
 
         self.assertGreater(
-            score_mission(unknown, control).information_contribution,
-            score_mission(known, control).information_contribution,
+            evaluate_mission(unknown, control).information_contribution,
+            evaluate_mission(known, control).information_contribution,
         )
 
     def test_high_risk_is_penalized_more_under_low_risk_tolerance(self):
@@ -278,16 +289,14 @@ class CrossBehaviorRankingTests(unittest.TestCase):
             activity=StrategicActivity.HARASS, opportunity=0.8, risk=0.9
         )
 
-        cautious = score_mission(risky, with_intent(BUILD, risk_tolerance=0.1))
-        bold = score_mission(risky, with_intent(BUILD, risk_tolerance=0.9))
+        cautious = evaluate_mission(risky, with_intent(BUILD, risk_tolerance=0.1))
+        bold = evaluate_mission(risky, with_intent(BUILD, risk_tolerance=0.9))
 
         self.assertGreater(cautious.risk_penalty, bold.risk_penalty)
         self.assertLess(cautious.utility, bold.utility)
         # Some risk always counts, even fully tolerated.
-        self.assertGreater(
-            score_mission(risky, with_intent(BUILD, risk_tolerance=1.0)).risk_penalty,
-            0.0,
-        )
+        tolerant = evaluate_mission(risky, with_intent(BUILD, risk_tolerance=1.0))
+        self.assertGreater(tolerant.risk_penalty, 0.0)
 
     def test_alignment_with_an_important_unsatisfied_objective_raises_utility(self):
         aligned = MissionSignals(
@@ -296,13 +305,13 @@ class CrossBehaviorRankingTests(unittest.TestCase):
             control=ControlMatch("passage:7", 1.0),
         )
 
-        unsatisfied = score_mission(
+        unsatisfied = evaluate_mission(
             aligned, BUILD, need=ControlNeed(importance=0.9, gap=0.8)
         )
-        satisfied = score_mission(
+        satisfied = evaluate_mission(
             aligned, BUILD, need=ControlNeed(importance=0.9, gap=0.0)
         )
-        unimportant = score_mission(
+        unimportant = evaluate_mission(
             aligned, BUILD, need=ControlNeed(importance=0.1, gap=0.8)
         )
 
@@ -312,7 +321,7 @@ class CrossBehaviorRankingTests(unittest.TestCase):
         self.assertEqual(satisfied.control_contribution, 0.0)
 
     def test_the_breakdown_adds_up_to_the_raw_utility(self):
-        ranking = score_mission(
+        ranking = evaluate_mission(
             MissionSignals(
                 activity=StrategicActivity.MAP_CONTROL,
                 opportunity=0.6,
@@ -328,54 +337,185 @@ class CrossBehaviorRankingTests(unittest.TestCase):
         self.assertFalse(ranking.floor_applied)
         self.assertAlmostEqual(ranking.utility, ranking.raw_utility)
         self.assertEqual(
+            ranking.raw_utility,
+            ranking.opportunity_contribution
+            + ranking.information_contribution
+            + ranking.control_contribution
+            + ranking.urgency_contribution
+            - ranking.risk_penalty,
+        )
+        self.assertEqual(ranking.control_need, ControlNeed(importance=0.7, gap=0.6))
+        self.assertEqual(
             set(ranking.log_fields()),
             {
-                "utility",
+                "activity",
+                "reason",
+                "viable",
                 "priority",
-                "strategic_desirability",
+                "utility",
+                "raw_utility",
+                "urgency_floor",
+                "floor_applied",
                 "opportunity_contribution",
                 "information_contribution",
                 "control_contribution",
                 "urgency_contribution",
                 "risk_penalty",
-                "urgency_floor",
-                "floor_applied",
+                "strategic_desirability",
+                "information_desire",
+                "risk_tolerance",
+                "control_importance",
+                "control_gap",
             },
         )
 
 
-class PriorityScaleTests(unittest.TestCase):
-    def test_the_fallback_owner_ranks_below_every_real_opportunity(self):
-        """Standing stays the owner of unused combat units: every real
-        mission clears it by at least the allocator's preemption margin."""
+class ViabilityTests(unittest.TestCase):
+    """A candidate is proposed only when it is worth executing at all."""
 
-        config = MissionPolicyConfig()
-        fallback = score_mission(MissionSignals.fallback("idle_army"), PRESSURE)
-        worthless = score_mission(
+    MARGIN = UnitAllocator().preemption_margin
+
+    def test_zero_final_utility_is_rejected(self):
+        evaluation = evaluate_mission(
+            MissionSignals(activity=StrategicActivity.MAP_CONTROL), BUILD
+        )
+
+        self.assertEqual(evaluation.utility, 0.0)
+        self.assertFalse(evaluation.viable)
+        self.assertIsNone(evaluation.priority)
+        self.assertEqual(evaluation.reason, REJECTED_UTILITY_NOT_ABOVE_MINIMUM)
+
+    def test_negative_raw_utility_clamped_to_zero_is_rejected(self):
+        evaluation = evaluate_mission(
             MissionSignals(activity=StrategicActivity.HARASS, risk=1.0),
             with_intent(PRESSURE, harass=0.0, risk_tolerance=0.0),
         )
 
-        self.assertEqual(fallback.priority, config.fallback_priority)
-        self.assertEqual(worthless.priority, config.minimum_priority)
+        self.assertLess(evaluation.raw_utility, 0.0)
+        self.assertEqual(evaluation.utility, 0.0)
+        self.assertFalse(evaluation.viable)
+        self.assertIsNone(evaluation.priority)
+        self.assertEqual(evaluation.reason, REJECTED_NEGATIVE_RAW_UTILITY)
+
+    def test_a_normal_positive_candidate_is_viable_above_the_fallback(self):
+        evaluation = evaluate_mission(good_harass(), BUILD)
+
+        self.assertTrue(evaluation.viable)
+        self.assertEqual(evaluation.reason, VIABLE_POSITIVE_UTILITY)
         self.assertGreaterEqual(
-            worthless.priority - fallback.priority,
-            UnitAllocator().preemption_margin,
+            evaluation.priority, MissionPolicyConfig().fallback_priority + self.MARGIN
         )
 
+    def test_urgent_defense_is_viable_through_its_floor_despite_negative_raw(self):
+        evaluation = evaluate_mission(
+            MissionSignals(activity=StrategicActivity.DEFENSE, urgency=0.6, risk=1.0),
+            with_intent(PRESSURE, defense=0.0, risk_tolerance=0.0),
+        )
+
+        self.assertLess(evaluation.raw_utility, 0.0)
+        self.assertTrue(evaluation.floor_applied)
+        self.assertTrue(evaluation.viable)
+        self.assertEqual(evaluation.reason, VIABLE_BY_URGENCY_FLOOR)
+        self.assertGreaterEqual(
+            evaluation.priority, MissionPolicyConfig().fallback_priority + self.MARGIN
+        )
+
+    def test_standing_is_accepted_at_its_fixed_fallback_priority(self):
+        evaluation = evaluate_mission(MissionSignals.fallback("idle_army"), PRESSURE)
+
+        self.assertTrue(evaluation.viable)
+        self.assertEqual(evaluation.priority, MissionPolicyConfig().fallback_priority)
+        self.assertEqual(evaluation.reason, FALLBACK_OWNER)
+
+    def test_no_worthless_candidate_outranks_standing(self):
+        """Every viable candidate clears the fallback owner by the preemption
+        margin; every other one has no priority at all."""
+
+        fallback = MissionPolicyConfig().fallback_priority
+        indifferent = with_intent(
+            BUILD,
+            defense=0.0,
+            map_control=0.0,
+            harass=0.0,
+            information=0.0,
+            risk_tolerance=0.0,
+        )
+        for activity in StrategicActivity:
+            for intent in (PRESSURE, STABILIZE, BUILD, indifferent):
+                for opportunity, urgency, risk in itertools.product(
+                    (0.0, 0.5, 1.0), repeat=3
+                ):
+                    evaluation = evaluate_mission(
+                        MissionSignals(
+                            activity=activity,
+                            opportunity=opportunity,
+                            urgency=urgency,
+                            risk=risk,
+                        ),
+                        intent,
+                    )
+                    with self.subTest(
+                        activity=activity.name,
+                        opportunity=opportunity,
+                        urgency=urgency,
+                        risk=risk,
+                    ):
+                        if evaluation.viable:
+                            self.assertGreater(evaluation.utility, 0.0)
+                            self.assertGreaterEqual(
+                                evaluation.priority, fallback + self.MARGIN
+                            )
+                        else:
+                            self.assertEqual(evaluation.utility, 0.0)
+                            self.assertIsNone(evaluation.priority)
+
+    def test_the_viability_predicate_is_replaceable(self):
+        signals = MissionSignals(
+            activity=StrategicActivity.MAP_CONTROL, opportunity=0.2
+        )
+
+        default = evaluate_mission(signals, BUILD)
+        strict = evaluate_mission(
+            signals,
+            BUILD,
+            config=MissionPolicyConfig(minimum_viable_utility=default.utility),
+        )
+
+        self.assertTrue(default.viable)
+        self.assertTrue(is_viable(default.utility))
+        self.assertFalse(strict.viable)
+        self.assertEqual(strict.reason, REJECTED_UTILITY_NOT_ABOVE_MINIMUM)
+        self.assertFalse(is_viable(0.0))
+
+    def test_a_priority_exists_exactly_when_viable(self):
+        viable = evaluate_mission(good_harass(), BUILD)
+
+        with self.assertRaises(ValueError):
+            replace(viable, priority=None)
+        with self.assertRaises(ValueError):
+            replace(viable, viable=False)
+
+
+class PriorityScaleTests(unittest.TestCase):
     def test_utility_maps_monotonically_onto_the_engine_scale(self):
-        priorities = [to_priority(value / 10) for value in range(11)]
+        priorities = [to_priority(value / 10) for value in range(1, 11)]
 
         self.assertEqual(priorities, sorted(priorities))
-        self.assertEqual(priorities[0], MissionPolicyConfig().minimum_priority)
+        self.assertGreaterEqual(priorities[0], MissionPolicyConfig().minimum_priority)
         self.assertEqual(priorities[-1], 100)
         self.assertTrue(all(isinstance(value, int) for value in priorities))
+
+    def test_a_non_viable_utility_has_no_priority(self):
+        with self.assertRaises(ValueError):
+            to_priority(0.0)
 
     def test_the_scale_rejects_an_inverted_configuration(self):
         with self.assertRaises(ValueError):
             MissionPolicyConfig(fallback_priority=40, minimum_priority=30)
         with self.assertRaises(ValueError):
             MissionPolicyConfig(emergency_urgency=1.0)
+        with self.assertRaises(ValueError):
+            MissionPolicyConfig(minimum_viable_utility=1.0)
 
 
 if __name__ == "__main__":

@@ -106,30 +106,46 @@ and every mission command are registered again every frame.
 `DEFENSE`, `MAP_CONTROL`, `HOLD_RALLY`, `POSITION`. `POSITION` has no planner
 today; it is registered to the standing executor for compatible callers.
 
-Priorities set the arbitration order under `UnitAllocator`'s preemption margin
-of 10:
+No planner sets a priority. Each drafts its proposal at `UNRANKED_PRIORITY`
+and describes the work as `MissionSignals`; the Mission Policy evaluates every
+candidate under the current `StrategicIntent`
+([strategy.md](strategy.md#mission-policy)) and only then does anything reach
+`MissionController`:
 
-| Kind | Planner | Priority | Mode | `can_preempt` |
-| --- | --- | ---: | --- | --- |
-| `HOLD_RALLY` | `StandingPlanner` | 20 | STANDING | yes |
-| `MAP_CONTROL` | `MapControlPlanner` | 40 | STANDING | yes |
-| `HARASS` | `ReaperHarassPlanner` | 60 | FINITE | yes |
-| `AIR_HARASS` | `BansheeHarassPlanner` | 62 | STANDING | yes |
-| `SCOUT` | `IntelPlanner` | 65 | FINITE | **no** |
-| `DEFENSE`, threatened base | `DefensePlanner` | 85 | FINITE | yes |
-| `DEFENSE`, critical base | `DefensePlanner` | 95 | FINITE | yes |
+| Outcome | Priority | Reaches `MissionController` |
+| --- | ---: | --- |
+| fallback owner (`StandingPlanner`) | 20 | yes |
+| viable: final utility > 0, after the emergency floor | `30 + round(70 * utility)`, 30..100 | yes |
+| rejected: final utility <= 0 | none | no; logged as `mission.evaluated` with `viable: false` |
 
-- `HOLD_RALLY` sits well below everything, so any mission can take a unit
-  from the standing army.
+| Kind | Planner | Mode | `can_preempt` |
+| --- | --- | --- | --- |
+| `HOLD_RALLY` | `StandingPlanner` | STANDING | yes |
+| `MAP_CONTROL` | `MapControlPlanner` | STANDING | yes |
+| `HARASS` | `ReaperHarassPlanner` | FINITE | yes |
+| `AIR_HARASS` | `BansheeHarassPlanner` | STANDING | yes |
+| `SCOUT` | `IntelPlanner` | FINITE | **no** |
+| `DEFENSE` | `DefensePlanner` | FINITE | yes |
+
+- Every viable mission clears the standing army by at least `UnitAllocator`'s
+  preemption margin (10), so it can take units from it. A rejected candidate
+  is never admitted and so can neither lease nor preempt.
+- A standing responsibility whose re-declared candidate is rejected is
+  withdrawn: the app names its planner in `declared_planners`, so the
+  controller cancels the live mission (`standing_proposal_omitted`) and its
+  units return to the standing army.
+- Between two viable missions the policy's utility decides the order;
+  preemption still needs the 10-point margin plus the owner's preemption
+  cost, so near-equal missions do not trade units.
 - Every kind except `SCOUT` can preempt, because the standing army holds most
   idle combat units: without preemption no opportunistic mission could get a
-  unit at all. Priority order still decides between two missions that want
-  the same unit.
+  unit at all.
 - `SCOUT` never preempts: information is worth a spare unit, not an
   interrupted raid. The known cost is that a scout proposed while every Reaper
   sits in the standing army stays blocked.
-- `HARASS` (60) and `AIR_HARASS` (62) cannot take units from each other or
-  from `SCOUT` (65): the gaps are under the margin.
+- An urgent defense keeps a floor regardless of intent (utility >= 0.95 at
+  urgency 1), so it stays viable and far above any raid even when Strategy
+  wants no defense.
 
 The full parameter set of every planner is in
 [behavior/README.md](behavior/README.md#roster).

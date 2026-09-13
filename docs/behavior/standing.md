@@ -17,9 +17,9 @@ behavior/standing/
 ```
 
 | Squad | Share | Home mission | Priority |
-| --- | --- | --- | ---: |
-| `main_army` | every combat unit no higher-priority mission holds | `HOLD_RALLY` | 20 |
-| `map_control` | 20% of combat supply, best `MOBILE_CONTROL` fits, preempted from `main_army` ([map-control.md](map-control.md)) | `MAP_CONTROL` | 40 |
+| --- | --- | --- | --- |
+| `main_army` | every combat unit no higher-priority mission holds | `HOLD_RALLY` | 20, the Mission Policy's fixed fallback |
+| `map_control` | 20% of combat supply, best `MOBILE_CONTROL` fits, preempted from `main_army` ([map-control.md](map-control.md)) | `MAP_CONTROL` | the policy's rank when viable (30..100); not proposed when worth nothing |
 
 ## Assess
 
@@ -32,13 +32,14 @@ behavior/standing/
 - `combat_units`: ready combat units (`bot.domain.is_combat_unit`) at or above
   `minimum_unit_health` (0, so every ready one).
 
-`derive_combat_posture` maps Awareness onto a `CombatPosture`. It is a
-different axis from `MacroPosture`: macro posture is about how risky spending
-is, combat posture about where the army should sit.
+`derive_combat_posture` maps Awareness onto a `CombatPosture`. It is
+descriptive only -- logged, moving nothing -- and reads no strategic caution:
+what the bot wants is Strategy's intent, and how risky spending is stays
+macro's concern.
 
 | Posture | When |
 | --- | --- |
-| `TURTLE` | a base is threatened, or macro posture is `DEFENSE`/`RECOVERY`, or the army belief is stably `BEHIND` |
+| `TURTLE` | a base is threatened, or the army belief is stably `BEHIND` |
 | `PRESSURE` | the army belief is stably `AHEAD` and no enemy combat unit is near our bases |
 | `BALANCED` | otherwise |
 
@@ -49,27 +50,39 @@ and gating it again on confidence is what used to make the posture flap.
 ## Plan
 
 `StandingPlanner.propose` runs every 5 s and always consumes its cadence. It
-turns the assessment into a `StandingPlan(anchor, anchor_reason, core_count,
-priority)`:
+turns the assessment and Strategy's control objectives into a
+`StandingPlan(anchor, anchor_reason, core_count, objective_id, supports)`.
+
+**Where the army waits follows Strategy.** Among Strategy's `BASE`
+objectives that some `PASSAGE` objective protects, the planner takes the most
+important base, then that base's most important protecting passage (exact
+ties by objective id). The anchor is `home_anchor_standoff` (4) inside the
+passage toward the base, never past it; `anchor_reason` is
+`holds_home_passage_objective`, `objective_id` the passage objective and
+`supports` the base objective. Each choice is kept until a rival is more
+important by `anchor_retarget_margin` (0.1). Importance never reads our own
+hold, so the army arriving does not argue its anchor away.
+
+With no such objective -- no region graph yet, or no passage Strategy wants
+held -- the old heuristic is the fallback:
 
 | Situation | Anchor | `anchor_reason` |
 | --- | --- | --- |
-| no townhall observed | our start | `no_held_base_yet` |
-| one base | that base | `single_base_held` |
-| two or more | 72% of the way from the second-farthest to the farthest base from our start | `between_previous_and_newest_base` |
+| no townhall observed | our start | `fallback_no_held_base_yet` |
+| one base | that base | `fallback_single_base_held` |
+| two or more | 72% of the way from the second-farthest to the farthest base from our start | `fallback_between_previous_and_newest_base` |
 
 `core_count = max(1, combat_units)`: every combat unit, not a share. It is a
 cardinality rather than a force size, exact whatever each unit weighs.
 
 Posture is computed and exposed (`StandingPlanner.last_posture`, logged in
-`standing.updated`) but does **not** move the anchor yet. That is the obvious
-next step; the plan shape makes it a one-line change.
+`standing.updated`) but does **not** move the anchor.
 
 The proposal:
 
 | Field | Value |
 | --- | --- |
-| kind, priority, mode | `HOLD_RALLY`, 20, `STANDING` |
+| kind, priority, mode | `HOLD_RALLY`, 20 (the Mission Policy's fixed fallback; always viable), `STANDING` |
 | `deduplication_key`, `target_key` | `hold_rally:main_army` |
 | `squad_id` | `main_army` |
 | `target` | the anchor |
@@ -112,14 +125,15 @@ Standing asks for every combat unit rather than a share, which is what makes
 it the fallback. Whatever no higher-priority mission holds is picked up on the
 next allocation: units from before map control has enough army to start,
 units a temporary mission released, units a patrol upgrade swapped out.
-Everything allowed to preempt (map control, defense, both raids) outranks
-Standing by at least the allocator's margin, so it takes its share and
-Standing can never take it back. A unit produced between two proposals waits
-at most one 5 s cadence for the updated count.
+Every viable mission allowed to preempt (map control, defense, both raids)
+outranks Standing by at least the allocator's margin, so it takes its share
+and Standing can never take it back; a candidate the Mission Policy rejects
+never becomes a mission, so whatever it wanted stays here. A unit produced
+between two proposals waits at most one 5 s cadence for the updated count.
 
-Specialized units are no exception. Banshees (62) and Reapers (60) rest here
-between raids and are preempted back out like any other unit. One gap
-remains: scouting never preempts, so a Reaper scout proposed while every
+Specialized units are no exception. Banshees and Reapers rest here between
+raids and are preempted back out by a viable raid like any other unit. One
+gap remains: scouting never preempts, so a Reaper scout proposed while every
 Reaper sits in Standing stays blocked ([scouting.md](scouting.md#known-gaps)).
 
 `standing.unassigned_units_persisting` fires when a ready, available combat
@@ -145,8 +159,9 @@ units, and it reacquires the same members afterwards
 | `cooldown_seconds` | 5 s |
 | `commitment_seconds` | 2 s |
 | `arrival_radius` | 4 |
-| `anchor_fraction_to_newest_base` | 0.72 |
-| `priority` | 20 |
+| `home_anchor_standoff` | 4 |
+| `anchor_retarget_margin` | 0.1 |
+| `anchor_fraction_to_newest_base` | 0.72 (fallback anchor only) |
 
 ## Events
 

@@ -116,6 +116,25 @@ def awareness(now: float, *, bases: BaseAwareness | None = None) -> AwarenessSna
     )
 
 
+def frontier_awareness(
+    now: float, *, bases: BaseAwareness | None = None
+) -> AwarenessSnapshot:
+    """One supported, known frontier sample at the map centre: a patrol there
+    is worth something, so the Mission Policy proposes it."""
+
+    return replace(
+        awareness(now, bases=bases),
+        spatial=SpatialField(
+            samples=(
+                SpatialFieldSample(
+                    MAP.center, friendly_value=0.45, knowledge_confidence=1.0
+                ),
+            ),
+            updated_at=now,
+        ),
+    )
+
+
 def attacked_base() -> BaseAwareness:
     return BaseAwareness(
         (
@@ -202,17 +221,26 @@ class MapControlPlannerTests(unittest.TestCase):
                 rank_candidates(
                     planner.propose(
                         attention(180.0),
-                        awareness(180.0, bases=attacked_base()),
+                        frontier_awareness(180.0, bases=attacked_base()),
                     )
                 )
             ),
             1,
         )
 
+    def test_a_patrol_with_no_spatial_field_offers_nothing_and_is_not_proposed(self):
+        candidates = MapControlPlanner().propose(attention(180.0), awareness(180.0))
+
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0].signals.opportunity, 0.0)
+        self.assertEqual(rank_candidates(candidates), ())
+
     def test_proposes_a_persistent_twenty_percent_patrol(self):
         planner = MapControlPlanner()
 
-        proposals = rank_candidates(planner.propose(attention(180.0), awareness(180.0)))
+        proposals = rank_candidates(
+            planner.propose(attention(180.0), frontier_awareness(180.0))
+        )
 
         self.assertEqual(len(proposals), 1)
         proposal = proposals[0]
@@ -240,9 +268,9 @@ class MapControlPlannerTests(unittest.TestCase):
     def test_a_fixed_unit_count_override_sizes_by_count(self):
         planner = MapControlPlanner(config=MapControlConfig(desired_units=3))
 
-        proposal = rank_candidates(planner.propose(attention(180.0), awareness(180.0)))[
-            0
-        ]
+        (proposal,) = rank_candidates(
+            planner.propose(attention(180.0), frontier_awareness(180.0))
+        )
 
         self.assertEqual(proposal.requirement.desired, 3)
         self.assertIsNone(proposal.requirement.supply_budget)
@@ -251,10 +279,10 @@ class MapControlPlannerTests(unittest.TestCase):
         planner = MapControlPlanner()
 
         self.assertEqual(
-            len(rank_candidates(planner.propose(attention(180.0), awareness(180.0)))), 1
+            len(planner.propose(attention(180.0), frontier_awareness(180.0))), 1
         )
         self.assertEqual(
-            rank_candidates(planner.propose(attention(181.0), awareness(181.0))), ()
+            planner.propose(attention(181.0), frontier_awareness(181.0)), ()
         )
 
     def test_hysteresis_ignores_small_gain_then_accepts_material_retarget(self):
@@ -753,7 +781,7 @@ class ControlMatchAndPricingTests(unittest.TestCase):
         self.assertIsNone(planner.last_candidates[0].control)
         self.assertEqual(planner.last_candidates[0].control_importance, 0.0)
         self.assertEqual(
-            ranker.last_rankings["map_control:patrol"].control_contribution, 0.0
+            ranker.last_evaluations["map_control:patrol"].control_contribution, 0.0
         )
 
     def test_meaningful_alignment_creates_a_match(self):
@@ -781,7 +809,7 @@ class ControlMatchAndPricingTests(unittest.TestCase):
         ranker.rank((candidate,), strategy)
 
         self.assertGreater(
-            ranker.last_rankings["map_control:patrol"].control_contribution, 0.0
+            ranker.last_evaluations["map_control:patrol"].control_contribution, 0.0
         )
 
     def test_intent_moves_the_anchor_only_through_strategic_value(self):
@@ -934,7 +962,8 @@ class MapControlAssessmentTests(unittest.TestCase):
             replace(marine(tag), unit_type=UnitTypeId.SIEGETANK, supply_cost=3.0)
             for tag in (20, 21)
         )
-        current, state = attention(30.0, marines=4, extra=tanks), awareness(30.0)
+        current = attention(30.0, marines=4, extra=tanks)
+        state = frontier_awareness(30.0)
         planner = MapControlPlanner()
 
         proposals = rank_candidates(planner.propose(current, state))

@@ -3,11 +3,14 @@
 A behavior planner describes a concrete opportunity in local terms only --
 how good it is, how urgent, how risky, what it would teach us
 (``MissionSignals``). This policy, and nothing else, weighs those terms
-against the current ``StrategicIntent`` and turns the result into the mission
-engine's 0..100 priority. The engine only ever sees that final number.
+against the current ``StrategicIntent``, decides whether the opportunity is
+worth executing at all, and turns a viable one into the mission engine's
+0..100 priority. The engine only ever sees that final number, and only for
+viable work.
 
-It ranks; it does not choose. Several opportunities can rank high at once,
-and which of them actually gets units stays the allocator's decision.
+It values; it does not choose units. Several viable opportunities can rank
+high at once, and which of them actually gets units stays the allocator's
+decision.
 """
 
 from __future__ import annotations
@@ -148,7 +151,7 @@ class ControlNeed:
 
 @dataclass(frozen=True, slots=True)
 class MissionPolicyConfig:
-    """Every number behind cross-behavior ranking, in one place.
+    """Every number behind cross-behavior valuation, in one place.
 
     First guesses, like the rest of Strategy's weights; see
     ``docs/strategy.md`` for the formula they enter.
@@ -157,11 +160,18 @@ class MissionPolicyConfig:
     # --- the priority scale ------------------------------------------------
     # The fallback owner's fixed rank ...
     fallback_priority: int = 20
-    # ... and the lowest rank of any real opportunity. The gap is at least the
-    # allocator's preemption margin, so every real mission can still take
-    # units from the fallback owner.
+    # ... and the lowest rank of any viable opportunity. The gap is at least
+    # the allocator's preemption margin, so every viable mission can still
+    # take units from the fallback owner.
     minimum_priority: int = 30
     maximum_priority: int = 100
+
+    # --- viability ---------------------------------------------------------
+    # A candidate is executable only when its final utility -- after the
+    # emergency floor -- is above this. At 0 a candidate must be worth
+    # something at all: one whose value never outweighs its risk is not
+    # proposed, however it would rank against nothing.
+    minimum_viable_utility: float = 0.0
 
     # --- value of the opportunity ------------------------------------------
     opportunity_weight: float = 0.55
@@ -212,64 +222,112 @@ class MissionPolicyConfig:
                 raise ValueError(f"{name} must be within [0, 1]")
         if not 0.0 <= self.emergency_urgency < 1.0:
             raise ValueError("emergency_urgency must be within [0, 1)")
+        if not 0.0 <= self.minimum_viable_utility < 1.0:
+            raise ValueError("minimum_viable_utility must be within [0, 1)")
+
+
+# Why an evaluation came out as it did. Machine-readable and stable: logs and
+# the viewer key on them.
+FALLBACK_OWNER = "fallback_owner"
+VIABLE_POSITIVE_UTILITY = "viable_positive_utility"
+VIABLE_BY_URGENCY_FLOOR = "viable_by_urgency_floor"
+REJECTED_NEGATIVE_RAW_UTILITY = "rejected_negative_raw_utility"
+REJECTED_UTILITY_NOT_ABOVE_MINIMUM = "rejected_utility_not_above_minimum"
 
 
 @dataclass(frozen=True, slots=True)
-class MissionRanking:
-    """One opportunity's final rank and every term that produced it.
+class MissionEvaluation:
+    """One candidate's complete Mission Policy evaluation, as it was decided.
 
-    ``raw_utility`` is the exact signed sum of the contributions; ``utility``
-    is that sum, raised to ``urgency_floor`` when the floor is higher, and
-    clamped into [0, 1]. ``priority`` is ``utility`` on the engine's scale.
+    - The four contributions and ``risk_penalty`` are the exact signed parts
+      of ``raw_utility``.
+    - ``urgency_floor`` is the emergency floor; ``utility`` is
+      ``clamp(max(raw_utility, urgency_floor), 0, 1)``.
+    - ``viable`` is ``is_viable(utility)``; the fallback owner is always
+      viable.
+    - ``priority`` is the engine priority when viable and ``None`` otherwise:
+      a rejected candidate has no rank.
+    - The inputs read from Strategy are kept too: ``strategic_desirability``,
+      ``information_desire`` and ``risk_tolerance`` from the intent, and
+      ``control_need`` for the matched objective. ``None`` where the
+      calculation did not read them (the fallback owner; no match).
     """
 
+    activity: StrategicActivity | None
+    reason: str
+    viable: bool
+    priority: int | None
     utility: float
-    priority: int
-    strategic_desirability: float
+    raw_utility: float
+    urgency_floor: float
     opportunity_contribution: float
     information_contribution: float
     control_contribution: float
     urgency_contribution: float
     risk_penalty: float
-    urgency_floor: float
+    strategic_desirability: float | None = None
+    information_desire: float | None = None
+    risk_tolerance: float | None = None
+    control_need: ControlNeed | None = None
+
+    def __post_init__(self) -> None:
+        if self.viable != (self.priority is not None):
+            raise ValueError("a priority exists exactly when the evaluation is viable")
+        if not self.reason.strip():
+            raise ValueError("reason must not be blank")
 
     @property
-    def raw_utility(self) -> float:
-        return (
-            self.opportunity_contribution
-            + self.information_contribution
-            + self.control_contribution
-            + self.urgency_contribution
-            - self.risk_penalty
-        )
+    def is_fallback(self) -> bool:
+        return self.activity is None
 
     @property
     def floor_applied(self) -> bool:
         return self.urgency_floor > self.raw_utility
 
     def log_fields(self) -> dict[str, Any]:
+        need = self.control_need
         return {
-            "utility": round(self.utility, 3),
+            "activity": "FALLBACK" if self.activity is None else self.activity.name,
+            "reason": self.reason,
+            "viable": self.viable,
             "priority": self.priority,
-            "strategic_desirability": round(self.strategic_desirability, 3),
+            "utility": round(self.utility, 3),
+            "raw_utility": round(self.raw_utility, 3),
+            "urgency_floor": round(self.urgency_floor, 3),
+            "floor_applied": self.floor_applied,
             "opportunity_contribution": round(self.opportunity_contribution, 3),
             "information_contribution": round(self.information_contribution, 3),
             "control_contribution": round(self.control_contribution, 3),
             "urgency_contribution": round(self.urgency_contribution, 3),
             "risk_penalty": round(self.risk_penalty, 3),
-            "urgency_floor": round(self.urgency_floor, 3),
-            "floor_applied": self.floor_applied,
+            "strategic_desirability": _rounded(self.strategic_desirability),
+            "information_desire": _rounded(self.information_desire),
+            "risk_tolerance": _rounded(self.risk_tolerance),
+            "control_importance": None if need is None else round(need.importance, 3),
+            "control_gap": None if need is None else round(need.gap, 3),
         }
 
 
-def score_mission(
+def is_viable(utility: float, config: MissionPolicyConfig | None = None) -> bool:
+    """Whether a candidate of this final utility is worth executing at all.
+
+    The one viability predicate: ``utility > minimum_viable_utility``.
+    """
+
+    config = config or MissionPolicyConfig()
+    if math.isnan(utility):
+        raise ValueError("utility must not be NaN")
+    return utility > config.minimum_viable_utility
+
+
+def evaluate_mission(
     signals: MissionSignals,
     intent: StrategicIntent,
     *,
     need: ControlNeed | None = None,
     config: MissionPolicyConfig | None = None,
-) -> MissionRanking:
-    """Rank one opportunity under the current intent.
+) -> MissionEvaluation:
+    """Evaluate one opportunity under the current intent.
 
     ::
 
@@ -283,26 +341,34 @@ def score_mission(
         urgency      = urgency_weight * urgency
         risk         = risk_weight * risk
                        * (unavoidable + (1 - unavoidable) * (1 - risk_tolerance))
+        raw_utility  = value + urgency - risk
         floor        = emergency_utility
                        * clamp((urgency - emergency_urgency) / (1 - emergency_urgency))
-        utility      = clamp(max(value + urgency - risk, floor), 0, 1)
+        utility      = clamp(max(raw_utility, floor), 0, 1)
+        viable       = utility > minimum_viable_utility
+        priority     = minimum + round((maximum - minimum) * utility)   if viable
 
-    The fallback owner (``activity is None``) is not weighed at all: it ranks
+    The floor is applied before viability, so a genuine emergency stays
+    viable even when its ordinary raw utility is negative. The fallback
+    owner (``activity is None``) is not weighed at all: it is always viable,
     at ``fallback_priority``.
     """
 
     config = config or MissionPolicyConfig()
     if signals.activity is None:
-        return MissionRanking(
-            utility=0.0,
+        return MissionEvaluation(
+            activity=None,
+            reason=FALLBACK_OWNER,
+            viable=True,
             priority=config.fallback_priority,
-            strategic_desirability=0.0,
+            utility=0.0,
+            raw_utility=0.0,
+            urgency_floor=0.0,
             opportunity_contribution=0.0,
             information_contribution=0.0,
             control_contribution=0.0,
             urgency_contribution=0.0,
             risk_penalty=0.0,
-            urgency_floor=0.0,
         )
 
     desirability = intent.desirability(signals.activity)
@@ -311,59 +377,76 @@ def score_mission(
     )
     # Control is priced only for a meaningful match to an objective Strategy
     # still holds; work serving no objective keeps every other term.
+    matched_need = None if signals.control is None else need
     control_value = (
         0.0
-        if signals.control is None or need is None
-        else signals.control.alignment * need.value
+        if signals.control is None or matched_need is None
+        else signals.control.alignment * matched_need.value
     )
     unavoidable = config.unavoidable_risk_share
-    ranking_terms = {
-        "opportunity_contribution": scale
-        * config.opportunity_weight
-        * signals.opportunity,
-        "information_contribution": scale
+    opportunity = scale * config.opportunity_weight * signals.opportunity
+    information = (
+        scale
         * config.information_weight
         * signals.information_gain
-        * intent.information,
-        "control_contribution": scale * config.control_weight * control_value,
-        "urgency_contribution": config.urgency_weight * signals.urgency,
-        "risk_penalty": config.risk_weight
-        * signals.risk
-        * (unavoidable + (1.0 - unavoidable) * (1.0 - intent.risk_tolerance)),
-    }
-    raw = (
-        ranking_terms["opportunity_contribution"]
-        + ranking_terms["information_contribution"]
-        + ranking_terms["control_contribution"]
-        + ranking_terms["urgency_contribution"]
-        - ranking_terms["risk_penalty"]
+        * intent.information
     )
+    control = scale * config.control_weight * control_value
+    urgency = config.urgency_weight * signals.urgency
+    risk = (
+        config.risk_weight
+        * signals.risk
+        * (unavoidable + (1.0 - unavoidable) * (1.0 - intent.risk_tolerance))
+    )
+    raw = opportunity + information + control + urgency - risk
     floor = config.emergency_utility * _clamp01(
         (signals.urgency - config.emergency_urgency)
         / (1.0 - config.emergency_urgency)
     )
     utility = _clamp01(max(raw, floor))
-    return MissionRanking(
+    viable = is_viable(utility, config)
+    if viable:
+        reason = VIABLE_BY_URGENCY_FLOOR if floor > raw else VIABLE_POSITIVE_UTILITY
+    elif raw < 0.0:
+        reason = REJECTED_NEGATIVE_RAW_UTILITY
+    else:
+        reason = REJECTED_UTILITY_NOT_ABOVE_MINIMUM
+    return MissionEvaluation(
+        activity=signals.activity,
+        reason=reason,
+        viable=viable,
+        priority=to_priority(utility, config) if viable else None,
         utility=utility,
-        priority=to_priority(utility, config),
-        strategic_desirability=desirability,
+        raw_utility=raw,
         urgency_floor=floor,
-        **ranking_terms,
+        opportunity_contribution=opportunity,
+        information_contribution=information,
+        control_contribution=control,
+        urgency_contribution=urgency,
+        risk_penalty=risk,
+        strategic_desirability=desirability,
+        information_desire=intent.information,
+        risk_tolerance=intent.risk_tolerance,
+        control_need=matched_need,
     )
 
 
 def to_priority(utility: float, config: MissionPolicyConfig | None = None) -> int:
-    """Utility 0..1 on the engine's scale: the only such conversion.
+    """A viable utility on the engine's scale: the only such conversion.
 
-    Every real opportunity lands in ``[minimum_priority, maximum_priority]``,
-    strictly above the fallback owner.
+    Every viable opportunity lands in ``[minimum_priority, maximum_priority]``,
+    strictly above the fallback owner. A non-viable utility has no priority.
     """
 
     config = config or MissionPolicyConfig()
-    if math.isnan(utility):
-        raise ValueError("utility must not be NaN")
+    if not is_viable(utility, config):
+        raise ValueError(f"utility {utility} is not viable and has no priority")
     span = config.maximum_priority - config.minimum_priority
     return config.minimum_priority + round(span * _clamp01(utility))
+
+
+def _rounded(value: float | None) -> float | None:
+    return None if value is None else round(value, 3)
 
 
 def _clamp01(value: float) -> float:
@@ -371,10 +454,18 @@ def _clamp01(value: float) -> float:
 
 
 __all__ = [
+    "FALLBACK_OWNER",
+    "MINIMUM_CONTROL_ALIGNMENT",
+    "REJECTED_NEGATIVE_RAW_UTILITY",
+    "REJECTED_UTILITY_NOT_ABOVE_MINIMUM",
+    "VIABLE_BY_URGENCY_FLOOR",
+    "VIABLE_POSITIVE_UTILITY",
+    "ControlMatch",
     "ControlNeed",
+    "MissionEvaluation",
     "MissionPolicyConfig",
-    "MissionRanking",
     "MissionSignals",
-    "score_mission",
+    "evaluate_mission",
+    "is_viable",
     "to_priority",
 ]

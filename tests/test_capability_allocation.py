@@ -32,6 +32,8 @@ from bot.world.awareness import (
     AwarenessSnapshot,
     MacroPosture,
     RelativeStrength,
+    SpatialField,
+    SpatialFieldSample,
     ThreatAssessment,
 )
 from bot.world.awareness.bases import BaseSecurityAssessor
@@ -464,6 +466,15 @@ def awareness_for(current: AttentionSnapshot) -> AwarenessSnapshot:
         updated_at=current.world.time,
         macro_posture=MacroPosture.BALANCED,
         bases=BaseSecurityAssessor().update(current.world),
+        # One supported, known frontier sample: a patrol worth proposing.
+        spatial=SpatialField(
+            samples=(
+                SpatialFieldSample(
+                    MAP.center, friendly_value=0.45, knowledge_confidence=1.0
+                ),
+            ),
+            updated_at=current.world.time,
+        ),
     )
 
 

@@ -47,8 +47,8 @@ flowchart TD
     Zero -->|yes| Safe["SAFE: no defense proposal"]
     Zero -->|no| Protect["count own combat units + 2 x static defense within 25"]
     Protect --> None{"protection_score == 0?"}
-    None -->|yes| Critical["CRITICAL: defense priority 95"]
-    None -->|no| Threatened["THREATENED: defense priority 85"]
+    None -->|yes| Critical["CRITICAL: defense urgency 1"]
+    None -->|no| Threatened["THREATENED: defense urgency grows with the gap"]
 ```
 
 ## Why protection never suppresses a proposal

@@ -198,11 +198,14 @@ never completes on its own.
 
 ## Arbitration
 
-The Mission Policy ranks the patrol from its signals under the current
-intent. Every ranked patrol sits at or above the policy's minimum priority
-(30), so it preempts its share from the standing army (fallback, 20). A
-`DEFENSE` mission ranked at least the allocator's margin (10) above it
-preempts it at any time after its 1 s commitment window. The squad
+The Mission Policy evaluates the patrol from its signals under the current
+intent. A viable patrol ranks at or above the policy's minimum priority (30),
+so it preempts its share from the standing army (fallback, 20). A patrol
+worth nothing -- no local value, or risk outweighing it -- is rejected and
+never proposed; if one is already live, its re-declared slot is withdrawn and
+its units return to the standing army. A `DEFENSE` mission ranked at least
+the allocator's margin (10) above it preempts it at any time after its 1 s
+commitment window. The squad
 bookkeeping ([engine/squads.md](../engine/squads.md)) brings the same units
 back afterwards, and while members are away the patrol's budget shrinks by
 their supply rather than backfilling.

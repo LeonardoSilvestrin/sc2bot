@@ -114,8 +114,8 @@ class FrameProcessor:
         self._scouting_vision.tick(attention, awareness)
 
         # Behavior: units already on the map, owned through missions.
-        # Planners find opportunities; the Mission Policy ranks all of them
-        # on one scale before the engine arbitrates units.
+        # Planners find opportunities; the Mission Policy evaluates all of
+        # them on one scale and only viable ones reach the engine.
         candidates = tuple(
             candidate
             for planner in self._mission_planners
@@ -131,6 +131,12 @@ class FrameProcessor:
             proposals=proposals,
             commands=commands,
             services=self._services,
+            # Every planner that declared work this frame, viable or not: a
+            # standing responsibility whose candidate the policy rejected is
+            # withdrawn rather than kept at its old priority.
+            declared_planners=frozenset(
+                candidate.draft.planner for candidate in candidates
+            ),
         )
 
     def _step_macro(

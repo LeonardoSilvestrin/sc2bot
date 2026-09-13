@@ -16,8 +16,9 @@ Source: `bot/strategy/`.
 director every frame and, on each new snapshot, publishes a
 `StrategicContext`: the `StrategicIntent` and the `ControlObjective`s.
 Behavior planners read that context to choose targets; the Mission Policy
-(`score_mission`, run by `MissionRanker` in `bot/app/mission_ranking.py`)
-ranks every planner's candidates under it. Macro does not read Strategy yet:
+(`evaluate_mission`, run by `MissionRanker` in `bot/app/mission_ranking.py`)
+evaluates every planner's candidates under it and proposes only the viable
+ones. Macro does not read Strategy yet:
 it still receives the legacy `MacroPosture`. Every weight below remains a
 first guess until match logs show where it is wrong.
 
@@ -33,7 +34,7 @@ AwarenessSnapshot --> awareness_adapter --> StrategyInputs
                   StrategicContext (intent + ControlObjectives)
                         |                          |
                behavior planners            Mission Policy
-           (targets, MissionSignals)   (score_mission -> priority)
+           (targets, MissionSignals)   (evaluate_mission -> viable? priority)
 ```
 
 The scoring, direction, intent and policy core (`model`, `config`,
@@ -55,7 +56,7 @@ remains unrelated: it is macro's goal/opening vocabulary.
 | `intent.py` | `StrategicActivity`, `StrategicIntent`, `IntentConfig`, `derive_intent` |
 | `spatial/` | `ControlObjective`, `SpatialStrategySnapshot`, `SpatialPolicyConfig`, `derive_control_objectives` |
 | `context.py` | `StrategicContext`: what behaviors and the Mission Policy read |
-| `mission_policy.py` | `MissionSignals`, `ControlMatch`, `ControlNeed`, `MissionPolicyConfig`, `score_mission` |
+| `mission_policy.py` | `MissionSignals`, `ControlMatch`, `ControlNeed`, `MissionPolicyConfig`, `MissionEvaluation`, `evaluate_mission`, `is_viable` |
 | `posture.py` | temporary owner of the legacy `MacroPosture` policy macro still consumes |
 
 ## Inputs
@@ -275,7 +276,8 @@ not argue an objective away. Every number lives in `SpatialPolicyConfig`.
 A behavior planner describes each concrete opportunity as `MissionSignals`,
 in local terms only: `activity`, `opportunity`, `urgency`, `risk`,
 `information_gain` (each 0..1) and an optional `control: ControlMatch`.
-`score_mission` is the one place those terms meet the intent:
+`evaluate_mission` is the one place those terms meet the intent. It returns a
+`MissionEvaluation` holding every term below as it was computed:
 
 ```text
 desirability = floor + (1 - floor) * intent[activity]
@@ -286,9 +288,13 @@ value        = value_share * desirability * (
 urgency      = urgency_weight * urgency
 risk         = risk_weight * risk
                * (unavoidable + (1 - unavoidable) * (1 - risk_tolerance))
+raw_utility  = value + urgency - risk
 floor        = emergency_utility
                * clamp((urgency - emergency_urgency) / (1 - emergency_urgency))
-utility      = clamp(max(value + urgency - risk, floor), 0, 1)
+utility      = clamp(max(raw_utility, floor), 0, 1)
+viable       = utility > minimum_viable_utility                  (is_viable)
+priority     = minimum_priority
+               + round((maximum_priority - minimum_priority) * utility)   viable only
 ```
 
 | `MissionPolicyConfig` | Default |
@@ -298,11 +304,26 @@ utility      = clamp(max(value + urgency - risk, floor), 0, 1)
 | `urgency_weight` | 0.45 |
 | `emergency_urgency`, `emergency_utility` | 0.5, 0.95 |
 | `risk_weight`, `unavoidable_risk_share` | 0.40, 0.15 |
+| `minimum_viable_utility` | 0.0 |
 | `fallback_priority`, `minimum_priority`, `maximum_priority` | 20, 30, 100 |
 
-The fallback owner (`activity` `None`, the standing army) ranks at
-`fallback_priority`; every other candidate at
-`minimum_priority + round((maximum_priority - minimum_priority) * utility)`.
+**Viability.** A candidate is executable only when its final utility is
+above `minimum_viable_utility`: at the default 0, when it is worth anything at
+all. A rejected evaluation has no priority, and `MissionRanker` never turns it
+into a proposal -- it is logged and goes no further, so it can neither be
+admitted nor take a unit. The emergency floor is applied *before* the
+predicate, so a genuine emergency stays viable even when risk makes its
+ordinary raw utility negative. The fallback owner (`activity` `None`, the
+standing army) is not weighed: it is always viable, at `fallback_priority`,
+the explicit owner of whatever no viable mission takes.
+
+| `reason` | When |
+| --- | --- |
+| `fallback_owner` | the standing army's fallback signals |
+| `viable_positive_utility` | viable on its own raw utility |
+| `viable_by_urgency_floor` | viable, the emergency floor above the raw utility |
+| `rejected_negative_raw_utility` | not viable; risk outweighed everything |
+| `rejected_utility_not_above_minimum` | not viable; nothing negative, but not enough |
 
 **One price per factor.** A planner's `opportunity` must not already contain
 risk, information, urgency, strategic desirability or an objective's

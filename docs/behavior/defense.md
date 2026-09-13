@@ -44,7 +44,7 @@ Per threatened base:
 | Plan field | Value |
 | --- | --- |
 | `desired_units` | `min(6, max(1, ceil(gap)))` -- grows with how outnumbered the base is |
-| `priority` | 95 when `CRITICAL` (no protection at all), 85 when `THREATENED` |
+| `signals` | `DEFENSE`; urgency 1 when `CRITICAL` (no protection at all), rising with how far the attack outweighs the cover when `THREATENED`; a `ControlMatch` at alignment 1 to Strategy's objective for the base, when it has one. No priority: the Mission Policy ranks it, and its emergency floor keeps an urgent defense viable and near the top whatever the intent |
 | `reason` | `base_undefended_against_observed_threat` / `base_outnumbered_by_observed_threat` |
 | `type_desirability` | the ground table if anything attacking is on the ground; the air-only table if every attacker flies |
 
@@ -173,7 +173,6 @@ So when no threat remains:
 | Group | Field | Default |
 | --- | --- | --- |
 | Proposal | `proposal_cadence` | 5 s |
-| | `threatened_priority`, `critical_priority` | 85, 95 |
 | | `mission_timeout`, `failure_cooldown` | 120 s, 10 s |
 | | `commitment_seconds` | 3 s |
 | Units | `unit_types` | Marine, Marauder, Reaper, Siege Tank (both), Banshee |

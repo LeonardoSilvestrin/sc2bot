@@ -22,13 +22,19 @@ from .director import StrategicDirector
 from .hysteresis import ObjectiveState, decision_confidence, select_objective
 from .intent import IntentConfig, StrategicActivity, StrategicIntent, derive_intent
 from .mission_policy import (
+    FALLBACK_OWNER,
     MINIMUM_CONTROL_ALIGNMENT,
+    REJECTED_NEGATIVE_RAW_UTILITY,
+    REJECTED_UTILITY_NOT_ABOVE_MINIMUM,
+    VIABLE_BY_URGENCY_FLOOR,
+    VIABLE_POSITIVE_UTILITY,
     ControlMatch,
     ControlNeed,
+    MissionEvaluation,
     MissionPolicyConfig,
-    MissionRanking,
     MissionSignals,
-    score_mission,
+    evaluate_mission,
+    is_viable,
     to_priority,
 )
 from .model import (
@@ -56,7 +62,12 @@ from .spatial import (
 )
 
 __all__ = [
+    "FALLBACK_OWNER",
     "MINIMUM_CONTROL_ALIGNMENT",
+    "REJECTED_NEGATIVE_RAW_UTILITY",
+    "REJECTED_UTILITY_NOT_ABOVE_MINIMUM",
+    "VIABLE_BY_URGENCY_FLOOR",
+    "VIABLE_POSITIVE_UTILITY",
     "BuildAdvantageWeights",
     "ControlMatch",
     "ControlNeed",
@@ -67,8 +78,8 @@ __all__ = [
     "MacroPostureConfig",
     "MacroPostureDirector",
     "MacroPostureState",
+    "MissionEvaluation",
     "MissionPolicyConfig",
-    "MissionRanking",
     "MissionSignals",
     "ObjectiveAssessment",
     "ObjectiveState",
@@ -92,11 +103,12 @@ __all__ = [
     "decision_confidence",
     "derive_control_objectives",
     "derive_intent",
+    "evaluate_mission",
+    "is_viable",
     "score_build_advantage",
     "score_pressure",
     "score_recover",
     "score_stabilize",
-    "score_mission",
     "score_take_map_control",
     "select_objective",
     "to_priority",

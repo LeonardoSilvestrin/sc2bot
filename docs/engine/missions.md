@@ -135,13 +135,16 @@ when a mission **finishes**, never on a rejection.
 
 ### Standing reconciliation
 
-If a planner proposed at least one STANDING proposal this tick, any live
-standing mission of that planner whose key is not among them is cancelled
-with `standing_proposal_omitted`. A planner that proposed nothing standing
-this tick -- its cadence was not ready, or it withheld -- leaves its standing
-missions alone: silence is not omission. Today every standing planner
-declares one fixed key, so this rule never fires in practice; it exists for a
-planner that holds several standing slots and drops one.
+`tick` takes `declared_planners`: every planner that declared work this tick,
+including work the Mission Policy rejected. The app passes it; the engine
+never learns why a proposal is missing. For each planner that is declared or
+sent at least one STANDING proposal, any live standing mission of that
+planner whose key is not among its proposals is cancelled with
+`standing_proposal_omitted`. That is how a standing responsibility the policy
+now rejects -- a patrol worth nothing -- is withdrawn instead of holding its
+units at its old priority. A planner that declared nothing this tick -- its
+cadence was not ready, or it withheld -- leaves its standing missions alone:
+silence is not omission.
 
 ### Cancellation
 
@@ -248,14 +251,18 @@ flowchart TD
 
 ### Worked example
 
-The standing army (20) holds ten units. Map control (40) is declared with a
-supply budget: after the standing mission's 2 s commitment window it
-preempts its share (40 >= 20 + 10). A base is attacked: defense (95) preempts
-from map control after map control's 1 s window (95 >= 40 + 10), and from a
-Banshee raid mid-strike (95 >= 62 + 10 + 5). A Reaper raid (60) cannot take
-the scouting Reaper (65), and scouting cannot take anything. When defense
-completes, its units are released and the standing and map-control missions,
-which prefer their squad members, take them back on the next allocation.
+Priorities here are illustrative Mission Policy outputs, not constants. The
+standing army (fallback, 20) holds ten units. A viable map-control patrol,
+ranked say 45, is declared with a supply budget: after the standing
+mission's 2 s commitment window it preempts its share (45 >= 20 + 10). A
+base is attacked: the defense's urgency floor ranks it near the top (say
+97), so it preempts from the patrol after the patrol's 1 s window
+(97 >= 45 + 10), and from a Banshee raid mid-strike ranked 70
+(97 >= 70 + 10 + 5). Two raids ranked within 10 of each other cannot take
+units from one another, and scouting cannot take anything. A candidate the
+policy rejected never appears here at all. When defense completes, its units
+are released and the standing and map-control missions, which prefer their
+squad members, take them back on the next allocation.
 
 ## Executor contract (`execution.py`)
 

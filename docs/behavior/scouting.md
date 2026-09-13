@@ -49,7 +49,7 @@ flowchart TD
 
 | Proposal field | Value |
 | --- | --- |
-| kind, priority, mode | `SCOUT`, 65, FINITE |
+| kind, priority, mode | `SCOUT`, ranked by the Mission Policy from its `INFORMATION` signals (rejected when worth nothing), FINITE |
 | `deduplication_key` | `scout:<key>` |
 | `target_key`, `target` | the resolved key and its position |
 | `reason` | `<key>_information_unknown` (never observed) or `<key>_information_stale` |
@@ -114,7 +114,7 @@ decision ([engine/vision.md](../engine/vision.md)).
 | `location_stale_after` | 90 s (also passed to `AwarenessService`) |
 | `minimum_workers` | 16 |
 | `repeat_scouts_after` | 240 s |
-| `proposal_cadence`, `priority` | 65 s, 65 |
+| `proposal_cadence` | 65 s |
 | `mission_timeout`, `failure_cooldown` | 105 s, 18 s |
 | `unit_types`, `fallback_unit_types` | Reaper; SCV |
 | `minimum_unit_health` | 0.70 |

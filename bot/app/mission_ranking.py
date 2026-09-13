@@ -1,10 +1,12 @@
 """The Mission Policy at runtime: every planner's candidates, one scale.
 
-Planners describe opportunities (``MissionCandidate``); this ranks them all
-under the frame's ``StrategicContext`` with ``bot.strategy.score_mission``
-and hands ``MissionController`` ordinary proposals carrying the final
-priority. Neither side learns about the other: planners never see a
-priority, and the engine never sees a signal or an intent.
+Planners describe opportunities (``MissionCandidate``); this evaluates each
+under the frame's ``StrategicContext`` with ``bot.strategy.evaluate_mission``,
+logs every evaluation -- a rejection as much as an acceptance -- and hands
+``MissionController`` ordinary proposals for the viable ones only, carrying
+the final priority. Neither side learns about the other: planners never see a
+priority, and the engine never sees a signal, an intent or a rejected
+candidate.
 """
 
 from __future__ import annotations
@@ -16,33 +18,31 @@ from bot.behavior.contracts import MissionCandidate
 from bot.engine.missions.models import MissionProposal
 from bot.ports.logging import BotLogger
 from bot.strategy import (
+    MissionEvaluation,
     MissionPolicyConfig,
-    MissionRanking,
     StrategicContext,
-    score_mission,
+    evaluate_mission,
 )
-
-from .telemetry.gate import ChangeGate
 
 COMPONENT = "strategy.mission_policy"
 
 
 @dataclass(slots=True)
 class MissionRanker:
-    """Ranks candidates and logs why, once per change of each responsibility.
+    """Evaluates candidates, logs each evaluation, proposes the viable ones.
 
-    ``mission.candidate`` (the planner's signals) and ``mission.ranked`` (the
-    policy's breakdown) go out together whenever a deduplication key's
-    signals or priority change, and at least every ``log_heartbeat`` seconds.
+    ``mission.evaluated`` is written for every candidate, viable or rejected,
+    under its ``proposal_id`` -- the join to the controller's ``proposal_*``
+    events. Planners propose on cadences seconds apart, so this is one line
+    per decision, not per frame, and is never change-gated.
     """
 
     logger: BotLogger | None = None
     config: MissionPolicyConfig = field(default_factory=MissionPolicyConfig)
-    log_heartbeat: float = 30.0
-    last_rankings: dict[str, MissionRanking] = field(
+    # The latest evaluation per deduplication key (tests, telemetry).
+    last_evaluations: dict[str, MissionEvaluation] = field(
         default_factory=dict, init=False, repr=False
     )
-    _gates: dict[str, ChangeGate] = field(default_factory=dict, init=False, repr=False)
 
     def rank(
         self,
@@ -53,7 +53,7 @@ class MissionRanker:
         proposals: list[MissionProposal] = []
         for candidate in candidates:
             signals = candidate.signals
-            ranking = score_mission(
+            evaluation = evaluate_mission(
                 signals,
                 context.intent,
                 need=context.need_for(
@@ -61,51 +61,33 @@ class MissionRanker:
                 ),
                 config=self.config,
             )
-            self.last_rankings[candidate.draft.deduplication_key] = ranking
-            self._log(candidate, ranking)
-            proposals.append(candidate.ranked(ranking.priority))
+            self.last_evaluations[candidate.draft.deduplication_key] = evaluation
+            self._log(candidate, evaluation)
+            if evaluation.priority is not None:
+                proposals.append(candidate.ranked(evaluation.priority))
         return tuple(proposals)
 
-    def _log(self, candidate: MissionCandidate, ranking: MissionRanking) -> None:
+    def _log(self, candidate: MissionCandidate, evaluation: MissionEvaluation) -> None:
         if self.logger is None:
             return
         draft = candidate.draft
-        signals = candidate.signals.log_fields()
-        signature = (
-            ranking.priority,
-            draft.target_key,
-            tuple(
-                (name, round(value, 2) if isinstance(value, float) else value)
-                for name, value in sorted(signals.items())
-            ),
-        )
-        gate = self._gates.setdefault(
-            draft.deduplication_key, ChangeGate(heartbeat=self.log_heartbeat)
-        )
-        if not gate.admit(signature, now=draft.created_at):
-            return
-        common = {
-            "planner": draft.planner,
-            "proposal_id": draft.proposal_id,
-            "deduplication_key": draft.deduplication_key,
-            "mission_kind": draft.kind.name,
-            "target_key": draft.target_key,
-            "target": [
-                round(float(draft.target.x), 1),
-                round(float(draft.target.y), 1),
-            ],
-        }
         self.logger.event(
-            "mission.candidate",
+            "mission.evaluated",
             component=COMPONENT,
             game_time=draft.created_at,
-            data={**common, **signals},
-        )
-        self.logger.event(
-            "mission.ranked",
-            component=COMPONENT,
-            game_time=draft.created_at,
-            data={**common, **ranking.log_fields()},
+            data={
+                "proposal_id": draft.proposal_id,
+                "deduplication_key": draft.deduplication_key,
+                "planner": draft.planner,
+                "mission_kind": draft.kind.name,
+                "target_key": draft.target_key,
+                "target": [float(draft.target.x), float(draft.target.y)],
+                "viable": evaluation.viable,
+                "reason": evaluation.reason,
+                "priority": evaluation.priority,
+                "signals": candidate.signals.log_fields(),
+                "evaluation": evaluation.log_fields(),
+            },
         )
 
 

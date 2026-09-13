@@ -42,13 +42,18 @@ in [contracts.md](../contracts.md#rules).
 Six behaviors, wired by `compose_bot` in this order.
 
 | Behavior | Planner -> executor | Kind | Priority | Mode | Deduplication key | Squad | Requirement | Preempts |
-| --- | --- | --- | ---: | --- | --- | --- | --- | --- |
-| [scouting](scouting.md) | `IntelPlanner` -> `ScoutExecutor` | `SCOUT` | 65 | FINITE | `scout:<target>` | -- | 1 Reaper (1 SCV when no Reaper is alive), health >= 0.70 | **no** |
-| [harass/reaper](harass.md#reaper-raid) | `ReaperHarassPlanner` -> `ReaperHarassExecutor` | `HARASS` | 60 | FINITE | `harass:<target>` | -- | 1 Reaper, health >= 0.5 | yes |
-| [harass/banshee](harass.md#banshee-raid) | `BansheeHarassPlanner` -> `BansheeHarassExecutor` | `AIR_HARASS` | 62 | STANDING | `air_harass:banshee_harass` | `banshee_harass` | every Banshee alive, minimum 0, health >= 0.5 | yes |
-| [defense](defense.md) | `DefensePlanner` -> `DefendBaseExecutor` | `DEFENSE` | 85 / 95 | FINITE | `defense:<base_id>` | bound to a compatible squad | 1..6 of Marine, Marauder, Reaper, Siege Tank, Banshee, health >= 0.3, preference by attack type | yes |
-| [map_control](map-control.md) | `MapControlPlanner` -> `MapControlExecutor` | `MAP_CONTROL` | 40 | STANDING | `map_control:patrol` | `map_control` | role `MOBILE_CONTROL`, 20% of combat supply, health >= 0.7, minimum 0 | yes |
-| [standing](standing.md) | `StandingPlanner` -> `StandingExecutor` | `HOLD_RALLY` | 20 | STANDING | `hold_rally:main_army` | `main_army` | every combat unit, minimum 0 | yes |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| [scouting](scouting.md) | `IntelPlanner` -> `ScoutExecutor` | `SCOUT` | policy | FINITE | `scout:<target>` | -- | 1 Reaper (1 SCV when no Reaper is alive), health >= 0.70 | **no** |
+| [harass/reaper](harass.md#reaper-raid) | `ReaperHarassPlanner` -> `ReaperHarassExecutor` | `HARASS` | policy | FINITE | `harass:<target>` | -- | 1 Reaper, health >= 0.5 | yes |
+| [harass/banshee](harass.md#banshee-raid) | `BansheeHarassPlanner` -> `BansheeHarassExecutor` | `AIR_HARASS` | policy | STANDING | `air_harass:banshee_harass` | `banshee_harass` | every Banshee alive, minimum 0, health >= 0.5 | yes |
+| [defense](defense.md) | `DefensePlanner` -> `DefendBaseExecutor` | `DEFENSE` | policy (urgency floor) | FINITE | `defense:<base_id>` | bound to a compatible squad | 1..6 of Marine, Marauder, Reaper, Siege Tank, Banshee, health >= 0.3, preference by attack type | yes |
+| [map_control](map-control.md) | `MapControlPlanner` -> `MapControlExecutor` | `MAP_CONTROL` | policy | STANDING | `map_control:patrol` | `map_control` | role `MOBILE_CONTROL`, 20% of combat supply, health >= 0.7, minimum 0 | yes |
+| [standing](standing.md) | `StandingPlanner` -> `StandingExecutor` | `HOLD_RALLY` | 20 (fallback) | STANDING | `hold_rally:main_army` | `main_army` | every combat unit, minimum 0 | yes |
+
+"policy": the planner describes the work as `MissionSignals` and the Mission
+Policy evaluates it under the current intent. A viable candidate is proposed
+at 30..100; one worth nothing is rejected and never reaches the engine
+([contracts.md](../contracts.md#mission-kinds-and-priorities)).
 
 Timing:
 
@@ -110,5 +115,6 @@ units: `path_to`, `safe_path_to`, `attack_move`, `attack_unit`,
 7. Add the folder to `VERTICAL_BEHAVIORS`, `ASSESSORS` and `PLANNERS` in
    `tests/test_behavior_architecture.py`.
 8. Document it: a page here, a row in the roster, its events in
-   [logging.md](../logging.md), its priority in
-   [contracts.md](../contracts.md#mission-kinds-and-priorities).
+   [logging.md](../logging.md), and what its `MissionSignals` mean -- the
+   Mission Policy, not the planner, turns them into a priority
+   ([contracts.md](../contracts.md#mission-kinds-and-priorities)).

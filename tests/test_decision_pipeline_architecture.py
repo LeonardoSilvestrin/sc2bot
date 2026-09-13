@@ -109,7 +109,7 @@ class PriorityOwnershipTests(unittest.TestCase):
             for path in sorted(BOT.rglob("*.py"))
             if "strategy" not in path.relative_to(BOT).parts[:1]
             and re.search(
-                r"\b(score_mission|to_priority)\b",
+                r"\b(evaluate_mission|is_viable|to_priority)\b",
                 path.read_text(encoding="utf-8-sig"),
             )
         ]

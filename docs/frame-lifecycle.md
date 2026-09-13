@@ -111,8 +111,10 @@ produces a new snapshot, the runtime derives the `StrategicIntent` and the
 `ControlObjective`s and publishes them as the frame's `StrategicContext`; it
 emits cadenced `strategy.updated` telemetry, and still derives the legacy
 macro posture that macro receives through Awareness. Behavior planners read
-that context, and `MissionRanker` ranks every candidate under it before
-`MissionController` sees a proposal.
+that context; `MissionRanker` evaluates every candidate under it, logs each
+evaluation, and passes only the viable ones to `MissionController` -- along
+with the ids of every planner that declared work, so a standing slot whose
+candidate was rejected is withdrawn.
 
 ## Step 10: inside `MissionController.tick`
 

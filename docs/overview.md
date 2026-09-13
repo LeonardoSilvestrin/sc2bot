@@ -58,9 +58,9 @@ In words:
    frame's `StrategicContext`.
 5. **Propose.** Six behavior planners read Attention, Awareness and the
    context and describe concrete mission candidates in local terms
-   (`MissionSignals`). The Mission Policy ranks every candidate under the
-   context and hands `MissionController` ordinary proposals with a final
-   priority. `MacroPlanner` reads Attention and Awareness and proposes
+   (`MissionSignals`). The Mission Policy evaluates every candidate under
+   the context, rejects the ones worth nothing, and hands `MissionController`
+   ordinary proposals with a final priority for the rest. `MacroPlanner` reads Attention and Awareness and proposes
    purchases. Nobody commands anything yet.
 6. **Arbitrate.** `MissionController` admits missions and `UnitAllocator`
    leases units to them by priority and utility. `EconomyController` admits

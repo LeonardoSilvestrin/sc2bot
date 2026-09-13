@@ -6,36 +6,55 @@ migration. Rules: [PRINCIPLES.md](PRINCIPLES.md).
 
 ## Last completed commit
 
-`refactor: complete control objective integration` (Stage 0), on top of the
-user's WIP checkpoint `ffce62d strat agora é live`.
+`fix: reject non-viable mission candidates` (Stage 1).
 
 ## Completed stages
 
-- **Stage 0 -- control objective integration.** The unfinished consumer
-  migration was already committed as `ffce62d` (18 files, +757/-106), so the
-  worktree was clean; this stage finished it on top instead of rewriting it.
+- **Stage 0 -- control objective integration** (`9b70838`). The unfinished
+  consumer migration was already committed by the user as `ffce62d` (18
+  files, +757/-106), so the worktree was clean; this stage finished it on top
+  instead of rewriting it.
   - `ControlMatch(objective_id, alignment)` replaces the loose
     `control_objective` / `control_alignment` pair on `MissionSignals`. A match
-    exists only at `alignment >= MINIMUM_CONTROL_ALIGNMENT` (0.5); an id never
-    travels with a negligible alignment. Work serving no objective is valid.
-  - Map Control's anchor evaluation (`evaluate_sample`, a pure function
-    returning `MapControlCandidate`) is split into `local_value`, `caution`
-    and `strategic_value`; `score = local - caution + strategic`. Strategy
-    moves the anchor only through `strategic_value`.
-  - `MissionSignals.opportunity` for the patrol is `local_value` over its best
-    possible value: no risk, unknown space, intent or objective importance.
-    Risk, information gain and the control match reach the policy as their
-    own signals, priced once there.
-  - Deterministic tie-breaks: objective pull ties go to the smaller id; a
-    travel-origin distance tie goes by base position, not townhall order.
+    exists only at `alignment >= MINIMUM_CONTROL_ALIGNMENT` (0.5).
+  - Map Control's anchor evaluation (`evaluate_sample` ->
+    `MapControlCandidate`) is split into `local_value`, `caution` and
+    `strategic_value`. Strategy moves the anchor only through
+    `strategic_value`; the patrol's `opportunity` is `local_value` alone.
+  - Explicit tie-breaks for objective pull and travel origin.
   - Docs no longer call Strategy or territory regions shadow/unconsumed.
+- **Stage 1 -- explicit mission viability.**
+  - `evaluate_mission` returns a `MissionEvaluation`: every contribution,
+    `raw_utility`, `urgency_floor`, final `utility`, `viable`, a
+    machine-readable `reason`, `priority` only when viable, and the Strategy
+    inputs it read (desirability, information desire, risk tolerance,
+    control need).
+  - Viability is one replaceable predicate, `is_viable`:
+    `utility > MissionPolicyConfig.minimum_viable_utility` (0.0). The
+    emergency floor applies first, so urgent defense stays viable with a
+    negative raw utility. The fallback owner is always viable at 20.
+  - `MissionRanker` proposes viable candidates only and logs one
+    `mission.evaluated` per candidate, rejected ones included (no change
+    gate; `mission.candidate` / `mission.ranked` are gone).
+  - `MissionController.tick(declared_planners=...)`: a planner that declared
+    work whose standing candidate was rejected has that standing mission
+    cancelled (`standing_proposal_omitted`), so rejected work cannot keep
+    units at an old priority. The engine receives planner ids only.
+  - The test that blessed a worthless candidate outranking Standing is
+    replaced by one asserting no worthless candidate can.
+  - Every canonical doc that listed fixed per-kind priorities (contracts,
+    engine/missions, behavior README, standing, scouting, defense, harass,
+    base-security) now describes policy ranking and viability. `standing.md`
+    also had pre-`ffce62d` anchor and posture sections (anchor now follows
+    Strategy's home passage objective; posture no longer reads macro
+    posture); corrected here.
 
 ## Tests and tooling
 
-At Stage 0 (Windows, project `.venv`, Python 3.12):
+At Stage 1 (Windows, project `.venv`, Python 3.12):
 
-- `pytest`: 789 passed.
-- `ruff check bot tests`: clean (the six WIP errors are fixed).
+- `pytest`: 804 passed.
+- `ruff check bot tests`: clean.
 - `mypy bot`: clean.
 - `git diff --check`: clean.
 
@@ -49,22 +68,29 @@ pytest/ruff/mypy).
   alignment" is enforced by the contract, not by each planner.
 - Map Control pulls its anchor with the objective's *importance*, not its
   gap: the gap shrinks as our own patrol arrives, which would argue the
-  anchor away. The Mission Policy still prices importance x gap for the
-  cross-mission decision.
+  anchor away. The Mission Policy still prices importance x gap.
 - Contract 16 was already relaxed in `ffce62d` (`ConsumerTests`): macro and
   the mission engine never read territory; Strategy and behaviors may.
+- Viability threshold stays 0.0: no repository evidence justifies a higher
+  semantic minimum yet. It is a config value behind `is_viable`.
+- Withdrawal of rejected standing work reuses the controller's existing
+  standing reconciliation rather than a new cancellation path: the app passes
+  `declared_planners` (plain planner ids), so the engine stays blind to the
+  policy and to why a proposal is missing.
+- Policy logging is per decision, not change-gated: planner cadences are 5 s
+  or more, so one line per candidate is small and gives every proposal a
+  persisted evaluation under its `proposal_id`.
 
 ## Known issues
 
-- Every non-fallback candidate gets priority >= 30 even at utility 0, above
-  Standing (20); a test blesses it (Stage 1).
-- `docs/contracts.md` "Mission kinds and priorities" and
-  `docs/behavior/README.md` still list the pre-policy fixed priorities
-  (Stage 1).
+- A live FINITE mission is not withdrawn when its re-declared candidate is
+  rejected (duplicates are rejected by the controller anyway); it runs to its
+  own end or timeout.
+- Tests that exercise Map Control allocation now need a spatial field: a
+  patrol with no field offers nothing and is rejected.
 - Logs round decision values, have no run id / sequence / schema version,
-  and stringify unknown objects (`default=str`); `mission.candidate` /
-  `mission.ranked` are change-gated, so not every proposal has a persisted
-  evaluation (Stage 2).
+  stringify unknown objects (`default=str`), and do not persist the
+  `StrategicContext` a policy decision read (Stage 2).
 - `MissionController._preemption_cost` swallows executor exceptions silently
   (Stage 2).
 - Map Control and Standing still use the capability/role system in
@@ -84,7 +110,10 @@ pytest/ruff/mypy).
 
 ## Next stage
 
-Stage 1 -- make mission viability explicit: `MissionPolicy` returns an
-evaluation with raw utility, urgency floor, final utility, viability, reason
-and priority only when viable; rejected candidates never reach
-`MissionController`.
+Stage 2 -- make the decision trace causally reproducible: a layer-neutral
+JSONL envelope (schema version, run id, sequence, iteration, exact game
+time), a game-start record, persisted `StrategicContext` revisions referenced
+by policy evaluations, spatial selection summaries, `mission.progressed` on
+outcome changes, a logged `preemption_cost` fault, and joinable
+Strategy -> candidate -> evaluation -> admission -> assignment -> progress
+tests.
