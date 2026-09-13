@@ -190,9 +190,11 @@ regions and 16 passages on the last recorded map).
 
 `_ground_traffic_routes` asks MapAnalyzer's pathfinder for a ground path
 (sensitivity 3, no smoothing) from every enemy start and the enemy natural to
-every ready, landed own townhall (or our start location when none). The result
-is cached by the endpoint positions; a pathfinding exception keeps the partial
-result and retries the same endpoints after 2 seconds.
+every ready, landed own townhall (or our start location when none). Townhalls
+are sorted by position first: the game does not list our structures in a stable
+order, and with two or more bases that alone used to re-path every other frame.
+The result is cached by the endpoint positions; a pathfinding exception keeps
+the partial result and retries the same endpoints after 2 seconds.
 
 ### Versioning by identity
 

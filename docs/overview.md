@@ -114,7 +114,7 @@ The rules behind this table, and the tests that keep it true, are in
 | Piece | Status | Notes |
 | --- | --- | --- |
 | Attention, enemy memory, enemy bases and forces, beliefs, macro posture, base security, spatial field | live | [world/awareness.md](world/awareness.md), [world/spatial-field.md](world/spatial-field.md) |
-| Territory (control, frontline, ground security) | shadow | computed every second, logged and drawn; no behavior, macro or engine code reads it ([world/territory.md](world/territory.md)) |
+| Territory (control, frontline, ground security) | sample projection live; regions shadow | computed every second, logged and drawn; bounded sample control/knowledge is projected onto the generic spatial field for Map Control, while no behavior reads territory types or the region graph ([world/territory.md](world/territory.md)) |
 | Strategy | shadow, not wired | pure library with tests; `compose_bot` never builds it and nothing logs it ([strategy.md](strategy.md)) |
 | Standing army, map control, defense, Reaper harass, Banshee harass, scouting | live | [behavior/README.md](behavior/README.md) |
 | Defense roles (Tanks siege on an anchor, everything else screens) | pilot | inside `DefendBaseExecutor` only ([behavior/defense.md](behavior/defense.md)) |

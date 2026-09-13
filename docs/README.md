@@ -36,7 +36,7 @@ Start at level 1, go down only where the work is.
 | [world/awareness.md](world/awareness.md) | `AwarenessService`: enemy memory, enemy bases and forces, economy/army beliefs, macro posture, confidence semantics | live |
 | [world/base-security.md](world/base-security.md) | Per-base threat/protection reading behind Defense | live |
 | [world/spatial-field.md](world/spatial-field.md) | The sampled spatial field (friendly, threat, choke, route values) and its caches | live |
-| [world/territory.md](world/territory.md) | Control, frontline and ground security of the map | shadow |
+| [world/territory.md](world/territory.md) | Control, frontline and ground security; sample control/knowledge feed the spatial field | sample projection live; regions shadow |
 | **Engine (arbitration)** | | |
 | [engine/missions.md](engine/missions.md) | `MissionController`, `UnitAllocator`, proposals, lifecycle modes, preemption, executor contract, command port | live |
 | [engine/capabilities.md](engine/capabilities.md) | Unit capability profiles, suitability math, roles, capability-based allocation | live |

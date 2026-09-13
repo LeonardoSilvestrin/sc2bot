@@ -11,11 +11,21 @@ class SpatialFieldSample:
 
     position: Point2
     friendly_value: float = 0.0
+    # Actual friendly territorial influence when Awareness has projected a
+    # territory update; ``None`` on a raw/synthetic spatial field.
+    friendly_control: float | None = None
+    # Credible, bounded territorial ownership. Unlike ``enemy_threat``, this
+    # never grows merely because an enemy position became uncertain.
+    enemy_control: float = 0.0
+    # Possible combat presence, including position uncertainty.
     enemy_threat: float = 0.0
     choke_value: float = 0.0
     route_value: float = 0.0
     # No enemy evidence is unknown by default, not a known-zero threat.
     confidence: float = 0.0
+    # How well this map location itself is known (vision memory or credible
+    # enemy evidence), independently of the threat estimate's confidence.
+    knowledge_confidence: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)

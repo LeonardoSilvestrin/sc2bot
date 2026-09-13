@@ -10,13 +10,12 @@ Source: `bot/world/awareness/territory/` (`assessor.py`, `influence.py`,
 `topology.py`, `frontline.py`, `observation.py`, `model.py`, `config.py`),
 region graph in `bot/adapters/ares/world_observer.py`.
 
-**Shadow mode.** Territory is computed, logged (`knowledge.territory`) and
-drawn (debug view, SVG snapshots), but no behavior, macro or engine code reads
-it. `tests/test_territory.py` (`ShadowModeTests`) fails if any module under
-`bot/behavior`, `bot/macro` or `bot/engine` mentions `.territory` or a
-`*Territory*` name; `bot/app` may read it. Wiring a consumer is a deliberate
-change that deletes that guard. The thresholds below are first guesses, left
-untuned until logs show where they are wrong.
+`TerritorySnapshot` remains an Awareness/debug model: behavior, macro and
+engine code do not couple to its region graph or types. `AwarenessService`
+does project each sample's bounded enemy influence and knowledge confidence
+onto `SpatialFieldSample`, where Map Control can consume those generic
+signals. The existing architecture guard still prevents direct territory
+dependencies outside the application/Awareness layers.
 
 ## Three independent dimensions
 
@@ -40,6 +39,7 @@ Territory never folds value into control.
 | `friendly_forces` | the `FriendlyForce` clusters used this update |
 | `frontline` | points where friendly and enemy dominance meet |
 | `confidence` | mean sample confidence: how much of the map we currently know |
+| aggregate enemy metrics | remembered cluster count, oldest memory, largest uncertainty, control radius and possible-presence radius |
 | `updated_at` | game time of the update |
 
 Lookups: `region(key)`, `region_at(position)`, `at(position)`,
@@ -69,28 +69,39 @@ A topology rebuild resets the observation memory and the hysteresis history.
 | Side | Military | Infrastructure |
 | --- | --- | --- |
 | Friendly | our armed non-worker units grouped exactly like enemy clusters (single linkage, 7 tiles); strength in supply (0.25 for zero-supply), confidence 1, uncertainty 0 | each held base, weight 1 |
-| Enemy | the `EnemyForceCluster`s, with their confidence and position uncertainty | each confirmed enemy base, weighted by its confidence |
+| Enemy | the `EnemyForceCluster`s, with confidence; position uncertainty does **not** enter control | each confirmed enemy base, weighted by its confidence |
 
 ## The reading at a point (`influence.py`)
 
-With `force_influence` and the kernel from [spatial-field.md](spatial-field.md#shared-kernel-kernelpy)
+With `force_control_influence` and the kernel from [spatial-field.md](spatial-field.md#shared-kernel-kernelpy)
 (`TerritoryConfig` defaults):
 
 ```text
 site(p, b)    = 0.6 * K(|p - b|, 14)
 
-friendly_raw  = force_influence(p, friendly forces, sigma 12, full 8).raw + sum over own bases of site(p, b)
+control(p, force):
+    edge_distance = max(0, |p - force.center| - force.radius)
+    edge_distance >= 24 -> 0
+    otherwise K(edge_distance, 12) * strength * confidence / 8
+
+friendly_raw  = sum control(p, friendly forces) + sum over own bases of site(p, b)
 F             = S(friendly_raw)
 F_mil         = S(force_influence(p, friendly forces).raw)                    our army alone
 F_ground      = S(force_influence(p, friendly forces, ground_only).raw)       what can fight ground units
 
-enemy         = force_influence(p, enemy clusters, sigma 12, full 8)
+enemy         = sum control(p, enemy clusters)
 enemy_raw     = enemy.raw      + sum over confirmed enemy bases of site(p, b) * base confidence
 evidence      = enemy.evidence + sum over confirmed enemy bases of site(p, b)
 E             = S(enemy_raw)
 E_ground_mil  = S(force_influence(p, enemy clusters, ground_only).raw)        enemy army that fights ground
 E_ground_pres = S(ground_only enemy raw + enemy base sites * confidence)      what can originate ground access
 ```
+
+The pre-fix control spread was `12 + radius + position_uncertainty`. Thus a
+lost sighting could increase distant `enemy_raw` solely because uncertainty
+grew. Control now ends exactly at the observed cluster radius plus 24 tiles;
+uncertainty remains in `SpatialField.enemy_threat` only. Confidence decay
+still reduces control continuously, and confidence 0 removes it.
 
 Each component is clamped so the parts never exceed the whole (`F_ground <=
 F_mil <= F`, `E_ground_mil <= E`, `E_ground_pres <= E`).
@@ -267,7 +278,9 @@ samples and regions counted per control; the mean confidence; the frontline
 size with up to six points; for every held base its region, control,
 `ground_access`, `ground_security`, `layered_ground_security` and confidence;
 for every region with an expansion slot its centre, control, dominance,
-confidence and both securities. It is logged when an expansion region changes
+confidence and both securities; enemy-control and threat sample counts;
+remembered-cluster count, oldest memory, and largest uncertainty/control/
+possible-presence radii. It is logged when an expansion region changes
 control or crosses a 0.2 security step, a base changes region, or the
 frontline appears or disappears, plus a ten-second heartbeat. `territory.perf`
 reports cost and counters every 10 s. See [logging.md](../logging.md).
@@ -280,6 +293,6 @@ reports cost and counters every 10 s. See [logging.md](../logging.md).
 - Static defense as a blocker: Bunkers, fortresses and cannons count as
   nothing here.
 - Visibility is read at each sample's own cell.
-- Strategy and every consumer: map control, the standing army, defense,
-  harass, scouting, macro, arbitration and allocation do not read territory.
+- Consumers do not read the territory region graph. Map Control receives only
+  the generic per-sample `enemy_control` and `knowledge_confidence` projection.
 - Travel time, combat simulation, exact region polygons, threshold tuning.

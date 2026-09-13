@@ -63,7 +63,8 @@ class TerranBuildConfigTests(unittest.TestCase):
 
     def test_battle_mech_factory_takes_the_barracks_reactor_for_hellions(self):
         commands = [
-            step.lower() for step in self.config["Builds"]["BattleMech"]["OpeningBuildOrder"]
+            step.lower()
+            for step in self.config["Builds"]["BattleMech"]["OpeningBuildOrder"]
         ]
 
         def index(fragment: str) -> int:

@@ -20,9 +20,11 @@ class TerritoryConfig:
     # A force of this much supply standing on a point reads there as raw
     # influence 1 (saturated 0.63); the same scale as the spatial threat.
     full_strength: float = 8.0
-    # How far a force projects control, before its own radius and -- for
-    # an enemy cluster -- its position uncertainty widen it.
+    # Falloff of control beyond the observed physical cluster footprint.
     military_sigma: float = 12.0
+    # Control has compact support: strength can deepen influence inside this
+    # reach but cannot push a Gaussian tail arbitrarily far across the map.
+    military_max_reach: float = 24.0
     # Our combat units this close belong to one force (single linkage), as
     # for enemy clusters.
     friendly_link_radius: float = 7.0
@@ -64,6 +66,7 @@ class TerritoryConfig:
         for name in (
             "full_strength",
             "military_sigma",
+            "military_max_reach",
             "friendly_link_radius",
             "zero_supply_unit_value",
             "infrastructure_weight",

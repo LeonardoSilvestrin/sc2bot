@@ -1259,12 +1259,19 @@ class AresWorldObserver:
         if enemy_natural is not None and enemy_natural not in source_items:
             source_items.append(enemy_natural)
         sources = tuple(source_items)
+        # The game does not list our structures in a stable order; sorting
+        # keeps the same townhalls from reading as new endpoints every frame.
         targets = tuple(
-            structure.position
-            for structure in own_structures
-            if structure.type_id in TOWNHALL_TYPES
-            and bool(self._safe_attr(structure, "is_ready", True))
-            and not bool(self._safe_attr(structure, "is_flying", False))
+            sorted(
+                (
+                    structure.position
+                    for structure in own_structures
+                    if structure.type_id in TOWNHALL_TYPES
+                    and bool(self._safe_attr(structure, "is_ready", True))
+                    and not bool(self._safe_attr(structure, "is_flying", False))
+                ),
+                key=lambda point: (float(point.x), float(point.y)),
+            )
         ) or (bot.start_location,)
         endpoints = (*sources, *targets)
         signature = tuple((float(point.x), float(point.y)) for point in endpoints)

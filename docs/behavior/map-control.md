@@ -77,25 +77,50 @@ and owns every weight; Awareness owns none.
 candidates = spatial samples at least 6 tiles from every own base
              (every sample if that leaves none; the map centre if the field is empty)
 
-score(s)   = 0.45 * friendly_value + 0.35 * choke_value + 0.55 * route_value - 0.80 * enemy_threat
+frontier pool = candidates with friendly support in [0.10, 0.80],
+                enemy_control < 0.55 and enemy_threat < 0.75
+                (safe fallback pool when the coarse lattice misses the band)
 
-best       = highest score, then lowest x, then lowest y
+friendly_support = projected friendly_control (or friendly_value before projection)
+support_band = max(0, 1 - |friendly_support - 0.45| / 0.35)
+frontier      = 1 when local lattice neighbours straddle support 0.45,
+                otherwise support_band
+unknown_risk  = 1 - knowledge_confidence
+
+score = 0.45 support_band + 0.65 frontier + 0.25 advancement
+        + 0.35 choke + 0.55 route
+        - 1.00 enemy_control - 0.80 enemy_threat
+        - 0.25 unknown_risk - 0.15 travel_cost
 ```
 
-In words: near our bases, at chokes, on the ground routes from enemy origins
-to our bases, and away from believed enemy force.
+This makes friendly influence supportability rather than a reward for hiding
+deeper at home. The preferred point is on the current support contour, moves
+away from the nearest held base, improves route/choke control, and remains
+within bounded danger. Known-safe frontier beats moderately unknown frontier;
+moderately unknown space remains explorable; unknown is never treated as
+known safe. `travel_cost` is bounded Euclidean distance from the old anchor
+(or nearest base initially), used only as a locality penalty.
+
+Neighbour detection builds one coordinate index for the lattice and checks
+only the eight adjacent cells per sample. Candidate construction is therefore
+`O(samples)`, followed by an `O(samples log samples)` ranking, once per 15 s
+proposal cadence; it does not perform an all-pairs spatial scan.
 
 **Hysteresis.** Once an anchor exists, the planner looks up the sample
 nearest to it. If that sample is within 1.5 lattice steps of the anchor and
-still a candidate, the anchor only moves when the best candidate is **both**
+still a valid frontier candidate, the anchor only moves when the best is **both**
 at least 1.5 lattice steps away **and** scores at least 0.12 more. Distances
 are in lattice steps so the rule keeps its meaning when the spacing changes.
 Because the last plan is forgotten whenever combat supply drops under 6, the
-hysteresis starts over after such a gap.
+hysteresis starts over after such a gap. Enemy control/threat above the pool
+limits or a materially advanced friendly frontier invalidates the current
+anchor immediately; hysteresis cannot preserve an obsolete or dangerous one.
 
-Whenever the anchor changes, the planner logs
-`map_control.spatial_candidates` with the top five candidates and the
-selected one (position, score and the five field values).
+Every selection cycle logs `map_control.spatial_candidates` with the top five
+candidates and the selected one, including score, frontier, advancement,
+support band, enemy control/threat, knowledge, choke/route, travel cost,
+selected flag and reason. `map_control.anchor_changed` records both anchors,
+scores, switch margin and reason whenever the anchor changes.
 
 A changed anchor replaces the live mission's proposal in place; the executor
 picks it up through `refresh` and restarts its patrol loop.
@@ -153,7 +178,12 @@ their supply rather than backfilling.
 | | `minimum_force_supply` | 6 |
 | | `desired_units` | `None` (a fixed count replaces the budget) |
 | | `minimum_unit_health` | 0.7 |
-| Anchor | `friendly_weight`, `choke_weight`, `route_weight`, `threat_weight` | 0.45, 0.35, 0.55, 0.80 |
+| Anchor | support/frontier/advancement weights | 0.45, 0.65, 0.25 |
+| | choke/route weights | 0.35, 0.55 |
+| | enemy control/threat weights | 1.00, 0.80 |
+| | unknown/travel weights | 0.25, 0.15 |
+| | frontier support target/width/min/max | 0.45, 0.35, 0.10, 0.80 |
+| | maximum enemy control/threat | 0.55, 0.75 |
 | | `base_exclusion_radius` | 6 |
 | | `retarget_score_improvement` | 0.12 |
 | | `retarget_min_sample_steps` | 1.5 |
@@ -166,12 +196,12 @@ their supply rather than backfilling.
 
 ## Known gaps
 
-- The anchor score ignores the field's `confidence`: unwatched space reads
-  threat 0 exactly like watched empty space. Confidence is only logged.
 - With the lattice at spacing 2, 1.5 steps is 3 tiles: the patrol circles the
   anchor's eight neighbouring samples, a small loop.
 - Any threatened base sends the whole patrol home, even when the attack is on
   the other side of the map.
 - The retreat target is chosen from `SAFE` bases, and `SAFE` only means no
   visible threat right now.
-- Territory (who holds the map) is not read; it is in shadow mode.
+- Reachability is pathable-sample plus bounded Euclidean travel cost, not a
+  cached all-pairs path distance. `MoveToSafeTarget` still validates the
+  actual route on Ares' ground danger grid.

@@ -12,7 +12,12 @@ from bot.world.attention import MapPassage, MapRegion, WorldFacts
 from ..bases import BaseAwareness
 from ..enemy import EnemyAwareness
 from ..spatial import SpatialField
-from ..spatial.kernel import cadence_due, force_influence, same_version, saturate
+from ..spatial.kernel import (
+    cadence_due,
+    force_control_influence,
+    same_version,
+    saturate,
+)
 from .config import TerritoryConfig
 from .frontline import frontline
 from .influence import (
@@ -248,6 +253,14 @@ class TerritoryAssessor:
             for index, region in enumerate(topology.regions)
         )
         by_key = {region.key: region for region in regions}
+        enemy_forces = tuple(sources.enemy_forces)
+        remembered = tuple(force for force in enemy_forces if force.confidence > 0.0)
+        observed_ages = tuple(
+            max(0.0, now - last_observed_at)
+            for force in remembered
+            if (last_observed_at := getattr(force, "last_observed_at", None))
+            is not None
+        )
         return TerritorySnapshot(
             samples=samples,
             regions=regions,
@@ -275,6 +288,26 @@ class TerritoryAssessor:
             friendly_forces=tuple(sources.friendly_forces),
             frontline=frontline(samples, topology.edges),
             confidence=mean_confidence(tuple(sample.reading for sample in samples)),
+            remembered_enemy_clusters=len(remembered),
+            oldest_enemy_memory=max(observed_ages, default=None),
+            largest_position_uncertainty=max(
+                (force.position_uncertainty for force in remembered), default=0.0
+            ),
+            military_control_reach=config.military_max_reach,
+            largest_control_radius=max(
+                (
+                    force.radius + config.military_max_reach
+                    for force in remembered
+                ),
+                default=0.0,
+            ),
+            largest_possible_presence_radius=max(
+                (
+                    force.radius + force.position_uncertainty
+                    for force in remembered
+                ),
+                default=0.0,
+            ),
             updated_at=now,
         )
 
@@ -375,10 +408,11 @@ def _independent_passage_passes(
         if force.anti_ground_strength <= 0.0:
             continue
         contributions = tuple(
-            force_influence(
+            force_control_influence(
                 passage.position,
                 (force,),
                 sigma=config.military_sigma,
+                max_reach=config.military_max_reach,
                 full_strength=config.full_strength,
                 ground_only=True,
             ).raw

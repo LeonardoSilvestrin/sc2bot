@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 from bot.ports.logging import BotLogger
 from bot.world.attention import TOWNHALL_TYPES, AttentionSnapshot
 
@@ -33,7 +35,7 @@ from .snapshot import (
     RelativeStrength,
     ThreatAssessment,
 )
-from .spatial import SpatialFieldModel, SpatialModelConfig
+from .spatial import SpatialField, SpatialFieldModel, SpatialModelConfig
 from .territory import TerritoryAssessor, TerritoryConfig
 
 
@@ -87,6 +89,8 @@ class AwarenessService:
         self._posture_state = PostureState()
         self._economy_state = BeliefState()
         self._army_state = BeliefState()
+        self._projected_spatial_key: tuple[int, int] | None = None
+        self._projected_spatial: SpatialField | None = None
 
     def update(self, attention: AttentionSnapshot) -> AwarenessSnapshot:
         world = attention.world
@@ -257,6 +261,35 @@ class AwarenessService:
         spatial = self._spatial_model.update(
             world, bases=bases, enemy_forces=enemy_forces
         )
+        territory = self._territory.update(
+            world, spatial=spatial, bases=bases, enemy=enemy
+        )
+        # Territory already performs the cadenced full-lattice control and
+        # observation pass. Project those two readings onto the strategy
+        # field once per changed snapshot instead of scanning the map again.
+        projection_key = (id(spatial), id(territory))
+        if projection_key != self._projected_spatial_key:
+            self._projected_spatial_key = projection_key
+            projected_spatial = replace(
+                spatial,
+                samples=tuple(
+                    replace(
+                        sample,
+                        friendly_control=(
+                            territory_sample.reading.friendly_influence
+                        ),
+                        enemy_control=territory_sample.reading.enemy_influence,
+                        knowledge_confidence=territory_sample.reading.confidence,
+                    )
+                    for sample, territory_sample in zip(
+                        spatial.samples, territory.samples, strict=True
+                    )
+                ),
+            )
+            if projected_spatial != self._projected_spatial:
+                self._projected_spatial = projected_spatial
+        assert self._projected_spatial is not None
+        spatial = self._projected_spatial
         return AwarenessSnapshot(
             enemy=enemy,
             relative_strength=RelativeStrength(
@@ -281,9 +314,7 @@ class AwarenessService:
             economy=economy_belief,
             army=army_belief,
             spatial=spatial,
-            territory=self._territory.update(
-                world, spatial=spatial, bases=bases, enemy=enemy
-            ),
+            territory=territory,
             belief_changes=belief_changes,
         )
 

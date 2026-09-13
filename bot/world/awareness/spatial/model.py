@@ -175,14 +175,18 @@ class SpatialFieldModel:
             static_recompute_ms = _elapsed_ms(started)
 
         started = perf_counter()
+        # Bases come in the order the game lists our townhalls, which is not
+        # stable between frames; the component only depends on the set.
         friendly_key = tuple(
-            (
-                base.base_id,
-                float(base.position.x),
-                float(base.position.y),
-                base.is_main,
+            sorted(
+                (
+                    base.base_id,
+                    float(base.position.x),
+                    float(base.position.y),
+                    base.is_main,
+                )
+                for base in bases
             )
-            for base in bases
         )
         friendly_valid = friendly_key == self._friendly_key
         friendly_cache_ms = _elapsed_ms(started)

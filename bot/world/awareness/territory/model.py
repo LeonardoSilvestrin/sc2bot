@@ -187,6 +187,12 @@ class TerritorySnapshot:
     frontline: tuple[Point2, ...] = field(default_factory=tuple)
     # Mean sample confidence: how much of the map we currently know.
     confidence: float = 0.0
+    remembered_enemy_clusters: int = 0
+    oldest_enemy_memory: float | None = None
+    largest_position_uncertainty: float = 0.0
+    military_control_reach: float = 0.0
+    largest_control_radius: float = 0.0
+    largest_possible_presence_radius: float = 0.0
     updated_at: float = 0.0
 
     def region(self, key: str) -> RegionTerritory | None:

@@ -79,7 +79,7 @@ mission ids and statuses) and every 10 s.
 | Event | When | Data |
 | --- | --- | --- |
 | `spatial.perf` | every 10 s | `samples`, `clusters`, `routes`, `route_points`; `cache_check_ms`, `recompute_ms`, `total_ms`; per component (`static`, `friendly`, `route`, `threat`) `*_cache_ms`, `*_recompute_ms`, `*_rebuilt`, `*_rebuilds`; `compose_ms` |
-| `knowledge.territory` | a region with an expansion changes control or crosses a 0.2 security step, a base changes region, the frontline appears or disappears; every 10 s | `samples` and `regions` counted per control; `confidence`; `frontline` {`size`, up to 6 `points`}; `bases[]` {`base_id`, `region`, `control`, `ground_access`, `ground_security`, `layered_ground_security`, `confidence`}; `expansion_regions[]` {`key`, `center`, `control`, `dominance`, `confidence`, `ground_security`, `layered_ground_security`} |
+| `knowledge.territory` | a region with an expansion changes control or crosses a 0.2 security step, a base changes region, the frontline appears or disappears; every 10 s | `samples` and `regions` counted per control; `confidence`; enemy control/threat sample counts; remembered cluster count, oldest memory, largest uncertainty/control/possible-presence radii; `frontline`; `bases[]`; `expansion_regions[]` |
 | `territory.perf` | every 10 s | `update_ms`, `updates`, `topology_rebuilds`, `samples`, `regions`, `passages`, `friendly_forces`, `enemy_forces` |
 
 ### `engine.missions.controller`
@@ -187,7 +187,8 @@ Each behavior logs under its own component through `BehaviorLog`:
 | `behavior.proposed` | the plan's `log_fields()`, `planner`, extras | the same moments, when a plan exists |
 | `behavior.state_changed` | `state`, `reason`, `mission_id`, extras | executors on a phase change (see below) |
 | `behavior.target_selection` | `change` (`SELECTED`, `KEPT`, `RETARGETED`, `REPLACED`, `LOST`, `NONE`), `selected`, `previous`, `candidates[]` | Reaper and Banshee planners on a target change, at least every 30 s |
-| `map_control.spatial_candidates` | top 5 `candidates[]` {`position`, `score`, `friendly`, `choke`, `route`, `threat`, `confidence`}, `selected` | `MapControlPlanner` when its anchor changes |
+| `map_control.spatial_candidates` | top 5 `candidates[]` with position, final score, frontier, advancement, friendly support/band, enemy control/threat, knowledge/unknown risk, choke, route, travel cost, selected flag and reason; plus `selected` | `MapControlPlanner` every selection cadence |
+| `map_control.anchor_changed` | `old_anchor`, `new_anchor`, `old_score`, `new_score`, `switch_margin`, `reason` | `MapControlPlanner` when its anchor changes |
 | `standing.updated` | `combat_posture`; `standing` {squad: `desired`, `assigned`}; `mission_allocation` {kind: unit count}; `squads[]`; `unassigned_eligible_units` | `StandingTelemetry`, on change and every 10 s |
 | `standing.unassigned_units_persisting` | `unassigned_eligible_units`, `unassigned_unit_tags`, `duration_seconds` | when a ready combat unit has had no mission for 15 s |
 

@@ -14,7 +14,7 @@ patrol on suitability alone, without this file changing.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from sc2.position import Point2
 
@@ -36,6 +36,7 @@ from .model import (
 
 COMPONENT = "behavior.map_control"
 DEDUPLICATION_KEY = "map_control:patrol"
+LatticeIndex = tuple[float, float, dict[tuple[int, int], SpatialFieldSample]]
 
 
 @dataclass(slots=True)
@@ -130,24 +131,39 @@ class MapControlPlanner:
             self.last_candidates = ()
             return attention.world.map.center
 
-        ranked = tuple(
-            sorted(
-                (
-                    MapControlCandidate(
-                        sample=sample,
-                        score=score_spatial_sample(sample, self.config),
-                    )
-                    for sample in samples
+        lattice = _lattice_index(samples, awareness.spatial.sample_spacing)
+        candidates = tuple(
+            self._candidate(
+                sample,
+                _lattice_neighbours(
+                    sample,
+                    lattice,
+                    awareness.spatial.sample_spacing,
                 ),
-                key=lambda candidate: (
-                    -candidate.score,
-                    candidate.sample.position.x,
-                    candidate.sample.position.y,
-                ),
+                awareness,
+                home=attention.world.map.own_start,
             )
+            for sample in samples
         )
-        self.last_candidates = ranked
-        selected = ranked[0]
+        frontier = tuple(
+            candidate
+            for candidate in candidates
+            if candidate.reason == "frontier_candidate"
+        )
+        # If the coarse lattice has no sample in the support band, retain a
+        # safe fallback instead of manufacturing a mathematically perfect
+        # frontier. Dangerous points are still excluded whenever possible.
+        pool = frontier or tuple(
+            replace(candidate, reason="fallback_no_frontier")
+            for candidate in candidates
+            if candidate.sample.enemy_control < self.config.max_enemy_control
+            and candidate.sample.enemy_threat < self.config.max_enemy_threat
+        )
+        pool = pool or candidates
+        ranked_pool = tuple(sorted(pool, key=_candidate_sort_key))
+        selected = ranked_pool[0]
+        switch_reason = "initial_frontier_selection"
+        old_candidate: MapControlCandidate | None = None
 
         if self.last_plan is not None:
             current_sample = awareness.spatial.at(self.last_plan.anchor)
@@ -157,13 +173,20 @@ class MapControlPlanner:
                 <= awareness.spatial.sample_spacing * 1.5
                 and any(
                     candidate.sample.position == current_sample.position
-                    for candidate in ranked
+                    for candidate in candidates
                 )
             ):
-                current = MapControlCandidate(
-                    sample=current_sample,
-                    score=score_spatial_sample(current_sample, self.config),
+                current = self._candidate(
+                    current_sample,
+                    _lattice_neighbours(
+                        current_sample,
+                        lattice,
+                        awareness.spatial.sample_spacing,
+                    ),
+                    awareness,
+                    home=attention.world.map.own_start,
                 )
+                old_candidate = current
                 move_distance = current_sample.position.distance_to(
                     selected.sample.position
                 )
@@ -172,23 +195,123 @@ class MapControlPlanner:
                     self.config.retarget_min_sample_steps
                     * awareness.spatial.sample_spacing
                 )
-                if (
+                current_valid = any(
+                    candidate.sample.position == current_sample.position
+                    for candidate in pool
+                )
+                if current_valid and (
                     move_distance < min_distance
                     or improvement < self.config.retarget_score_improvement
                 ):
                     selected = current
+                    switch_reason = (
+                        "hysteresis_hold_nearby_anchor"
+                        if move_distance < min_distance
+                        else "hysteresis_hold_small_improvement"
+                    )
+                elif not current_valid:
+                    switch_reason = _invalidation_reason(current, self.config)
+                else:
+                    switch_reason = "meaningful_strategic_improvement"
 
+        ranked = tuple(sorted(candidates, key=_candidate_sort_key))
+        selected = replace(selected, selected=True, reason=switch_reason)
+        self.last_candidates = tuple(
+            (
+                selected
+                if candidate.sample.position == selected.sample.position
+                else candidate
+            )
+            for candidate in ranked
+        )
+        logged = list(self.last_candidates[: self.config.logged_candidate_count])
+        if all(item.sample.position != selected.sample.position for item in logged):
+            logged.append(selected)
+        self._log.event(
+            "map_control.spatial_candidates",
+            now=attention.world.time,
+            candidates=[candidate.log_fields() for candidate in logged],
+            selected=selected.log_fields(),
+        )
         if self.last_plan is None or selected.sample.position != self.last_plan.anchor:
             self._log.event(
-                "map_control.spatial_candidates",
+                "map_control.anchor_changed",
                 now=attention.world.time,
-                candidates=[
-                    candidate.log_fields()
-                    for candidate in ranked[: self.config.logged_candidate_count]
-                ],
-                selected=selected.log_fields(),
+                old_anchor=(
+                    None
+                    if self.last_plan is None
+                    else _xy(self.last_plan.anchor)
+                ),
+                new_anchor=_xy(selected.sample.position),
+                old_score=(
+                    None
+                    if old_candidate is None
+                    else round(old_candidate.score, 3)
+                ),
+                new_score=round(selected.score, 3),
+                switch_margin=(
+                    None
+                    if old_candidate is None
+                    else round(selected.score - old_candidate.score, 3)
+                ),
+                reason=switch_reason,
             )
         return selected.sample.position
+
+    def _candidate(
+        self,
+        sample: SpatialFieldSample,
+        neighbours: tuple[SpatialFieldSample, ...],
+        awareness: AwarenessSnapshot,
+        *,
+        home: Point2,
+    ) -> MapControlCandidate:
+        spacing = max(awareness.spatial.sample_spacing, 1.0)
+        support_score = _support_band(_friendly_support(sample), self.config)
+        values = (
+            _friendly_support(sample),
+            *(_friendly_support(item) for item in neighbours),
+        )
+        crosses_frontier = (
+            min(values) < self.config.frontier_support <= max(values)
+        )
+        frontier_score = 1.0 if crosses_frontier else support_score
+        origins = tuple(base.position for base in awareness.bases)
+        if origins:
+            distance_from_support = min(
+                sample.position.distance_to(origin) for origin in origins
+            )
+        else:
+            distance_from_support = sample.position.distance_to(home)
+        advancement = min(1.0, distance_from_support / (4.0 * spacing))
+        travel_origin = (
+            self.last_plan.anchor
+            if self.last_plan is not None
+            else min(
+                origins,
+                key=lambda origin: origin.distance_to(sample.position),
+                default=home,
+            )
+        )
+        travel_cost = min(
+            1.0, sample.position.distance_to(travel_origin) / (8.0 * spacing)
+        )
+        unknown_risk = 1.0 - sample.knowledge_confidence
+        reason = _eligibility_reason(sample, self.config)
+        candidate = MapControlCandidate(
+            sample=sample,
+            score=0.0,
+            frontier_score=frontier_score,
+            advancement_score=advancement,
+            support_score=support_score,
+            unknown_risk=unknown_risk,
+            travel_cost=travel_cost,
+            reason=reason,
+        )
+        return replace(
+            candidate,
+            score=score_spatial_sample(sample, self.config, candidate=candidate),
+        )
 
     def _log_plan_change(
         self, plan: MapControlPlan, assessment: MapControlAssessment
@@ -236,12 +359,122 @@ class MapControlPlanner:
         )
 
 
-def score_spatial_sample(sample: SpatialFieldSample, config: MapControlConfig) -> float:
-    """Map-control utility; Awareness deliberately owns none of these weights."""
+def score_spatial_sample(
+    sample: SpatialFieldSample,
+    config: MapControlConfig,
+    *,
+    candidate: MapControlCandidate | None = None,
+) -> float:
+    """Frontier utility; friendly influence is a support band, not shelter."""
+
+    support = _support_band(_friendly_support(sample), config)
+    frontier = support if candidate is None else candidate.frontier_score
+    advancement = 0.0 if candidate is None else candidate.advancement_score
+    unknown = 1.0 - sample.knowledge_confidence
+    travel = 0.0 if candidate is None else candidate.travel_cost
 
     return (
-        config.friendly_weight * sample.friendly_value
+        config.friendly_weight * support
+        + config.frontier_weight * frontier
+        + config.advancement_weight * advancement
         + config.choke_weight * sample.choke_value
         + config.route_weight * sample.route_value
         - config.threat_weight * sample.enemy_threat
+        - config.enemy_control_weight * sample.enemy_control
+        - config.unknown_weight * unknown
+        - config.travel_weight * travel
     )
+
+
+def _support_band(value: float, config: MapControlConfig) -> float:
+    return max(
+        0.0,
+        1.0 - abs(value - config.frontier_support) / config.frontier_support_width,
+    )
+
+
+def _friendly_support(sample: SpatialFieldSample) -> float:
+    return (
+        sample.friendly_value
+        if sample.friendly_control is None
+        else sample.friendly_control
+    )
+
+
+def _eligibility_reason(sample: SpatialFieldSample, config: MapControlConfig) -> str:
+    if sample.enemy_control >= config.max_enemy_control:
+        return "rejected_enemy_control"
+    if sample.enemy_threat >= config.max_enemy_threat:
+        return "rejected_excessive_threat"
+    support = _friendly_support(sample)
+    if support < config.frontier_min_support:
+        return "rejected_unsupported"
+    if support > config.frontier_max_support:
+        return "rejected_deep_friendly_interior"
+    return "frontier_candidate"
+
+
+def _invalidation_reason(
+    candidate: MapControlCandidate, config: MapControlConfig
+) -> str:
+    if candidate.sample.enemy_control >= config.max_enemy_control:
+        return "current_anchor_invalidated_by_enemy_control"
+    if candidate.sample.enemy_threat >= config.max_enemy_threat:
+        return "current_anchor_invalidated_by_enemy_threat"
+    return "current_anchor_left_friendly_frontier"
+
+
+def _candidate_sort_key(candidate: MapControlCandidate) -> tuple[float, float, float]:
+    return (
+        -candidate.score,
+        float(candidate.sample.position.x),
+        float(candidate.sample.position.y),
+    )
+
+
+def _lattice_index(
+    samples: tuple[SpatialFieldSample, ...], spacing: float
+) -> LatticeIndex:
+    if not samples:
+        return (0.0, 0.0, {})
+    spacing = max(spacing, 1.0)
+    min_x = min(float(sample.position.x) for sample in samples)
+    min_y = min(float(sample.position.y) for sample in samples)
+    return (
+        min_x,
+        min_y,
+        {
+            (
+                round((float(sample.position.x) - min_x) / spacing),
+                round((float(sample.position.y) - min_y) / spacing),
+            ): sample
+            for sample in samples
+        },
+    )
+
+
+def _lattice_neighbours(
+    sample: SpatialFieldSample,
+    lattice: LatticeIndex,
+    spacing: float,
+) -> tuple[SpatialFieldSample, ...]:
+    min_x, min_y, by_cell = lattice
+    if not by_cell:
+        return ()
+    spacing = max(spacing, 1.0)
+    cell = (
+        round((float(sample.position.x) - min_x) / spacing),
+        round((float(sample.position.y) - min_y) / spacing),
+    )
+    return tuple(
+        neighbour
+        for dx in (-1, 0, 1)
+        for dy in (-1, 0, 1)
+        if (dx or dy)
+        and (neighbour := by_cell.get((cell[0] + dx, cell[1] + dy)))
+        is not None
+    )
+
+
+def _xy(point: Point2) -> list[float]:
+    return [round(float(point.x), 1), round(float(point.y), 1)]

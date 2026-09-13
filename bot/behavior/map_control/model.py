@@ -37,9 +37,23 @@ class MapControlConfig:
 
     # --- spatial utility --------------------------------------------------
     friendly_weight: float = 0.45
+    frontier_weight: float = 0.65
+    advancement_weight: float = 0.25
     choke_weight: float = 0.35
     route_weight: float = 0.55
     threat_weight: float = 0.80
+    enemy_control_weight: float = 1.0
+    unknown_weight: float = 0.25
+    travel_weight: float = 0.15
+    # Friendly influence is useful as a support band, not as a monotonic
+    # reward. The frontier pool excludes both unsupported space and the deep
+    # friendly interior whenever a viable frontier exists.
+    frontier_support: float = 0.45
+    frontier_support_width: float = 0.35
+    frontier_min_support: float = 0.10
+    frontier_max_support: float = 0.80
+    max_enemy_control: float = 0.55
+    max_enemy_threat: float = 0.75
     base_exclusion_radius: float = 6.0
     retarget_score_improvement: float = 0.12
     # Measured in grid steps (multiples of the field's sample spacing), so it
@@ -83,9 +97,15 @@ class MapControlConfig:
             raise ValueError("commitment_seconds must not be negative")
         for name in (
             "friendly_weight",
+            "frontier_weight",
+            "advancement_weight",
             "choke_weight",
             "route_weight",
             "threat_weight",
+            "enemy_control_weight",
+            "unknown_weight",
+            "travel_weight",
+            "frontier_support_width",
             "base_exclusion_radius",
             "retarget_score_improvement",
             "retarget_min_sample_steps",
@@ -93,6 +113,19 @@ class MapControlConfig:
         ):
             if getattr(self, name) < 0.0:
                 raise ValueError(f"{name} must not be negative")
+        for name in (
+            "frontier_support",
+            "frontier_min_support",
+            "frontier_max_support",
+            "max_enemy_control",
+            "max_enemy_threat",
+        ):
+            if not 0.0 <= getattr(self, name) <= 1.0:
+                raise ValueError(f"{name} must be between 0 and 1")
+        if self.frontier_min_support >= self.frontier_max_support:
+            raise ValueError("frontier_min_support must be below frontier_max_support")
+        if self.frontier_support_width <= 0.0:
+            raise ValueError("frontier_support_width must be positive")
         if self.logged_candidate_count < 1:
             raise ValueError("logged_candidate_count must be positive")
         for name in ("danger_radius", "arrival_radius", "retreat_arrival_radius"):
@@ -155,6 +188,13 @@ class MapControlCandidate:
 
     sample: SpatialFieldSample
     score: float
+    frontier_score: float = 0.0
+    advancement_score: float = 0.0
+    support_score: float = 0.0
+    unknown_risk: float = 0.0
+    travel_cost: float = 0.0
+    selected: bool = False
+    reason: str = "lower_score"
 
     def log_fields(self) -> dict[str, Any]:
         sample = self.sample
@@ -164,11 +204,25 @@ class MapControlCandidate:
                 round(float(sample.position.y), 1),
             ],
             "score": round(self.score, 3),
-            "friendly": round(sample.friendly_value, 3),
+            "frontier": round(self.frontier_score, 3),
+            "advancement": round(self.advancement_score, 3),
+            "friendly_support": round(
+                sample.friendly_value
+                if sample.friendly_control is None
+                else sample.friendly_control,
+                3,
+            ),
+            "friendly_proximity": round(sample.friendly_value, 3),
+            "support_band": round(self.support_score, 3),
+            "enemy_control": round(sample.enemy_control, 3),
+            "enemy_threat": round(sample.enemy_threat, 3),
+            "knowledge": round(sample.knowledge_confidence, 3),
+            "unknown_risk": round(self.unknown_risk, 3),
             "choke": round(sample.choke_value, 3),
             "route": round(sample.route_value, 3),
-            "threat": round(sample.enemy_threat, 3),
-            "confidence": round(sample.confidence, 3),
+            "travel_cost": round(self.travel_cost, 3),
+            "selected": self.selected,
+            "reason": self.reason,
         }
 
 

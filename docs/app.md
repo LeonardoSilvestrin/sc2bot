@@ -157,14 +157,15 @@ What one snapshot shows, bottom to top:
 | Layer | Drawn as |
 | --- | --- |
 | Expansion slots | small grey rings |
-| Territory samples | dots coloured by control; radius grows with presence, opacity with dominance |
+| Possible enemy threat | translucent orange dots from the spatial threat field |
+| Territory samples | dots coloured by actual control; radius grows with presence, opacity with dominance; red means enemy control, not uncertainty |
 | Passages | cyan rings joined to their two region centres, labelled `H <hold>` |
 | Regions | rings coloured by control at the centre, labelled with the region key |
 | Frontline | white dots |
 | Own bases | green squares: `MAIN`/`BASE [region] <control> \| Sec <security> Acc <access>` |
 | Confirmed enemy bases | red diamonds, `EN BASE <key>` |
 | Own forces | green rings sized by supply, `OWN <supply>` (the friendly clusters territory used) |
-| Enemy forces | red rings sized by supply, a faint ring for spread plus position uncertainty, `EN <supply>` and `C <confidence>` |
+| Enemy forces | red bounded-control radius, dashed orange possible-presence radius, a supply ring, and labels for strength, confidence, uncertainty and both radii |
 | Side panel | game time, sample counts per control, frontline, regions, passages, force counts, one line per base |
 
 Each write logs `debug.spatial_snapshot_written`; any exception is caught and

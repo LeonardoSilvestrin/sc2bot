@@ -16,6 +16,7 @@ from bot.world.attention import AttentionSnapshot
 from bot.world.awareness import (
     AwarenessSnapshot,
     BaseTerritory,
+    TerritoryConfig,
     TerritoryControl,
 )
 
@@ -28,6 +29,7 @@ _MAP_TOP = 40.0
 _MAP_WIDTH = 900.0
 _MAP_HEIGHT = 920.0
 _PANEL_X = 980
+_CONTROL_REACH = TerritoryConfig().military_max_reach
 
 _CONTROL_COLORS = {
     TerritoryControl.FRIENDLY: "#35d07f",
@@ -160,18 +162,40 @@ class SpatialSnapshotRenderer:
         ):
             x, y = projection.point(item.position)
             parts.append(_circle(x, y, 3.0, fill="none", stroke="#718096"))
+        parts.append('</g><g id="enemy-threat">')
+
+        # Orange is possible threat/presence, including position uncertainty.
+        # It sits underneath the categorical territory samples; red therefore
+        # remains actual enemy control only.
+        for threat_sample in sorted(
+            awareness.spatial.samples,
+            key=lambda item: (float(item.position.x), float(item.position.y)),
+        ):
+            if threat_sample.enemy_threat <= 0.01:
+                continue
+            x, y = projection.point(threat_sample.position)
+            parts.append(
+                _circle(
+                    x,
+                    y,
+                    2.0 + 4.0 * threat_sample.enemy_threat,
+                    fill="#f2994a",
+                    opacity=0.12 + 0.35 * threat_sample.enemy_threat,
+                    extra='data-field="enemy-threat"',
+                )
+            )
         parts.append('</g><g id="samples">')
 
-        for sample in sorted(
+        for territory_sample in sorted(
             territory.samples,
             key=lambda item: (float(item.position.x), float(item.position.y)),
         ):
-            x, y = projection.point(sample.position)
-            reading = sample.reading
+            x, y = projection.point(territory_sample.position)
+            reading = territory_sample.reading
             radius = 1.8 + 4.8 * reading.presence
             opacity = (
                 0.18
-                if sample.control is TerritoryControl.UNCONTROLLED
+                if territory_sample.control is TerritoryControl.UNCONTROLLED
                 else 0.42 + 0.48 * abs(reading.dominance)
             )
             parts.append(
@@ -179,9 +203,11 @@ class SpatialSnapshotRenderer:
                     x,
                     y,
                     radius,
-                    fill=_CONTROL_COLORS[sample.control],
+                    fill=_CONTROL_COLORS[territory_sample.control],
                     opacity=opacity,
-                    extra=f'data-control="{sample.control.name.lower()}"',
+                    extra=(
+                        f'data-control="{territory_sample.control.name.lower()}"'
+                    ),
                 )
             )
         parts.append('</g><g id="passages">')
@@ -260,18 +286,35 @@ class SpatialSnapshotRenderer:
             awareness.enemy.forces, key=lambda item: item.cluster_id
         ):
             x, y = projection.point(enemy_force.center)
-            uncertainty = max(
+            possible_presence = max(
                 0.0, enemy_force.radius + enemy_force.position_uncertainty
             )
-            if uncertainty > 0.0:
+            control_reach = territory.military_control_reach or _CONTROL_REACH
+            control_radius = max(0.0, enemy_force.radius + control_reach)
+            parts.append(
+                _circle(
+                    x,
+                    y,
+                    max(6.0, control_radius * projection.scale),
+                    fill="none",
+                    stroke="#eb5757",
+                    opacity=0.55 * enemy_force.confidence,
+                    extra='data-field="enemy-control-radius"',
+                )
+            )
+            if possible_presence > 0.0:
                 parts.append(
                     _circle(
                         x,
                         y,
-                        max(6.0, uncertainty * projection.scale),
+                        max(6.0, possible_presence * projection.scale),
                         fill="none",
-                        stroke="#a64949",
-                        opacity=0.45,
+                        stroke="#f2994a",
+                        opacity=0.65,
+                        extra=(
+                            'stroke-dasharray="5 4" '
+                            'data-field="enemy-possible-presence-radius"'
+                        ),
                     )
                 )
             radius = max(8.0, min(28.0, 7.0 + enemy_force.combat_strength * 0.7))
@@ -290,7 +333,18 @@ class SpatialSnapshotRenderer:
                 _text(
                     x + radius + 3,
                     y + 12,
-                    f"C {enemy_force.confidence:.2f}",
+                    (
+                        f"C {enemy_force.confidence:.2f} "
+                        f"U {enemy_force.position_uncertainty:.1f}"
+                    ),
+                    "tiny",
+                )
+            )
+            parts.append(
+                _text(
+                    x + radius + 3,
+                    y + 24,
+                    f"R ctl {control_radius:.1f} poss {possible_presence:.1f}",
                     "tiny",
                 )
             )
@@ -414,6 +468,10 @@ def _panel(attention: AttentionSnapshot, awareness: AwarenessSnapshot) -> list[s
         f"Passages       {len(territory.passages)}",
         f"Own forces     {len(territory.friendly_forces)}",
         f"Enemy forces   {len(awareness.enemy.forces)}",
+        "Threat samples "
+        f"{sum(s.enemy_threat > 0.05 for s in awareness.spatial.samples)}",
+        f"Max ctl radius {territory.largest_control_radius:.1f}",
+        f"Max uncertainty {territory.largest_position_uncertainty:.1f}",
         "",
         "Bases",
     ]

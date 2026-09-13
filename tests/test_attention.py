@@ -227,6 +227,55 @@ class AresWorldObserverTests(unittest.TestCase):
         self.assertEqual(len(observer._ground_traffic_routes(bot, ())), 1)
         self.assertEqual(attempts, [0.0, 2.5])
 
+    def test_traffic_routes_ignore_the_order_townhalls_are_listed_in(self):
+        calls = []
+
+        def pathfind(start, goal, grid, **_options):
+            calls.append((start, goal))
+            return [start, goal]
+
+        bot = SimpleNamespace(
+            time=0.0,
+            mediator=SimpleNamespace(
+                get_enemy_nat=None,
+                get_map_data_object=SimpleNamespace(
+                    pathfind=pathfind, get_pyastar_grid=lambda: "grid"
+                ),
+            ),
+            enemy_start_locations=(Point2((90, 90)),),
+            start_location=Point2((10, 10)),
+        )
+        main = unit(10, UnitTypeId.COMMANDCENTER, structure=True)
+        natural = unit(30, UnitTypeId.COMMANDCENTER, structure=True)
+        observer = AresWorldObserver()
+
+        routes = observer._ground_traffic_routes(bot, (main, natural))
+        bot.time = 0.1
+        reordered = observer._ground_traffic_routes(bot, (natural, main))
+
+        self.assertIs(reordered, routes)
+        self.assertEqual(len(calls), 2)
+        # The same routes, keys included, whichever order was listed first.
+        self.assertEqual(
+            AresWorldObserver()._ground_traffic_routes(bot, (natural, main)), routes
+        )
+
+        calls.clear()
+        building = unit(50, UnitTypeId.COMMANDCENTER, structure=True, ready=False)
+        lifted = unit(60, UnitTypeId.COMMANDCENTERFLYING, structure=True)
+        lifted.is_flying = True
+        self.assertIs(
+            observer._ground_traffic_routes(bot, (natural, building, lifted, main)),
+            routes,
+        )
+        self.assertEqual(calls, [])
+
+        third = unit(70, UnitTypeId.COMMANDCENTER, structure=True)
+        expanded = observer._ground_traffic_routes(bot, (third, natural, main))
+
+        self.assertEqual(len(expanded), 3)
+        self.assertEqual(len(calls), 3)
+
     def test_economy_counts_every_form_of_a_unit_as_the_type_it_was_built_as(self):
         bot = SimpleNamespace(
             time=300.0,

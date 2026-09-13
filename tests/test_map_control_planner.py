@@ -123,12 +123,37 @@ class MapControlConfigTests(unittest.TestCase):
         )
         config = MapControlConfig(
             friendly_weight=1.0,
+            frontier_weight=0.0,
+            advancement_weight=0.0,
             choke_weight=2.0,
             route_weight=3.0,
             threat_weight=4.0,
+            enemy_control_weight=0.0,
+            unknown_weight=0.0,
+            travel_weight=0.0,
         )
 
-        self.assertAlmostEqual(score_spatial_sample(sample, config), 3.3)
+        self.assertAlmostEqual(score_spatial_sample(sample, config), 2.8857142857)
+
+    def test_friendly_influence_is_a_frontier_support_band(self):
+        config = MapControlConfig(
+            frontier_weight=0.0,
+            advancement_weight=0.0,
+            choke_weight=0.0,
+            route_weight=0.0,
+            threat_weight=0.0,
+            enemy_control_weight=0.0,
+            unknown_weight=0.0,
+            travel_weight=0.0,
+        )
+
+        frontier = SpatialFieldSample(Point2((40, 40)), friendly_value=0.45)
+        deep_home = SpatialFieldSample(Point2((10, 10)), friendly_value=1.0)
+
+        self.assertGreater(
+            score_spatial_sample(frontier, config),
+            score_spatial_sample(deep_home, config),
+        )
 
 
 class MapControlPlannerTests(unittest.TestCase):
@@ -206,9 +231,14 @@ class MapControlPlannerTests(unittest.TestCase):
         config = MapControlConfig(
             proposal_cadence=1.0,
             friendly_weight=1.0,
+            frontier_weight=0.0,
+            advancement_weight=0.0,
             choke_weight=0.0,
             route_weight=0.0,
             threat_weight=0.0,
+            enemy_control_weight=0.0,
+            unknown_weight=0.0,
+            travel_weight=0.0,
             retarget_score_improvement=0.1,
             retarget_min_sample_steps=1.5,
         )
@@ -218,24 +248,24 @@ class MapControlPlannerTests(unittest.TestCase):
             attention(0.0),
             self.spatial_awareness(
                 0.0,
-                SpatialFieldSample(first, friendly_value=0.76),
-                SpatialFieldSample(second, friendly_value=0.70),
+                SpatialFieldSample(first, friendly_value=0.47),
+                SpatialFieldSample(second, friendly_value=0.30),
             ),
         )[0]
         small_gain = planner.propose(
             attention(1.0),
             self.spatial_awareness(
                 1.0,
-                SpatialFieldSample(first, friendly_value=0.76),
-                SpatialFieldSample(second, friendly_value=0.79),
+                SpatialFieldSample(first, friendly_value=0.47),
+                SpatialFieldSample(second, friendly_value=0.45),
             ),
         )[0]
         material_gain = planner.propose(
             attention(2.0),
             self.spatial_awareness(
                 2.0,
-                SpatialFieldSample(first, friendly_value=0.50),
-                SpatialFieldSample(second, friendly_value=0.90),
+                SpatialFieldSample(first, friendly_value=0.70),
+                SpatialFieldSample(second, friendly_value=0.45),
             ),
         )[0]
 
@@ -248,9 +278,14 @@ class MapControlPlannerTests(unittest.TestCase):
         config = MapControlConfig(
             proposal_cadence=1.0,
             friendly_weight=1.0,
+            frontier_weight=0.0,
+            advancement_weight=0.0,
             choke_weight=0.0,
             route_weight=0.0,
             threat_weight=0.0,
+            enemy_control_weight=0.0,
+            unknown_weight=0.0,
+            travel_weight=0.0,
             retarget_score_improvement=0.1,
             retarget_min_sample_steps=1.5,
         )
@@ -269,16 +304,16 @@ class MapControlPlannerTests(unittest.TestCase):
             )
 
         coarse = MapControlPlanner(config=config)
-        coarse.propose(attention(0.0), spatial_state(0.0, 10.0, 0.8, 0.2))
+        coarse.propose(attention(0.0), spatial_state(0.0, 10.0, 0.45, 0.2))
         # One step on a 10-cell grid: the patrol region already covers it.
         coarse_retarget = coarse.propose(
-            attention(1.0), spatial_state(1.0, 10.0, 0.2, 0.9)
+            attention(1.0), spatial_state(1.0, 10.0, 0.2, 0.45)
         )[0]
         fine = MapControlPlanner(config=config)
-        fine.propose(attention(0.0), spatial_state(0.0, 5.0, 0.8, 0.2))
+        fine.propose(attention(0.0), spatial_state(0.0, 5.0, 0.45, 0.2))
         # The same ten units are two steps on a 5-cell grid: a real move.
         fine_retarget = fine.propose(
-            attention(1.0), spatial_state(1.0, 5.0, 0.2, 0.9)
+            attention(1.0), spatial_state(1.0, 5.0, 0.2, 0.45)
         )[0]
 
         self.assertEqual(coarse_retarget.target, current)
@@ -315,11 +350,20 @@ class MapControlPlannerTests(unittest.TestCase):
             {
                 "position",
                 "score",
-                "friendly",
+                "frontier",
+                "advancement",
+                "friendly_support",
+                "friendly_proximity",
+                "support_band",
+                "enemy_control",
+                "enemy_threat",
+                "knowledge",
+                "unknown_risk",
                 "choke",
                 "route",
-                "threat",
-                "confidence",
+                "travel_cost",
+                "selected",
+                "reason",
             },
         )
 
@@ -350,6 +394,138 @@ class MapControlPlannerTests(unittest.TestCase):
         proposal = MapControlPlanner().propose(attention(10.0), state)[0]
 
         self.assertEqual(proposal.target, valid_position)
+
+    def test_selects_useful_supported_frontier_not_deep_base_or_danger(self):
+        home = Point2((10, 10))
+        deep = Point2((20, 10))
+        frontier = Point2((40, 10))
+        choke = Point2((50, 10))
+        dangerous = Point2((70, 10))
+        unknown_distant = Point2((90, 10))
+        state = self.spatial_awareness(
+            10.0,
+            SpatialFieldSample(deep, friendly_value=0.95, knowledge_confidence=1.0),
+            SpatialFieldSample(frontier, friendly_value=0.55, knowledge_confidence=1.0),
+            SpatialFieldSample(
+                choke,
+                friendly_value=0.42,
+                choke_value=1.0,
+                route_value=1.0,
+                knowledge_confidence=0.8,
+            ),
+            SpatialFieldSample(
+                dangerous,
+                friendly_value=0.35,
+                choke_value=1.0,
+                route_value=1.0,
+                enemy_control=0.8,
+                enemy_threat=0.9,
+                knowledge_confidence=1.0,
+            ),
+            SpatialFieldSample(
+                unknown_distant,
+                friendly_value=0.30,
+                route_value=0.4,
+                knowledge_confidence=0.0,
+            ),
+        )
+        state = replace(
+            state,
+            bases=BaseAwareness(
+                (
+                    BaseAssessment(
+                        "base:1", home, True, 0.0, 0.0, BaseSecurityLevel.SAFE
+                    ),
+                )
+            ),
+        )
+
+        proposal = MapControlPlanner().propose(attention(10.0), state)[0]
+
+        self.assertEqual(proposal.target, choke)
+        self.assertNotEqual(proposal.target, deep)
+        self.assertNotEqual(proposal.target, dangerous)
+        self.assertNotEqual(proposal.target, unknown_distant)
+
+    def test_advancing_friendly_frontier_advances_anchor(self):
+        first, second = Point2((40, 10)), Point2((60, 10))
+        planner = MapControlPlanner(
+            config=MapControlConfig(proposal_cadence=1.0)
+        )
+
+        initial = planner.propose(
+            attention(0.0),
+            self.spatial_awareness(
+                0.0,
+                SpatialFieldSample(
+                    first, friendly_value=0.45, knowledge_confidence=1.0
+                ),
+                SpatialFieldSample(
+                    second, friendly_value=0.05, knowledge_confidence=0.5
+                ),
+            ),
+        )[0]
+        advanced = planner.propose(
+            attention(1.0),
+            self.spatial_awareness(
+                1.0,
+                SpatialFieldSample(
+                    first, friendly_value=0.95, knowledge_confidence=1.0
+                ),
+                SpatialFieldSample(
+                    second, friendly_value=0.45, knowledge_confidence=0.8
+                ),
+            ),
+        )[0]
+
+        self.assertEqual(initial.target, first)
+        self.assertEqual(advanced.target, second)
+
+    def test_enemy_threat_invalidates_current_anchor_despite_hysteresis(self):
+        current, alternative = Point2((40, 10)), Point2((60, 10))
+        logger = FakeLogger()
+        planner = MapControlPlanner(
+            config=MapControlConfig(proposal_cadence=1.0), logger=logger
+        )
+        planner.propose(
+            attention(0.0),
+            self.spatial_awareness(
+                0.0,
+                SpatialFieldSample(
+                    current, friendly_value=0.45, knowledge_confidence=1.0
+                ),
+                SpatialFieldSample(
+                    alternative, friendly_value=0.35, knowledge_confidence=1.0
+                ),
+            ),
+        )
+
+        proposal = planner.propose(
+            attention(1.0),
+            self.spatial_awareness(
+                1.0,
+                SpatialFieldSample(
+                    current,
+                    friendly_value=0.45,
+                    enemy_threat=0.9,
+                    knowledge_confidence=1.0,
+                ),
+                SpatialFieldSample(
+                    alternative, friendly_value=0.45, knowledge_confidence=1.0
+                ),
+            ),
+        )[0]
+
+        self.assertEqual(proposal.target, alternative)
+        change = [
+            event
+            for event in logger.events
+            if event["name"] == "map_control.anchor_changed"
+        ][-1]
+        self.assertEqual(
+            change["data"]["reason"],
+            "current_anchor_invalidated_by_enemy_threat",
+        )
 
 
 class MapControlAssessmentTests(unittest.TestCase):

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 from sc2.position import Point2
@@ -33,6 +34,8 @@ from bot.world.awareness import (
     PassageTerritory,
     RegionTerritory,
     RelativeStrength,
+    SpatialField,
+    SpatialFieldSample,
     TerritoryControl,
     TerritoryReading,
     TerritorySample,
@@ -222,6 +225,25 @@ class SpatialSnapshotRendererTests(unittest.TestCase):
         self.assertIn('data-control="friendly"', svg)
         self.assertIn('data-control="enemy"', svg)
 
+    def test_possible_threat_is_an_orange_layer_separate_from_red_control(self):
+        attention, awareness = snapshots()
+        awareness = replace(
+            awareness,
+            spatial=SpatialField(
+                samples=(
+                    SpatialFieldSample(
+                        Point2((60, 60)), enemy_threat=0.7, enemy_control=0.0
+                    ),
+                )
+            ),
+        )
+
+        svg = SpatialSnapshotRenderer().render(attention, awareness)
+
+        self.assertIn('<g id="enemy-threat">', svg)
+        self.assertIn('data-field="enemy-threat"', svg)
+        self.assertIn('fill="#f2994a"', svg)
+
     def test_frontline_is_rendered(self):
         svg = SpatialSnapshotRenderer().render(*snapshots())
 
@@ -239,6 +261,10 @@ class SpatialSnapshotRendererTests(unittest.TestCase):
         self.assertIn(">OWN 24</text>", svg)
         self.assertIn(">EN 16</text>", svg)
         self.assertIn(">EN BASE enemy-main</text>", svg)
+        self.assertIn('data-field="enemy-control-radius"', svg)
+        self.assertIn('data-field="enemy-possible-presence-radius"', svg)
+        self.assertIn("C 0.72 U 4.0", svg)
+        self.assertIn("R ctl 27.0 poss 7.0", svg)
 
     def test_same_input_produces_identical_svg(self):
         inputs = snapshots()

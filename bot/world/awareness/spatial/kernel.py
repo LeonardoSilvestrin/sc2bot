@@ -57,6 +57,46 @@ class ForceInfluence(NamedTuple):
     evidence: float
 
 
+def force_control_influence(
+    point: Point2,
+    forces: Iterable[ForcePresence],
+    *,
+    sigma: float,
+    max_reach: float,
+    full_strength: float,
+    ground_only: bool = False,
+) -> ForceInfluence:
+    """Bounded territorial influence from credible observed positions.
+
+    ``radius`` is the physical footprint of the observed cluster. Beyond that
+    footprint, combat control falls off over ``sigma`` and is exactly zero
+    after ``max_reach``. Position uncertainty is deliberately absent: it can
+    widen possible presence and threat, but cannot create ownership.
+    """
+
+    if max_reach <= 0.0:
+        raise ValueError("max_reach must be positive")
+    raw = evidence = confidence_weight = weighted_confidence = 0.0
+    for force in forces:
+        strength = force.anti_ground_strength if ground_only else force.combat_strength
+        radius = max(0.0, force.radius)
+        squared_distance = distance_squared(point, force.center)
+        if squared_distance >= (radius + max_reach) ** 2:
+            continue
+        edge_distance = max(0.0, math.sqrt(squared_distance) - radius)
+        locality = kernel_squared(edge_distance * edge_distance, sigma)
+        raw += strength * force.confidence * locality / full_strength
+        evidence += strength * locality / full_strength
+        if locality > _CONFIDENCE_LOCALITY:
+            weight = locality * max(strength, _MIN_CONFIDENCE_STRENGTH)
+            confidence_weight += weight
+            weighted_confidence += weight * force.confidence
+    confidence = (
+        weighted_confidence / confidence_weight if confidence_weight > 0.0 else 0.0
+    )
+    return ForceInfluence(raw=raw, confidence=confidence, evidence=evidence)
+
+
 def saturate(value: float) -> float:
     return 1.0 - math.exp(-max(0.0, value))
 
@@ -79,13 +119,14 @@ def force_influence(
     full_strength: float,
     ground_only: bool = False,
 ) -> ForceInfluence:
-    """Unsaturated influence of believed forces at ``point``.
+    """Unsaturated possible-presence/threat influence at ``point``.
 
     Each force spreads over ``sigma`` plus its own radius and how far it may
     have moved since it was seen, and weighs ``strength * confidence /
-    full_strength``: a stale force reaches wider but weaker, and fades out as
-    its confidence does. ``ground_only`` counts only the strength that can
-    fight ground units.
+    full_strength``: a stale force may threaten a wider area while fading.
+    This function must not be used for territorial ownership; use
+    :func:`force_control_influence` for that. ``ground_only`` counts only the
+    strength that can fight ground units.
     """
 
     raw = evidence = confidence_weight = weighted_confidence = 0.0

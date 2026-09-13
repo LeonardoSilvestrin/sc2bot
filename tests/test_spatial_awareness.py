@@ -15,6 +15,7 @@ from bot.world.attention import (
     UnitSnapshot,
     WorldFacts,
 )
+from bot.world.awareness import TerritoryControl
 from bot.world.awareness.bases import BaseAssessment, BaseAwareness, BaseSecurityLevel
 from bot.world.awareness.enemy import EnemyForceAwareness, EnemyForceCluster
 from bot.world.awareness.service import AwarenessService
@@ -30,9 +31,11 @@ from tests.fakes import FakeLogger
 MAP_CENTER = Point2((50, 50))
 
 
-def base(position: Point2, *, main: bool = True) -> BaseAssessment:
+def base(
+    position: Point2, *, main: bool = True, base_id: str = "base:1"
+) -> BaseAssessment:
     return BaseAssessment(
-        base_id="base:1",
+        base_id=base_id,
         position=position,
         is_main=main,
         threat_score=0.0,
@@ -225,6 +228,62 @@ class SpatialFieldModelTests(unittest.TestCase):
         far_sample = snapshot.spatial.at(far)
         assert near_sample is not None and far_sample is not None
         self.assertGreater(near_sample.enemy_threat, far_sample.enemy_threat)
+
+    def test_losing_vision_expands_threat_but_not_projected_enemy_control(self):
+        center, flank = Point2((50, 50)), Point2((80, 50))
+        visible = UnitSnapshot(
+            tag=99,
+            unit_type=UnitTypeId.MARINE,
+            position=center,
+            health_percentage=1.0,
+            is_flying=False,
+            is_worker=False,
+            can_attack_air=True,
+            can_attack_ground=True,
+            supply_cost=8.0,
+        )
+        service = AwarenessService(
+            spatial_model_config=SpatialModelConfig(update_interval=0.0)
+        )
+
+        fresh = service.update(
+            AttentionSnapshot(
+                replace(
+                    world((center, flank), now=0.0), enemy_units=(visible,)
+                )
+            )
+        )
+        unseen = service.update(
+            AttentionSnapshot(
+                replace(
+                    world((center, flank), now=10.0),
+                    enemy_units=(replace(visible, visible_now=False),),
+                )
+            )
+        )
+
+        self.assertTrue(
+            all(
+                old.enemy_control >= stale.enemy_control
+                for old, stale in zip(
+                    fresh.spatial.samples,
+                    unseen.spatial.samples,
+                    strict=True,
+                )
+            )
+        )
+        self.assertGreater(
+            unseen.spatial.samples[1].enemy_threat,
+            fresh.spatial.samples[1].enemy_threat,
+        )
+        self.assertGreater(
+            unseen.enemy.forces.clusters[0].position_uncertainty,
+            fresh.enemy.forces.clusters[0].position_uncertainty,
+        )
+        self.assertLessEqual(
+            unseen.territory.count(TerritoryControl.ENEMY),
+            fresh.territory.count(TerritoryControl.ENEMY),
+        )
 
     def test_unchanged_inputs_reuse_every_component_and_the_field(self):
         points = (Point2((10, 10)), Point2((20, 20)))
@@ -540,6 +599,103 @@ class SpatialFieldModelTests(unittest.TestCase):
         perf = model.last_performance
         assert perf is not None
         self.assertEqual((perf.static_rebuilds, perf.route_rebuilds), (1, 1))
+
+    def test_reordered_bases_reuse_the_friendly_component(self):
+        points = (Point2((10, 10)), Point2((30, 30)), Point2((60, 60)))
+        main = base(points[0], base_id="base:1")
+        natural = base(points[1], main=False, base_id="base:2")
+        forces = EnemyForceAwareness()
+        model = SpatialFieldModel(SpatialModelConfig(update_interval=10.0))
+
+        first = model.update(
+            world(points, now=0.0),
+            bases=BaseAwareness((main, natural)),
+            enemy_forces=forces,
+        )
+        reordered = model.update(
+            world(points, now=1.0),
+            bases=BaseAwareness((natural, main)),
+            enemy_forces=forces,
+        )
+
+        self.assertIs(reordered, first)
+        perf = model.last_performance
+        assert perf is not None
+        self.assertFalse(perf.friendly_rebuilt)
+        self.assertEqual(perf.friendly_rebuilds, 1)
+        fresh = SpatialFieldModel(SpatialModelConfig(update_interval=10.0)).update(
+            world(points, now=1.0),
+            bases=BaseAwareness((natural, main)),
+            enemy_forces=forces,
+        )
+        for cached, recomputed in zip(first.samples, fresh.samples, strict=True):
+            self.assertAlmostEqual(cached.friendly_value, recomputed.friendly_value)
+
+    def test_moved_added_removed_or_promoted_bases_rebuild_the_friendly_component(
+        self,
+    ):
+        points = (Point2((10, 10)), Point2((30, 30)), Point2((60, 60)))
+        main = base(points[0], base_id="base:1")
+        natural = base(points[1], main=False, base_id="base:2")
+        moved = base(points[2], main=False, base_id="base:2")
+        third = base(points[1], main=False, base_id="base:3")
+        forces = EnemyForceAwareness()
+        model = SpatialFieldModel(SpatialModelConfig(update_interval=10.0))
+        model.update(
+            world(points, now=0.0),
+            bases=BaseAwareness((main, natural)),
+            enemy_forces=forces,
+        )
+
+        changes = (
+            (main, moved),
+            (main, moved, third),
+            (third, main),
+            (base(points[0], main=False, base_id="base:1"), third),
+        )
+        for step, bases in enumerate(changes, start=1):
+            model.update(
+                world(points, now=float(step)),
+                bases=BaseAwareness(bases),
+                enemy_forces=forces,
+            )
+            perf = model.last_performance
+            assert perf is not None
+            self.assertTrue(perf.friendly_rebuilt, step)
+            self.assertEqual(perf.friendly_rebuilds, step + 1)
+
+    def test_awareness_ignores_the_order_townhalls_are_listed_in(self):
+        def townhall(tag: int, position: Point2) -> UnitSnapshot:
+            return UnitSnapshot(
+                tag=tag,
+                unit_type=UnitTypeId.COMMANDCENTER,
+                position=position,
+                health_percentage=1.0,
+                is_flying=False,
+                is_worker=False,
+                can_attack_air=False,
+                can_attack_ground=False,
+                is_structure=True,
+            )
+
+        points = (Point2((10, 10)), Point2((30, 30)))
+        main, natural = townhall(1, points[0]), townhall(2, points[1])
+        service = AwarenessService(
+            spatial_model_config=SpatialModelConfig(update_interval=10.0)
+        )
+
+        first = service.update(
+            AttentionSnapshot(
+                replace(world(points, now=0.0), own_structures=(main, natural))
+            )
+        )
+        second = service.update(
+            AttentionSnapshot(
+                replace(world(points, now=1.0), own_structures=(natural, main))
+            )
+        )
+
+        self.assertIs(second.spatial, first.spatial)
 
 
 if __name__ == "__main__":

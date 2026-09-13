@@ -385,7 +385,7 @@ class ConfidenceTests(unittest.TestCase):
         self.assertLess(half.reading.confidence, 0.5)
         self.assertGreater(sure.reading.confidence, half.reading.confidence)
 
-    def test_stale_enemy_force_reads_wider_weaker_and_less_certain(self):
+    def test_stale_enemy_force_control_fades_without_growing_wider(self):
         center, flank = Point2((50, 50)), Point2((80, 50))
         facts = world((center, flank))
 
@@ -406,7 +406,7 @@ class ConfidenceTests(unittest.TestCase):
             stale.samples[0].reading.enemy_influence,
             fresh.samples[0].reading.enemy_influence,
         )
-        self.assertGreater(
+        self.assertLessEqual(
             stale.samples[1].reading.enemy_influence,
             fresh.samples[1].reading.enemy_influence,
         )
@@ -420,6 +420,36 @@ class ConfidenceTests(unittest.TestCase):
         self.assertEqual(watched.samples[0].reading.confidence, 1.0)
         self.assertEqual(forgotten.samples[0].reading.enemy_influence, 0.0)
         self.assertIs(forgotten.samples[0].control, U)
+
+    def test_position_uncertainty_does_not_change_enemy_control_footprint(self):
+        center, edge, outside = row(50, 70, 80)
+        facts = world((center, edge, outside))
+
+        certain = assess(
+            facts,
+            enemy_awareness=enemy(cluster(center, confidence=0.6, uncertainty=0.0)),
+        )
+        uncertain = assess(
+            facts,
+            enemy_awareness=enemy(cluster(center, confidence=0.6, uncertainty=30.0)),
+        )
+
+        self.assertEqual(
+            tuple(sample.reading.enemy_influence for sample in certain.samples),
+            tuple(sample.reading.enemy_influence for sample in uncertain.samples),
+        )
+
+    def test_large_army_control_is_zero_beyond_bounded_reach(self):
+        center, outside = row(50, 90)
+
+        snapshot = assess(
+            world((center, outside)),
+            enemy_awareness=enemy(cluster(center, strength=200.0)),
+        )
+
+        self.assertIs(snapshot.samples[0].control, E)
+        self.assertEqual(snapshot.samples[1].reading.enemy_influence, 0.0)
+        self.assertIs(snapshot.samples[1].control, U)
 
 
 class FrontlineTests(unittest.TestCase):
@@ -456,12 +486,12 @@ class FrontlineTests(unittest.TestCase):
         points = row(10, 20, 30, 40, 50, 60, 70, 80, 90)
 
         snapshot = assess(
-            world(points, own_units=army(Point2((20, 50)), 16)),
-            enemy_awareness=enemy(cluster(Point2((80, 50)))),
+            world(points, own_units=army(Point2((30, 50)), 16)),
+            enemy_awareness=enemy(cluster(Point2((70, 50)))),
         )
 
-        self.assertIs(snapshot.samples[1].control, F)
-        self.assertIs(snapshot.samples[7].control, E)
+        self.assertIs(snapshot.samples[2].control, F)
+        self.assertIs(snapshot.samples[6].control, E)
         self.assertTrue(snapshot.frontline)
         self.assertTrue(all(20 < point.x < 80 for point in snapshot.frontline))
 

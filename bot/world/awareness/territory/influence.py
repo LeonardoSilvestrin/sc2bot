@@ -13,7 +13,7 @@ from ..enemy.forces.clustering import group_by_proximity
 from ..spatial.kernel import (
     ForcePresence,
     distance_squared,
-    force_influence,
+    force_control_influence,
     kernel_squared,
     saturate,
 )
@@ -95,32 +95,36 @@ def read_point(
     fresh our last look at the point is (see ``reading_confidence``).
     """
 
-    military = force_influence(
+    military = force_control_influence(
         point,
         sources.friendly_forces,
         sigma=config.military_sigma,
+        max_reach=config.military_max_reach,
         full_strength=config.full_strength,
     )
-    ground = force_influence(
+    ground = force_control_influence(
         point,
         sources.friendly_forces,
         sigma=config.military_sigma,
+        max_reach=config.military_max_reach,
         full_strength=config.full_strength,
         ground_only=True,
     )
     friendly_raw = military.raw
     for site in sources.friendly_sites:
         friendly_raw += _site_influence(point, site, config)
-    enemy = force_influence(
+    enemy = force_control_influence(
         point,
         sources.enemy_forces,
         sigma=config.military_sigma,
+        max_reach=config.military_max_reach,
         full_strength=config.full_strength,
     )
-    enemy_ground = force_influence(
+    enemy_ground = force_control_influence(
         point,
         sources.enemy_forces,
         sigma=config.military_sigma,
+        max_reach=config.military_max_reach,
         full_strength=config.full_strength,
         ground_only=True,
     )

@@ -42,7 +42,7 @@ frame. The order of its steps is in
 | `bases` | `BaseAwareness` | defense, map control, Banshee retreat, standing anchor, spatial field, territory |
 | `economy`, `army` | `EconomyBelief`, `ArmyBelief` | standing posture (army), macro posture (army), telemetry |
 | `spatial` | `SpatialField` | map control, territory, debug view |
-| `territory` | `TerritorySnapshot` | telemetry and debug only (shadow) |
+| `territory` | `TerritorySnapshot` | telemetry/debug; sample enemy control and knowledge are projected onto `spatial` for Map Control |
 | `belief_changes` | `tuple[str]` | `FrameProcessor` logs them |
 
 Readings with their own documents: [base-security.md](base-security.md),
@@ -341,5 +341,6 @@ to spending is in [macro/macro-planner.md](../macro/macro-planner.md#posture-adj
   [attention.md](attention.md#known-gaps)).
 - `BaseSecurityLevel.SAFE` means "no visible threat near the base right now",
   with no confidence; it is not proof the area was watched. Topological
-  exposure is `territory` ground security, in shadow mode.
+  exposure is `territory` ground security; region-level strategy consumption
+  remains in shadow mode.
 - `relative_strength` is only logged; decisions read the army belief.

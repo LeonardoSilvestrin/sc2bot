@@ -64,6 +64,27 @@ class TerritoryTelemetry:
                     region.control for region in territory.regions
                 ),
                 "confidence": round(territory.confidence, 2),
+                "enemy_controlled_samples": territory.count(
+                    TerritoryControl.ENEMY
+                ),
+                "enemy_threat_samples": sum(
+                    sample.enemy_threat > 0.05 for sample in awareness.spatial.samples
+                ),
+                "remembered_enemy_clusters": territory.remembered_enemy_clusters,
+                "oldest_enemy_memory": (
+                    None
+                    if territory.oldest_enemy_memory is None
+                    else round(territory.oldest_enemy_memory, 1)
+                ),
+                "largest_position_uncertainty": round(
+                    territory.largest_position_uncertainty, 1
+                ),
+                "largest_control_radius": round(
+                    territory.largest_control_radius, 1
+                ),
+                "largest_possible_presence_radius": round(
+                    territory.largest_possible_presence_radius, 1
+                ),
                 "frontline": {
                     "size": len(territory.frontline),
                     "points": [
