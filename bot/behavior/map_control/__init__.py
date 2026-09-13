@@ -15,7 +15,12 @@ from .model import (
     MapControlPlan,
     PatrolPhase,
 )
-from .planner import MapControlPlanner, score_spatial_sample
+from .planner import (
+    MapControlPlanner,
+    evaluate_sample,
+    max_local_value,
+    score_spatial_sample,
+)
 
 __all__ = [
     "MapControlAssessment",
@@ -26,5 +31,7 @@ __all__ = [
     "MapControlPlan",
     "MapControlPlanner",
     "PatrolPhase",
+    "evaluate_sample",
+    "max_local_value",
     "score_spatial_sample",
 ]

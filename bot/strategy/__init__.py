@@ -22,6 +22,8 @@ from .director import StrategicDirector
 from .hysteresis import ObjectiveState, decision_confidence, select_objective
 from .intent import IntentConfig, StrategicActivity, StrategicIntent, derive_intent
 from .mission_policy import (
+    MINIMUM_CONTROL_ALIGNMENT,
+    ControlMatch,
     ControlNeed,
     MissionPolicyConfig,
     MissionRanking,
@@ -54,7 +56,9 @@ from .spatial import (
 )
 
 __all__ = [
+    "MINIMUM_CONTROL_ALIGNMENT",
     "BuildAdvantageWeights",
+    "ControlMatch",
     "ControlNeed",
     "ControlObjective",
     "ControlTargetKind",

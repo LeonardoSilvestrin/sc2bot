@@ -312,11 +312,11 @@ data (synthetic tests), it falls back to visible unit counts.
 ## Legacy macro posture compatibility
 
 Awareness no longer derives macro posture. `AwarenessSnapshot.macro_posture`
-is a deprecated transport slot retained while existing macro, map-control and
-standing consumers are migrated. After Awareness returns, Strategy's
+is a deprecated transport slot retained while macro, its last consumer, is
+migrated; no behavior reads it. After Awareness returns, Strategy's
 `MacroPostureDirector` evaluates the unchanged compatibility policy and the
-app copies that value into the slot. New strategic interpretation is exposed
-separately through the shadow `StrategySnapshot`.
+app copies that value into the slot. Strategic interpretation reaches
+behaviors separately, as the live `StrategicContext` ([strategy.md](../strategy.md)).
 
 ## Known gaps
 
@@ -324,6 +324,6 @@ separately through the shadow `StrategySnapshot`.
   [attention.md](attention.md#known-gaps)).
 - `BaseSecurityLevel.SAFE` means "no visible threat near the base right now",
   with no confidence; it is not proof the area was watched. Topological
-  exposure is `territory` ground security; region-level strategy consumption
-  remains in shadow mode.
+  exposure is `territory` ground security, which Strategy reads to weigh its
+  base objectives.
 - `relative_strength` is only logged; decisions read the army belief.

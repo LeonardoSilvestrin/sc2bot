@@ -36,7 +36,7 @@ Start at level 1, go down only where the work is.
 | [world/awareness.md](world/awareness.md) | `AwarenessService`: enemy memory, enemy bases and forces, economy/army beliefs, macro posture, confidence semantics | live |
 | [world/base-security.md](world/base-security.md) | Per-base threat/protection reading behind Defense | live |
 | [world/spatial-field.md](world/spatial-field.md) | The sampled spatial field (friendly, threat, choke, route values) and its caches | live |
-| [world/territory.md](world/territory.md) | Control, frontline and ground security; sample control/knowledge feed the spatial field | sample projection live; regions shadow |
+| [world/territory.md](world/territory.md) | Control, frontline and ground security; sample control/knowledge feed the spatial field | live (regions and passages read by Strategy and Defense) |
 | **Engine (arbitration)** | | |
 | [engine/missions.md](engine/missions.md) | `MissionController`, `UnitAllocator`, proposals, lifecycle modes, preemption, executor contract, command port | live |
 | [engine/capabilities.md](engine/capabilities.md) | Unit capability profiles, suitability math, roles, capability-based allocation | live |
@@ -54,7 +54,7 @@ Start at level 1, go down only where the work is.
 | [macro/macro-planner.md](macro/macro-planner.md) | `MacroPlanner`: army demand, production capacity, supply, workers, gas, expansion, add-ons, priorities | live |
 | [macro/builds.md](macro/builds.md) | The Ares openings in `terran_builds.yml`, how one is picked, and each build's goal set | live (BattleMech only) |
 | **Strategy** | | |
-| [strategy.md](strategy.md) | Objective scoring and hysteresis in `bot/strategy` | shadow, not wired |
+| [strategy.md](strategy.md) | Objective scoring and hysteresis, `StrategicIntent`, `ControlObjective`s and the Mission Policy in `bot/strategy` | live (macro still reads the legacy posture) |
 | **History** | | |
 | [history/scout-pilot-migration.md](history/scout-pilot-migration.md) | What the first vertical slice kept from the old `ares` branch and what it dropped | record |
 | [history/awareness-hardening.md](history/awareness-hardening.md) | The September 2026 audit of confidence semantics (Portuguese) | record |

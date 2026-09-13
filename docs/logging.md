@@ -187,7 +187,7 @@ Each behavior logs under its own component through `BehaviorLog`:
 | `behavior.proposed` | the plan's `log_fields()`, `planner`, extras | the same moments, when a plan exists |
 | `behavior.state_changed` | `state`, `reason`, `mission_id`, extras | executors on a phase change (see below) |
 | `behavior.target_selection` | `change` (`SELECTED`, `KEPT`, `RETARGETED`, `REPLACED`, `LOST`, `NONE`), `selected`, `previous`, `candidates[]` | Reaper and Banshee planners on a target change, at least every 30 s |
-| `map_control.spatial_candidates` | top 5 `candidates[]` with position, final score, frontier, advancement, friendly support/band, enemy control/threat, knowledge/unknown risk, choke, route, travel cost, selected flag and reason; plus `selected` | `MapControlPlanner` every selection cadence |
+| `map_control.spatial_candidates` | top 5 `candidates[]` with position, `score` (= `local_value` - `caution` + `strategic_value`), `opportunity`, frontier, advancement, friendly support/band, enemy control/threat, knowledge/unknown risk, choke, route, travel cost, `information_desire`, `control_objective`/`control_alignment`/`control_importance` (`null`/0 without a match), selected flag and reason; plus `selected` | `MapControlPlanner` every selection cadence |
 | `map_control.anchor_changed` | `old_anchor`, `new_anchor`, `old_score`, `new_score`, `switch_margin`, `reason` | `MapControlPlanner` when its anchor changes |
 | `standing.updated` | `combat_posture`; `standing` {squad: `desired`, `assigned`}; `mission_allocation` {kind: unit count}; `squads[]`; `unassigned_eligible_units` | `StandingTelemetry`, on change and every 10 s |
 | `standing.unassigned_units_persisting` | `unassigned_eligible_units`, `unassigned_unit_tags`, `duration_seconds` | when a ready combat unit has had no mission for 15 s |
@@ -203,12 +203,22 @@ Each behavior logs under its own component through `BehaviorLog`:
 
 ### `strategy.director`
 
-In shadow mode it logs `strategy.updated` on the first update, objective
-transitions, and a periodic cadence. The event mirrors `StrategySnapshot`:
-`objective`, `previous_objective`, `leader`, `confidence`,
-`time_in_objective`, `inputs` (the six signals), `scores` (objective ->
-score), `reason` and `shadow`. The viewer has a track for it and treats every
-objective not marked `shadow: false` as shadow.
+Strategy is live. `StrategyRuntime` logs `strategy.updated` on the first
+update, on objective transitions, and at most every 10 s otherwise. The event
+mirrors `StrategySnapshot`: `objective`, `previous_objective`, `leader`,
+`confidence`, `time_in_objective`, `inputs` (the six signals), `scores`
+(objective -> score), `reason`, `shadow: false` and `mode: "live"`. The viewer
+has a track for it; an older log without `shadow: false` is shown as shadow.
+
+### `strategy.mission_policy`
+
+`MissionRanker` logs two events together, whenever a deduplication key's
+signals or priority change and at least every 30 s:
+
+| Event | Data |
+| --- | --- |
+| `mission.candidate` | `planner`, `proposal_id`, `deduplication_key`, `mission_kind`, `target_key`, `target`; the planner's `MissionSignals`: `activity`, `opportunity`, `urgency`, `risk`, `information_gain`, `control_objective` and `control_alignment` (both `null` without a `ControlMatch`), `signal_reason` |
+| `mission.ranked` | the same identifiers; the `MissionRanking` terms: `utility`, `priority`, `strategic_desirability`, `opportunity_contribution`, `information_contribution`, `control_contribution`, `urgency_contribution`, `risk_penalty`, `urgency_floor`, `floor_applied` |
 
 ## The log viewer
 

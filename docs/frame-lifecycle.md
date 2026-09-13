@@ -105,9 +105,14 @@ Each reading is built from the ones above it. Details in
  o  TerritoryAssessor.update      control, frontline, ground access (1 s cadence)
 ```
 
-After Awareness returns, `StrategyShadow` translates the snapshot, updates
-`StrategicDirector`, emits cadenced `strategy.updated` telemetry, and derives
-the legacy macro posture that existing consumers still receive.
+After Awareness returns, `StrategyRuntime` translates the snapshot into
+`StrategyInputs` and updates `StrategicDirector`. Whenever the director
+produces a new snapshot, the runtime derives the `StrategicIntent` and the
+`ControlObjective`s and publishes them as the frame's `StrategicContext`; it
+emits cadenced `strategy.updated` telemetry, and still derives the legacy
+macro posture that macro receives through Awareness. Behavior planners read
+that context, and `MissionRanker` ranks every candidate under it before
+`MissionController` sees a proposal.
 
 ## Step 10: inside `MissionController.tick`
 

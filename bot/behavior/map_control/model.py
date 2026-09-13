@@ -10,7 +10,7 @@ from sc2.position import Point2
 
 from bot.engine.missions.models import MissionKind
 from bot.engine.missions.roles import CombatRole
-from bot.strategy import MissionSignals
+from bot.strategy import ControlMatch, MissionSignals
 from bot.world.awareness.spatial import SpatialFieldSample
 
 
@@ -62,12 +62,16 @@ class MapControlConfig:
     retarget_min_sample_steps: float = 1.5
     logged_candidate_count: int = 5
 
-    # --- what Strategy wants -----------------------------------------------
+    # --- what Strategy wants (anchor selection only) -----------------------
     # Unknown space is worth `information_weight * intent.information` against
-    # `unknown_weight`'s caution; a sample near an approach Strategy wants
-    # controlled or watched is worth `objective_weight * importance`, fading
-    # over `objective_sigma_steps` grid steps. Strategy says whether space and
-    # information matter; this still decides which point obtains them.
+    # `unknown_weight`'s caution. A sample that meaningfully serves an
+    # approach Strategy wants controlled or watched (a `ControlMatch`) is
+    # worth `objective_weight * importance * alignment`; alignment fades over
+    # `objective_sigma_steps` grid steps and stops being a match below
+    # `MINIMUM_CONTROL_ALIGNMENT` (about 1.2 sigma, near the patrol loop's
+    # edge). Strategy says whether space and information matter; this still
+    # decides which point obtains them. None of it enters the opportunity the
+    # Mission Policy is told.
     information_weight: float = 0.3
     objective_weight: float = 0.6
     objective_sigma_steps: float = 1.5
@@ -194,24 +198,51 @@ class MapControlPlan:
 
 @dataclass(frozen=True, slots=True)
 class MapControlCandidate:
-    """One sampled point scored with map-control-specific preferences."""
+    """One sampled point, evaluated as the patrol's anchor.
+
+    Three groups of terms, each with one owner, and nothing counted twice:
+
+    - **local evidence** -- ``support_score``, ``frontier_score``,
+      ``advancement_score``, the sample's choke and route values, and
+      ``travel_cost`` -- weighted into ``local_value``. What the field and the
+      patrol's own position say about holding this point. ``opportunity`` is
+      ``local_value`` over the best a sample could reach: the only thing the
+      Mission Policy is told as opportunity.
+    - **caution** -- enemy threat, enemy control and unknown space, weighted.
+      It steers selection away from danger; the Mission Policy prices the
+      same danger again only through ``MissionSignals.risk``, for the
+      separate cross-mission decision.
+    - **strategy** -- ``strategic_value``: unknown space priced by
+      ``information_desire`` (``intent.information``), plus the importance of
+      the control objective the point meaningfully serves (``control``). The
+      one path by which Strategy moves the anchor.
+
+    ``score`` is exactly ``local_value - caution + strategic_value``.
+    """
 
     sample: SpatialFieldSample
-    score: float
-    frontier_score: float = 0.0
-    advancement_score: float = 0.0
-    support_score: float = 0.0
-    unknown_risk: float = 0.0
-    travel_cost: float = 0.0
-    # What Strategy's intent and objectives add: unknown space weighted by
-    # intent.information, and the pull of the approach objective nearest in
-    # importance x proximity (`objective_alignment` is the proximity alone).
-    information_score: float = 0.0
-    objective_score: float = 0.0
-    objective_alignment: float = 0.0
-    objective_id: str | None = None
+    support_score: float
+    frontier_score: float
+    advancement_score: float
+    travel_cost: float
+    unknown_risk: float
+    local_value: float
+    caution: float
+    opportunity: float
+    information_desire: float = 0.0
+    control: ControlMatch | None = None
+    control_importance: float = 0.0
+    strategic_value: float = 0.0
     selected: bool = False
     reason: str = "lower_score"
+
+    def __post_init__(self) -> None:
+        if self.control is None and self.control_importance != 0.0:
+            raise ValueError("control_importance needs a control match")
+
+    @property
+    def score(self) -> float:
+        return self.local_value - self.caution + self.strategic_value
 
     def log_fields(self) -> dict[str, Any]:
         sample = self.sample
@@ -221,6 +252,10 @@ class MapControlCandidate:
                 round(float(sample.position.y), 1),
             ],
             "score": round(self.score, 3),
+            "local_value": round(self.local_value, 3),
+            "caution": round(self.caution, 3),
+            "strategic_value": round(self.strategic_value, 3),
+            "opportunity": round(self.opportunity, 3),
             "frontier": round(self.frontier_score, 3),
             "advancement": round(self.advancement_score, 3),
             "friendly_support": round(
@@ -238,9 +273,14 @@ class MapControlCandidate:
             "choke": round(sample.choke_value, 3),
             "route": round(sample.route_value, 3),
             "travel_cost": round(self.travel_cost, 3),
-            "information": round(self.information_score, 3),
-            "objective": round(self.objective_score, 3),
-            "objective_id": self.objective_id,
+            "information_desire": round(self.information_desire, 3),
+            "control_objective": (
+                None if self.control is None else self.control.objective_id
+            ),
+            "control_alignment": (
+                None if self.control is None else round(self.control.alignment, 3)
+            ),
+            "control_importance": round(self.control_importance, 3),
             "selected": self.selected,
             "reason": self.reason,
         }

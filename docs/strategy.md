@@ -1,38 +1,48 @@
 # Strategy
 
-`bot/strategy/` answers one question:
+`bot/strategy/` answers two questions:
 
 > Given a normalized set of signals about the game, which strategic objective
-> should dominate right now?
+> should dominate right now -- and what does that direction want, spelled out
+> for every behavior that acts on it?
 
-It decides a **direction**, never an execution. It says "PRESSURE", never
-"attack the enemy third with the main army".
+It decides a **direction** and the **world state it wants**, never an
+execution. It says "PRESSURE", "harass is wanted at 0.9" and "the natural's
+choke should be held", never "attack the enemy third with the main army".
 
-Source: `bot/strategy/` (`model.py`, `config.py`, `scoring.py`,
-`hysteresis.py`, `director.py`, `awareness_adapter.py`, `posture.py`).
+Source: `bot/strategy/`.
 
-**Shadow mode, wired but not controlling gameplay.** `compose_bot` builds the
-director; `awareness_adapter.py` is the single Awareness-to-Strategy boundary;
-and `app/strategy_shadow.py` updates and logs `StrategySnapshot`. No behavior
-or macro planner receives the new objective yet. Every weight below remains a
+**Live.** `StrategyRuntime` (`bot/app/strategy_runtime.py`) updates the
+director every frame and, on each new snapshot, publishes a
+`StrategicContext`: the `StrategicIntent` and the `ControlObjective`s.
+Behavior planners read that context to choose targets; the Mission Policy
+(`score_mission`, run by `MissionRanker` in `bot/app/mission_ranking.py`)
+ranks every planner's candidates under it. Macro does not read Strategy yet:
+it still receives the legacy `MacroPosture`. Every weight below remains a
 first guess until match logs show where it is wrong.
 
 ```text
 AwarenessSnapshot --> awareness_adapter --> StrategyInputs
-                                              |
-                                              v
-                                      StrategicDirector
-                                              |
-                                              v
-                                      StrategySnapshot
-                                      (shadow log only)
+    |                                            |
+    |                                    StrategicDirector
+    |                                            |
+    |                                    StrategySnapshot --> derive_intent
+    |                                                               |
+    +-----------------> derive_control_objectives <----- StrategicIntent
+                                   |
+                  StrategicContext (intent + ControlObjectives)
+                        |                          |
+               behavior planners            Mission Policy
+           (targets, MissionSignals)   (score_mission -> priority)
 ```
 
-The scoring/director core imports only itself, shared domain contracts and the
-standard library, performs no I/O and knows no runtime, Ares, Attention,
-Awareness or behavior. Only `awareness_adapter.py` imports Awareness. Runtime
-coordination and logging live in `bot.app`. `bot.macro.strategy` remains
-unrelated: it is macro's goal/opening vocabulary.
+The scoring, direction, intent and policy core (`model`, `config`,
+`scoring`, `hysteresis`, `director`, `intent`, `mission_policy`, `posture`)
+imports only itself, `bot.domain` (the legacy posture enum) and the standard
+library, performs no I/O and knows no runtime, Ares, Attention, Awareness or
+behavior. Only `awareness_adapter.py` and `spatial/policy.py` read Awareness.
+Runtime coordination and logging live in `bot.app`. `bot.macro.strategy`
+remains unrelated: it is macro's goal/opening vocabulary.
 
 | Module | Holds |
 | --- | --- |
@@ -42,7 +52,11 @@ unrelated: it is macro's goal/opening vocabulary.
 | `hysteresis.py` | `ObjectiveState`, `select_objective`, `decision_confidence` |
 | `director.py` | `StrategicDirector`, the only stateful piece |
 | `awareness_adapter.py` | the sole translation from `AwarenessSnapshot` to `StrategyInputs` |
-| `posture.py` | temporary owner of the legacy `MacroPosture` policy used by existing consumers |
+| `intent.py` | `StrategicActivity`, `StrategicIntent`, `IntentConfig`, `derive_intent` |
+| `spatial/` | `ControlObjective`, `SpatialStrategySnapshot`, `SpatialPolicyConfig`, `derive_control_objectives` |
+| `context.py` | `StrategicContext`: what behaviors and the Mission Policy read |
+| `mission_policy.py` | `MissionSignals`, `ControlMatch`, `ControlNeed`, `MissionPolicyConfig`, `score_mission` |
+| `posture.py` | temporary owner of the legacy `MacroPosture` policy macro still consumes |
 
 ## Inputs
 
@@ -212,11 +226,108 @@ Only an emergency leaves it before the first dwell is over.
 `snapshot.leader` is the best-scoring objective this update, which can differ
 from `objective` while hysteresis holds.
 
+## Intent
+
+`derive_intent` spells the objective out as a `StrategicIntent`: independent
+0..1 preferences for `defense`, `map_control`, `harass` and `information`,
+plus `risk_tolerance`. They are not shares of a whole. `IntentConfig` holds
+one profile per objective; `held_share` (0.7) of the intent is the profile of
+the objective in force and the rest the score-weighted mix of every
+objective's profile, so a close challenger shades the intent before
+hysteresis lets it take over. Before the first snapshot the neutral context
+uses the `BUILD_ADVANTAGE` profile.
+
+| Profile | defense | map_control | harass | information | risk_tolerance |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `STABILIZE` | 0.95 | 0.15 | 0.10 | 0.45 | 0.15 |
+| `RECOVER` | 0.75 | 0.20 | 0.25 | 0.55 | 0.25 |
+| `BUILD_ADVANTAGE` | 0.60 | 0.25 | 0.65 | 0.55 | 0.40 |
+| `TAKE_MAP_CONTROL` | 0.50 | 0.85 | 0.50 | 0.80 | 0.50 |
+| `PRESSURE` | 0.35 | 0.65 | 0.90 | 0.60 | 0.70 |
+
+No behavior reads the objective itself: the direction is interpreted once,
+here, the same way for everyone.
+
+## Control objectives
+
+`derive_control_objectives(intent, awareness)` (`spatial/policy.py`) says
+where control is wanted. A `ControlObjective` names a base, region or
+passage, how firmly Strategy wants it held (`desired_control`) and watched
+(`desired_visibility`), its `importance`, and Awareness' reading of the place
+when it was derived (`current_control`, `current_visibility`); `gap` is the
+larger shortfall. It names no unit, count, formation or priority.
+
+| Kind | One per | Activity | Importance |
+| --- | --- | --- | --- |
+| `BASE` | held base | `DEFENSE` | `intent.defense` x stake (main 1, expansion 0.9) x raised exposure x raised facing, + 0.3 x threat |
+| `PASSAGE` | way into a held base's region, at most 3 per base | `DEFENSE` | the base's importance, x 0.35 for a link between two held bases, x raised facing |
+| `REGION` | approach region one passage outside our own, at most 4 | `MAP_CONTROL` or `INFORMATION`, whichever value is larger | 0.9 x max(`intent.map_control` x ground access, `intent.information` x (1 - confidence)) |
+
+`raised(floor, x) = floor + (1 - floor) * x`, with an exposure floor of 0.45
+and a facing floor of 0.7. Objectives under importance 0.05 are dropped; the
+rest are sorted by `(-importance, objective_id)`, and every snapshot is
+complete -- an objective missing from it is no longer wanted. Importance
+never reads how firmly we already hold a place, so our own army arriving does
+not argue an objective away. Every number lives in `SpatialPolicyConfig`.
+
+## Mission Policy
+
+A behavior planner describes each concrete opportunity as `MissionSignals`,
+in local terms only: `activity`, `opportunity`, `urgency`, `risk`,
+`information_gain` (each 0..1) and an optional `control: ControlMatch`.
+`score_mission` is the one place those terms meet the intent:
+
+```text
+desirability = floor + (1 - floor) * intent[activity]
+value        = value_share * desirability * (
+                   opportunity_weight * opportunity
+                 + information_weight * information_gain * intent.information
+                 + control_weight     * alignment * importance * gap)
+urgency      = urgency_weight * urgency
+risk         = risk_weight * risk
+               * (unavoidable + (1 - unavoidable) * (1 - risk_tolerance))
+floor        = emergency_utility
+               * clamp((urgency - emergency_urgency) / (1 - emergency_urgency))
+utility      = clamp(max(value + urgency - risk, floor), 0, 1)
+```
+
+| `MissionPolicyConfig` | Default |
+| --- | ---: |
+| `opportunity_weight`, `information_weight`, `control_weight` | 0.55, 0.20, 0.25 |
+| `desirability_floor`, `value_share` | 0.15, 0.85 |
+| `urgency_weight` | 0.45 |
+| `emergency_urgency`, `emergency_utility` | 0.5, 0.95 |
+| `risk_weight`, `unavoidable_risk_share` | 0.40, 0.15 |
+| `fallback_priority`, `minimum_priority`, `maximum_priority` | 20, 30, 100 |
+
+The fallback owner (`activity` `None`, the standing army) ranks at
+`fallback_priority`; every other candidate at
+`minimum_priority + round((maximum_priority - minimum_priority) * utility)`.
+
+**One price per factor.** A planner's `opportunity` must not already contain
+risk, information, urgency, strategic desirability or an objective's
+importance: the policy prices each of them once, from its own signal. A
+behavior may weigh all of them to *choose* a target -- that is its own
+decision -- but reports the chosen target's local value as opportunity (see
+Map Control's anchor, [behavior/map-control.md](behavior/map-control.md)).
+
+**Control matches.** `ControlMatch(objective_id, alignment)` exists only for
+`alignment >= MINIMUM_CONTROL_ALIGNMENT` (0.5): the work is at least half as
+direct as standing on the objective. A weaker association is not a match: it
+carries no objective id and prices no control. Work serving no objective is
+still ranked on every other term. The control term reads the objective's
+importance and gap from the current context; a match to an objective the
+context no longer holds prices nothing. Defense matches its base's objective
+at alignment 1; Map Control matches the approach objective its anchor lies
+near (a Gaussian over 1.5 grid steps).
+
 ## Deliberately out of scope
 
-Strategy decides direction, not execution. It has no:
+Strategy decides direction and the world state it wants, not execution. It
+has no:
 
-- target position, target base, attack target or coordinates;
+- attack target, unit position or path (a `ControlObjective` names a place
+  whose control is wanted, never where a unit stands);
 - army allocation, squads, missions or unit counts;
 - production recommendation or build order;
 - map control percentage or territory model of its own;
@@ -239,7 +350,7 @@ keeping the model/director unaware of Awareness. Current mappings are:
 | `knowledge_confidence` | mean territory, army and economy confidence |
 
 The app logs the first result, objective transitions and periodic samples as
-`strategy.updated`. The new objective has no gameplay consumer. Existing
-consumers temporarily keep receiving `MacroPosture`; its unchanged policy now
-lives in Strategy and is copied into the deprecated Awareness snapshot field
-only for compatibility.
+`strategy.updated`. Gameplay reads the objective only through the intent and
+the control objectives. Macro, the last legacy consumer, still receives
+`MacroPosture`; its unchanged policy lives in Strategy (`posture.py`) and is
+copied into the deprecated Awareness snapshot field only for compatibility.

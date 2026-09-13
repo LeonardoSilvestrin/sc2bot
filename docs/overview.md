@@ -21,8 +21,12 @@ flowchart LR
     Observer --> Attention["Attention<br/>facts of this frame"]
     Attention --> Awareness["Awareness<br/>memory + beliefs"]
 
-    Awareness --> Behaviors["Behavior planners<br/>(behavior/*)"]
-    Behaviors -->|MissionProposal| Missions["MissionController<br/>UnitAllocator, Squads"]
+    Awareness --> Strategy["Strategy<br/>objective, intent,<br/>control objectives"]
+    Strategy -->|StrategicContext| Behaviors["Behavior planners<br/>(behavior/*)"]
+    Awareness --> Behaviors
+    Behaviors -->|MissionCandidate| Policy["Mission Policy<br/>(app/mission_ranking)"]
+    Strategy -->|StrategicContext| Policy
+    Policy -->|MissionProposal| Missions["MissionController<br/>UnitAllocator, Squads"]
     Missions --> Executors["Mission executors"]
     Executors -->|MissionCommands| AresUnits["Ares combat behaviors"]
 
@@ -47,13 +51,21 @@ In words:
    beliefs: where enemy bases and armies are and how sure we are, whether we
    are ahead in economy and army, how risky spending is, how threatened each
    base is, a spatial field over the map, and a territory reading.
-4. **Propose.** Six behavior planners read Attention and Awareness and
-   propose missions. `MacroPlanner` reads the same snapshots and proposes
+4. **Prescribe.** Strategy scores its objectives over Awareness, spells the
+   one in force out as a `StrategicIntent` (how much defense, map control,
+   harass and information are wanted, and how much risk) and derives the
+   `ControlObjective`s (where control is wanted). Both reach behaviors as the
+   frame's `StrategicContext`.
+5. **Propose.** Six behavior planners read Attention, Awareness and the
+   context and describe concrete mission candidates in local terms
+   (`MissionSignals`). The Mission Policy ranks every candidate under the
+   context and hands `MissionController` ordinary proposals with a final
+   priority. `MacroPlanner` reads Attention and Awareness and proposes
    purchases. Nobody commands anything yet.
-5. **Arbitrate.** `MissionController` admits missions and `UnitAllocator`
+6. **Arbitrate.** `MissionController` admits missions and `UnitAllocator`
    leases units to them by priority and utility. `EconomyController` admits
    purchases against the bank.
-6. **Execute.** Each admitted mission's executor issues commands for its
+7. **Execute.** Each admitted mission's executor issues commands for its
    leased units through a port; the Ares adapters turn those into Ares
    behaviors. Funded purchases go through the economy port the same way.
 7. **Explain.** Every decision is logged with a reason. Telemetry, the
@@ -103,7 +115,7 @@ a unit tag, mission or squad.
 | `bot/engine/services` | Capabilities shared by behaviors (active vision) | requests, Attention | vision request results, scans | knows who asked |
 | `bot/macro` | What to buy | Attention, Awareness | `EconomicProposal`s, `MacroStatus` | names a unit tag, mission or squad |
 | `bot/engine/economy` | Spend admission against a virtual bank | proposals, Attention | `EconomicAction`s | knows units, missions or production policy |
-| `bot/strategy` | Strategic objective scoring (wired in shadow mode) | `AwarenessSnapshot` at its one adapter; otherwise `StrategyInputs` | `StrategySnapshot`; temporary legacy posture | performs runtime I/O or issues commands |
+| `bot/strategy` | What matters and what world state is wanted: objective scoring, `StrategicIntent`, `ControlObjective`s, the Mission Policy | `AwarenessSnapshot` at its two boundary modules; otherwise `StrategyInputs` | `StrategicContext`, mission rankings; temporary legacy posture | performs runtime I/O, picks units or targets, or issues commands |
 | `bot/app` | Wiring, frame order, telemetry, debug views | everything | logs, debug drawings, SVGs | holds game rules |
 
 The rules behind this table, and the tests that keep it true, are in
@@ -114,8 +126,8 @@ The rules behind this table, and the tests that keep it true, are in
 | Piece | Status | Notes |
 | --- | --- | --- |
 | Attention, enemy memory, enemy bases and forces, beliefs, macro posture, base security, spatial field | live | [world/awareness.md](world/awareness.md), [world/spatial-field.md](world/spatial-field.md) |
-| Territory (control, frontline, ground security) | sample projection live; regions shadow | computed every second, logged and drawn; bounded sample control/knowledge is projected onto the generic spatial field for Map Control, while no behavior reads territory types or the region graph ([world/territory.md](world/territory.md)) |
-| Strategy | shadow, wired | `compose_bot` updates and logs it; no behavior or macro consumer reads the new objective ([strategy.md](strategy.md)) |
+| Territory (control, frontline, ground security, regions and passages) | live | computed every second, logged and drawn; sample control/knowledge feed the spatial field; Strategy derives its control objectives from regions and passages, and Defense holds the passage into an attacked base ([world/territory.md](world/territory.md)) |
+| Strategy | live | objective, intent and control objectives reach planners as `StrategicContext`; the Mission Policy ranks every mission candidate; macro still reads the legacy posture ([strategy.md](strategy.md)) |
 | Standing army, map control, defense, Reaper harass, Banshee harass, scouting | live | [behavior/README.md](behavior/README.md) |
 | Defense roles (Tanks siege on an anchor, everything else screens) | pilot | inside `DefendBaseExecutor` only ([behavior/defense.md](behavior/defense.md)) |
 | `CombatRole.SIEGE_ANCHOR` | defined, unused | no behavior asks for it yet |

@@ -191,6 +191,7 @@ class BehaviorInterpretationTests(unittest.TestCase):
             "bot.strategy.MissionSignals",
             "bot.strategy.StrategicActivity",
             "bot.strategy.StrategicContext",
+            "bot.strategy.ControlMatch",
             "bot.strategy.ControlObjective",
             "bot.strategy.ControlTargetKind",
             "bot.strategy.SpatialStrategySnapshot",

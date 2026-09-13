@@ -7,6 +7,8 @@ import unittest
 
 from bot.engine.missions.allocator import UnitAllocator
 from bot.strategy import (
+    MINIMUM_CONTROL_ALIGNMENT,
+    ControlMatch,
     ControlNeed,
     IntentConfig,
     MissionPolicyConfig,
@@ -63,15 +65,58 @@ class MissionSignalsContractTests(unittest.TestCase):
                 ):
                     MissionSignals(activity=StrategicActivity.HARASS, **{name: bad})
 
-    def test_alignment_needs_an_objective(self):
+    def test_work_serving_no_objective_is_a_valid_signal(self):
+        signals = MissionSignals(activity=StrategicActivity.HARASS, opportunity=0.5)
+
+        self.assertIsNone(signals.control)
+        self.assertIsNone(signals.log_fields()["control_objective"])
+
+
+class ControlMatchContractTests(unittest.TestCase):
+    """An objective id never travels with a negligible alignment."""
+
+    def test_a_match_names_its_objective(self):
         with self.assertRaises(ValueError):
-            MissionSignals(
-                activity=StrategicActivity.DEFENSE, control_alignment=0.5
+            ControlMatch(objective_id="  ", alignment=1.0)
+
+    def test_a_match_below_the_semantic_minimum_cannot_exist(self):
+        for bad in (0.0, 1e-9, MINIMUM_CONTROL_ALIGNMENT - 1e-6, 1.01, math.nan):
+            with self.subTest(alignment=bad), self.assertRaises(ValueError):
+                ControlMatch(objective_id="region:west", alignment=bad)
+
+    def test_from_alignment_reports_no_match_for_a_weak_association(self):
+        self.assertIsNone(ControlMatch.from_alignment("region:west", 1e-9))
+        self.assertIsNone(
+            ControlMatch.from_alignment(
+                "region:west", MINIMUM_CONTROL_ALIGNMENT - 1e-6
             )
+        )
+        self.assertEqual(
+            ControlMatch.from_alignment("region:west", MINIMUM_CONTROL_ALIGNMENT),
+            ControlMatch("region:west", MINIMUM_CONTROL_ALIGNMENT),
+        )
         with self.assertRaises(ValueError):
-            MissionSignals(
-                activity=StrategicActivity.DEFENSE, control_objective="  "
-            )
+            ControlMatch.from_alignment("region:west", math.nan)
+
+    def test_no_match_prices_no_control_even_when_the_objective_has_a_need(self):
+        need = ControlNeed(importance=1.0, gap=1.0)
+        unmatched = MissionSignals(
+            activity=StrategicActivity.MAP_CONTROL, opportunity=0.5
+        )
+        matched = MissionSignals(
+            activity=StrategicActivity.MAP_CONTROL,
+            opportunity=0.5,
+            control=ControlMatch("region:west", 1.0),
+        )
+
+        self.assertEqual(
+            score_mission(unmatched, BUILD, need=need).control_contribution, 0.0
+        )
+        self.assertGreater(
+            score_mission(matched, BUILD, need=need).control_contribution, 0.0
+        )
+        # A match to an objective the context no longer holds prices nothing.
+        self.assertEqual(score_mission(matched, BUILD).control_contribution, 0.0)
 
     def test_signals_carry_no_priority(self):
         self.assertNotIn("priority", MissionSignals.__dataclass_fields__)
@@ -248,8 +293,7 @@ class CrossBehaviorRankingTests(unittest.TestCase):
         aligned = MissionSignals(
             activity=StrategicActivity.DEFENSE,
             opportunity=0.5,
-            control_objective="passage:7",
-            control_alignment=1.0,
+            control=ControlMatch("passage:7", 1.0),
         )
 
         unsatisfied = score_mission(
@@ -275,8 +319,7 @@ class CrossBehaviorRankingTests(unittest.TestCase):
                 urgency=0.1,
                 risk=0.3,
                 information_gain=0.7,
-                control_objective="region:north",
-                control_alignment=0.5,
+                control=ControlMatch("region:north", 0.5),
             ),
             BUILD,
             need=ControlNeed(importance=0.7, gap=0.6),

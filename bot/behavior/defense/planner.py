@@ -32,6 +32,7 @@ from bot.engine.services import (
 )
 from bot.ports.logging import BotLogger
 from bot.strategy import (
+    ControlMatch,
     ControlObjective,
     ControlTargetKind,
     MissionSignals,
@@ -215,8 +216,12 @@ class DefensePlanner:
             opportunity=balance,
             urgency=urgency,
             risk=config.engagement_risk * balance,
-            control_objective=None if objective is None else objective.objective_id,
-            control_alignment=0.0 if objective is None else 1.0,
+            # Defending the base is the most direct service its objective has.
+            control=(
+                None
+                if objective is None
+                else ControlMatch(objective_id=objective.objective_id, alignment=1.0)
+            ),
             reason=reason,
         )
 

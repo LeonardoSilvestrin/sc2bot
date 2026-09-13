@@ -15,12 +15,17 @@ bot.domain            nothing from bot
 bot.ports             nothing from bot (type-only imports of engine models)
 bot.world.attention   nothing from bot
 bot.world.awareness   world.attention, ports.logging
-bot.strategy          the standard library only
+bot.strategy          the standard library and domain (legacy posture); its
+                      boundary modules (awareness_adapter, spatial/policy) also
+                      world.awareness
 bot.engine.services   world.attention, ports
 bot.engine.missions   domain, world, engine.services, engine.squads, ports
 bot.engine.squads     engine.missions (models, allocator), world.attention, ports
 bot.engine.economy    world.attention, ports
-bot.behavior          engine.missions, engine.services, world, domain, ports
+bot.behavior          engine.missions, engine.services, world, domain, ports,
+                      strategy contracts (MissionSignals, ControlMatch,
+                      StrategicActivity, StrategicContext, ControlObjective,
+                      ControlTargetKind, SpatialStrategySnapshot)
 bot.macro             engine.economy, world, ports
 bot.adapters.ares     ares, sc2, world.attention facts, engine models the ports carry
 bot.app               everything: the composition root
@@ -45,7 +50,9 @@ flowchart TD
     economy --> attention
     services --> attention
     adapters --> attention
-    strategy["bot.strategy<br/>(imported by nothing)"]
+    app --> strategy["bot.strategy"]
+    behavior -->|contracts only| strategy
+    strategy -->|boundary modules| awareness
 ```
 
 ## Rules
@@ -69,8 +76,8 @@ Each rule names what enforces it. "Review" means no test does yet.
 | 13 | **The domain is a leaf; doctrine is macro's.** `bot/domain` imports nothing from `bot` and contains no `CombatRole`, `CompositionDoctrine` or `UnitRequirement`. `CompositionDoctrine` appears only under `bot/macro`; the mission engine never mentions doctrine. | `test_behavior_architecture.py` (`CompositionIndependenceTests`) |
 | 14 | **Generic behaviors state a job.** `standing/` and `map_control/` name no `UnitTypeId` and no doctrine; map control asks `UnitRequirement.for_role(...)`, standing asks `UnitRequirement.any_combat_unit(...)`. Specialized raids ask for their own unit with `UnitRequirement.combat(...)`. | `test_behavior_architecture.py` (`CompositionIndependenceTests`) |
 | 15 | **Every behavior is a vertical folder** holding exactly `__init__.py`, `model.py`, `assessment.py`, `planner.py`, `executor.py`. | `test_behavior_architecture.py` (`BehaviorShapeTests`) |
-| 16 | **Territory types stay behind Awareness.** No module under `bot/behavior`, `bot/macro` or `bot/engine` mentions `.territory` or a `*Territory*` name. Awareness may project generic sample control/knowledge onto `SpatialField`; `bot/app` may read the full snapshot for telemetry/debug. | `test_territory.py` (`ShadowModeTests`) |
-| 17 | **Strategy is pure and unconsumed.** `bot/strategy` imports only `__future__`, `collections.abc`, `dataclasses`, `enum`, `math`; calls no `open`/`print`/`input`/`exec`/`eval`; and nothing outside it imports it. | `test_strategy_architecture.py` |
+| 16 | **Territory types stay out of macro and the mission engine.** No module under `bot/macro` or `bot/engine` mentions `.territory` or a `*Territory*` name. Strategy's `spatial/policy.py` derives control objectives from regions and passages; behaviors may read the topology for tactics (Defense holds the passage into an attacked base's region); Awareness projects generic sample control/knowledge onto `SpatialField`; `bot/app` may read the full snapshot for telemetry/debug. | `test_territory.py` (`ConsumerTests`) |
+| 17 | **Strategy is pure and consumed only through its contracts.** Its core (`model`, `config`, `scoring`, `hysteresis`, `director`, `intent`, `mission_policy`, `posture`) imports only itself, `bot.domain` and the standard library; only `awareness_adapter.py` and `spatial/policy.py` read Awareness; nothing in it reaches behavior, engine, macro, app or adapters, or performs I/O. Only `bot/app/strategy_runtime.py` drives the director; behaviors import only the context and signal contracts and never read the objective; only `bot/app/mission_ranking.py` prices candidates; the engine never names a strategic concept. | `test_strategy_architecture.py`, `test_decision_pipeline_architecture.py` |
 | 18 | **Observers change nothing.** Telemetry and the debug view/SVG exporter read snapshots, derive no world state, and never stop a match: the exporter catches every exception and logs it. | review; `test_spatial_snapshot.py` |
 | 19 | **The ladder writes nothing.** `MyBot` defaults to `NullBotLogger`; `run.py` opens a JSONL log and the SVG exporter only for local games, and never enables the debug view or snapshots when `--LadderServer` is present. | `test_run.py`, `test_contracts.py` |
 | 20 | **The frame order is fixed.** Vision needs are collected before they are resolved, leases are synced before macro reads the frame, diagnostics run after both domains. | `test_frame_processor.py` |

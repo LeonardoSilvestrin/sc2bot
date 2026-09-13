@@ -363,7 +363,9 @@ def base_region_key(awareness: AwarenessSnapshot, base_id: str) -> str | None:
     territory = next(
         (item for item in awareness.territory.bases if item.base_id == base_id), None
     )
-    return None if territory is None or territory.region is None else territory.region.key
+    if territory is None or territory.region is None:
+        return None
+    return territory.region.key
 
 
 def choose_approach(

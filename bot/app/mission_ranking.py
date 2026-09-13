@@ -56,7 +56,9 @@ class MissionRanker:
             ranking = score_mission(
                 signals,
                 context.intent,
-                need=context.need_for(signals.control_objective),
+                need=context.need_for(
+                    None if signals.control is None else signals.control.objective_id
+                ),
                 config=self.config,
             )
             self.last_rankings[candidate.draft.deduplication_key] = ranking

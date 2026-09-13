@@ -18,7 +18,48 @@ from typing import Any
 
 from .intent import StrategicActivity, StrategicIntent
 
-_SIGNALS = ("opportunity", "urgency", "risk", "information_gain", "control_alignment")
+_SIGNALS = ("opportunity", "urgency", "risk", "information_gain")
+
+# The weakest alignment that still counts as serving a control objective: the
+# work is at least half as direct as standing on the objective itself. A
+# proximity kernel's positive tail is not an association -- below this a
+# planner reports no match at all, so no objective id travels with a
+# negligible alignment and no control value is priced for it.
+MINIMUM_CONTROL_ALIGNMENT = 0.5
+
+
+@dataclass(frozen=True, slots=True)
+class ControlMatch:
+    """A meaningful association between one candidate and one control objective.
+
+    ``objective_id`` names the ``ControlObjective``; ``alignment`` in
+    ``[MINIMUM_CONTROL_ALIGNMENT, 1]`` is how directly the work serves it.
+    Weaker associations are not matches: ``from_alignment`` returns ``None``
+    for them, and constructing one directly raises.
+    """
+
+    objective_id: str
+    alignment: float
+
+    def __post_init__(self) -> None:
+        if not self.objective_id.strip():
+            raise ValueError("objective_id must not be blank")
+        # NaN fails this comparison too.
+        if not MINIMUM_CONTROL_ALIGNMENT <= self.alignment <= 1.0:
+            raise ValueError(
+                f"alignment must be within [{MINIMUM_CONTROL_ALIGNMENT}, 1], "
+                f"got {self.alignment}"
+            )
+
+    @classmethod
+    def from_alignment(cls, objective_id: str, alignment: float) -> ControlMatch | None:
+        """The match, or ``None`` when ``alignment`` is not a meaningful one."""
+
+        if math.isnan(alignment):
+            raise ValueError("alignment must not be NaN")
+        if alignment < MINIMUM_CONTROL_ALIGNMENT:
+            return None
+        return cls(objective_id=objective_id, alignment=min(alignment, 1.0))
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,13 +70,15 @@ class MissionSignals:
       the fallback owner, which serves none and ranks at a fixed floor.
     - ``opportunity``: 0 (pointless) .. 1 (as good as this kind of work gets)
       if we pursue it, judged locally: value at the target, fit of the force.
+      It must not already contain a term priced below -- risk, information,
+      urgency, strategic desirability or a control objective's importance.
     - ``urgency``: 0 (can wait indefinitely) .. 1 (a loss is happening now and
       every second of delay costs).
     - ``risk``: 0 (safe) .. 1 (the units sent are likely lost).
     - ``information_gain``: 0 (we would learn nothing) .. 1 (it resolves what
       we know least).
-    - ``control_objective``: the id of the Strategy control objective the work
-      serves, if any; ``control_alignment`` 0..1 how directly it serves it.
+    - ``control``: the Strategy control objective the work meaningfully
+      serves, if any (``ControlMatch``). Work serving none is still valid.
     - ``reason``: the planner's short explanation.
     """
 
@@ -44,8 +87,7 @@ class MissionSignals:
     urgency: float = 0.0
     risk: float = 0.0
     information_gain: float = 0.0
-    control_objective: str | None = None
-    control_alignment: float = 0.0
+    control: ControlMatch | None = None
     reason: str = ""
 
     def __post_init__(self) -> None:
@@ -54,10 +96,6 @@ class MissionSignals:
             # NaN fails this comparison too.
             if not 0.0 <= value <= 1.0:
                 raise ValueError(f"{name} must be within [0, 1], got {value}")
-        if self.control_objective is not None and not self.control_objective.strip():
-            raise ValueError("control_objective must not be blank")
-        if self.control_alignment > 0.0 and self.control_objective is None:
-            raise ValueError("control_alignment needs a control_objective")
 
     @classmethod
     def fallback(cls, reason: str) -> MissionSignals:
@@ -76,8 +114,12 @@ class MissionSignals:
             "urgency": round(self.urgency, 3),
             "risk": round(self.risk, 3),
             "information_gain": round(self.information_gain, 3),
-            "control_objective": self.control_objective,
-            "control_alignment": round(self.control_alignment, 3),
+            "control_objective": (
+                None if self.control is None else self.control.objective_id
+            ),
+            "control_alignment": (
+                None if self.control is None else round(self.control.alignment, 3)
+            ),
             "signal_reason": self.reason,
         }
 
@@ -236,6 +278,8 @@ def score_mission(
                            opportunity_weight * opportunity
                          + information_weight * information_gain * intent.information
                          + control_weight * alignment * importance * gap)
+                       (alignment * importance * gap is 0 without a ControlMatch
+                        to an objective the context still holds)
         urgency      = urgency_weight * urgency
         risk         = risk_weight * risk
                        * (unavoidable + (1 - unavoidable) * (1 - risk_tolerance))
@@ -265,7 +309,13 @@ def score_mission(
     scale = config.value_share * (
         config.desirability_floor + (1.0 - config.desirability_floor) * desirability
     )
-    control_value = 0.0 if need is None else need.value
+    # Control is priced only for a meaningful match to an objective Strategy
+    # still holds; work serving no objective keeps every other term.
+    control_value = (
+        0.0
+        if signals.control is None or need is None
+        else signals.control.alignment * need.value
+    )
     unavoidable = config.unavoidable_risk_share
     ranking_terms = {
         "opportunity_contribution": scale
@@ -275,10 +325,7 @@ def score_mission(
         * config.information_weight
         * signals.information_gain
         * intent.information,
-        "control_contribution": scale
-        * config.control_weight
-        * signals.control_alignment
-        * control_value,
+        "control_contribution": scale * config.control_weight * control_value,
         "urgency_contribution": config.urgency_weight * signals.urgency,
         "risk_penalty": config.risk_weight
         * signals.risk

@@ -10,6 +10,18 @@ combat supply -- never for a unit type or a head count. Every combat unit is
 scored against the role, so whatever the army is made of -- Marines,
 Hellions, Cyclones, or all three while production shifts -- competes for the
 patrol on suitability alone, without this file changing.
+
+Two decisions, each pricing its factors once (``evaluate_sample``):
+
+- **Which anchor.** Local spatial evidence, minus caution about danger and
+  unknown space, plus Strategy's value. Strategy moves the anchor only
+  through that last term: ``intent.information`` pricing unknown space, and
+  the importance of a control objective the point meaningfully serves
+  (``ControlMatch``).
+- **What the patrol is worth against other missions.** The Mission Policy's.
+  It is told the anchor's local value as opportunity, and risk, information
+  and the control match as separate signals -- never the selection score,
+  which already contains them.
 """
 
 from __future__ import annotations
@@ -24,7 +36,7 @@ from bot.engine.missions.models import MissionMode, MissionProposal, UnitRequire
 from bot.engine.missions.planning import ProposalCadence
 from bot.ports.logging import BotLogger
 from bot.strategy import (
-    ControlObjective,
+    ControlMatch,
     MissionSignals,
     SpatialStrategySnapshot,
     StrategicActivity,
@@ -102,11 +114,19 @@ class MapControlPlanner:
         return (self._candidate_for(plan, now),)
 
     def _signals(self, selected: MapControlCandidate | None) -> MissionSignals:
-        """The chosen anchor, read as an opportunity.
+        """The chosen anchor, read as an opportunity for the Mission Policy.
 
-        Opportunity is its spatial score against the best a sample could
-        reach; risk is the enemy threat or control standing on it; what
-        patrolling there would teach us is how little we know of it.
+        Each factor reaches the policy exactly once, from the raw evidence
+        rather than from the selection score:
+
+        - opportunity: the anchor's ``local_value`` against the best a sample
+          could reach -- no risk, unknown space or Strategy in it;
+        - risk: the enemy threat or control standing on it;
+        - information gain: how little we know of it;
+        - control: the objective it meaningfully serves, if any.
+
+        The policy then weighs those against the intent; the selection score
+        that picked the anchor is never passed on.
         """
 
         if selected is None:
@@ -117,11 +137,10 @@ class MapControlPlanner:
         sample = selected.sample
         return MissionSignals(
             activity=StrategicActivity.MAP_CONTROL,
-            opportunity=_clamp01(selected.score / max_spatial_score(self.config)),
+            opportunity=selected.opportunity,
             risk=_clamp01(max(sample.enemy_threat, sample.enemy_control)),
             information_gain=_clamp01(selected.unknown_risk),
-            control_objective=selected.objective_id,
-            control_alignment=_clamp01(selected.objective_alignment),
+            control=selected.control,
             reason=selected.reason,
         )
 
@@ -314,62 +333,31 @@ class MapControlPlanner:
         home: Point2,
         strategy: StrategicContext,
     ) -> MapControlCandidate:
-        spacing = max(awareness.spatial.sample_spacing, 1.0)
-        support_score = _support_band(_friendly_support(sample), self.config)
-        values = (
-            _friendly_support(sample),
-            *(_friendly_support(item) for item in neighbours),
-        )
-        crosses_frontier = (
-            min(values) < self.config.frontier_support <= max(values)
-        )
-        frontier_score = 1.0 if crosses_frontier else support_score
         origins = tuple(base.position for base in awareness.bases)
-        if origins:
-            distance_from_support = min(
-                sample.position.distance_to(origin) for origin in origins
-            )
-        else:
-            distance_from_support = sample.position.distance_to(home)
-        advancement = min(1.0, distance_from_support / (4.0 * spacing))
+        # Held bases arrive in the game's unstable townhall order: break an
+        # exact distance tie by position, never by arrival.
         travel_origin = (
             self.last_plan.anchor
             if self.last_plan is not None
             else min(
                 origins,
-                key=lambda origin: origin.distance_to(sample.position),
+                key=lambda origin: (
+                    origin.distance_to(sample.position),
+                    float(origin.x),
+                    float(origin.y),
+                ),
                 default=home,
             )
         )
-        travel_cost = min(
-            1.0, sample.position.distance_to(travel_origin) / (8.0 * spacing)
-        )
-        unknown_risk = 1.0 - sample.knowledge_confidence
-        reason = _eligibility_reason(sample, self.config)
-        objective, alignment = _objective_pull(
-            sample.position,
-            strategy.spatial,
-            spacing * self.config.objective_sigma_steps,
-        )
-        candidate = MapControlCandidate(
-            sample=sample,
-            score=0.0,
-            frontier_score=frontier_score,
-            advancement_score=advancement,
-            support_score=support_score,
-            unknown_risk=unknown_risk,
-            travel_cost=travel_cost,
-            information_score=strategy.intent.information * unknown_risk,
-            objective_score=(
-                0.0 if objective is None else objective.importance * alignment
-            ),
-            objective_alignment=alignment,
-            objective_id=None if objective is None else objective.objective_id,
-            reason=reason,
-        )
-        return replace(
-            candidate,
-            score=score_spatial_sample(sample, self.config, candidate=candidate),
+        return evaluate_sample(
+            sample,
+            neighbours,
+            config=self.config,
+            spacing=awareness.spatial.sample_spacing,
+            support_origins=origins,
+            home=home,
+            travel_origin=travel_origin,
+            strategy=strategy,
         )
 
     def _log_plan_change(
@@ -426,51 +414,144 @@ class MapControlPlanner:
         )
 
 
-def max_spatial_score(config: MapControlConfig) -> float:
-    """The highest score a sample could reach: every reward at full value
-    and no penalty."""
+def evaluate_sample(
+    sample: SpatialFieldSample,
+    neighbours: tuple[SpatialFieldSample, ...],
+    *,
+    config: MapControlConfig,
+    spacing: float,
+    support_origins: tuple[Point2, ...],
+    home: Point2,
+    travel_origin: Point2,
+    strategy: StrategicContext,
+) -> MapControlCandidate:
+    """Every term of one sample's anchor evaluation, and nothing else.
+
+    Pure: the same inputs always give the same record. The three term groups
+    and their owners are documented on ``MapControlCandidate``::
+
+        local_value     = friendly  * support_band + frontier * frontier
+                        + advance   * advancement  + choke    * choke_value
+                        + route     * route_value  - travel   * travel_cost
+        caution         = threat    * enemy_threat + control  * enemy_control
+                        + unknown   * unknown_risk
+        strategic_value = information * intent.information * unknown_risk
+                        + objective   * importance * alignment   (0 without a match)
+        score           = local_value - caution + strategic_value
+        opportunity     = clamp01(local_value / max_local_value)
+    """
+
+    spacing = max(spacing, 1.0)
+    support = _friendly_support(sample)
+    support_score = _support_band(support, config)
+    values = (support, *(_friendly_support(item) for item in neighbours))
+    crosses_frontier = min(values) < config.frontier_support <= max(values)
+    frontier_score = 1.0 if crosses_frontier else support_score
+    if support_origins:
+        distance_from_support = min(
+            sample.position.distance_to(origin) for origin in support_origins
+        )
+    else:
+        distance_from_support = sample.position.distance_to(home)
+    advancement = min(1.0, distance_from_support / (4.0 * spacing))
+    travel_cost = min(
+        1.0, sample.position.distance_to(travel_origin) / (8.0 * spacing)
+    )
+    unknown_risk = 1.0 - sample.knowledge_confidence
+    local = _local_value(
+        sample,
+        config,
+        support_band=support_score,
+        frontier=frontier_score,
+        advancement=advancement,
+        travel_cost=travel_cost,
+    )
+    pull = _control_pull(
+        sample.position, strategy.spatial, spacing * config.objective_sigma_steps
+    )
+    control, importance = (None, 0.0) if pull is None else pull
+    information_desire = strategy.intent.information
+    strategic = config.information_weight * information_desire * unknown_risk + (
+        0.0
+        if control is None
+        else config.objective_weight * importance * control.alignment
+    )
+    return MapControlCandidate(
+        sample=sample,
+        support_score=support_score,
+        frontier_score=frontier_score,
+        advancement_score=advancement,
+        travel_cost=travel_cost,
+        unknown_risk=unknown_risk,
+        local_value=local,
+        caution=_caution(sample, config),
+        opportunity=_clamp01(local / max_local_value(config)),
+        information_desire=information_desire,
+        control=control,
+        control_importance=importance,
+        strategic_value=strategic,
+        reason=_eligibility_reason(sample, config),
+    )
+
+
+def max_local_value(config: MapControlConfig) -> float:
+    """The highest local value a sample could reach: every local reward at
+    full value and no travel. Caution and Strategy are not local value."""
 
     return max(
         config.friendly_weight
         + config.frontier_weight
         + config.advancement_weight
         + config.choke_weight
-        + config.route_weight
-        + config.information_weight
-        + config.objective_weight,
+        + config.route_weight,
         1e-6,
     )
 
 
 def score_spatial_sample(
+    sample: SpatialFieldSample, config: MapControlConfig
+) -> float:
+    """A sample's score with no neighbourhood, position or Strategy: its
+    support band standing in for the frontier, minus caution.
+
+    Frontier utility; friendly influence is a support band, not shelter.
+    """
+
+    support = _support_band(_friendly_support(sample), config)
+    return _local_value(
+        sample,
+        config,
+        support_band=support,
+        frontier=support,
+        advancement=0.0,
+        travel_cost=0.0,
+    ) - _caution(sample, config)
+
+
+def _local_value(
     sample: SpatialFieldSample,
     config: MapControlConfig,
     *,
-    candidate: MapControlCandidate | None = None,
+    support_band: float,
+    frontier: float,
+    advancement: float,
+    travel_cost: float,
 ) -> float:
-    """Frontier utility; friendly influence is a support band, not shelter."""
-
-    support = _support_band(_friendly_support(sample), config)
-    frontier = support if candidate is None else candidate.frontier_score
-    advancement = 0.0 if candidate is None else candidate.advancement_score
-    unknown = 1.0 - sample.knowledge_confidence
-    travel = 0.0 if candidate is None else candidate.travel_cost
-    information = 0.0 if candidate is None else candidate.information_score
-    objective = 0.0 if candidate is None else candidate.objective_score
-
     return (
-        config.information_weight * information
-        + config.objective_weight * objective
-        +
-        config.friendly_weight * support
+        config.friendly_weight * support_band
         + config.frontier_weight * frontier
         + config.advancement_weight * advancement
         + config.choke_weight * sample.choke_value
         + config.route_weight * sample.route_value
-        - config.threat_weight * sample.enemy_threat
-        - config.enemy_control_weight * sample.enemy_control
-        - config.unknown_weight * unknown
-        - config.travel_weight * travel
+        - config.travel_weight * travel_cost
+    )
+
+
+def _caution(sample: SpatialFieldSample, config: MapControlConfig) -> float:
+    return (
+        config.threat_weight * sample.enemy_threat
+        + config.enemy_control_weight * sample.enemy_control
+        + config.unknown_weight * (1.0 - sample.knowledge_confidence)
     )
 
 
@@ -507,30 +588,39 @@ _APPROACH_ACTIVITIES = frozenset(
 )
 
 
-def _objective_pull(
+def _control_pull(
     position: Point2, spatial: SpatialStrategySnapshot, sigma: float
-) -> tuple[ControlObjective | None, float]:
-    """The approach objective pulling hardest on ``position``, and its
-    proximity (1 on it, fading with distance over ``sigma``).
+) -> tuple[ControlMatch, float] | None:
+    """The approach objective a patrol at ``position`` meaningfully serves,
+    and that objective's importance; ``None`` when it serves none.
+
+    Alignment is proximity: 1 on the objective, fading with distance over
+    ``sigma``. Only a ``ControlMatch`` counts -- below
+    ``MINIMUM_CONTROL_ALIGNMENT`` the kernel's tail is not an association.
+    Among matches the strongest pull (importance x alignment) wins, and an
+    exact tie goes to the smaller objective id, whatever order Strategy
+    listed them in.
 
     Only map control and information objectives: holding the ways into our
     bases is the standing army's and defense's, not the patrol's.
     """
 
-    best: ControlObjective | None = None
-    best_pull = 0.0
-    best_alignment = 0.0
     sigma = max(sigma, 1e-6)
+    best: tuple[ControlMatch, float] | None = None
+    best_key: tuple[float, str] | None = None
     for objective in spatial.objectives:
         if objective.activity not in _APPROACH_ACTIVITIES:
             continue
-        alignment = math.exp(
-            -0.5 * (position.distance_to(objective.position) / sigma) ** 2
+        match = ControlMatch.from_alignment(
+            objective.objective_id,
+            math.exp(-0.5 * (position.distance_to(objective.position) / sigma) ** 2),
         )
-        pull = objective.importance * alignment
-        if pull > best_pull:
-            best, best_pull, best_alignment = objective, pull, alignment
-    return best, best_alignment
+        if match is None:
+            continue
+        key = (-objective.importance * match.alignment, objective.objective_id)
+        if best_key is None or key < best_key:
+            best, best_key = (match, objective.importance), key
+    return best
 
 
 def _invalidation_reason(

@@ -526,7 +526,9 @@ class DefenseApproachTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(anchors.screen, EAST_CHOKE.position)
-        self.assertLess(anchors.siege.distance_to(BASE), anchors.screen.distance_to(BASE))
+        self.assertLess(
+            anchors.siege.distance_to(BASE), anchors.screen.distance_to(BASE)
+        )
         self.assertEqual(anchors.approach, "east_choke")
 
 

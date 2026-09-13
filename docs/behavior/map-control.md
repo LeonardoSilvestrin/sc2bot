@@ -17,7 +17,9 @@ Source: `bot/behavior/map_control/` (`model.py`, `assessment.py`,
 | `combat_units` | ready combat units (`bot.domain.is_combat_unit`) at 70% health or more |
 | `combat_supply` | their total supply |
 | `started` | game time past `start_after` (0) |
-| `strategically_safe` | no threatened base and macro posture not `DEFENSE`/`RECOVERY` -- reported, never gated on |
+
+Whether holding the map is strategically wanted is not assessed here: it is
+Strategy's intent, which the planner reads and the Mission Policy weighs.
 
 ## Plan
 
@@ -55,7 +57,7 @@ fits as they appear ([engine/capabilities.md](../engine/capabilities.md)).
 
 | Field | Value |
 | --- | --- |
-| kind, priority, mode | `MAP_CONTROL`, 40, `STANDING` |
+| kind, priority, mode | `MAP_CONTROL`, ranked by the Mission Policy (below), `STANDING` |
 | `deduplication_key`, `target_key` | `map_control:patrol` |
 | `squad_id` | `map_control` |
 | `target` | the anchor |
@@ -87,11 +89,48 @@ frontier      = 1 when local lattice neighbours straddle support 0.45,
                 otherwise support_band
 unknown_risk  = 1 - knowledge_confidence
 
-score = 0.45 support_band + 0.65 frontier + 0.25 advancement
-        + 0.35 choke + 0.55 route
-        - 1.00 enemy_control - 0.80 enemy_threat
-        - 0.25 unknown_risk - 0.15 travel_cost
+local_value     = 0.45 support_band + 0.65 frontier + 0.25 advancement
+                  + 0.35 choke + 0.55 route - 0.15 travel_cost
+caution         = 1.00 enemy_control + 0.80 enemy_threat + 0.25 unknown_risk
+strategic_value = 0.30 intent.information * unknown_risk
+                  + 0.60 importance * alignment      (only with a ControlMatch)
+
+score           = local_value - caution + strategic_value
 ```
+
+`evaluate_sample` computes all of it as one immutable `MapControlCandidate`,
+and the logs serialize that record. The three groups have separate owners:
+
+- **Local evidence** (`local_value`) is what the field and the patrol's own
+  position say about holding the point.
+- **Caution** steers selection away from danger and unknown space.
+- **Strategy** (`strategic_value`) is the only path by which Strategy moves
+  the anchor: `intent.information` prices unknown space, and a control
+  objective the point meaningfully serves adds its importance.
+
+**Control match.** Among Strategy's `MAP_CONTROL` and `INFORMATION`
+objectives (base and passage objectives are the standing army's and
+defense's), a point's alignment is `exp(-0.5 * (d / sigma)^2)` with sigma 1.5
+grid steps. It is a `ControlMatch` only at alignment 0.5 or more (within about
+1.2 sigma, near the patrol loop's edge); a farther objective is no match and
+adds nothing, however important. Among matches the strongest
+importance x alignment wins, an exact tie going to the smaller objective id.
+Importance, not the gap, pulls the anchor: our own patrol arriving must not
+argue its objective away.
+
+**What the Mission Policy is told.** Not the score, which already contains
+risk, unknown space and Strategy. Each factor is reported once, from its raw
+evidence:
+
+| Signal | Value |
+| --- | --- |
+| `opportunity` | `clamp(local_value / 2.25)`, 2.25 being the best local value a sample can reach |
+| `risk` | `max(enemy_threat, enemy_control)` at the anchor |
+| `information_gain` | the anchor's `unknown_risk` |
+| `control` | the anchor's `ControlMatch`, or none |
+
+The policy then prices desirability, information, control importance and gap,
+urgency and risk once each ([strategy.md](../strategy.md#mission-policy)).
 
 This makes friendly influence supportability rather than a reward for hiding
 deeper at home. The preferred point is on the current support contour, moves
@@ -139,8 +178,9 @@ picks it up through `refresh` and restarts its patrol loop.
 
 Retreat reasons, checked in order:
 
-1. `strategic_danger` -- macro posture `DEFENSE` or `RECOVERY`, or any
-   threatened base (anywhere).
+1. `base_under_attack` -- any threatened base (anywhere). An observed
+   attack, not a strategic reading: whether map control is wanted at all is
+   Strategy's, and only ranks the mission.
 2. `squad_health_low` -- any member at 60% health or less.
 3. `enemy_too_close` -- a visible enemy able to attack ground within 20 of
    any member.
@@ -158,8 +198,11 @@ never completes on its own.
 
 ## Arbitration
 
-At priority 40 map control preempts its share from the standing army (20).
-`DEFENSE` preempts it at any time after its 1 s commitment window. The squad
+The Mission Policy ranks the patrol from its signals under the current
+intent. Every ranked patrol sits at or above the policy's minimum priority
+(30), so it preempts its share from the standing army (fallback, 20). A
+`DEFENSE` mission ranked at least the allocator's margin (10) above it
+preempts it at any time after its 1 s commitment window. The squad
 bookkeeping ([engine/squads.md](../engine/squads.md)) brings the same units
 back afterwards, and while members are away the patrol's budget shrinks by
 their supply rather than backfilling.
@@ -170,7 +213,6 @@ their supply rather than backfilling.
 | --- | --- | --- |
 | Proposal | `start_after` | 0 s |
 | | `proposal_cadence` | 15 s |
-| | `priority` | 40 |
 | | `mission_timeout`, `failure_cooldown` | 3600 s, 15 s |
 | | `commitment_seconds` | 1 s |
 | Size | `role` | `MOBILE_CONTROL` |

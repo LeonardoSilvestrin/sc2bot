@@ -1,20 +1,33 @@
 from __future__ import annotations
 
+import itertools
 import unittest
 from dataclasses import replace
 
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
-from bot.app.mission_ranking import rank_candidates
+from bot.app.mission_ranking import MissionRanker, rank_candidates
 from bot.behavior.map_control import (
+    MapControlAssessment,
     MapControlAssessor,
     MapControlConfig,
     MapControlPlanner,
+    max_local_value,
     score_spatial_sample,
 )
 from bot.engine.missions import CombatRole, MissionKind
-from bot.strategy import MissionPolicyConfig
+from bot.strategy import (
+    MINIMUM_CONTROL_ALIGNMENT,
+    ControlObjective,
+    ControlTargetKind,
+    IntentConfig,
+    MissionPolicyConfig,
+    SpatialStrategySnapshot,
+    StrategicActivity,
+    StrategicContext,
+    StrategicObjective,
+)
 from bot.world.attention import (
     AttentionSnapshot,
     MapFacts,
@@ -28,15 +41,6 @@ from bot.world.awareness import (
     SpatialField,
     SpatialFieldSample,
     ThreatAssessment,
-)
-from bot.strategy import (
-    ControlObjective,
-    ControlTargetKind,
-    IntentConfig,
-    SpatialStrategySnapshot,
-    StrategicActivity,
-    StrategicContext,
-    StrategicObjective,
 )
 from bot.world.awareness.bases import (
     BaseAssessment,
@@ -389,6 +393,10 @@ class MapControlPlannerTests(unittest.TestCase):
             {
                 "position",
                 "score",
+                "local_value",
+                "caution",
+                "strategic_value",
+                "opportunity",
                 "frontier",
                 "advancement",
                 "friendly_support",
@@ -401,12 +409,20 @@ class MapControlPlannerTests(unittest.TestCase):
                 "choke",
                 "route",
                 "travel_cost",
-                "information",
-                "objective",
-                "objective_id",
+                "information_desire",
+                "control_objective",
+                "control_alignment",
+                "control_importance",
                 "selected",
                 "reason",
             },
+        )
+        self.assertAlmostEqual(
+            selected["score"],
+            selected["local_value"]
+            - selected["caution"]
+            + selected["strategic_value"],
+            places=2,
         )
 
     def test_does_not_select_the_townhall_center_as_military_position(self):
@@ -613,7 +629,8 @@ class StrategyConsumptionTests(unittest.TestCase):
         return StrategicContext(intent=replace(base, **intent))
 
     def test_strategic_safety_is_not_derived_from_macro_posture(self):
-        self.assertNotIn("strategically_safe", MapControlAssessment.__dataclass_fields__)
+        fields = MapControlAssessment.__dataclass_fields__
+        self.assertNotIn("strategically_safe", fields)
         calm = MapControlPlanner().propose(attention(180.0), awareness(180.0))
         legacy_danger = MapControlPlanner().propose(
             attention(180.0),
@@ -660,16 +677,240 @@ class StrategyConsumptionTests(unittest.TestCase):
         (unpulled,) = MapControlPlanner().propose(attention(10.0), state)
 
         self.assertEqual(candidate.draft.target, self.SOUTH)
-        self.assertEqual(candidate.signals.control_objective, "region:south")
-        self.assertGreater(candidate.signals.control_alignment, 0.9)
+        self.assertEqual(candidate.signals.control.objective_id, "region:south")
+        self.assertGreater(candidate.signals.control.alignment, 0.9)
         self.assertEqual(unpulled.draft.target, self.SOUTH)
-        self.assertIsNone(unpulled.signals.control_objective)
+        self.assertIsNone(unpulled.signals.control)
         self.assertGreater(
             rank_candidates((candidate,), strategy)[0].priority,
             rank_candidates((replace(candidate, signals=unpulled.signals),), strategy)[
                 0
             ].priority,
         )
+
+
+class ControlMatchAndPricingTests(unittest.TestCase):
+    """Which objective a patrol serves, and which terms reach which decision."""
+
+    SPACING = 2.0  # sigma = 1.5 steps = 3 map units
+    POINT = Point2((40, 10))
+
+    @staticmethod
+    def approach(
+        position: Point2, *, objective_id: str = "region:west", importance: float = 0.8
+    ) -> ControlObjective:
+        return ControlObjective(
+            objective_id=objective_id,
+            kind=ControlTargetKind.REGION,
+            target_key=objective_id.split(":", 1)[1],
+            position=position,
+            activity=StrategicActivity.MAP_CONTROL,
+            desired_control=0.6,
+            desired_visibility=0.8,
+            importance=importance,
+            current_control=0.0,
+            current_visibility=0.2,
+            reason="contested_approach",
+        )
+
+    @staticmethod
+    def strategy(*objectives: ControlObjective, **intent: float) -> StrategicContext:
+        base = IntentConfig().profile(StrategicObjective.BUILD_ADVANTAGE)
+        return StrategicContext(
+            intent=replace(base, **intent),
+            spatial=SpatialStrategySnapshot(objectives=tuple(objectives)),
+        )
+
+    def field(self, *samples: SpatialFieldSample, now: float = 10.0):
+        return replace(
+            awareness(now),
+            spatial=SpatialField(
+                samples=samples, updated_at=now, sample_spacing=self.SPACING
+            ),
+        )
+
+    def sample(self, position: Point2 | None = None, **values) -> SpatialFieldSample:
+        return SpatialFieldSample(
+            position or self.POINT,
+            **{"friendly_value": 0.45, "knowledge_confidence": 1.0, **values},
+        )
+
+    def propose(self, state, strategy=None, *, planner=None):
+        planner = planner or MapControlPlanner()
+        (candidate,) = planner.propose(attention(10.0), state, strategy)
+        return planner, candidate
+
+    def test_a_distant_sample_does_not_claim_an_objective(self):
+        # Twenty map units is almost seven sigma: a positive, meaningless tail.
+        far = self.approach(Point2((40, 30)))
+        ranker = MissionRanker()
+        strategy = self.strategy(far)
+
+        planner, candidate = self.propose(self.field(self.sample()), strategy)
+        ranker.rank((candidate,), strategy)
+
+        self.assertIsNone(candidate.signals.control)
+        self.assertIsNone(planner.last_candidates[0].control)
+        self.assertEqual(planner.last_candidates[0].control_importance, 0.0)
+        self.assertEqual(
+            ranker.last_rankings["map_control:patrol"].control_contribution, 0.0
+        )
+
+    def test_meaningful_alignment_creates_a_match(self):
+        for distance, expected in ((0.0, True), (3.0, True), (4.5, False)):
+            with self.subTest(distance=distance):
+                objective = self.approach(Point2((40 + distance, 10)))
+
+                _, candidate = self.propose(
+                    self.field(self.sample()), self.strategy(objective)
+                )
+
+                match = candidate.signals.control
+                if expected:
+                    self.assertEqual(match.objective_id, "region:west")
+                    self.assertGreaterEqual(match.alignment, MINIMUM_CONTROL_ALIGNMENT)
+                else:
+                    self.assertIsNone(candidate.signals.control)
+
+    def test_a_match_to_an_unsatisfied_objective_is_priced_once_by_the_policy(self):
+        objective = self.approach(self.POINT)
+        strategy = self.strategy(objective)
+        ranker = MissionRanker()
+
+        _, candidate = self.propose(self.field(self.sample()), strategy)
+        ranker.rank((candidate,), strategy)
+
+        self.assertGreater(
+            ranker.last_rankings["map_control:patrol"].control_contribution, 0.0
+        )
+
+    def test_intent_moves_the_anchor_only_through_strategic_value(self):
+        known, unknown = Point2((40, 10)), Point2((10, 40))
+        state = self.field(
+            self.sample(known, knowledge_confidence=1.0),
+            self.sample(unknown, knowledge_confidence=0.0),
+        )
+
+        curious, curious_candidate = self.propose(
+            state, self.strategy(information=1.0)
+        )
+        incurious, incurious_candidate = self.propose(
+            state, self.strategy(information=0.0)
+        )
+
+        self.assertEqual(curious_candidate.draft.target, unknown)
+        self.assertEqual(incurious_candidate.draft.target, known)
+        by_position = {
+            item.sample.position: item for item in incurious.last_candidates
+        }
+        for item in curious.last_candidates:
+            other = by_position[item.sample.position]
+            with self.subTest(position=item.sample.position):
+                self.assertEqual(item.local_value, other.local_value)
+                self.assertEqual(item.caution, other.caution)
+                self.assertEqual(item.opportunity, other.opportunity)
+        def strategic(planner):
+            return {
+                item.sample.position: item.strategic_value
+                for item in planner.last_candidates
+            }
+
+        self.assertNotEqual(strategic(curious), strategic(incurious))
+
+    def test_local_opportunity_contains_no_policy_priced_term(self):
+        plain = self.strategy()
+        _, baseline = self.propose(self.field(self.sample()), plain)
+        variants = {
+            "enemy_threat": (self.field(self.sample(enemy_threat=0.5)), plain),
+            "enemy_control": (self.field(self.sample(enemy_control=0.4)), plain),
+            "unknown_space": (
+                self.field(self.sample(knowledge_confidence=0.1)),
+                plain,
+            ),
+            "information_intent": (
+                self.field(self.sample()),
+                self.strategy(information=1.0),
+            ),
+            "risk_tolerance": (
+                self.field(self.sample()),
+                self.strategy(risk_tolerance=1.0),
+            ),
+            "objective_importance": (
+                self.field(self.sample()),
+                self.strategy(self.approach(self.POINT, importance=1.0)),
+            ),
+        }
+
+        self.assertGreater(baseline.signals.opportunity, 0.0)
+        for name, (state, strategy) in variants.items():
+            with self.subTest(term=name):
+                _, candidate = self.propose(state, strategy)
+                self.assertEqual(
+                    candidate.signals.opportunity, baseline.signals.opportunity
+                )
+        # The same terms still reach the policy, as their own signals.
+        _, threatened = self.propose(*variants["enemy_threat"])
+        _, unknown = self.propose(*variants["unknown_space"])
+        _, served = self.propose(*variants["objective_importance"])
+        self.assertGreater(threatened.signals.risk, baseline.signals.risk)
+        self.assertGreater(
+            unknown.signals.information_gain, baseline.signals.information_gain
+        )
+        self.assertIsNotNone(served.signals.control)
+
+    def test_opportunity_is_local_value_over_its_best_possible(self):
+        planner, candidate = self.propose(self.field(self.sample()), self.strategy())
+        chosen = planner.last_candidates[0]
+
+        self.assertAlmostEqual(
+            candidate.signals.opportunity,
+            max(0.0, min(1.0, chosen.local_value / max_local_value(planner.config))),
+        )
+
+    def test_shuffled_equal_inputs_choose_the_same_target_and_objective(self):
+        # Four samples thirty units from home on a coarse grid: every term
+        # is equal, so only the explicit tie-break (x, then y) decides.
+        positions = (
+            Point2((40, 10)),
+            Point2((10, 40)),
+            Point2((-20, 10)),
+            Point2((10, -20)),
+        )
+        winner = Point2((-20, 10))
+        # Two equally important objectives on the winner: an exact tie in pull.
+        twins = (
+            self.approach(winner, objective_id="region:b"),
+            self.approach(winner, objective_id="region:a"),
+        )
+        targets = set()
+        matches = set()
+        for order in itertools.permutations(positions):
+            state = self.field(*(self.sample(position) for position in order))
+            _, plain = self.propose(state, self.strategy())
+            targets.add(plain.draft.target)
+            for objectives in (twins, twins[::-1]):
+                _, served = self.propose(state, self.strategy(*objectives))
+                matches.add((served.draft.target, served.signals.control.objective_id))
+
+        self.assertEqual(targets, {winner})
+        self.assertEqual(matches, {(winner, "region:a")})
+
+    def test_retarget_hysteresis_still_holds_a_nearby_strategic_pull(self):
+        near = Point2((42, 10))
+        planner = MapControlPlanner(config=MapControlConfig(proposal_cadence=1.0))
+        state = self.field(self.sample(), self.sample(near))
+
+        _, first = self.propose(state, self.strategy(), planner=planner)
+        # Pull toward whichever of the two neighbours was not chosen.
+        pulled = near if first.draft.target != near else self.POINT
+        (second,) = planner.propose(
+            attention(11.0),
+            replace(state, updated_at=11.0),
+            self.strategy(self.approach(pulled)),
+        )
+
+        # One grid step is inside the patrol loop: the anchor holds.
+        self.assertEqual(second.draft.target, first.draft.target)
 
 
 class MapControlAssessmentTests(unittest.TestCase):
