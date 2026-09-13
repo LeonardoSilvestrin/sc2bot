@@ -342,6 +342,22 @@ context no longer holds prices nothing. Defense matches its base's objective
 at alignment 1; Map Control matches the approach objective its anchor lies
 near (a Gaussian over 1.5 grid steps).
 
+## Context revisions and the record
+
+`StrategyRuntime` derives a candidate `StrategicContext` from every new
+snapshot but publishes it only when it is materially different -- another
+intent or another set of control objectives, compared exactly -- under the
+next `revision`. A revision therefore names one set of prescriptions; 0 is the
+neutral context before Strategy has run.
+
+Before the Mission Policy's first decision under a revision, the frame calls
+`record_context()`, which writes `strategy.context` once for that revision:
+the objective, leader and confidence, every assessment with its score
+contributions, the six inputs, the intent and every control objective, at
+machine precision. Each record is complete, so an objective absent from a
+later record is no longer wanted. `mission.evaluated` cites the revision
+(`context_revision`) instead of copying the context.
+
 ## Deliberately out of scope
 
 Strategy decides direction and the world state it wants, not execution. It

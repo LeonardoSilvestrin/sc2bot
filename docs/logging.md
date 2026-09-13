@@ -10,13 +10,28 @@ plus every `logger.event(...)` call listed below. Viewer: `logs/viewer.html`,
 
 ## Format and location
 
-One JSON object per line:
+One strict-JSON object per line, in a layer-neutral envelope:
 
 ```json
-{"event": "mission_started", "component": "engine.missions.controller", "game_time": 131.428, "data": {"reason": "unit_requirements_satisfied", "mission_id": "mission-0007", "...": "..."}}
+{"schema": 2, "run": "9f1c0b...", "seq": 4182, "iteration": 2911, "event": "mission_started", "component": "engine.missions.controller", "game_time": 131.42857142857142, "data": {"reason": "unit_requirements_satisfied", "mission_id": "mission-0007", "...": "..."}}
 ```
 
-- `game_time` is rounded to milliseconds.
+| Field | Meaning |
+| --- | --- |
+| `schema` | envelope version, `SCHEMA_VERSION` (2) |
+| `run` | the run id, one per logger (a UUID unless given) |
+| `seq` | 1, 2, 3, ... in write order: the causal order of the log |
+| `iteration` | the frame the event was emitted in -- `FrameProcessor` brackets every frame with `begin_frame` / `end_frame`; `null` for `game.started`, `game.ended` and anything else outside a frame |
+| `game_time` | exact, never rounded |
+
+- Nothing is stringified and there is no NaN or Infinity. A record that
+  cannot be written exactly is replaced by `logging.record_rejected`
+  (component `adapters.logging`: `rejected_event`, `rejected_component`,
+  `error`). `tests/fakes.py` holds every event any test emits to the same
+  strictness.
+- Decision records -- `strategy.context`, `mission.evaluated`,
+  `map_control.spatial_candidates` -- carry values at machine precision;
+  round only when reading. Periodic state summaries may still round.
 - `data` always carries a `reason` for transitions, plus the correlation keys
   that apply: `proposal_id`, `mission_id`, `deduplication_key`, `squad_id`,
   `action_id`, `request_id`.
@@ -27,10 +42,15 @@ One JSON object per line:
 
 ### Change gates
 
-Periodic diagnostics would bury decisions, so most reporters use a
+Periodic diagnostics would bury decisions, so most state reporters use a
 `ChangeGate`: a line goes out when its signature (a tuple of the values that
 matter) differs from the last one let through, or when its heartbeat has
 elapsed since then. Without a heartbeat, only changes go out.
+
+Decisions and transitions are never gated: every policy evaluation, every
+context revision a decision cites, and every proposal, admission, rejection,
+lease change, preemption, phase change, progress change and failure is
+written when it happens.
 
 ## Catalog
 
@@ -38,7 +58,7 @@ elapsed since then. Without a heartbeat, only changes go out.
 
 | Event | When | Data |
 | --- | --- | --- |
-| `game.started` | `on_start` | `map` |
+| `game.started` | `on_start`, after the opening re-roll | `map`; `opening` (the one played, or `null`); `build` {`commit`, `branch`, `source`: `git` or `unknown`}; `config_fingerprint` over every decision-critical configuration, and `configs` {name: fingerprint}; `rng_seed`, `rng_seed_source` (`generated`, `configured` or `external`) |
 | `game.ended` | `on_end` | `result` |
 | `macro.build_order_progress` | the build runner moves to another step, or completes | `opening`, `step`, `total_steps`, `command`, `completed` |
 
@@ -101,6 +121,8 @@ Every event carries `reason` and, where a proposal or mission is involved:
 | `mission_completed` | the executor's reason | -- |
 | `mission_failed` | `all_assigned_units_lost`, `all_assigned_units_preempted`, `executor_error:<Type>:<message>`, or the executor's reason | -- |
 | `mission_cancelled` | `mission_timeout`, `objective_satisfied_before_mission_started`, `standing_proposal_omitted` | -- |
+| `mission.progressed` | the executor's reason, whenever an active mission's `(outcome, reason)` changes -- its first report included | `outcome`, `previous_outcome`, `previous_reason` |
+| `mission.preemption_cost_failed` | `executor_preemption_cost_failed`: `preemption_cost()` raised or returned NaN; logged on the first failure, then at most every 30 s per mission | `error`, `fallback_cost` (0), `suppressed_since_last` |
 | `standing_mission_updated` | `standing_requirement_changed` | `previous_priority`, `previous_desired`, `previous_supply_budget` |
 | `units_assigned` | `allocator_assignment_changed` | `previous_unit_tags`, `unit_tags`, `unit_types` |
 | `units_reassigned` | `higher_priority_after_commitment_window` | `unit_tags`, `unit_types`, `from_mission_id`, `from_proposal_id`, `from_priority` |
@@ -187,7 +209,7 @@ Each behavior logs under its own component through `BehaviorLog`:
 | `behavior.proposed` | the plan's `log_fields()`, `planner`, extras | the same moments, when a plan exists |
 | `behavior.state_changed` | `state`, `reason`, `mission_id`, extras | executors on a phase change (see below) |
 | `behavior.target_selection` | `change` (`SELECTED`, `KEPT`, `RETARGETED`, `REPLACED`, `LOST`, `NONE`), `selected`, `previous`, `candidates[]` | Reaper and Banshee planners on a target change, at least every 30 s |
-| `map_control.spatial_candidates` | top 5 `candidates[]` with position, `score` (= `local_value` - `caution` + `strategic_value`), `opportunity`, frontier, advancement, friendly support/band, enemy control/threat, knowledge/unknown risk, choke, route, travel cost, `information_desire`, `control_objective`/`control_alignment`/`control_importance` (`null`/0 without a match), selected flag and reason; plus `selected` | `MapControlPlanner` every selection cadence |
+| `map_control.spatial_candidates` | `candidate_count`; `candidate_set` (order-free digest of every sample the selection saw); `pool` (`frontier`, `safe_fallback` or `all_candidates`) and `pool_size`; `rejections` {eligibility reason: count}; `selected`, `runner_up` (best other valid anchor, or `null`) and `winning_margin` (`selected.score - runner_up.score`; negative when hysteresis held the anchor); top 5 `candidates[]`. Each candidate at machine precision: position, `score` (= `local_value` - `caution` + `strategic_value`), `opportunity`, frontier, advancement, friendly support/band, enemy control/threat, knowledge/unknown risk, choke, route, travel cost, `information_desire`, `control_objective`/`control_alignment`/`control_importance` (`null`/0 without a match), selected flag and reason | `MapControlPlanner` every selection cadence |
 | `map_control.anchor_changed` | `old_anchor`, `new_anchor`, `old_score`, `new_score`, `switch_margin`, `reason` | `MapControlPlanner` when its anchor changes |
 | `standing.updated` | `combat_posture`; `standing` {squad: `desired`, `assigned`}; `mission_allocation` {kind: unit count}; `squads[]`; `unassigned_eligible_units` | `StandingTelemetry`, on change and every 10 s |
 | `standing.unassigned_units_persisting` | `unassigned_eligible_units`, `unassigned_unit_tags`, `duration_seconds` | when a ready combat unit has had no mission for 15 s |
@@ -203,12 +225,15 @@ Each behavior logs under its own component through `BehaviorLog`:
 
 ### `strategy.director`
 
-Strategy is live. `StrategyRuntime` logs `strategy.updated` on the first
-update, on objective transitions, and at most every 10 s otherwise. The event
-mirrors `StrategySnapshot`: `objective`, `previous_objective`, `leader`,
-`confidence`, `time_in_objective`, `inputs` (the six signals), `scores`
-(objective -> score), `reason`, `shadow: false` and `mode: "live"`. The viewer
-has a track for it; an older log without `shadow: false` is shown as shadow.
+Strategy is live. Two events:
+
+| Event | When | Data |
+| --- | --- | --- |
+| `strategy.updated` | the first update, an objective transition, and every 10 s otherwise | the change/heartbeat summary, mirroring `StrategySnapshot`: `objective`, `previous_objective`, `leader`, `confidence`, `time_in_objective`, `inputs` (the six signals), `scores` (objective -> score), `reason`, `context_revision` (in force), `shadow: false`, `mode: "live"` |
+| `strategy.context` | once per `StrategicContext` revision, before the first decision that cites it | the exact, complete context: `revision`, `updated_at`, `objective`, `leader`, `confidence`, `inputs`, `assessments[]` {`objective`, `score`, `raw_score`, `contributions` {signal: value}}, `intent` {`defense`, `map_control`, `harass`, `information`, `risk_tolerance`}, `control_objectives[]` (every objective, complete: one absent from a later revision is no longer wanted) |
+
+The viewer has a track for `strategy.updated`; an older log without
+`shadow: false` is shown as shadow.
 
 ### `strategy.mission_policy`
 
@@ -216,11 +241,13 @@ has a track for it; an older log without `shadow: false` is shown as shadow.
 evaluates, viable or rejected. It is never change-gated: planners propose
 seconds apart, so it is one line per decision. `proposal_id` joins it to the
 controller's `proposal_*` and mission events; a rejected candidate has no
-controller event at all.
+controller event at all. `context_revision` joins it to the
+`strategy.context` it was decided under.
 
 | Field | Meaning |
 | --- | --- |
 | `proposal_id`, `deduplication_key`, `planner`, `mission_kind`, `target_key`, `target` | the candidate's identity |
+| `context_revision`, `policy_model`, `policy_config` | what decided it: the Strategy context revision, the valuation model (`linear_utility_v1`) and the fingerprint of `MissionPolicyConfig` |
 | `viable`, `reason`, `priority` | the verdict. `reason` is `fallback_owner`, `viable_positive_utility`, `viable_by_urgency_floor`, `rejected_negative_raw_utility` or `rejected_utility_not_above_minimum`; `priority` is `null` when rejected |
 | `signals` | the planner's `MissionSignals`: `activity`, `opportunity`, `urgency`, `risk`, `information_gain`, `control_objective` and `control_alignment` (both `null` without a `ControlMatch`), `signal_reason` |
 | `evaluation` | the `MissionEvaluation` the verdict came from: `utility`, `raw_utility`, `urgency_floor`, `floor_applied`, `opportunity_contribution`, `information_contribution`, `control_contribution`, `urgency_contribution`, `risk_penalty`, and the Strategy inputs it read: `strategic_desirability`, `information_desire`, `risk_tolerance`, `control_importance`, `control_gap` (`null` where not read) |

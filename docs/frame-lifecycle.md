@@ -15,8 +15,8 @@ after calling Ares' own:
 
 | Hook | What the runtime does |
 | --- | --- |
-| `on_start` | `OpeningSelector.choose_and_announce` re-rolls the opening from the configured cycle and posts it in chat ([macro/builds.md](macro/builds.md)); logs `game.started` with the map name. |
-| `on_step` | `FrameProcessor.process(bot, iteration)` -- everything below. |
+| `on_start` | `OpeningSelector.choose_and_announce` re-rolls the opening from the configured cycle and posts it in chat ([macro/builds.md](macro/builds.md)); logs `game.started` with the map, the opening played, build identity, configuration fingerprints and RNG seed ([logging.md](logging.md#appruntime)). |
+| `on_step` | `FrameProcessor.process(bot, iteration)`: `logger.begin_frame(iteration)`, everything below, then `logger.end_frame()` -- also when a step raises -- so every event of the frame carries its iteration. |
 | `on_end` | Logs `game.ended` with the result and closes the logger. |
 
 Every long-lived object was built once, before the game, by `compose_bot`
@@ -111,10 +111,12 @@ produces a new snapshot, the runtime derives the `StrategicIntent` and the
 `ControlObjective`s and publishes them as the frame's `StrategicContext`; it
 emits cadenced `strategy.updated` telemetry, and still derives the legacy
 macro posture that macro receives through Awareness. Behavior planners read
-that context; `MissionRanker` evaluates every candidate under it, logs each
-evaluation, and passes only the viable ones to `MissionController` -- along
-with the ids of every planner that declared work, so a standing slot whose
-candidate was rejected is withdrawn.
+that context. When any of them declared work, `StrategyRuntime.record_context()`
+first writes the context revision the evaluations will cite (once per
+revision, as `strategy.context`). `MissionRanker` then evaluates every
+candidate under the context, logs each evaluation, and passes only the viable
+ones to `MissionController` -- along with the ids of every planner that
+declared work, so a standing slot whose candidate was rejected is withdrawn.
 
 ## Step 10: inside `MissionController.tick`
 

@@ -72,6 +72,14 @@ class FrameProcessor:
         self._mission_ranker = mission_ranker or MissionRanker(logger=logger)
 
     async def process(self, bot, *, iteration: int) -> None:
+        # Every event this frame emits carries its iteration.
+        self._logger.begin_frame(iteration)
+        try:
+            await self._process(bot, iteration=iteration)
+        finally:
+            self._logger.end_frame()
+
+    async def _process(self, bot, *, iteration: int) -> None:
         world = self._world_observer.world_facts(bot, iteration=iteration)
         attention = AttentionService.build(world=world)
         awareness = self._awareness.update(attention)
@@ -121,6 +129,9 @@ class FrameProcessor:
             for planner in self._mission_planners
             for candidate in planner.propose(attention, awareness, strategy)
         )
+        if candidates and self._strategy is not None:
+            # The exact context is on record before any decision cites it.
+            self._strategy.record_context()
         proposals = self._mission_ranker.rank(candidates, strategy)
         self._vision.resolve()
         register_baseline_behaviors(bot)

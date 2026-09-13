@@ -941,6 +941,58 @@ class ControlMatchAndPricingTests(unittest.TestCase):
         self.assertEqual(second.draft.target, first.draft.target)
 
 
+class SelectionSummaryTests(ControlMatchAndPricingTests):
+    """One selection's record: enough to audit it, not the whole field."""
+
+    def summary(self, *samples: SpatialFieldSample) -> dict:
+        logger = FakeLogger()
+        MapControlPlanner(logger=logger).propose(
+            attention(10.0), self.field(*samples), self.strategy()
+        )
+        return next(
+            event["data"]
+            for event in logger.events
+            if event["name"] == "map_control.spatial_candidates"
+        )
+
+    def test_the_summary_names_the_runner_up_margin_and_rejections(self):
+        samples = (
+            self.sample(Point2((40, 10))),
+            self.sample(Point2((10, 40)), choke_value=0.5),
+            self.sample(Point2((70, 70)), enemy_control=0.9),
+        )
+
+        data = self.summary(*samples)
+
+        self.assertEqual(data["candidate_count"], 3)
+        self.assertEqual(data["pool"], "frontier")
+        self.assertEqual(data["pool_size"], 2)
+        self.assertEqual(data["rejections"], {"rejected_enemy_control": 1})
+        self.assertEqual(data["selected"]["position"], [10.0, 40.0])
+        self.assertEqual(data["runner_up"]["position"], [40.0, 10.0])
+        self.assertEqual(
+            data["winning_margin"],
+            data["selected"]["score"] - data["runner_up"]["score"],
+        )
+        self.assertGreater(data["winning_margin"], 0.0)
+
+    def test_the_candidate_set_fingerprint_is_exact_and_order_free(self):
+        samples = (
+            self.sample(Point2((40, 10))),
+            self.sample(Point2((10, 40)), choke_value=0.5),
+            self.sample(Point2((70, 70)), enemy_control=0.9),
+        )
+
+        original = self.summary(*samples)["candidate_set"]
+        shuffled = self.summary(*reversed(samples))["candidate_set"]
+        changed = self.summary(
+            samples[0], replace(samples[1], choke_value=0.6), samples[2]
+        )["candidate_set"]
+
+        self.assertEqual(original, shuffled)
+        self.assertNotEqual(original, changed)
+
+
 class MapControlAssessmentTests(unittest.TestCase):
     def test_counts_every_combat_unit_healthy_enough_to_roam(self):
         extra = (

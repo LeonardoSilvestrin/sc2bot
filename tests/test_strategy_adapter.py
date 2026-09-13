@@ -215,8 +215,72 @@ class StrategyRuntimeTests(unittest.TestCase):
         self.assertIn("scores", event["data"])
 
     def test_the_context_is_neutral_before_the_first_update(self):
+        context = StrategyRuntime(logger=FakeLogger()).context
+
+        self.assertEqual(context.intent, derive_intent(None))
+        self.assertEqual(context.revision, 0)
+
+    def test_a_revision_names_exactly_one_set_of_prescriptions(self):
+        runner = StrategyRuntime(logger=FakeLogger())
+
+        runner.update(snapshot(near_base_combat=1))
+        first = runner.context
+        # The same world recomputed later: a new snapshot, the same
+        # prescriptions, so the same context and revision.
+        runner.update(replace(snapshot(near_base_combat=1), updated_at=102.0))
+        held = runner.context
+        # A different world: different prescriptions, the next revision.
+        runner.update(
+            replace(
+                snapshot(military_advantage=0.9, military_confidence=1.0),
+                updated_at=104.0,
+            )
+        )
+        changed = runner.context
+
+        self.assertEqual(first.revision, 1)
+        self.assertIs(held, first)
+        self.assertEqual(changed.revision, 2)
+        self.assertFalse(changed.materially_equals(first))
+
+    def test_each_revision_is_recorded_once_completely_and_exactly(self):
+        logger = FakeLogger()
+        runner = StrategyRuntime(logger=logger)
+
+        runner.update(snapshot(near_base_combat=1))
+        runner.record_context()
+        runner.record_context()
+        runner.update(
+            replace(
+                snapshot(military_advantage=0.9, military_confidence=1.0),
+                updated_at=104.0,
+            )
+        )
+        runner.record_context()
+
+        records = [
+            event["data"]
+            for event in logger.events
+            if event["name"] == "strategy.context"
+        ]
+        self.assertEqual([record["revision"] for record in records], [1, 2])
+        latest = records[-1]
+        self.assertEqual(latest["intent"], runner.context.intent.as_dict())
         self.assertEqual(
-            StrategyRuntime(logger=FakeLogger()).context.intent, derive_intent(None)
+            latest["control_objectives"],
+            [item.log_fields() for item in runner.context.spatial.objectives],
+        )
+        self.assertEqual(latest["objective"], runner.snapshot.objective.name)
+        self.assertEqual(latest["updated_at"], 104.0)
+        for assessment in latest["assessments"]:
+            self.assertAlmostEqual(
+                assessment["raw_score"], sum(assessment["contributions"].values())
+            )
+        # The objective summary stays change/heartbeat gated (4 s < 10 s and
+        # no objective change: one summary), and cites the revision in force.
+        summaries = [e for e in logger.events if e["name"] == "strategy.updated"]
+        self.assertEqual(
+            [item["data"]["context_revision"] for item in summaries], [1]
         )
 
     def test_the_deprecated_shadow_name_is_the_runtime(self):

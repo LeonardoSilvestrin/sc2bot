@@ -10,6 +10,7 @@ from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
 from bot.app.mission_ranking import MissionRanker, rank_candidates
+from bot.app.run_identity import fingerprint
 from bot.behavior.contracts import UNRANKED_PRIORITY, MissionCandidate
 from bot.engine.missions import (
     MissionController,
@@ -23,6 +24,7 @@ from bot.engine.missions.allocator import UnitAllocator
 from bot.engine.missions.execution import MissionOutcome, MissionResult
 from bot.strategy import (
     FALLBACK_OWNER,
+    MISSION_POLICY_MODEL,
     REJECTED_NEGATIVE_RAW_UTILITY,
     REJECTED_UTILITY_NOT_ABOVE_MINIMUM,
     VIABLE_BY_URGENCY_FLOOR,
@@ -261,6 +263,36 @@ class EvaluationLogTests(unittest.TestCase):
         ):
             self.assertIn(name, accepted["evaluation"])
         self.assertEqual(accepted["priority"], accepted["evaluation"]["priority"])
+
+
+class EvaluationProvenanceTests(unittest.TestCase):
+    def test_an_evaluation_cites_its_context_model_and_configuration(self):
+        logger = FakeLogger()
+        ranker = MissionRanker(logger=logger)
+        strategy = replace(context(StrategicObjective.PRESSURE), revision=4)
+
+        ranker.rank((patrol(),), strategy)
+
+        (event,) = logger.events
+        self.assertEqual(event["data"]["context_revision"], 4)
+        self.assertEqual(event["data"]["policy_model"], MISSION_POLICY_MODEL)
+        self.assertEqual(
+            event["data"]["policy_config"], fingerprint(MissionPolicyConfig())
+        )
+        stricter = MissionRanker(config=MissionPolicyConfig(minimum_viable_utility=0.2))
+        self.assertNotEqual(stricter.config_fingerprint, ranker.config_fingerprint)
+
+    def test_evaluations_are_logged_at_machine_precision(self):
+        logger = FakeLogger()
+        ranker = MissionRanker(logger=logger)
+
+        ranker.rank((patrol(opportunity=0.123456789),))
+
+        data = logger.events[0]["data"]
+        evaluation = ranker.last_evaluations["map_control:patrol"]
+        self.assertEqual(data["signals"]["opportunity"], 0.123456789)
+        self.assertEqual(data["evaluation"]["utility"], evaluation.utility)
+        self.assertEqual(data["evaluation"]["raw_utility"], evaluation.raw_utility)
 
 
 class RejectedWorkInTheEngineTests(unittest.IsolatedAsyncioTestCase):

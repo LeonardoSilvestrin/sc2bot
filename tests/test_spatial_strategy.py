@@ -336,6 +336,31 @@ class SnapshotTests(unittest.TestCase):
         self.assertIsNone(context.need_for("passage:unknown"))
         self.assertIsNone(context.need_for(None))
 
+    def test_each_revision_record_is_complete_so_a_removal_is_visible(self):
+        logger = FakeLogger()
+        runtime = StrategyRuntime(logger=logger)
+
+        runtime.update(world())
+        runtime.record_context()
+        # The natural is lost: its objective must not appear to remain.
+        runtime.update(replace(world(with_natural=False), updated_at=105.0))
+        runtime.record_context()
+
+        first, second = (
+            event["data"]
+            for event in logger.events
+            if event["name"] == "strategy.context"
+        )
+        self.assertIn("base:nat", [item["id"] for item in first["control_objectives"]])
+        self.assertNotIn(
+            "base:nat", [item["id"] for item in second["control_objectives"]]
+        )
+        self.assertEqual(
+            second["control_objectives"],
+            [item.log_fields() for item in runtime.context.spatial.objectives],
+        )
+        self.assertEqual(second["revision"], first["revision"] + 1)
+
     def test_the_runtime_publishes_objectives_with_the_intent(self):
         runtime = StrategyRuntime(logger=FakeLogger())
 

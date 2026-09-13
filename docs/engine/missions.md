@@ -164,6 +164,9 @@ Checked for each live mission before allocation:
   standing mission picks up a changed target), then
   `executor.step(MissionContext(attention, awareness, assigned_units,
   commands, services))`. An exception fails the mission the same way.
+- Each result is compared with the mission's last `(outcome, reason)`; a
+  change -- including the first report -- is logged as `mission.progressed`
+  (`outcome`, `previous_outcome`, `previous_reason`), a repeat is not.
 - `COMPLETED` or `FAILED` results finish the mission; `ACTIVE` keeps it.
 - A blocked mission keeps its surviving leases and does not step; once
   replenished it resumes the same executor with its original start time.
@@ -280,9 +283,12 @@ class MissionExecutor(ABC):
   non-empty reason.
 - `refresh` lets a standing mission's executor follow its replaced proposal.
 - `preemption_cost` is the running executor's tactical answer to "what does
-  taking my units cost right now"; it is clamped to >= 0 (an exception reads
-  as 0) and added to the preemption margin on its leases. The Banshee raid
-  returns 5 while infiltrating or striking.
+  taking my units cost right now"; it is clamped to >= 0 and added to the
+  preemption margin on its leases. A cost that raises or is NaN reads as 0,
+  but never silently: `mission.preemption_cost_failed` (`error`,
+  `fallback_cost`, `suppressed_since_last`) is logged on the first failure,
+  then at most every 30 s per mission. The Banshee raid returns 5 while
+  infiltrating or striking.
 - `MissionExecutorFactory = Callable[[Mission, float], MissionExecutor]`,
   registered per kind in `bot/app/mission_registry.py` ([app.md](../app.md#executor-registry)).
 

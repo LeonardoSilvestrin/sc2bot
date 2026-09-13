@@ -11,6 +11,7 @@ from bot.engine.missions.execution import (
     MissionExecutor,
     MissionExecutorFactory,
     MissionOutcome,
+    MissionResult,
 )
 from bot.engine.missions.models import (
     Mission,
@@ -50,6 +51,12 @@ class MissionController:
         self._processed_proposals: set[str] = set()
         self._cooldown_until: dict[str, float] = {}
         self._mission_sequence = 0
+        # The last (outcome, reason) each running executor reported: progress
+        # is logged when it changes, not every step.
+        self._progress: dict[str, tuple[MissionOutcome, str]] = {}
+        # Per mission: when a failing preemption_cost was last logged, and
+        # how many failures went unlogged since.
+        self._cost_faults: dict[str, tuple[float, int]] = {}
 
     def snapshots(self) -> tuple[MissionSnapshot, ...]:
         return self.board.snapshots()
@@ -133,7 +140,7 @@ class MissionController:
                     can_preempt=mission.proposal.can_preempt,
                     commitment_seconds=mission.proposal.commitment_seconds,
                     preferred_tags=self.squads.preferred_tags(mission.mission_id),
-                    preemption_cost=self._preemption_cost(mission),
+                    preemption_cost=self._preemption_cost(mission, now),
                 )
             self._apply_allocation(mission, allocation, now, commands)
             self.squads.allocation_changed(
@@ -167,12 +174,18 @@ class MissionController:
                 mission, now, attention, awareness, commands, services
             )
 
-    def _preemption_cost(self, mission: Mission) -> float:
+    # A failing preemption_cost is logged at most this often per mission.
+    preemption_cost_fault_interval = 30.0
+
+    def _preemption_cost(self, mission: Mission, now: float) -> float:
         """Ask the running executor what interrupting it costs right now.
 
         Duck-typed like ``refresh`` so test executors providing only ``step``
         keep working, and clamped to a non-negative number so a misbehaving
         executor cannot make its units *easier* to take than priority says.
+        A cost that raises or is NaN reads as 0 -- never silently: the first
+        failure is logged, then at most one per
+        ``preemption_cost_fault_interval`` with the count suppressed between.
         """
 
         executor = self._executors.get(mission.mission_id)
@@ -180,9 +193,32 @@ class MissionController:
         if cost is None:
             return 0.0
         try:
-            return max(0.0, float(cost()))
-        except Exception:
+            value = float(cost())
+            if value != value:
+                raise ValueError("preemption_cost returned NaN")
+        except Exception as error:
+            self._preemption_cost_failed(mission, now, error)
             return 0.0
+        return max(0.0, value)
+
+    def _preemption_cost_failed(
+        self, mission: Mission, now: float, error: Exception
+    ) -> None:
+        previous = self._cost_faults.get(mission.mission_id)
+        interval = self.preemption_cost_fault_interval
+        if previous is not None and now - previous[0] < interval:
+            self._cost_faults[mission.mission_id] = (previous[0], previous[1] + 1)
+            return
+        self._cost_faults[mission.mission_id] = (now, 0)
+        self._emit(
+            "mission.preemption_cost_failed",
+            now,
+            "executor_preemption_cost_failed",
+            mission=mission,
+            error=f"{type(error).__name__}: {error}",
+            fallback_cost=0.0,
+            suppressed_since_last=0 if previous is None else previous[1],
+        )
 
     def _cancellation_reason(
         self, mission: Mission, now: float, awareness: AwarenessSnapshot
@@ -365,6 +401,7 @@ class MissionController:
             return
 
         mission.last_reason = result.reason
+        self._record_progress(mission, result, now)
         if result.outcome is MissionOutcome.COMPLETED:
             self._finish(
                 mission, MissionStatus.COMPLETED, result.reason, now, commands
@@ -373,6 +410,29 @@ class MissionController:
             self._finish(
                 mission, MissionStatus.FAILED, result.reason, now, commands
             )
+
+    def _record_progress(
+        self, mission: Mission, result: MissionResult, now: float
+    ) -> None:
+        """Log what a running executor reports when it changes, not every step.
+
+        The first report after the mission starts is always a change.
+        """
+
+        progress = (result.outcome, result.reason)
+        previous = self._progress.get(mission.mission_id)
+        if previous == progress:
+            return
+        self._progress[mission.mission_id] = progress
+        self._emit(
+            "mission.progressed",
+            now,
+            result.reason,
+            mission=mission,
+            outcome=result.outcome.name,
+            previous_outcome=None if previous is None else previous[0].name,
+            previous_reason=None if previous is None else previous[1],
+        )
 
     def _consider(self, proposal: MissionProposal, now: float) -> None:
         if proposal.proposal_id in self._processed_proposals:
@@ -544,6 +604,8 @@ class MissionController:
         mission.finished_at = now
         mission.last_reason = reason
         self._executors.pop(mission.mission_id, None)
+        self._progress.pop(mission.mission_id, None)
+        self._cost_faults.pop(mission.mission_id, None)
         self._capability_log.forget(mission.mission_id)
         self.squads.mission_finished(mission, now=now)
         self._cooldown_until[mission.proposal.deduplication_key] = (

@@ -6,54 +6,58 @@ migration. Rules: [PRINCIPLES.md](PRINCIPLES.md).
 
 ## Last completed commit
 
-`fix: reject non-viable mission candidates` (Stage 1).
+`feat: make decision traces causally reproducible` (Stage 2).
 
 ## Completed stages
 
 - **Stage 0 -- control objective integration** (`9b70838`). The unfinished
   consumer migration was already committed by the user as `ffce62d` (18
   files, +757/-106), so the worktree was clean; this stage finished it on top
-  instead of rewriting it.
-  - `ControlMatch(objective_id, alignment)` replaces the loose
-    `control_objective` / `control_alignment` pair on `MissionSignals`. A match
-    exists only at `alignment >= MINIMUM_CONTROL_ALIGNMENT` (0.5).
-  - Map Control's anchor evaluation (`evaluate_sample` ->
-    `MapControlCandidate`) is split into `local_value`, `caution` and
-    `strategic_value`. Strategy moves the anchor only through
-    `strategic_value`; the patrol's `opportunity` is `local_value` alone.
-  - Explicit tie-breaks for objective pull and travel origin.
-  - Docs no longer call Strategy or territory regions shadow/unconsumed.
-- **Stage 1 -- explicit mission viability.**
-  - `evaluate_mission` returns a `MissionEvaluation`: every contribution,
-    `raw_utility`, `urgency_floor`, final `utility`, `viable`, a
-    machine-readable `reason`, `priority` only when viable, and the Strategy
-    inputs it read (desirability, information desire, risk tolerance,
-    control need).
-  - Viability is one replaceable predicate, `is_viable`:
-    `utility > MissionPolicyConfig.minimum_viable_utility` (0.0). The
-    emergency floor applies first, so urgent defense stays viable with a
-    negative raw utility. The fallback owner is always viable at 20.
-  - `MissionRanker` proposes viable candidates only and logs one
-    `mission.evaluated` per candidate, rejected ones included (no change
-    gate; `mission.candidate` / `mission.ranked` are gone).
-  - `MissionController.tick(declared_planners=...)`: a planner that declared
-    work whose standing candidate was rejected has that standing mission
-    cancelled (`standing_proposal_omitted`), so rejected work cannot keep
-    units at an old priority. The engine receives planner ids only.
-  - The test that blessed a worthless candidate outranking Standing is
-    replaced by one asserting no worthless candidate can.
-  - Every canonical doc that listed fixed per-kind priorities (contracts,
-    engine/missions, behavior README, standing, scouting, defense, harass,
-    base-security) now describes policy ranking and viability. `standing.md`
-    also had pre-`ffce62d` anchor and posture sections (anchor now follows
-    Strategy's home passage objective; posture no longer reads macro
-    posture); corrected here.
+  instead of rewriting it. `ControlMatch` (alignment >= 0.5) replaces the
+  loose objective id/alignment pair; Map Control's anchor score is split into
+  `local_value`, `caution` and `strategic_value`, and its opportunity is the
+  local value alone.
+- **Stage 1 -- explicit mission viability** (`25dba8d`). `evaluate_mission`
+  returns a `MissionEvaluation` with raw/final utility, floor, `viable`,
+  reason, and a priority only when viable (`is_viable`: utility > 0). Rejected
+  candidates never reach `MissionController`; a rejected standing
+  responsibility is withdrawn through `declared_planners`. Docs lost every
+  fixed per-kind priority.
+- **Stage 2 -- causally reproducible decision trace.**
+  - JSONL envelope on every record: `schema` (2), `run`, `seq`, `iteration`
+    (null outside a frame), exact `game_time`. The port gained
+    `begin_frame`/`end_frame`; `FrameProcessor` brackets each frame.
+  - Strict JSON: no `default=str`. A record that is not strict JSON becomes a
+    `logging.record_rejected` fault record naming the event and the error.
+    The test `FakeLogger` enforces strict JSON for every event any test emits.
+  - `game.started` records the opening actually played, build identity
+    (commit/branch from git's files, or explicitly unknown), a fingerprint of
+    every decision-critical configuration plus one per config, and the RNG
+    seed with its source (`generated`, `configured`, `external`).
+  - `StrategicContext.revision`: increments only when intent or the control
+    objective set changes materially. `StrategyRuntime.record_context()`
+    persists the exact, complete context (objective, assessments with
+    contributions, inputs, intent, every objective) once per revision as
+    `strategy.context`; the frame calls it before the first policy decision.
+  - `mission.evaluated` cites `context_revision`, `policy_model`
+    (`linear_utility_v1`) and `policy_config` (fingerprint); decision values
+    are logged at machine precision.
+  - `map_control.spatial_candidates` adds candidate count, pool, rejection
+    counts, runner-up, winning margin and an order-free candidate-set
+    fingerprint.
+  - `mission.progressed` on a change of an active mission's
+    (outcome, reason); a raising or NaN `preemption_cost()` logs
+    `mission.preemption_cost_failed` (first failure, then at most every 30 s
+    with the suppressed count) before reading as 0.
+  - Joinable causal-chain tests against a real JSONL file: context ->
+    evaluation -> admission -> assignment -> progress, and context ->
+    rejected evaluation -> nothing in the engine.
 
 ## Tests and tooling
 
-At Stage 1 (Windows, project `.venv`, Python 3.12):
+At Stage 2 (Windows, project `.venv`, Python 3.12):
 
-- `pytest`: 804 passed.
+- `pytest`: 839 passed.
 - `ruff check bot tests`: clean.
 - `mypy bot`: clean.
 - `git diff --check`: clean.
@@ -63,36 +67,38 @@ pytest/ruff/mypy).
 
 ## Architectural decisions
 
-- `ControlMatch` and its threshold live in `bot.strategy.mission_policy`, next
-  to `MissionSignals`: the invariant "an objective id implies a meaningful
-  alignment" is enforced by the contract, not by each planner.
-- Map Control pulls its anchor with the objective's *importance*, not its
-  gap: the gap shrinks as our own patrol arrives, which would argue the
-  anchor away. The Mission Policy still prices importance x gap.
-- Contract 16 was already relaxed in `ffce62d` (`ConsumerTests`): macro and
-  the mission engine never read territory; Strategy and behaviors may.
-- Viability threshold stays 0.0: no repository evidence justifies a higher
-  semantic minimum yet. It is a config value behind `is_viable`.
-- Withdrawal of rejected standing work reuses the controller's existing
-  standing reconciliation rather than a new cancellation path: the app passes
-  `declared_planners` (plain planner ids), so the engine stays blind to the
-  policy and to why a proposal is missing.
-- Policy logging is per decision, not change-gated: planner cadences are 5 s
-  or more, so one line per candidate is small and gives every proposal a
-  persisted evaluation under its `proposal_id`.
+- `ControlMatch` and its threshold live in `bot.strategy.mission_policy`, so
+  "an objective id implies a meaningful alignment" is a contract invariant.
+- Map Control pulls its anchor with objective importance, not gap (the gap
+  shrinks as the patrol arrives); the policy prices importance x gap.
+- Contract 16 was already relaxed in `ffce62d`: only macro and the mission
+  engine are kept out of territory.
+- Viability threshold stays 0.0 behind `is_viable`; no evidence yet for a
+  higher semantic minimum.
+- Rejected standing work is withdrawn through the existing standing
+  reconciliation; the engine only receives planner ids.
+- The envelope is the writer's job (adapter), frame scoping the port's; no
+  event sourcing. A serialization fault is written, not raised, so a bad
+  record cannot stop a match, and never coerced.
+- Context revisions are assigned in `bot.app` by exact dataclass equality of
+  intent and objectives; Strategy's core stays hash- and I/O-free. The
+  context is persisted lazily, before the first decision that cites it, so
+  unreferenced revisions cost nothing.
+- Configuration fingerprints and build identity live in
+  `bot/app/run_identity.py`; unsupported config values are refused, not
+  stringified. Build identity reads git files, never a subprocess.
 
 ## Known issues
 
 - A live FINITE mission is not withdrawn when its re-declared candidate is
-  rejected (duplicates are rejected by the controller anyway); it runs to its
-  own end or timeout.
-- Tests that exercise Map Control allocation now need a spatial field: a
-  patrol with no field offers nothing and is rejected.
-- Logs round decision values, have no run id / sequence / schema version,
-  stringify unknown objects (`default=str`), and do not persist the
-  `StrategicContext` a policy decision read (Stage 2).
-- `MissionController._preemption_cost` swallows executor exceptions silently
-  (Stage 2).
+  rejected; it runs to its own end or timeout.
+- Build identity does not detect uncommitted changes.
+- While macro follows the opening, `configs.macro` fingerprints `None`; the
+  opening name in `game.started` determines the profile.
+- State summaries (observation, knowledge, standing, macro status, behavior
+  plans) still round for readability; decision records do not.
+- The log viewer does not yet display the envelope, `strategy.context`,
+  `mission.evaluated`, `mission.progressed` or the spatial summary fields.
 - Map Control and Standing still use the capability/role system in
   `bot/domain` (Stage 3).
 - `AwarenessSnapshot.macro_posture` transports macro policy through
@@ -107,13 +113,13 @@ pytest/ruff/mypy).
 - The mathematical migration itself. Recommended first: production
   demand/capacity (measurable quantities, localized seams).
 - Retuning any weight: every number is still a first guess.
+- Viewer support for the new records.
 
 ## Next stage
 
-Stage 2 -- make the decision trace causally reproducible: a layer-neutral
-JSONL envelope (schema version, run id, sequence, iteration, exact game
-time), a game-start record, persisted `StrategicContext` revisions referenced
-by policy evaluations, spatial selection summaries, `mission.progressed` on
-outcome changes, a logged `preemption_cost` fault, and joinable
-Strategy -> candidate -> evaluation -> admission -> assignment -> progress
-tests.
+Stage 3 -- replace the RPG capability model with behavior-owned concrete unit
+requirements: remove `CombatCapabilities`, `CapabilityRequirement`,
+`Suitability`, unit profiles, `CombatRole` and capability allocation
+diagnostics/upgrades; each behavior names its supported unit types; keep
+leases, counts, supply budgets, per-type desirability, commitment and
+preemption.

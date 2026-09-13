@@ -16,5 +16,11 @@ class NullBotLogger:
     ) -> None:
         return None
 
+    def begin_frame(self, iteration: int) -> None:
+        return None
+
+    def end_frame(self) -> None:
+        return None
+
     def close(self) -> None:
         return None

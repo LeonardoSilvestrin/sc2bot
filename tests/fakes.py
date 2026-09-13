@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from bot.engine.economy.models import (
@@ -12,13 +13,24 @@ from bot.engine.economy.models import (
 class FakeLogger:
     def __init__(self) -> None:
         self.events: list[dict[str, Any]] = []
+        self.iteration: int | None = None
+
+    def begin_frame(self, iteration: int) -> None:
+        self.iteration = iteration
+
+    def end_frame(self) -> None:
+        self.iteration = None
 
     def event(self, name, *, component, game_time, data=None) -> None:
+        # Every event any test produces must already be strict JSON: no NaN,
+        # nothing the real log writer would have to stringify.
+        json.dumps({"data": data or {}, "game_time": game_time}, allow_nan=False)
         self.events.append(
             {
                 "name": name,
                 "component": component,
                 "game_time": game_time,
+                "iteration": self.iteration,
                 "data": data or {},
             }
         )

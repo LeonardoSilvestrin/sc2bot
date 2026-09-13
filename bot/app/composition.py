@@ -7,6 +7,7 @@ concrete observer, planners, controllers and diagnostics a game runs with.
 from __future__ import annotations
 
 import random
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -58,6 +59,11 @@ class BotComposition:
     missions: MissionController
     macro_planner: MacroPlanner
     strategy: StrategyRuntime
+    # What `game.started` records about this run: every configuration a
+    # decision reads, by name, and the seed of the application's own RNG.
+    decision_configs: Mapping[str, object]
+    rng_seed: int | None
+    rng_seed_source: str
 
 
 def compose_bot(
@@ -79,10 +85,21 @@ def compose_bot(
     spatial_snapshot_config: SpatialSnapshotConfig | None = None,
     spatial_snapshot_directory: Path | None = None,
     rng: random.Random | None = None,
+    rng_seed: int | None = None,
 ) -> BotComposition:
-    rng = rng or random.Random()
+    if rng is not None and rng_seed is not None:
+        raise ValueError("pass rng or rng_seed, not both")
+    if rng is not None:
+        # An injected generator's seed belongs to the caller: unknown here.
+        seed, seed_source = None, "external"
+    else:
+        seed_source = "generated" if rng_seed is None else "configured"
+        seed = random.SystemRandom().getrandbits(32) if rng_seed is None else rng_seed
+        rng = random.Random(seed)
     intel_config = intel_config or IntelConfig()
     scouting_vision_config = scouting_vision_config or ScoutingVisionConfig()
+    vision_service_config = vision_service_config or VisionServiceConfig()
+    scan_provider_config = scan_provider_config or ScanProviderConfig()
     banshee_harass_config = banshee_harass_config or BansheeHarassConfig()
     reaper_harass_config = reaper_harass_config or ReaperHarassConfig()
     defense_config = defense_config or DefenseConfig()
@@ -99,10 +116,8 @@ def compose_bot(
 
     # Capabilities several behaviors share.
     vision = VisionService(
-        provider=ScanProvider(
-            config=scan_provider_config or ScanProviderConfig(), logger=logger
-        ),
-        config=vision_service_config or VisionServiceConfig(),
+        provider=ScanProvider(config=scan_provider_config, logger=logger),
+        config=vision_service_config,
         logger=logger,
     )
     services = BehaviorServices(vision=vision)
@@ -163,6 +178,7 @@ def compose_bot(
     economy = EconomyController(logger=logger)
     macro_diagnostics = MacroDiagnostics(logger=logger)
     strategy = StrategyRuntime(logger=logger)
+    mission_ranker = MissionRanker(logger=logger)
 
     frame = FrameProcessor(
         logger=logger,
@@ -186,12 +202,39 @@ def compose_bot(
             logger=logger,
         ),
         strategy=strategy,
-        mission_ranker=MissionRanker(logger=logger),
+        mission_ranker=mission_ranker,
     )
+    decision_configs: dict[str, object] = {
+        "strategy": strategy.director.config,
+        "intent": strategy.intent_config,
+        "spatial_policy": strategy.spatial_config,
+        "legacy_macro_posture": strategy.legacy_posture.config,
+        "mission_policy": mission_ranker.config,
+        "allocator": {
+            "preemption_margin": missions.allocator.preemption_margin,
+            "upgrade_margin": missions.allocator.upgrade_margin,
+        },
+        "intel": intel_config,
+        "scouting_vision": scouting_vision_config,
+        "vision_service": vision_service_config,
+        "scan_provider": scan_provider_config,
+        "banshee_harass": banshee_harass_config,
+        "reaper_harass": reaper_harass_config,
+        "defense": defense_config,
+        "map_control": map_control_config,
+        "standing": standing_config,
+        "spatial_sample_spacing": spatial_sample_spacing,
+        "spatial_model": spatial_model_config,
+        # None: the macro profile follows whichever opening Ares resolves.
+        "macro": macro_config,
+    }
     return BotComposition(
         opening=OpeningSelector(rng=rng),
         frame=frame,
         missions=missions,
         macro_planner=macro_planner,
         strategy=strategy,
+        decision_configs=decision_configs,
+        rng_seed=seed,
+        rng_seed_source=seed_source,
     )

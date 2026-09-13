@@ -26,7 +26,9 @@ Two decisions, each pricing its factors once (``evaluate_sample``):
 
 from __future__ import annotations
 
+import hashlib
 import math
+from collections import Counter
 from dataclasses import dataclass, field, replace
 
 from sc2.position import Point2
@@ -293,11 +295,41 @@ class MapControlPlanner:
         logged = list(self.last_candidates[: self.config.logged_candidate_count])
         if all(item.sample.position != selected.sample.position for item in logged):
             logged.append(selected)
+        # The best valid alternative the selection passed over; hysteresis can
+        # make the margin negative, and says so in the selected reason.
+        runner_up = next(
+            (
+                item
+                for item in ranked_pool
+                if item.sample.position != selected.sample.position
+            ),
+            None,
+        )
+        rejections = Counter(
+            candidate.reason
+            for candidate in candidates
+            if candidate.reason != "frontier_candidate"
+        )
         self._log.event(
             "map_control.spatial_candidates",
             now=attention.world.time,
-            candidates=[candidate.log_fields() for candidate in logged],
+            candidate_count=len(candidates),
+            candidate_set=candidate_set_fingerprint(samples),
+            pool=(
+                "frontier"
+                if frontier
+                else "all_candidates"
+                if pool is candidates
+                else "safe_fallback"
+            ),
+            pool_size=len(pool),
+            rejections=dict(sorted(rejections.items())),
             selected=selected.log_fields(),
+            runner_up=None if runner_up is None else runner_up.log_fields(),
+            winning_margin=(
+                None if runner_up is None else selected.score - runner_up.score
+            ),
+            candidates=[candidate.log_fields() for candidate in logged],
         )
         if self.last_plan is None or selected.sample.position != self.last_plan.anchor:
             self._log.event(
@@ -631,6 +663,21 @@ def _invalidation_reason(
     if candidate.sample.enemy_threat >= config.max_enemy_threat:
         return "current_anchor_invalidated_by_enemy_threat"
     return "current_anchor_left_friendly_frontier"
+
+
+def candidate_set_fingerprint(samples: tuple[SpatialFieldSample, ...]) -> str:
+    """A short digest naming the exact sample set one selection saw.
+
+    Order-independent and exact: every sample, with every value it carries,
+    sorted by position. The same field in any order gives the same digest,
+    so logs can tell two selections apart without dumping the field.
+    """
+
+    rows = sorted(
+        ((float(sample.position.x), float(sample.position.y)), repr(sample))
+        for sample in samples
+    )
+    return hashlib.sha256(repr(rows).encode("utf-8")).hexdigest()[:16]
 
 
 def _candidate_sort_key(candidate: MapControlCandidate) -> tuple[float, float, float]:

@@ -24,6 +24,7 @@ from .intent import IntentConfig, StrategicActivity, StrategicIntent, derive_int
 from .mission_policy import (
     FALLBACK_OWNER,
     MINIMUM_CONTROL_ALIGNMENT,
+    MISSION_POLICY_MODEL,
     REJECTED_NEGATIVE_RAW_UTILITY,
     REJECTED_UTILITY_NOT_ABOVE_MINIMUM,
     VIABLE_BY_URGENCY_FLOOR,
@@ -64,6 +65,7 @@ from .spatial import (
 __all__ = [
     "FALLBACK_OWNER",
     "MINIMUM_CONTROL_ALIGNMENT",
+    "MISSION_POLICY_MODEL",
     "REJECTED_NEGATIVE_RAW_UTILITY",
     "REJECTED_UTILITY_NOT_ABOVE_MINIMUM",
     "VIABLE_BY_URGENCY_FLOOR",

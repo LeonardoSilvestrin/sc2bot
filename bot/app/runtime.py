@@ -16,6 +16,7 @@ from bot.world.awareness import SpatialModelConfig
 
 from .composition import compose_bot
 from .debug import SpatialDebugConfig, SpatialSnapshotConfig
+from .run_identity import describe_build, fingerprint
 
 
 class BotRuntime:
@@ -46,6 +47,7 @@ class BotRuntime:
         spatial_snapshot_config: SpatialSnapshotConfig | None = None,
         spatial_snapshot_directory: Path | None = None,
         rng: random.Random | None = None,
+        rng_seed: int | None = None,
     ) -> None:
         self.logger = logger
         composition = compose_bot(
@@ -66,7 +68,9 @@ class BotRuntime:
             spatial_snapshot_config=spatial_snapshot_config,
             spatial_snapshot_directory=spatial_snapshot_directory,
             rng=rng,
+            rng_seed=rng_seed,
         )
+        self._composition = composition
         self._opening = composition.opening
         self._frame = composition.frame
         self.missions = composition.missions
@@ -74,11 +78,26 @@ class BotRuntime:
 
     async def on_start(self, bot) -> None:
         await self._opening.choose_and_announce(bot)
+        composition = self._composition
+        runner = getattr(bot, "build_order_runner", None)
+        opening = str(getattr(runner, "chosen_opening", "") or "")
         self.logger.event(
             "game.started",
             component="app.runtime",
             game_time=float(bot.time),
-            data={"map": str(bot.game_info.map_name)},
+            data={
+                "map": str(bot.game_info.map_name),
+                # After OpeningSelector's re-roll: the opening actually played.
+                "opening": opening or None,
+                "build": describe_build().log_fields(),
+                "config_fingerprint": fingerprint(composition.decision_configs),
+                "configs": {
+                    name: fingerprint(config)
+                    for name, config in composition.decision_configs.items()
+                },
+                "rng_seed": composition.rng_seed,
+                "rng_seed_source": composition.rng_seed_source,
+            },
         )
 
     async def on_step(self, bot, *, iteration: int) -> None:

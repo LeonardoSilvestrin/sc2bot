@@ -50,7 +50,17 @@ VS Code launchers (`.vscode/launch.json`, checked by `tests/test_run.py`):
 `compose_bot(logger=..., **optional configs)` in `composition.py` is the only
 place that knows which concrete objects a game runs with. Plain constructors,
 no container. It returns `BotComposition(opening, frame, missions,
-macro_planner)`.
+macro_planner, strategy, decision_configs, rng_seed, rng_seed_source)`.
+`decision_configs` names every configuration a decision reads -- Strategy,
+intent, spatial policy, legacy posture, Mission Policy, allocator margins,
+every behavior and vision config, spatial spacing and model, macro -- and
+`game.started` records their fingerprints (`bot/app/run_identity.py`:
+canonical JSON, SHA-256; an unsupported value is refused, never stringified).
+
+**RNG.** The application owns its RNG (today only the opening re-roll draws
+from it). Without arguments `compose_bot` draws a seed from the system and
+records it (`generated`); `rng_seed=` fixes it (`configured`); an injected
+`rng=` is recorded as `external`, seed unknown. Passing both is an error.
 
 What it builds, in order:
 
@@ -61,6 +71,7 @@ What it builds, in order:
 | Behavior domain | `IntelPlanner`, `ScoutingVisionRequester`, `BansheeHarassPlanner`, `ReaperHarassPlanner`, `DefensePlanner(services)`, `MapControlPlanner`, `StandingPlanner` |
 | Mission engine | `MissionController(executor_factories=build_executor_factories(...))`, which builds its own `UnitAllocator`, `MissionBoard`, `SquadController` |
 | Macro domain | `MacroPlanner(config, follow_opening=macro_config is None)`, `EconomyController`, `MacroDiagnostics` |
+| Strategy and policy | `StrategyRuntime` (director, intent, spatial policy, legacy posture), `MissionRanker` (Mission Policy config) |
 | Frame | `FrameProcessor(...)` with `FrameTelemetry`, `SpatialDebugView`, `SpatialSnapshotExporter` |
 | Start of game | `OpeningSelector(rng)` |
 

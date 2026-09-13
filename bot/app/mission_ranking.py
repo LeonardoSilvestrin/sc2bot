@@ -18,11 +18,14 @@ from bot.behavior.contracts import MissionCandidate
 from bot.engine.missions.models import MissionProposal
 from bot.ports.logging import BotLogger
 from bot.strategy import (
+    MISSION_POLICY_MODEL,
     MissionEvaluation,
     MissionPolicyConfig,
     StrategicContext,
     evaluate_mission,
 )
+
+from .run_identity import fingerprint
 
 COMPONENT = "strategy.mission_policy"
 
@@ -33,8 +36,10 @@ class MissionRanker:
 
     ``mission.evaluated`` is written for every candidate, viable or rejected,
     under its ``proposal_id`` -- the join to the controller's ``proposal_*``
-    events. Planners propose on cadences seconds apart, so this is one line
-    per decision, not per frame, and is never change-gated.
+    events -- and cites the ``StrategicContext`` revision it was decided
+    under, the policy model and the policy configuration's fingerprint.
+    Planners propose on cadences seconds apart, so this is one line per
+    decision, not per frame, and is never change-gated.
     """
 
     logger: BotLogger | None = None
@@ -43,6 +48,10 @@ class MissionRanker:
     last_evaluations: dict[str, MissionEvaluation] = field(
         default_factory=dict, init=False, repr=False
     )
+    config_fingerprint: str = field(default="", init=False)
+
+    def __post_init__(self) -> None:
+        self.config_fingerprint = fingerprint(self.config)
 
     def rank(
         self,
@@ -62,12 +71,17 @@ class MissionRanker:
                 config=self.config,
             )
             self.last_evaluations[candidate.draft.deduplication_key] = evaluation
-            self._log(candidate, evaluation)
+            self._log(candidate, evaluation, context)
             if evaluation.priority is not None:
                 proposals.append(candidate.ranked(evaluation.priority))
         return tuple(proposals)
 
-    def _log(self, candidate: MissionCandidate, evaluation: MissionEvaluation) -> None:
+    def _log(
+        self,
+        candidate: MissionCandidate,
+        evaluation: MissionEvaluation,
+        context: StrategicContext,
+    ) -> None:
         if self.logger is None:
             return
         draft = candidate.draft
@@ -85,6 +99,9 @@ class MissionRanker:
                 "viable": evaluation.viable,
                 "reason": evaluation.reason,
                 "priority": evaluation.priority,
+                "context_revision": context.revision,
+                "policy_model": MISSION_POLICY_MODEL,
+                "policy_config": self.config_fingerprint,
                 "signals": candidate.signals.log_fields(),
                 "evaluation": evaluation.log_fields(),
             },

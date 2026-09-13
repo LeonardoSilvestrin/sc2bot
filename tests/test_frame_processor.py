@@ -123,6 +123,9 @@ class FrameProcessorOrderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             [event["name"] for event in logger.events], ["awareness.belief_changed"]
         )
+        # Everything the frame emitted carries its iteration; nothing after.
+        self.assertEqual([event["iteration"] for event in logger.events], [7])
+        self.assertIsNone(logger.iteration)
 
 
 if __name__ == "__main__":

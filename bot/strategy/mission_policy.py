@@ -21,6 +21,10 @@ from typing import Any
 
 from .intent import StrategicActivity, StrategicIntent
 
+# Names the valuation model below. Change it whenever ``evaluate_mission``'s
+# formula changes shape, so logged evaluations say which model decided them.
+MISSION_POLICY_MODEL = "linear_utility_v1"
+
 _SIGNALS = ("opportunity", "urgency", "risk", "information_gain")
 
 # The weakest alignment that still counts as serving a control objective: the
@@ -111,17 +115,19 @@ class MissionSignals:
         return self.activity is None
 
     def log_fields(self) -> dict[str, Any]:
+        """Every signal exactly as the policy read it."""
+
         return {
             "activity": "FALLBACK" if self.activity is None else self.activity.name,
-            "opportunity": round(self.opportunity, 3),
-            "urgency": round(self.urgency, 3),
-            "risk": round(self.risk, 3),
-            "information_gain": round(self.information_gain, 3),
+            "opportunity": self.opportunity,
+            "urgency": self.urgency,
+            "risk": self.risk,
+            "information_gain": self.information_gain,
             "control_objective": (
                 None if self.control is None else self.control.objective_id
             ),
             "control_alignment": (
-                None if self.control is None else round(self.control.alignment, 3)
+                None if self.control is None else self.control.alignment
             ),
             "signal_reason": self.reason,
         }
@@ -285,26 +291,28 @@ class MissionEvaluation:
         return self.urgency_floor > self.raw_utility
 
     def log_fields(self) -> dict[str, Any]:
+        """The evaluation exactly as decided: machine precision, no rounding."""
+
         need = self.control_need
         return {
             "activity": "FALLBACK" if self.activity is None else self.activity.name,
             "reason": self.reason,
             "viable": self.viable,
             "priority": self.priority,
-            "utility": round(self.utility, 3),
-            "raw_utility": round(self.raw_utility, 3),
-            "urgency_floor": round(self.urgency_floor, 3),
+            "utility": self.utility,
+            "raw_utility": self.raw_utility,
+            "urgency_floor": self.urgency_floor,
             "floor_applied": self.floor_applied,
-            "opportunity_contribution": round(self.opportunity_contribution, 3),
-            "information_contribution": round(self.information_contribution, 3),
-            "control_contribution": round(self.control_contribution, 3),
-            "urgency_contribution": round(self.urgency_contribution, 3),
-            "risk_penalty": round(self.risk_penalty, 3),
-            "strategic_desirability": _rounded(self.strategic_desirability),
-            "information_desire": _rounded(self.information_desire),
-            "risk_tolerance": _rounded(self.risk_tolerance),
-            "control_importance": None if need is None else round(need.importance, 3),
-            "control_gap": None if need is None else round(need.gap, 3),
+            "opportunity_contribution": self.opportunity_contribution,
+            "information_contribution": self.information_contribution,
+            "control_contribution": self.control_contribution,
+            "urgency_contribution": self.urgency_contribution,
+            "risk_penalty": self.risk_penalty,
+            "strategic_desirability": self.strategic_desirability,
+            "information_desire": self.information_desire,
+            "risk_tolerance": self.risk_tolerance,
+            "control_importance": None if need is None else need.importance,
+            "control_gap": None if need is None else need.gap,
         }
 
 
@@ -445,10 +453,6 @@ def to_priority(utility: float, config: MissionPolicyConfig | None = None) -> in
     return config.minimum_priority + round(span * _clamp01(utility))
 
 
-def _rounded(value: float | None) -> float | None:
-    return None if value is None else round(value, 3)
-
-
 def _clamp01(value: float) -> float:
     return min(max(value, 0.0), 1.0)
 
@@ -456,6 +460,7 @@ def _clamp01(value: float) -> float:
 __all__ = [
     "FALLBACK_OWNER",
     "MINIMUM_CONTROL_ALIGNMENT",
+    "MISSION_POLICY_MODEL",
     "REJECTED_NEGATIVE_RAW_UTILITY",
     "REJECTED_UTILITY_NOT_ABOVE_MINIMUM",
     "VIABLE_BY_URGENCY_FLOOR",

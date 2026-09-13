@@ -96,22 +96,22 @@ class ControlObjective:
         return ControlNeed(importance=self.importance, gap=self.gap)
 
     def log_fields(self) -> dict[str, Any]:
+        """The objective exactly as Strategy holds it: machine precision."""
+
         return {
             "id": self.objective_id,
             "kind": self.kind.name,
             "target": self.target_key,
-            "position": [
-                round(float(self.position.x), 1),
-                round(float(self.position.y), 1),
-            ],
+            "position": [float(self.position.x), float(self.position.y)],
             "activity": self.activity.name,
-            "importance": round(self.importance, 3),
-            "desired_control": round(self.desired_control, 3),
-            "current_control": round(self.current_control, 3),
-            "control_gap": round(self.control_gap, 3),
-            "desired_visibility": round(self.desired_visibility, 3),
-            "current_visibility": round(self.current_visibility, 3),
-            "visibility_gap": round(self.visibility_gap, 3),
+            "importance": self.importance,
+            "desired_control": self.desired_control,
+            "current_control": self.current_control,
+            "control_gap": self.control_gap,
+            "desired_visibility": self.desired_visibility,
+            "current_visibility": self.current_visibility,
+            "visibility_gap": self.visibility_gap,
+            "gap": self.gap,
             "region": self.region_key,
             "protects": self.protects,
             "reason": self.reason,

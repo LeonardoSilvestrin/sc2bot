@@ -245,42 +245,40 @@ class MapControlCandidate:
         return self.local_value - self.caution + self.strategic_value
 
     def log_fields(self) -> dict[str, Any]:
+        """Every term exactly as evaluated: machine precision, no rounding."""
+
         sample = self.sample
         return {
-            "position": [
-                round(float(sample.position.x), 1),
-                round(float(sample.position.y), 1),
-            ],
-            "score": round(self.score, 3),
-            "local_value": round(self.local_value, 3),
-            "caution": round(self.caution, 3),
-            "strategic_value": round(self.strategic_value, 3),
-            "opportunity": round(self.opportunity, 3),
-            "frontier": round(self.frontier_score, 3),
-            "advancement": round(self.advancement_score, 3),
-            "friendly_support": round(
+            "position": [float(sample.position.x), float(sample.position.y)],
+            "score": self.score,
+            "local_value": self.local_value,
+            "caution": self.caution,
+            "strategic_value": self.strategic_value,
+            "opportunity": self.opportunity,
+            "frontier": self.frontier_score,
+            "advancement": self.advancement_score,
+            "friendly_support": (
                 sample.friendly_value
                 if sample.friendly_control is None
-                else sample.friendly_control,
-                3,
+                else sample.friendly_control
             ),
-            "friendly_proximity": round(sample.friendly_value, 3),
-            "support_band": round(self.support_score, 3),
-            "enemy_control": round(sample.enemy_control, 3),
-            "enemy_threat": round(sample.enemy_threat, 3),
-            "knowledge": round(sample.knowledge_confidence, 3),
-            "unknown_risk": round(self.unknown_risk, 3),
-            "choke": round(sample.choke_value, 3),
-            "route": round(sample.route_value, 3),
-            "travel_cost": round(self.travel_cost, 3),
-            "information_desire": round(self.information_desire, 3),
+            "friendly_proximity": sample.friendly_value,
+            "support_band": self.support_score,
+            "enemy_control": sample.enemy_control,
+            "enemy_threat": sample.enemy_threat,
+            "knowledge": sample.knowledge_confidence,
+            "unknown_risk": self.unknown_risk,
+            "choke": sample.choke_value,
+            "route": sample.route_value,
+            "travel_cost": self.travel_cost,
+            "information_desire": self.information_desire,
             "control_objective": (
                 None if self.control is None else self.control.objective_id
             ),
             "control_alignment": (
-                None if self.control is None else round(self.control.alignment, 3)
+                None if self.control is None else self.control.alignment
             ),
-            "control_importance": round(self.control_importance, 3),
+            "control_importance": self.control_importance,
             "selected": self.selected,
             "reason": self.reason,
         }
