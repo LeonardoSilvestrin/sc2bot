@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import unittest
+from dataclasses import replace
 
 from sc2.ids.ability_id import AbilityId
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
 from bot.behavior.defense import DefendBaseExecutor, DefenseAnchors, DefenseConfig
+from bot.behavior.defense.model import choose_approach
 from bot.engine.missions import MissionContext, MissionOutcome
 from bot.world.attention import (
     AttentionSnapshot,
@@ -16,7 +18,12 @@ from bot.world.attention import (
 )
 from bot.world.awareness import (
     AwarenessSnapshot,
+    BaseTerritory,
+    PassageTerritory,
+    RegionTerritory,
     RelativeStrength,
+    TerritoryReading,
+    TerritorySnapshot,
     ThreatAssessment,
 )
 from bot.world.awareness.bases import (
@@ -446,6 +453,81 @@ class DefenseRoleTests(unittest.IsolatedAsyncioTestCase):
         moving = logger.events[2]["data"]
         self.assertEqual(moving["unit_tag"], 1)
         self.assertEqual(moving["siege_anchor"], [16.0, 10.0])
+
+
+HOME = RegionTerritory(
+    key="home", center=BASE, expansions=(BASE,), reading=TerritoryReading()
+)
+EAST_CHOKE = PassageTerritory(
+    key="east_choke",
+    position=Point2((20, 10)),
+    regions=("home", "outside"),
+    reading=TerritoryReading(),
+)
+
+
+def with_topology(mission_context: MissionContext) -> MissionContext:
+    return replace(
+        mission_context,
+        awareness=replace(
+            mission_context.awareness,
+            territory=TerritorySnapshot(
+                regions=(HOME,),
+                passages=(EAST_CHOKE,),
+                bases=(BaseTerritory("own_base", BASE, HOME),),
+            ),
+        ),
+    )
+
+
+class DefenseApproachTests(unittest.IsolatedAsyncioTestCase):
+    """Strategy says the base matters; Defense decides to hold its way in."""
+
+    async def test_tanks_hold_the_way_in_the_attack_still_has_to_pass(self):
+        commands = FakeCommands()
+
+        await executor().step(
+            with_topology(
+                context(
+                    enemy_units=(enemy_marine(9, Point2((32, 10))),),
+                    assigned_units=(tank(1, Point2((10, 13))),),
+                    commands=commands,
+                    bases=held_base(),
+                )
+            )
+        )
+
+        # Six back from the choke toward the base, not six out from the base.
+        self.assertEqual(
+            commands.commands,
+            [("attack_move", "mission-0001", 1, Point2((14, 10)), 2.5)],
+        )
+
+    def test_an_attack_already_inside_falls_back_to_the_line_toward_it(self):
+        config = DefenseConfig()
+
+        self.assertIsNone(
+            choose_approach(BASE, "home", Point2((15, 10)), (EAST_CHOKE,), config)
+        )
+        self.assertIsNone(
+            choose_approach(BASE, None, Point2((32, 10)), (EAST_CHOKE,), config)
+        )
+
+    def test_a_passage_facing_away_from_the_attack_is_not_held(self):
+        config = DefenseConfig()
+
+        self.assertIsNone(
+            choose_approach(BASE, "home", Point2((10, 32)), (EAST_CHOKE,), config)
+        )
+
+    def test_approach_anchors_keep_the_tank_behind_the_screen(self):
+        anchors = DefenseAnchors.at_approach(
+            BASE, EAST_CHOKE, Point2((32, 10)), DefenseConfig()
+        )
+
+        self.assertEqual(anchors.screen, EAST_CHOKE.position)
+        self.assertLess(anchors.siege.distance_to(BASE), anchors.screen.distance_to(BASE))
+        self.assertEqual(anchors.approach, "east_choke")
 
 
 if __name__ == "__main__":

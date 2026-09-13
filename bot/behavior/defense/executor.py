@@ -31,7 +31,14 @@ from bot.engine.missions.execution import (
 from bot.ports.logging import BotLogger
 from bot.world.attention import UnitSnapshot
 
-from .model import DefenseAnchors, DefenseConfig, DefenseRole, SiegePhase
+from .model import (
+    DefenseAnchors,
+    DefenseConfig,
+    DefenseRole,
+    SiegePhase,
+    base_region_key,
+    choose_approach,
+)
 
 COMPONENT = "behavior.defense"
 
@@ -203,8 +210,10 @@ class DefendBaseExecutor(MissionExecutor):
         """Anchors facing the ground attack on the defended base.
 
         Faces the ground threats' centroid when there are any -- a Tank has
-        nothing to answer the air with -- and every threat otherwise. Falls
-        back to the main if the defended base is no longer held.
+        nothing to answer the air with -- and every threat otherwise. Holds
+        the passage into the base's region the attack still has to come
+        through, when there is one; otherwise stands on the line toward it.
+        Falls back to the main if the defended base is no longer held.
         """
 
         base = context.awareness.bases.get(self.target_key)
@@ -214,7 +223,17 @@ class DefendBaseExecutor(MissionExecutor):
             else context.attention.world.map.own_start
         )
         ground = tuple(unit for unit in threats if not unit.is_flying)
-        return DefenseAnchors.toward(origin, _centroid(ground or threats), self.config)
+        threat = _centroid(ground or threats)
+        approach = choose_approach(
+            origin,
+            base_region_key(context.awareness, self.target_key),
+            threat,
+            context.awareness.territory.passages,
+            self.config,
+        )
+        if approach is not None:
+            return DefenseAnchors.at_approach(origin, approach, threat, self.config)
+        return DefenseAnchors.toward(origin, threat, self.config)
 
     # --- release ------------------------------------------------------------
 

@@ -9,8 +9,10 @@ current defenders are; which defenders are asked for first depends on what
 is attacking.
 
 What this planner reports is the attack: how urgent and how decisive a
-defense is here. What the base is worth, and how the defense ranks against a
-raid or a patrol, is Strategy's -- the Mission Policy applies both.
+defense is here, and which of Strategy's base objectives it serves. What the
+base is worth, how far its control falls short of what Strategy wants, and
+how the defense ranks against a raid or a patrol are Strategy's -- the
+Mission Policy applies them.
 """
 
 from __future__ import annotations
@@ -29,12 +31,25 @@ from bot.engine.services import (
     VisionUrgency,
 )
 from bot.ports.logging import BotLogger
-from bot.strategy import MissionSignals, StrategicActivity, StrategicContext
+from bot.strategy import (
+    ControlObjective,
+    ControlTargetKind,
+    MissionSignals,
+    StrategicActivity,
+    StrategicContext,
+)
 from bot.world.attention import AttentionSnapshot
 from bot.world.awareness import AwarenessSnapshot
 
 from .assessment import DefenseAssessor
-from .model import DefenseAssessment, DefenseConfig, DefensePlan, ThreatenedBase
+from .model import (
+    DefenseAssessment,
+    DefenseConfig,
+    DefensePlan,
+    ThreatenedBase,
+    base_region_key,
+    choose_approach,
+)
 
 COMPONENT = "behavior.defense"
 
@@ -88,7 +103,10 @@ class DefensePlanner:
             return ()
 
         self._cadence.mark(now)
-        plans = tuple(self._plan(base) for base in assessment.threatened)
+        context = strategy or StrategicContext.neutral()
+        plans = tuple(
+            self._plan(base, awareness, context) for base in assessment.threatened
+        )
         self.last_plans = plans
         self._log.assessed(assessment, now=now, decision="propose")
         for plan in plans:
@@ -134,11 +152,23 @@ class DefensePlanner:
             ttl=self.config.vision_request_ttl,
         )
 
-    def _plan(self, base: ThreatenedBase) -> DefensePlan:
+    def _plan(
+        self,
+        base: ThreatenedBase,
+        awareness: AwarenessSnapshot,
+        strategy: StrategicContext,
+    ) -> DefensePlan:
         reason = (
             "base_undefended_against_observed_threat"
             if base.is_critical
             else "base_outnumbered_by_observed_threat"
+        )
+        approach = choose_approach(
+            base.base.position,
+            base_region_key(awareness, base.base_id),
+            base.target,
+            awareness.territory.passages,
+            self.config,
         )
         return DefensePlan(
             base=base,
@@ -147,17 +177,29 @@ class DefensePlanner:
                 max(self.config.minimum_units, math.ceil(base.gap)),
             ),
             reason=reason,
-            signals=self._signals(base, reason),
+            signals=self._signals(
+                base,
+                reason,
+                strategy.spatial.for_target(ControlTargetKind.BASE, base.base_id),
+            ),
             type_desirability=self._type_desirability(base),
+            approach=None if approach is None else approach.key,
         )
 
-    def _signals(self, base: ThreatenedBase, reason: str) -> MissionSignals:
+    def _signals(
+        self,
+        base: ThreatenedBase,
+        reason: str,
+        objective: ControlObjective | None,
+    ) -> MissionSignals:
         """How pressing and how decisive defending this base is, locally.
 
         Urgency is the attack itself: an undefended base is losing something
         now (1.0); a covered one grows more urgent the more the attack
         outweighs its cover. Reinforcing matters most, and costs most, where
-        the base is most outweighed.
+        the base is most outweighed. The defense serves Strategy's objective
+        for the base fully; its importance and control gap are Strategy's to
+        weigh, not read here.
         """
 
         config = self.config
@@ -173,6 +215,8 @@ class DefensePlanner:
             opportunity=balance,
             urgency=urgency,
             risk=config.engagement_risk * balance,
+            control_objective=None if objective is None else objective.objective_id,
+            control_alignment=0.0 if objective is None else 1.0,
             reason=reason,
         )
 

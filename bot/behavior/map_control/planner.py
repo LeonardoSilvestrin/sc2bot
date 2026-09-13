@@ -14,6 +14,7 @@ patrol on suitability alone, without this file changing.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field, replace
 
 from sc2.position import Point2
@@ -22,7 +23,13 @@ from bot.behavior.contracts import UNRANKED_PRIORITY, BehaviorLog, MissionCandid
 from bot.engine.missions.models import MissionMode, MissionProposal, UnitRequirement
 from bot.engine.missions.planning import ProposalCadence
 from bot.ports.logging import BotLogger
-from bot.strategy import MissionSignals, StrategicActivity, StrategicContext
+from bot.strategy import (
+    ControlObjective,
+    MissionSignals,
+    SpatialStrategySnapshot,
+    StrategicActivity,
+    StrategicContext,
+)
 from bot.world.attention import AttentionSnapshot
 from bot.world.awareness import AwarenessSnapshot
 from bot.world.awareness.spatial import SpatialFieldSample
@@ -83,7 +90,9 @@ class MapControlPlanner:
             return ()
 
         self._cadence.mark(now)
-        selected = self._select_anchor(attention, awareness)
+        selected = self._select_anchor(
+            attention, awareness, strategy or StrategicContext.neutral()
+        )
         anchor = (
             attention.world.map.center if selected is None else selected.sample.position
         )
@@ -111,6 +120,8 @@ class MapControlPlanner:
             opportunity=_clamp01(selected.score / max_spatial_score(self.config)),
             risk=_clamp01(max(sample.enemy_threat, sample.enemy_control)),
             information_gain=_clamp01(selected.unknown_risk),
+            control_objective=selected.objective_id,
+            control_alignment=_clamp01(selected.objective_alignment),
             reason=selected.reason,
         )
 
@@ -144,7 +155,10 @@ class MapControlPlanner:
         )
 
     def _select_anchor(
-        self, attention: AttentionSnapshot, awareness: AwarenessSnapshot
+        self,
+        attention: AttentionSnapshot,
+        awareness: AwarenessSnapshot,
+        strategy: StrategicContext,
     ) -> MapControlCandidate | None:
         all_samples = awareness.spatial.candidates
         samples = tuple(
@@ -173,6 +187,7 @@ class MapControlPlanner:
                 ),
                 awareness,
                 home=attention.world.map.own_start,
+                strategy=strategy,
             )
             for sample in samples
         )
@@ -216,6 +231,7 @@ class MapControlPlanner:
                     ),
                     awareness,
                     home=attention.world.map.own_start,
+                    strategy=strategy,
                 )
                 old_candidate = current
                 move_distance = current_sample.position.distance_to(
@@ -296,6 +312,7 @@ class MapControlPlanner:
         awareness: AwarenessSnapshot,
         *,
         home: Point2,
+        strategy: StrategicContext,
     ) -> MapControlCandidate:
         spacing = max(awareness.spatial.sample_spacing, 1.0)
         support_score = _support_band(_friendly_support(sample), self.config)
@@ -329,6 +346,11 @@ class MapControlPlanner:
         )
         unknown_risk = 1.0 - sample.knowledge_confidence
         reason = _eligibility_reason(sample, self.config)
+        objective, alignment = _objective_pull(
+            sample.position,
+            strategy.spatial,
+            spacing * self.config.objective_sigma_steps,
+        )
         candidate = MapControlCandidate(
             sample=sample,
             score=0.0,
@@ -337,6 +359,12 @@ class MapControlPlanner:
             support_score=support_score,
             unknown_risk=unknown_risk,
             travel_cost=travel_cost,
+            information_score=strategy.intent.information * unknown_risk,
+            objective_score=(
+                0.0 if objective is None else objective.importance * alignment
+            ),
+            objective_alignment=alignment,
+            objective_id=None if objective is None else objective.objective_id,
             reason=reason,
         )
         return replace(
@@ -407,7 +435,9 @@ def max_spatial_score(config: MapControlConfig) -> float:
         + config.frontier_weight
         + config.advancement_weight
         + config.choke_weight
-        + config.route_weight,
+        + config.route_weight
+        + config.information_weight
+        + config.objective_weight,
         1e-6,
     )
 
@@ -425,8 +455,13 @@ def score_spatial_sample(
     advancement = 0.0 if candidate is None else candidate.advancement_score
     unknown = 1.0 - sample.knowledge_confidence
     travel = 0.0 if candidate is None else candidate.travel_cost
+    information = 0.0 if candidate is None else candidate.information_score
+    objective = 0.0 if candidate is None else candidate.objective_score
 
     return (
+        config.information_weight * information
+        + config.objective_weight * objective
+        +
         config.friendly_weight * support
         + config.frontier_weight * frontier
         + config.advancement_weight * advancement
@@ -465,6 +500,37 @@ def _eligibility_reason(sample: SpatialFieldSample, config: MapControlConfig) ->
     if support > config.frontier_max_support:
         return "rejected_deep_friendly_interior"
     return "frontier_candidate"
+
+
+_APPROACH_ACTIVITIES = frozenset(
+    {StrategicActivity.MAP_CONTROL, StrategicActivity.INFORMATION}
+)
+
+
+def _objective_pull(
+    position: Point2, spatial: SpatialStrategySnapshot, sigma: float
+) -> tuple[ControlObjective | None, float]:
+    """The approach objective pulling hardest on ``position``, and its
+    proximity (1 on it, fading with distance over ``sigma``).
+
+    Only map control and information objectives: holding the ways into our
+    bases is the standing army's and defense's, not the patrol's.
+    """
+
+    best: ControlObjective | None = None
+    best_pull = 0.0
+    best_alignment = 0.0
+    sigma = max(sigma, 1e-6)
+    for objective in spatial.objectives:
+        if objective.activity not in _APPROACH_ACTIVITIES:
+            continue
+        alignment = math.exp(
+            -0.5 * (position.distance_to(objective.position) / sigma) ** 2
+        )
+        pull = objective.importance * alignment
+        if pull > best_pull:
+            best, best_pull, best_alignment = objective, pull, alignment
+    return best, best_alignment
 
 
 def _invalidation_reason(

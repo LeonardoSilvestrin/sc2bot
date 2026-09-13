@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from bot.domain import is_combat_unit
-from bot.strategy import MacroPosture
 from bot.world.attention import AttentionSnapshot
 from bot.world.awareness import AwarenessSnapshot, RelativePosition
 
@@ -13,21 +12,18 @@ from .model import CombatPosture, StandingAssessment, StandingConfig
 
 
 def derive_combat_posture(*, awareness: AwarenessSnapshot) -> CombatPosture:
-    """A small, deterministic policy over already-computed Awareness signals.
+    """A small, deterministic reading of already-computed Awareness signals.
 
-    No new observation is introduced here -- ``bases.threatened``, the
-    stabilized army belief and ``macro_posture`` already exist precisely to
-    answer "is something wrong right now" and "are we ahead". The army
-    belief already weighs how sure it is, so its stable state is read as is:
-    gating it again on its confidence is what used to make this flap.
+    No new observation is introduced here -- ``bases.threatened`` and the
+    stabilized army belief already answer "is something wrong right now" and
+    "are we ahead". The army belief already weighs how sure it is, so its
+    stable state is read as is: gating it again on its confidence is what
+    used to make this flap. Strategic caution is not read here at all; it is
+    Strategy's intent.
     """
 
     army = awareness.army.relative
-    if (
-        awareness.bases.threatened
-        or awareness.macro_posture in {MacroPosture.DEFENSE, MacroPosture.RECOVERY}
-        or army.stable_state is RelativePosition.BEHIND
-    ):
+    if awareness.bases.threatened or army.stable_state is RelativePosition.BEHIND:
         return CombatPosture.TURTLE
 
     if (

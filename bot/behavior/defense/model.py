@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Any
@@ -11,6 +12,7 @@ from sc2.position import Point2
 
 from bot.engine.missions.models import MissionKind
 from bot.strategy import MissionSignals
+from bot.world.awareness import AwarenessSnapshot, PassageTerritory
 from bot.world.awareness.bases import BaseAssessment, BaseSecurityLevel
 
 _DEFAULT_DEFENDER_TYPES: frozenset[UnitTypeId] = frozenset(
@@ -105,6 +107,11 @@ class DefenseConfig:
     # Once the threat clears, how long the mission may hold its Tanks to
     # unsiege them before completing regardless.
     unsiege_timeout: float = 6.0
+    # When the attack still has to come through a passage into the defended
+    # base's region -- no farther out than this -- the defense holds that
+    # way in, the siege anchor this far back from it toward the base.
+    approach_max_distance: float = 30.0
+    approach_siege_standoff: float = 6.0
 
     mission_kind: MissionKind = MissionKind.DEFENSE
 
@@ -145,6 +152,8 @@ class DefenseConfig:
             )
         if self.unsiege_timeout < 0.0:
             raise ValueError("unsiege_timeout must not be negative")
+        if self.approach_max_distance <= 0.0 or self.approach_siege_standoff < 0.0:
+            raise ValueError("invalid approach geometry")
 
 
 @dataclass(frozen=True, slots=True)
@@ -225,6 +234,8 @@ class DefensePlan:
     signals: MissionSignals
     # Which defender types this attack makes worth pulling.
     type_desirability: tuple[tuple[UnitTypeId, float], ...] = ()
+    # The passage the attack is expected through, if it has one to pass.
+    approach: str | None = None
 
     @property
     def target(self) -> Point2:
@@ -235,6 +246,7 @@ class DefensePlan:
             "base_id": self.base.base_id,
             "desired_units": self.desired_units,
             **self.signals.log_fields(),
+            "approach": self.approach,
             "reason": self.reason,
             "critical": self.base.is_critical,
             "ground_threats": self.base.ground_threats,
@@ -286,15 +298,39 @@ class SiegePhase(Enum):
 class DefenseAnchors:
     """Where each role stands this frame, facing the attack on the base.
 
-    Plain geometry, no map analysis: both anchors lie on the segment from
-    the base toward the threat, the siege anchor always closer to the base
-    than the screen anchor. Not the perfect choke -- a deliberate position.
+    Two shapes, the siege anchor always closer to the base than the screen:
+
+    - ``at_approach``: the attack still has to come through a passage into
+      the base's region, so the defense holds that way in.
+    - ``toward``: plain geometry on the segment from the base toward the
+      threat, when there is no way in to hold (the attack is already inside,
+      or no region graph exists).
     """
 
     base: Point2
     threat: Point2
     siege: Point2
     screen: Point2
+    approach: str | None = None
+
+    @classmethod
+    def at_approach(
+        cls,
+        base: Point2,
+        passage: PassageTerritory,
+        threat: Point2,
+        config: DefenseConfig,
+    ) -> DefenseAnchors:
+        standoff = min(
+            config.approach_siege_standoff, passage.position.distance_to(base)
+        )
+        return cls(
+            base=base,
+            threat=threat,
+            siege=passage.position.towards(base, standoff),
+            screen=passage.position,
+            approach=passage.key,
+        )
 
     @classmethod
     def toward(
@@ -317,7 +353,60 @@ class DefenseAnchors:
             "threat": _xy(self.threat),
             "siege_anchor": _xy(self.siege),
             "screen_anchor": _xy(self.screen),
+            "approach": self.approach,
         }
+
+
+def base_region_key(awareness: AwarenessSnapshot, base_id: str) -> str | None:
+    """The region Awareness places one of our bases in, if it has a graph."""
+
+    territory = next(
+        (item for item in awareness.territory.bases if item.base_id == base_id), None
+    )
+    return None if territory is None or territory.region is None else territory.region.key
+
+
+def choose_approach(
+    base: Point2,
+    region_key: str | None,
+    threat: Point2,
+    passages: Iterable[PassageTerritory],
+    config: DefenseConfig,
+) -> PassageTerritory | None:
+    """The way into the base's region the attack still has to come through.
+
+    Tactical geometry over Awareness' topology, nothing strategic: a passage
+    of the base's region, within ``approach_max_distance`` of the base,
+    nearer the base than the attack and nearer the attack than the base --
+    so it lies between them -- best aligned with where the attack comes
+    from. ``None`` once the attack is inside, or without a region graph.
+    """
+
+    if region_key is None:
+        return None
+    threat_distance = base.distance_to(threat)
+    if threat_distance <= 0.0:
+        return None
+    best: PassageTerritory | None = None
+    best_alignment = 0.0
+    for passage in sorted(passages, key=lambda item: item.key):
+        if region_key not in passage.regions:
+            continue
+        reach = base.distance_to(passage.position)
+        if not 0.0 < reach <= config.approach_max_distance:
+            continue
+        if (
+            reach >= threat_distance
+            or passage.position.distance_to(threat) >= threat_distance
+        ):
+            continue
+        alignment = (
+            (passage.position.x - base.x) * (threat.x - base.x)
+            + (passage.position.y - base.y) * (threat.y - base.y)
+        ) / (reach * threat_distance)
+        if alignment > best_alignment:
+            best, best_alignment = passage, alignment
+    return best
 
 
 def _xy(point: Point2) -> list[float]:

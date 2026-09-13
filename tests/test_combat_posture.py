@@ -85,12 +85,15 @@ class CombatPostureTests(unittest.TestCase):
             CombatPosture.TURTLE,
         )
 
-    def test_turtles_when_macro_posture_is_defense_or_recovery(self):
+    def test_the_legacy_macro_posture_is_not_reinterpreted(self):
+        """Strategic caution is Strategy's intent; the compatibility posture
+        macro still reads no longer turtles the army."""
+
         for macro in (MacroPosture.DEFENSE, MacroPosture.RECOVERY):
             with self.subTest(macro=macro):
                 self.assertEqual(
                     derive_combat_posture(awareness=snapshot(macro_posture=macro)),
-                    CombatPosture.TURTLE,
+                    CombatPosture.BALANCED,
                 )
 
     def test_turtles_when_confidently_behind(self):

@@ -7,14 +7,24 @@ from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
 from bot.app.mission_ranking import rank_candidates
-from bot.behavior.standing import StandingPlanner
+from bot.behavior.standing import StandingConfig, StandingPlanner
 from bot.domain import COMBAT_UNIT_TYPES
 from bot.engine.missions import MissionKind, MissionMode
+from bot.strategy import (
+    ControlTargetKind,
+    IntentConfig,
+    MissionPolicyConfig,
+    StrategicContext,
+    StrategicObjective,
+    derive_control_objectives,
+)
 from bot.world.attention import AttentionSnapshot, MapFacts, UnitSnapshot, WorldFacts
 from bot.world.awareness import AwarenessSnapshot, RelativeStrength, ThreatAssessment
 from bot.world.awareness.bases import BaseSecurityAssessor
 from bot.world.awareness.enemy import EnemyAwareness
 from tests.fakes import FakeLogger
+from tests.test_spatial_strategy import NATURAL
+from tests.test_spatial_strategy import world as topology
 
 MAP = MapFacts(
     center=Point2((50, 50)),
@@ -158,9 +168,9 @@ class CoreArmyStandingTests(unittest.TestCase):
             if event["name"] == "behavior.proposed"
         ]
         self.assertEqual(len(anchors), 2)
-        self.assertEqual(anchors[0]["anchor_reason"], "single_base_held")
+        self.assertEqual(anchors[0]["anchor_reason"], "fallback_single_base_held")
         self.assertEqual(
-            anchors[1]["anchor_reason"], "between_previous_and_newest_base"
+            anchors[1]["anchor_reason"], "fallback_between_previous_and_newest_base"
         )
         self.assertEqual(anchors[1]["previous_anchor"], anchors[0]["anchor"])
 
@@ -186,6 +196,92 @@ class CoreArmyStandingTests(unittest.TestCase):
             second_proposal.deduplication_key,
         )
         self.assertEqual(rank_candidates(planner.propose(second, awareness)), ())
+
+    def test_standing_stays_the_low_priority_fallback_owner(self):
+        attention, awareness = current(10.0)
+        pressing = StrategicContext(
+            intent=IntentConfig().profile(StrategicObjective.PRESSURE)
+        )
+
+        (candidate,) = StandingPlanner().propose(attention, awareness, pressing)
+        (proposal,) = rank_candidates((candidate,), pressing)
+
+        self.assertTrue(candidate.signals.is_fallback)
+        self.assertEqual(proposal.priority, MissionPolicyConfig().fallback_priority)
+
+
+def strategy_over_topology(
+    objective: StrategicObjective = StrategicObjective.BUILD_ADVANTAGE, **options
+) -> tuple[AwarenessSnapshot, StrategicContext]:
+    awareness = topology(**options)
+    intent = IntentConfig().profile(objective)
+    return awareness, StrategicContext(
+        intent=intent, spatial=derive_control_objectives(intent, awareness)
+    )
+
+
+class SpatialAnchorTests(unittest.TestCase):
+    def test_the_army_waits_inside_the_passage_strategy_wants_held(self):
+        """A high-importance base behind an important passage moves the army
+        onto the way in, not between townhalls."""
+
+        awareness, strategy = strategy_over_topology()
+        attention = current(10.0)[0]
+        planner = StandingPlanner()
+
+        (candidate,) = planner.propose(attention, awareness, strategy)
+
+        choke = strategy.spatial.for_target(ControlTargetKind.PASSAGE, "nat_choke")
+        plan = planner.last_plan
+        self.assertEqual(plan.objective_id, choke.objective_id)
+        self.assertEqual(plan.supports, "base:nat")
+        self.assertEqual(plan.anchor_reason, "holds_home_passage_objective")
+        self.assertAlmostEqual(
+            candidate.draft.target.distance_to(choke.position),
+            StandingConfig().home_anchor_standoff,
+        )
+        self.assertLess(
+            candidate.draft.target.distance_to(NATURAL),
+            choke.position.distance_to(NATURAL),
+        )
+
+    def test_the_between_bases_interpolation_is_only_the_fallback(self):
+        awareness, strategy = strategy_over_topology()
+        attention = current(10.0)[0]
+
+        without = StandingPlanner()
+        without.propose(attention, awareness)
+        with_strategy = StandingPlanner()
+        with_strategy.propose(attention, awareness, strategy)
+
+        self.assertTrue(without.last_plan.anchor_reason.startswith("fallback_"))
+        self.assertFalse(with_strategy.last_plan.anchor_reason.startswith("fallback_"))
+        self.assertNotEqual(without.last_plan.anchor, with_strategy.last_plan.anchor)
+
+    def test_a_marginally_more_important_passage_does_not_move_the_army(self):
+        awareness, strategy = strategy_over_topology()
+        attention = current(10.0)[0]
+        planner = StandingPlanner(config=StandingConfig(proposal_cadence=1.0))
+        planner.propose(attention, awareness, strategy)
+        held = planner.last_plan.objective_id
+
+        ramp = strategy.spatial.for_target(ControlTargetKind.PASSAGE, "ramp")
+        choke = strategy.spatial.for_target(ControlTargetKind.PASSAGE, "nat_choke")
+        nudged = StrategicContext(
+            intent=strategy.intent,
+            spatial=replace(
+                strategy.spatial,
+                objectives=tuple(
+                    replace(item, protects="base:nat", importance=choke.importance)
+                    if item is ramp
+                    else item
+                    for item in strategy.spatial.objectives
+                ),
+            ),
+        )
+        planner.propose(current(11.0)[0], awareness, nudged)
+
+        self.assertEqual(planner.last_plan.objective_id, held)
 
 
 if __name__ == "__main__":

@@ -16,7 +16,6 @@ from bot.engine.missions.execution import (
 )
 from bot.engine.missions.models import Mission
 from bot.ports.logging import BotLogger
-from bot.strategy import MacroPosture
 from bot.world.attention import UnitSnapshot
 from bot.world.awareness.bases import BaseSecurityLevel
 from bot.world.awareness.spatial import SpatialField
@@ -153,11 +152,10 @@ class MapControlExecutor(MissionExecutor):
         context: MissionContext,
         units: tuple[UnitSnapshot, ...],
     ) -> str | None:
-        if context.awareness.macro_posture in {
-            MacroPosture.DEFENSE,
-            MacroPosture.RECOVERY,
-        } or context.awareness.bases.threatened:
-            return "strategic_danger"
+        # An observed attack on a base, not a strategic reading: whether map
+        # control is wanted at all is Strategy's, and ranks the mission.
+        if context.awareness.bases.threatened:
+            return "base_under_attack"
         if any(unit.health_percentage <= self.retreat_health for unit in units):
             return "squad_health_low"
         if any(

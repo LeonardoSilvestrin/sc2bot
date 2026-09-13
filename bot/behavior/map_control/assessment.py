@@ -1,11 +1,14 @@
-"""ASSESS: can we spare a squad to hold the map right now?"""
+"""ASSESS: how much of an army could hold the map right now?
+
+Whether holding the map is strategically wanted is not assessed here: that
+is Strategy's intent, which the planner reads and the Mission Policy weighs.
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 
 from bot.domain import is_combat_unit
-from bot.strategy import MacroPosture
 from bot.world.attention import AttentionSnapshot, UnitSnapshot
 from bot.world.awareness import AwarenessSnapshot
 
@@ -26,15 +29,6 @@ class MapControlAssessor:
             combat_units=len(army),
             combat_supply=sum(unit.supply_cost for unit in army),
             started=world.time >= self.config.start_after,
-            # Reported, not gated on: the planner keeps declaring the squad
-            # under pressure and lets the executor pull it home, so the
-            # standing mission survives instead of being torn down and
-            # rebuilt every time a base is threatened.
-            strategically_safe=(
-                not awareness.bases.threatened
-                and awareness.macro_posture
-                not in {MacroPosture.DEFENSE, MacroPosture.RECOVERY}
-            ),
         )
 
     def _counts(self, unit: UnitSnapshot) -> bool:

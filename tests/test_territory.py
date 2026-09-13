@@ -729,12 +729,15 @@ class TerritoryStructureTests(unittest.TestCase):
         )
 
 
-class ShadowModeTests(unittest.TestCase):
-    def test_no_behavior_macro_or_engine_reads_territory_yet(self):
+class ConsumerTests(unittest.TestCase):
+    def test_macro_and_the_mission_engine_never_read_territory(self):
+        """Strategy prescribes from territory and behaviors act on it; macro
+        and the mission engine stay out of it."""
+
         pattern = re.compile(r"\.territory\b|\w*Territory\w*")
         readers = [
             str(path.relative_to(BOT))
-            for package in ("behavior", "macro", "engine")
+            for package in ("macro", "engine")
             for path in (BOT / package).rglob("*.py")
             if pattern.search(path.read_text(encoding="utf-8"))
         ]

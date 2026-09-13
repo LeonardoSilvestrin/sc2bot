@@ -21,6 +21,8 @@ from bot.world.attention import (
     UnitSnapshot,
     WorldFacts,
 )
+from dataclasses import replace
+
 from bot.world.awareness import (
     AwarenessSnapshot,
     MacroPosture,
@@ -78,7 +80,6 @@ def context(
     *,
     assigned_units: tuple[UnitSnapshot, ...],
     enemy_units: tuple[UnitSnapshot, ...] = (),
-    posture: MacroPosture = MacroPosture.BALANCED,
     bases: BaseAwareness | None = None,
     spatial: SpatialField | None = None,
     commands: FakeCommands,
@@ -99,7 +100,6 @@ def context(
         relative_strength=RelativeStrength(0.0, 0.0, 0, 0),
         threat=ThreatAssessment(0, 0, 0),
         updated_at=world.time,
-        macro_posture=posture,
         bases=bases or base_awareness(),
         spatial=spatial or SpatialField(),
     )
@@ -176,20 +176,34 @@ class MapControlExecutorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.reason, "squad_health_low_holding_home")
         self.assertEqual(commands.commands, [])
 
-    async def test_strategic_defense_posture_sends_the_squad_home(self):
+    async def test_a_base_under_attack_sends_the_squad_home(self):
         commands = FakeCommands()
         squad = (marine(1, Point2((40, 40))),)
 
         result = await self.executor().step(
             context(
                 assigned_units=squad,
-                posture=MacroPosture.DEFENSE,
+                bases=base_awareness(BaseSecurityLevel.CRITICAL),
                 commands=commands,
             )
         )
 
-        self.assertEqual(result.reason, "strategic_danger_retreating")
+        self.assertEqual(result.reason, "base_under_attack_retreating")
         self.assertEqual(commands.commands[0][3], MAP.own_start)
+
+    async def test_the_legacy_macro_posture_no_longer_sends_the_squad_home(self):
+        commands = FakeCommands()
+        squad = (marine(1, Point2((40, 40))),)
+        calm = context(assigned_units=squad, commands=commands)
+
+        result = await self.executor().step(
+            replace(
+                calm,
+                awareness=replace(calm.awareness, macro_posture=MacroPosture.DEFENSE),
+            )
+        )
+
+        self.assertEqual(result.reason, "patrolling_safe_map_route")
 
     async def test_fails_if_the_assigned_squad_disappears(self):
         commands = FakeCommands()

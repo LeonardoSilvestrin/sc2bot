@@ -13,15 +13,12 @@ from bot.world.awareness.bases import BaseAssessment
 
 
 class CombatPosture(Enum):
-    """How defensively the standing army should currently be arranged.
+    """Whether anything observed is pressing on the standing army.
 
-    This is deliberately a different axis from ``MacroPosture``:
-    ``MacroPosture`` is economic/strategic policy (how risky spending is
-    right now); ``CombatPosture`` is only about where standing military
-    force should sit when nothing more urgent (``DEFENSE``, harass, ...)
-    needs it. Mixing the two would conflate "should I greed for a fourth
-    base" with "should my army be forward or home", which are genuinely
-    different questions answered from different evidence.
+    Descriptive only: it is logged and moves nothing. It is deliberately not
+    a strategic reading -- what the bot wants is Strategy's intent, and how
+    risky spending is stays macro's concern -- only what Awareness observes
+    about threatened bases and the army belief.
     """
 
     TURTLE = auto()
@@ -36,8 +33,8 @@ class StandingConfig:
     The core army is the fallback owner: the Mission Policy ranks it at its
     fixed fallback floor, below every real opportunity by at least the
     allocator's preemption margin, so a standing slot is always freely
-    preemptible. The anchor fraction is a deliberately small, deterministic
-    policy knob rather than a composition system.
+    preemptible. Where the army waits follows Strategy's home control
+    objectives; the anchor fraction is only the last resort without them.
 
     Which units belong to the core army is not configured here: every combat
     unit no more specific mission is using, whatever produced it. Specialized
@@ -51,6 +48,14 @@ class StandingConfig:
     cooldown_seconds: float = 5.0
     commitment_seconds: float = 2.0
     arrival_radius: float = 4.0
+    # Where the core army waits on a home passage Strategy wants held: this
+    # far inside it, toward the base it protects.
+    home_anchor_standoff: float = 4.0
+    # A base or passage must matter this much more than the one the army
+    # already supports before the army moves to it.
+    anchor_retarget_margin: float = 0.1
+    # Last resort only, with no spatial objective to support: most of the way
+    # from the previous base toward the newest one.
     anchor_fraction_to_newest_base: float = 0.72
 
     def __post_init__(self) -> None:
@@ -68,6 +73,10 @@ class StandingConfig:
             raise ValueError("arrival_radius must be positive")
         if not 0.0 <= self.anchor_fraction_to_newest_base <= 1.0:
             raise ValueError("anchor_fraction_to_newest_base must be between 0 and 1")
+        if self.home_anchor_standoff < 0.0:
+            raise ValueError("home_anchor_standoff must not be negative")
+        if not 0.0 <= self.anchor_retarget_margin <= 1.0:
+            raise ValueError("anchor_retarget_margin must be between 0 and 1")
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,12 +121,18 @@ class StandingPlan:
     # no higher-priority mission holds belongs here. A cardinality, not a
     # force size -- "all of them" is exact whatever each unit weighs.
     core_count: int
+    # The Strategy objective the anchor holds (a home passage), and the base
+    # objective it protects; both ``None`` on the fallback anchor.
+    objective_id: str | None = None
+    supports: str | None = None
 
     def log_fields(self) -> dict[str, Any]:
         return {
             "anchor": [round(float(self.anchor.x), 1), round(float(self.anchor.y), 1)],
             "anchor_reason": self.anchor_reason,
             "core_count": self.core_count,
+            "objective": self.objective_id,
+            "supports": self.supports,
         }
 
 

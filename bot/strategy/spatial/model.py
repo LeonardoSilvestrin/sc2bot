@@ -134,6 +134,20 @@ class SpatialStrategySnapshot:
     def of_kind(self, *kinds: ControlTargetKind) -> tuple[ControlObjective, ...]:
         return tuple(item for item in self.objectives if item.kind in kinds)
 
+    def for_target(
+        self, kind: ControlTargetKind, target_key: str
+    ) -> ControlObjective | None:
+        """The objective about this base, region or passage, if Strategy has one."""
+
+        return next(
+            (
+                item
+                for item in self.objectives
+                if item.kind is kind and item.target_key == target_key
+            ),
+            None,
+        )
+
     def protecting(self, objective_id: str) -> tuple[ControlObjective, ...]:
         """The objectives guarding ``objective_id``, most important first."""
 

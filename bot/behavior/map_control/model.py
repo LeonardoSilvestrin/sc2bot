@@ -62,6 +62,16 @@ class MapControlConfig:
     retarget_min_sample_steps: float = 1.5
     logged_candidate_count: int = 5
 
+    # --- what Strategy wants -----------------------------------------------
+    # Unknown space is worth `information_weight * intent.information` against
+    # `unknown_weight`'s caution; a sample near an approach Strategy wants
+    # controlled or watched is worth `objective_weight * importance`, fading
+    # over `objective_sigma_steps` grid steps. Strategy says whether space and
+    # information matter; this still decides which point obtains them.
+    information_weight: float = 0.3
+    objective_weight: float = 0.6
+    objective_sigma_steps: float = 1.5
+
     # --- tactics ----------------------------------------------------------
     # The patrol walks every sampled pathable point within this many grid
     # steps of the anchor; 0 holds the anchor itself.
@@ -108,6 +118,9 @@ class MapControlConfig:
             "retarget_score_improvement",
             "retarget_min_sample_steps",
             "patrol_radius_sample_steps",
+            "information_weight",
+            "objective_weight",
+            "objective_sigma_steps",
         ):
             if getattr(self, name) < 0.0:
                 raise ValueError(f"{name} must not be negative")
@@ -145,7 +158,6 @@ class MapControlAssessment:
     combat_units: int
     combat_supply: float
     started: bool
-    strategically_safe: bool
 
     @property
     def force_available(self) -> bool:
@@ -156,7 +168,6 @@ class MapControlAssessment:
             "combat_units": self.combat_units,
             "combat_supply": round(self.combat_supply, 1),
             "started": self.started,
-            "strategically_safe": self.strategically_safe,
         }
 
 
@@ -192,6 +203,13 @@ class MapControlCandidate:
     support_score: float = 0.0
     unknown_risk: float = 0.0
     travel_cost: float = 0.0
+    # What Strategy's intent and objectives add: unknown space weighted by
+    # intent.information, and the pull of the approach objective nearest in
+    # importance x proximity (`objective_alignment` is the proximity alone).
+    information_score: float = 0.0
+    objective_score: float = 0.0
+    objective_alignment: float = 0.0
+    objective_id: str | None = None
     selected: bool = False
     reason: str = "lower_score"
 
@@ -220,6 +238,9 @@ class MapControlCandidate:
             "choke": round(sample.choke_value, 3),
             "route": round(sample.route_value, 3),
             "travel_cost": round(self.travel_cost, 3),
+            "information": round(self.information_score, 3),
+            "objective": round(self.objective_score, 3),
+            "objective_id": self.objective_id,
             "selected": self.selected,
             "reason": self.reason,
         }
@@ -228,9 +249,9 @@ class MapControlCandidate:
 class PatrolPhase(Enum):
     """What the patrol squad is doing right now.
 
-    The patrol is deliberately timid: anything strategically wrong, any hurt
-    member, or any nearby enemy that can shoot it sends the squad home rather
-    than into a fight it was never sized to win.
+    The patrol is deliberately timid: a base under attack, any hurt member,
+    or any nearby enemy that can shoot it sends the squad home rather than
+    into a fight it was never sized to win.
     """
 
     WAITING = auto()

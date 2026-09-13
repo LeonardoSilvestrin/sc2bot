@@ -29,6 +29,15 @@ from bot.world.awareness import (
     SpatialFieldSample,
     ThreatAssessment,
 )
+from bot.strategy import (
+    ControlObjective,
+    ControlTargetKind,
+    IntentConfig,
+    SpatialStrategySnapshot,
+    StrategicActivity,
+    StrategicContext,
+    StrategicObjective,
+)
 from bot.world.awareness.bases import (
     BaseAssessment,
     BaseAwareness,
@@ -93,18 +102,23 @@ def attention(
     )
 
 
-def awareness(
-    now: float,
-    *,
-    posture: MacroPosture = MacroPosture.BALANCED,
-) -> AwarenessSnapshot:
+def awareness(now: float, *, bases: BaseAwareness | None = None) -> AwarenessSnapshot:
     return AwarenessSnapshot(
         enemy=EnemyAwareness(sightings=(), locations=()),
         relative_strength=RelativeStrength(0.0, 0.0, 0, 0),
         threat=ThreatAssessment(0, 0, 0),
         updated_at=now,
-        macro_posture=posture,
-        bases=BaseAwareness(),
+        bases=bases or BaseAwareness(),
+    )
+
+
+def attacked_base() -> BaseAwareness:
+    return BaseAwareness(
+        (
+            BaseAssessment(
+                "base:1", Point2((10, 10)), True, 2.0, 0.0, BaseSecurityLevel.CRITICAL
+            ),
+        )
     )
 
 
@@ -184,7 +198,7 @@ class MapControlPlannerTests(unittest.TestCase):
                 rank_candidates(
                     planner.propose(
                         attention(180.0),
-                        awareness(180.0, posture=MacroPosture.DEFENSE),
+                        awareness(180.0, bases=attacked_base()),
                     )
                 )
             ),
@@ -387,6 +401,9 @@ class MapControlPlannerTests(unittest.TestCase):
                 "choke",
                 "route",
                 "travel_cost",
+                "information",
+                "objective",
+                "objective_id",
                 "selected",
                 "reason",
             },
@@ -562,6 +579,96 @@ class MapControlPlannerTests(unittest.TestCase):
         self.assertEqual(
             change["data"]["reason"],
             "current_anchor_invalidated_by_enemy_threat",
+        )
+
+
+class StrategyConsumptionTests(unittest.TestCase):
+    """Strategy says whether space and information matter; the planner still
+    picks the point that obtains them."""
+
+    WEST, SOUTH = Point2((40, 10)), Point2((10, 40))
+
+    def frontier(self, now: float, *, west_knowledge: float, south_knowledge: float):
+        return replace(
+            awareness(now),
+            spatial=SpatialField(
+                samples=(
+                    SpatialFieldSample(
+                        self.WEST,
+                        friendly_value=0.45,
+                        knowledge_confidence=west_knowledge,
+                    ),
+                    SpatialFieldSample(
+                        self.SOUTH,
+                        friendly_value=0.45,
+                        knowledge_confidence=south_knowledge,
+                    ),
+                ),
+                updated_at=now,
+            ),
+        )
+
+    def context(self, **intent) -> StrategicContext:
+        base = IntentConfig().profile(StrategicObjective.BUILD_ADVANTAGE)
+        return StrategicContext(intent=replace(base, **intent))
+
+    def test_strategic_safety_is_not_derived_from_macro_posture(self):
+        self.assertNotIn("strategically_safe", MapControlAssessment.__dataclass_fields__)
+        calm = MapControlPlanner().propose(attention(180.0), awareness(180.0))
+        legacy_danger = MapControlPlanner().propose(
+            attention(180.0),
+            replace(awareness(180.0), macro_posture=MacroPosture.DEFENSE),
+        )
+
+        self.assertEqual(rank_candidates(calm), rank_candidates(legacy_danger))
+
+    def test_an_information_intent_sends_the_patrol_toward_unknown_space(self):
+        state = self.frontier(10.0, west_knowledge=1.0, south_knowledge=0.0)
+
+        curious = MapControlPlanner().propose(
+            attention(10.0), state, self.context(information=1.0)
+        )
+        incurious = MapControlPlanner().propose(
+            attention(10.0), state, self.context(information=0.0)
+        )
+
+        self.assertEqual(curious[0].draft.target, self.SOUTH)
+        self.assertEqual(incurious[0].draft.target, self.WEST)
+        self.assertGreater(curious[0].signals.information_gain, 0.9)
+
+    def test_an_approach_strategy_wants_pulls_the_anchor_and_is_served(self):
+        state = self.frontier(10.0, west_knowledge=1.0, south_knowledge=1.0)
+        approach = ControlObjective(
+            objective_id="region:south",
+            kind=ControlTargetKind.REGION,
+            target_key="south",
+            position=self.SOUTH,
+            activity=StrategicActivity.MAP_CONTROL,
+            desired_control=0.6,
+            desired_visibility=0.8,
+            importance=0.8,
+            current_control=0.0,
+            current_visibility=0.2,
+            reason="contested_approach",
+        )
+        strategy = replace(
+            self.context(),
+            spatial=SpatialStrategySnapshot(objectives=(approach,)),
+        )
+
+        (candidate,) = MapControlPlanner().propose(attention(10.0), state, strategy)
+        (unpulled,) = MapControlPlanner().propose(attention(10.0), state)
+
+        self.assertEqual(candidate.draft.target, self.SOUTH)
+        self.assertEqual(candidate.signals.control_objective, "region:south")
+        self.assertGreater(candidate.signals.control_alignment, 0.9)
+        self.assertEqual(unpulled.draft.target, self.SOUTH)
+        self.assertIsNone(unpulled.signals.control_objective)
+        self.assertGreater(
+            rank_candidates((candidate,), strategy)[0].priority,
+            rank_candidates((replace(candidate, signals=unpulled.signals),), strategy)[
+                0
+            ].priority,
         )
 
 

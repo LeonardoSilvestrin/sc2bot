@@ -193,15 +193,28 @@ class BehaviorInterpretationTests(unittest.TestCase):
             "bot.strategy.StrategicContext",
             "bot.strategy.ControlObjective",
             "bot.strategy.ControlTargetKind",
-            # Legacy transport still read by Standing and Map Control until
-            # they consume the spatial objectives.
-            "bot.strategy.MacroPosture",
+            "bot.strategy.SpatialStrategySnapshot",
         }
         found = [
             f"{relative(path)}: {name}"
             for path in sorted((BOT / "behavior").rglob("*.py"))
             for name in sorted(imported_modules(path))
             if name.startswith("bot.strategy") and name not in allowed
+        ]
+
+        self.assertEqual(found, [])
+
+    def test_behaviors_no_longer_reinterpret_the_legacy_macro_posture(self):
+        """MacroPosture stays macro's compatibility input; strategic caution
+        reaches behaviors only as Strategy's intent and objectives."""
+
+        found = [
+            relative(path)
+            for path in sorted((BOT / "behavior").rglob("*.py"))
+            if re.search(
+                r"\b(MacroPosture|macro_posture)\b",
+                path.read_text(encoding="utf-8-sig"),
+            )
         ]
 
         self.assertEqual(found, [])
