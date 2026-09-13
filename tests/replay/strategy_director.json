@@ -1,0 +1,46 @@
+{
+  "kernel": "strategy_director",
+  "configs": null,
+  "cases": [
+    {
+      "name": "an_even_start_holds_the_initial_objective",
+      "input": {
+        "steps": [
+          {"game_time": 0.0, "inputs": {"military_edge": 0.0, "economic_edge": 0.0, "territory_edge": 0.0, "immediate_threat": 0.0, "base_exposure": 0.2, "knowledge_confidence": 0.5}}
+        ]
+      },
+      "expected": null
+    },
+    {
+      "name": "an_emergency_replaces_the_objective_before_its_dwell",
+      "input": {
+        "steps": [
+          {"game_time": 0.0, "inputs": {"military_edge": 0.0, "economic_edge": 0.0, "territory_edge": 0.0, "immediate_threat": 0.0, "base_exposure": 0.2, "knowledge_confidence": 0.5}},
+          {"game_time": 1.0, "inputs": {"military_edge": -0.6, "economic_edge": 0.0, "territory_edge": -0.3, "immediate_threat": 0.95, "base_exposure": 0.8, "knowledge_confidence": 0.7}}
+        ]
+      },
+      "expected": null
+    },
+    {
+      "name": "a_clear_lead_switches_only_after_the_dwell",
+      "input": {
+        "steps": [
+          {"game_time": 0.0, "inputs": {"military_edge": 0.8, "economic_edge": 0.6, "territory_edge": 0.5, "immediate_threat": 0.0, "base_exposure": 0.1, "knowledge_confidence": 0.9}},
+          {"game_time": 10.0, "inputs": {"military_edge": 0.8, "economic_edge": 0.6, "territory_edge": 0.5, "immediate_threat": 0.0, "base_exposure": 0.1, "knowledge_confidence": 0.9}},
+          {"game_time": 25.0, "inputs": {"military_edge": 0.8, "economic_edge": 0.6, "territory_edge": 0.5, "immediate_threat": 0.0, "base_exposure": 0.1, "knowledge_confidence": 0.9}}
+        ]
+      },
+      "expected": null
+    },
+    {
+      "name": "between_updates_the_snapshot_is_reused",
+      "input": {
+        "steps": [
+          {"game_time": 0.0, "inputs": {"military_edge": 0.0, "economic_edge": 0.0, "territory_edge": 0.0, "immediate_threat": 0.0, "base_exposure": 0.2, "knowledge_confidence": 0.5}},
+          {"game_time": 0.5, "inputs": {"military_edge": 0.8, "economic_edge": 0.6, "territory_edge": 0.5, "immediate_threat": 0.0, "base_exposure": 0.1, "knowledge_confidence": 0.9}}
+        ]
+      },
+      "expected": null
+    }
+  ]
+}

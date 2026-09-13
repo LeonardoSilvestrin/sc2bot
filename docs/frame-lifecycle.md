@@ -49,8 +49,9 @@ Every long-lived object was built once, before the game, by `compose_bot`
 16  FrameTelemetry.report(bot, attention, awareness)           end-of-frame log lines
 ```
 
-The planner tuple order does not decide arbitration -- `MissionController`
-sorts live missions by priority -- but it is the order proposals are logged.
+The planner tuple order decides neither admission nor arbitration --
+`MissionController` sorts proposals and live missions by explicit keys -- but
+it is the order `mission.evaluated` is logged.
 
 Ares runs the behaviors registered during steps 9, 10 and 12 after
 `on_step` returns, and clears them; everything is registered again next frame.
@@ -127,9 +128,10 @@ Details in [engine/missions.md](engine/missions.md).
  a  UnitAllocator.sync(own units)          drop leases of units that no longer exist
  b  SquadController.sync(own units)        drop dead members
  c  fail started missions that lost their whole team (minimum > 0 only)
- d  for each proposal: _consider           admit, reject, or update a live standing mission
+ d  for each proposal, by (-priority, deduplication_key, proposal_id): _consider
+                                           admit, reject, or update a live standing mission
  e  _reconcile_standing_missions           cancel standing keys a planner stopped declaring
- f  for each live mission, by (-priority, admitted_at):
+ f  for each live mission, by (-priority, admitted_at, deduplication_key, mission_id):
         cancel on timeout (FINITE) or objective observed before start
         bind a DEFENSE mission to a compatible squad
         effective requirement (home squads shrink while members are away)

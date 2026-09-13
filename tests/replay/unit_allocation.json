@@ -1,0 +1,125 @@
+{
+  "kernel": "unit_allocation",
+  "configs": null,
+  "cases": [
+    {
+      "name": "preference_then_distance_then_tag",
+      "input": {
+        "preemption_margin": 10,
+        "steps": [
+          {"sync": [
+            {"tag": 1, "type": "MARINE", "position": [20.0, 20.0], "supply": 1.0},
+            {"tag": 2, "type": "MARINE", "position": [12.0, 12.0], "supply": 1.0},
+            {"tag": 3, "type": "CYCLONE", "position": [40.0, 40.0], "supply": 3.0},
+            {"tag": 4, "type": "HELLION", "position": [30.0, 30.0], "supply": 2.0},
+            {"tag": 5, "type": "HELLION", "position": [30.0, 30.0], "supply": 2.0},
+            {"tag": 6, "type": "MARAUDER", "position": [11.0, 11.0], "supply": 2.0}
+          ]},
+          {"allocate": {"mission_id": "patrol", "priority": 40, "now": 0.0, "objective": [10.0, 10.0], "commitment_seconds": 1.0,
+            "requirement": {"unit_types": ["CYCLONE", "HELLION", "MARINE", "MARAUDER"], "desired": 3, "minimum": 0, "type_desirability": [["CYCLONE", 1.0], ["HELLION", 0.9], ["MARINE", 0.6], ["MARAUDER", 0.6]]}}},
+          {"allocate": {"mission_id": "army", "priority": 20, "now": 0.0, "objective": [10.0, 10.0],
+            "requirement": {"unit_types": ["CYCLONE", "HELLION", "MARINE", "MARAUDER"], "desired": 6, "minimum": 0}}}
+        ]
+      },
+      "expected": null
+    },
+    {
+      "name": "a_supply_budget_lets_the_last_unit_overshoot",
+      "input": {
+        "preemption_margin": 10,
+        "steps": [
+          {"sync": [
+            {"tag": 1, "type": "MARAUDER", "position": [10.0, 10.0], "supply": 2.0},
+            {"tag": 2, "type": "MARAUDER", "position": [11.0, 10.0], "supply": 2.0},
+            {"tag": 3, "type": "MARAUDER", "position": [12.0, 10.0], "supply": 2.0},
+            {"tag": 4, "type": "MARINE", "position": [13.0, 10.0], "supply": 1.0}
+          ]},
+          {"allocate": {"mission_id": "patrol", "priority": 40, "now": 0.0, "objective": [10.0, 10.0],
+            "requirement": {"unit_types": ["MARINE", "MARAUDER"], "desired": 10, "minimum": 1, "supply_budget": 5.0}}}
+        ]
+      },
+      "expected": null
+    },
+    {
+      "name": "preemption_needs_the_margin_and_the_commitment_window",
+      "input": {
+        "preemption_margin": 10,
+        "steps": [
+          {"sync": [
+            {"tag": 1, "type": "MARINE", "position": [10.0, 10.0], "supply": 1.0},
+            {"tag": 2, "type": "MARINE", "position": [10.0, 10.0], "supply": 1.0}
+          ]},
+          {"allocate": {"mission_id": "standing", "priority": 20, "now": 0.0, "commitment_seconds": 5.0,
+            "requirement": {"unit_types": ["MARINE"], "desired": 2, "minimum": 0}}},
+          {"allocate": {"mission_id": "raid", "priority": 29, "now": 6.0, "can_preempt": true,
+            "requirement": {"unit_types": ["MARINE"], "desired": 1, "minimum": 1}}},
+          {"allocate": {"mission_id": "raid", "priority": 30, "now": 3.0, "can_preempt": true,
+            "requirement": {"unit_types": ["MARINE"], "desired": 1, "minimum": 1}}},
+          {"allocate": {"mission_id": "raid", "priority": 30, "now": 6.0, "can_preempt": true,
+            "requirement": {"unit_types": ["MARINE"], "desired": 1, "minimum": 1}}},
+          {"allocate": {"mission_id": "standing", "priority": 20, "now": 6.0, "commitment_seconds": 5.0,
+            "requirement": {"unit_types": ["MARINE"], "desired": 2, "minimum": 0}}}
+        ]
+      },
+      "expected": null
+    },
+    {
+      "name": "shrinking_keeps_the_most_preferred_units",
+      "input": {
+        "preemption_margin": 10,
+        "steps": [
+          {"sync": [
+            {"tag": 1, "type": "MARINE", "position": [11.0, 10.0], "supply": 1.0},
+            {"tag": 2, "type": "CYCLONE", "position": [60.0, 60.0], "supply": 3.0},
+            {"tag": 3, "type": "HELLION", "position": [30.0, 30.0], "supply": 2.0}
+          ]},
+          {"allocate": {"mission_id": "patrol", "priority": 40, "now": 0.0, "objective": [10.0, 10.0],
+            "requirement": {"unit_types": ["CYCLONE", "HELLION", "MARINE"], "desired": 3, "minimum": 0, "type_desirability": [["CYCLONE", 1.0], ["HELLION", 0.9], ["MARINE", 0.6]]}}},
+          {"allocate": {"mission_id": "patrol", "priority": 40, "now": 1.0, "objective": [10.0, 10.0],
+            "requirement": {"unit_types": ["CYCLONE", "HELLION", "MARINE"], "desired": 1, "minimum": 0, "type_desirability": [["CYCLONE", 1.0], ["HELLION", 0.9], ["MARINE", 0.6]]}}}
+        ]
+      },
+      "expected": null
+    },
+    {
+      "name": "a_lost_unit_drops_its_lease_and_a_newcomer_fills_in",
+      "input": {
+        "preemption_margin": 10,
+        "steps": [
+          {"sync": [
+            {"tag": 1, "type": "MARINE", "position": [10.0, 10.0], "supply": 1.0},
+            {"tag": 2, "type": "MARINE", "position": [20.0, 10.0], "supply": 1.0}
+          ]},
+          {"allocate": {"mission_id": "raid", "priority": 60, "now": 0.0, "objective": [10.0, 10.0],
+            "requirement": {"unit_types": ["MARINE"], "desired": 2, "minimum": 2}}},
+          {"sync": [
+            {"tag": 2, "type": "MARINE", "position": [20.0, 10.0], "supply": 1.0},
+            {"tag": 3, "type": "MARINE", "position": [30.0, 10.0], "supply": 1.0}
+          ]},
+          {"allocate": {"mission_id": "raid", "priority": 60, "now": 1.0, "objective": [10.0, 10.0],
+            "requirement": {"unit_types": ["MARINE"], "desired": 2, "minimum": 2}}}
+        ]
+      },
+      "expected": null
+    },
+    {
+      "name": "health_readiness_and_availability_filter_candidates",
+      "input": {
+        "preemption_margin": 10,
+        "steps": [
+          {"sync": [
+            {"tag": 1, "type": "MARINE", "position": [10.0, 10.0], "supply": 1.0, "health": 0.5},
+            {"tag": 2, "type": "MARINE", "position": [10.0, 10.0], "supply": 1.0, "ready": false},
+            {"tag": 3, "type": "MARINE", "position": [10.0, 10.0], "supply": 1.0, "available": false},
+            {"tag": 4, "type": "MARINE", "position": [10.0, 10.0], "supply": 1.0}
+          ]},
+          {"allocate": {"mission_id": "raid", "priority": 60, "now": 0.0,
+            "requirement": {"unit_types": ["MARINE"], "desired": 4, "minimum": 1, "minimum_health": 0.7}}},
+          {"allocate": {"mission_id": "defense", "priority": 80, "now": 0.0,
+            "requirement": {"unit_types": ["MARINE"], "desired": 4, "minimum": 2, "minimum_health": 0.7}}}
+        ]
+      },
+      "expected": null
+    }
+  ]
+}

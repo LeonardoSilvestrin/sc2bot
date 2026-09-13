@@ -1,0 +1,62 @@
+{
+  "kernel": "mission_policy",
+  "configs": null,
+  "cases": [
+    {
+      "name": "the_fallback_owner_is_not_weighed",
+      "input": {
+        "context": {"revision": 4, "intent": {"defense": 0.3, "map_control": 0.8, "harass": 0.4, "information": 0.7, "risk_tolerance": 0.5}, "objectives": [{"id": "region:1", "kind": "REGION", "target": "region:1", "position": [40.0, 40.0], "activity": "MAP_CONTROL", "desired_control": 0.9, "desired_visibility": 0.6, "importance": 0.8, "current_control": 0.2, "current_visibility": 0.5, "reason": "contested_region"}]},
+        "signals": {"activity": null, "reason": "owns_idle_units"}
+      },
+      "expected": null
+    },
+    {
+      "name": "viable_work_serving_a_held_objective",
+      "input": {
+        "context": {"revision": 4, "intent": {"defense": 0.3, "map_control": 0.8, "harass": 0.4, "information": 0.7, "risk_tolerance": 0.5}, "objectives": [{"id": "region:1", "kind": "REGION", "target": "region:1", "position": [40.0, 40.0], "activity": "MAP_CONTROL", "desired_control": 0.9, "desired_visibility": 0.6, "importance": 0.8, "current_control": 0.2, "current_visibility": 0.5, "reason": "contested_region"}]},
+        "signals": {"activity": "MAP_CONTROL", "opportunity": 0.6, "risk": 0.3, "information_gain": 0.4, "control": {"objective_id": "region:1", "alignment": 0.75}, "reason": "frontier"}
+      },
+      "expected": null
+    },
+    {
+      "name": "an_emergency_is_viable_by_the_urgency_floor",
+      "input": {
+        "context": {"revision": 4, "intent": {"defense": 0.3, "map_control": 0.8, "harass": 0.4, "information": 0.7, "risk_tolerance": 0.5}, "objectives": []},
+        "signals": {"activity": "INFORMATION", "urgency": 0.95, "risk": 1.0, "reason": "lost_attackers"}
+      },
+      "expected": null
+    },
+    {
+      "name": "risk_without_payoff_is_rejected_as_negative",
+      "input": {
+        "context": {"revision": 4, "intent": {"defense": 0.3, "map_control": 0.8, "harass": 0.4, "information": 0.7, "risk_tolerance": 0.5}, "objectives": []},
+        "signals": {"activity": "HARASS", "risk": 0.9, "reason": "guarded"}
+      },
+      "expected": null
+    },
+    {
+      "name": "nothing_to_gain_is_not_above_the_minimum",
+      "input": {
+        "context": {"revision": 4, "intent": {"defense": 0.3, "map_control": 0.8, "harass": 0.4, "information": 0.7, "risk_tolerance": 0.5}, "objectives": []},
+        "signals": {"activity": "HARASS", "reason": "nothing_to_gain"}
+      },
+      "expected": null
+    },
+    {
+      "name": "an_objective_no_longer_held_prices_no_control",
+      "input": {
+        "context": {"revision": 4, "intent": {"defense": 0.3, "map_control": 0.8, "harass": 0.4, "information": 0.7, "risk_tolerance": 0.5}, "objectives": [{"id": "region:1", "kind": "REGION", "target": "region:1", "position": [40.0, 40.0], "activity": "MAP_CONTROL", "desired_control": 0.9, "desired_visibility": 0.6, "importance": 0.8, "current_control": 0.2, "current_visibility": 0.5, "reason": "contested_region"}]},
+        "signals": {"activity": "MAP_CONTROL", "opportunity": 0.5, "control": {"objective_id": "region:gone", "alignment": 1.0}, "reason": "stale_objective"}
+      },
+      "expected": null
+    },
+    {
+      "name": "the_neutral_context_before_strategy_runs",
+      "input": {
+        "context": {"revision": 0, "intent": null, "objectives": []},
+        "signals": {"activity": "HARASS", "opportunity": 0.8, "risk": 0.2, "reason": "workers_exposed"}
+      },
+      "expected": null
+    }
+  ]
+}

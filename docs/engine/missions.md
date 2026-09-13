@@ -104,9 +104,9 @@ finished; `MissionSnapshot` is its immutable view for telemetry.
 1  allocator.sync(own units); squads.sync(own units)
 2  for each live mission that started, had units and now holds none, with minimum > 0:
        FAILED all_assigned_units_lost                  (checked before replacement allocation)
-3  for each proposal: _consider (below)
+3  for each proposal, by admission_key (-priority, deduplication_key, proposal_id): _consider (below)
 4  _reconcile_standing_missions
-5  for each live mission, sorted by (-priority, admitted_at):
+5  for each live mission, by arbitration_key (-priority, admitted_at, deduplication_key, mission_id):
        cancellation check (below)
        squads.bind_compatible_squad (DEFENSE only)
        requirement = squads.effective_requirement (a home squad shrinks while members are away;
@@ -117,6 +117,18 @@ finished; `MissionSnapshot` is its immutable view for telemetry.
        not satisfied: FAILED all_assigned_units_lost if started with zero units, else BLOCKED
        satisfied: advance the executor
 ```
+
+Neither order depends on the order proposals arrive in, so the same proposals
+in any order admit the same missions, under the same ids, and allocate the
+same units (`test_decision_invariants.py`, `ArbitrationOrderTests`):
+
+- **Admission.** Higher priority first, so of two FINITE duplicates in one
+  tick the higher-ranked one is admitted; equal priorities by deduplication
+  key, then proposal id.
+- **Arbitration.** Higher priority first. Among equals the earlier-admitted
+  mission allocates first -- it already holds its units, so a newcomer of the
+  same rank never reshuffles them -- then the deduplication key (one live
+  mission per key makes the order total), then the mission id.
 
 ### Admitting one proposal (`_consider`)
 

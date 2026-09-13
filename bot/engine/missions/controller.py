@@ -28,6 +28,36 @@ from bot.world.attention import AttentionSnapshot
 from bot.world.awareness import AwarenessSnapshot
 
 
+def admission_key(proposal: MissionProposal) -> tuple[int, str, str]:
+    """The order one tick's proposals are considered in.
+
+    Higher priority first; equal priorities by deduplication key, then
+    proposal id -- identities planners chose, never the order proposals
+    arrived in. The same proposals in any order admit the same missions under
+    the same ids, and of two duplicates the higher-ranked one is admitted.
+    """
+
+    return (-proposal.priority, proposal.deduplication_key, proposal.proposal_id)
+
+
+def arbitration_key(mission: Mission) -> tuple[int, float, str, str]:
+    """The order live missions allocate in, with every tie made explicit.
+
+    Priority first. Among equals the earlier-admitted mission goes first: it
+    already holds its units, so a newcomer of the same rank never reshuffles
+    them. Missions admitted at the same time go by deduplication key -- at
+    most one live mission holds a key, so this is already total -- and the
+    mission id closes the key.
+    """
+
+    return (
+        -mission.proposal.priority,
+        mission.admitted_at,
+        mission.proposal.deduplication_key,
+        mission.mission_id,
+    )
+
+
 class MissionController:
     """Admits proposals, owns mission lifecycle, and arbitrates unit leases."""
 
@@ -99,14 +129,11 @@ class MissionController:
                     now,
                     commands,
                 )
-        for proposal in proposals:
+        for proposal in sorted(proposals, key=admission_key):
             self._consider(proposal, now)
         self._reconcile_standing_missions(proposals, declared_planners, now, commands)
 
-        missions = sorted(
-            self.board.live(),
-            key=lambda item: (-item.proposal.priority, item.admitted_at),
-        )
+        missions = sorted(self.board.live(), key=arbitration_key)
         for mission in missions:
             if mission.status.terminal:
                 continue
