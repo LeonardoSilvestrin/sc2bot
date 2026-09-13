@@ -8,6 +8,7 @@ gameplay module may consume the new objective yet.
 from __future__ import annotations
 
 import ast
+import re
 import unittest
 from pathlib import Path
 
@@ -137,6 +138,25 @@ class ShadowModeTests(unittest.TestCase):
 
         self.assertTrue(any(is_within(name, "bot.macro.strategy") for name in names))
         self.assertFalse(any(is_within(name, "bot.strategy") for name in names))
+
+
+class NamingTests(unittest.TestCase):
+    def test_strategic_intent_has_exactly_one_meaning(self):
+        """The opening's capability gate is `OpeningIntent`; `StrategicIntent`
+        is only Strategy's."""
+
+        definers = [
+            path.relative_to(BOT).as_posix()
+            for path in sorted(BOT.rglob("*.py"))
+            if re.search(
+                r"^class \w*StrategicIntent\b",
+                path.read_text(encoding="utf-8-sig"),
+                re.MULTILINE,
+            )
+        ]
+
+        self.assertEqual(definers, ["strategy/intent.py"])
+        self.assertFalse((BOT / "behavior" / "strategy_intent.py").exists())
 
 
 if __name__ == "__main__":

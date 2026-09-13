@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 
 from sc2.position import Point2
 
-from bot.behavior.strategy_intent import BuildStrategicIntent, StrategicIntent
+from bot.behavior.opening_intent import BuildOpeningIntent, OpeningIntent
 from bot.world.attention import AttentionSnapshot
 from bot.world.awareness import (
     AwarenessSnapshot,
@@ -41,7 +41,7 @@ class BansheeHarassAssessor:
     """Builds a `BansheeHarassAssessment` from the world model."""
 
     config: BansheeHarassConfig = field(default_factory=BansheeHarassConfig)
-    strategic_intent: StrategicIntent = field(default_factory=BuildStrategicIntent)
+    opening_intent: OpeningIntent = field(default_factory=BuildOpeningIntent)
 
     def assess(
         self, attention: AttentionSnapshot, awareness: AwarenessSnapshot
@@ -66,8 +66,8 @@ class BansheeHarassAssessor:
             cloak_ready=cloak_ready,
             cloak_progress=cloak_progress,
             workers=sum(unit.is_worker for unit in world.own_units),
-            build_supports_harass=self.strategic_intent.allows(
-                self.config.strategic_intent, world
+            build_supports_harass=self.opening_intent.allows(
+                self.config.opening_capability, world
             ),
             targets=targets,
             known_anti_air_units=awareness.threat.known_anti_air_units,

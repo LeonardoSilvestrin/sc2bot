@@ -9,7 +9,7 @@ the bot converges to afterwards, a `MacroGoalSet` in
 
 Source: `terran_builds.yml`, `config.yml`, `bot/app/opening.py`,
 `bot/macro/builds/`, `bot/macro/strategy/openings.py`,
-`bot/macro/strategy/reference_build.py`, `bot/behavior/strategy_intent.py`.
+`bot/macro/strategy/reference_build.py`, `bot/behavior/opening_intent.py`.
 
 ## Which opening plays
 
@@ -54,7 +54,7 @@ The YAML owns only the opening, but macro does not wait for it:
 
 - Once the runner reports `build_completed`, nothing is protected and macro
   owns production, expansions and composition.
-- `BuildStrategicIntent` lets the Banshee raid run for `BansheeCloak` and
+- `BuildOpeningIntent` lets the Banshee raid run for `BansheeCloak` and
   `BattleMech` ([behavior/harass.md](../behavior/harass.md)). Neither the
   openings nor the goal sets scout: scouting is `IntelPlanner`'s alone.
 
@@ -218,7 +218,7 @@ buy and never reaches the mission system ([engine/capabilities.md](../engine/cap
 3. Register it in `MACRO_PROFILES` (`bot/macro/strategy/openings.py`), with or
    without a reference build.
 4. If a behavior depends on it (as the Banshee raid does), add the opening to
-   `BuildStrategicIntent`.
+   `BuildOpeningIntent`.
 5. Optionally give it a chat description in `_OPENING_ANNOUNCEMENTS`
    (`bot/app/opening.py`).
 6. Document it here.

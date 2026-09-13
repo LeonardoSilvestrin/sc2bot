@@ -5,7 +5,7 @@ What the bot buys is not a behavior ([macro](../macro/macro-planner.md)). A
 behavior may read what exists -- how many Banshees are alive, whether cloak is
 researched -- but never proposes spend.
 
-Source: `bot/behavior/` (`contracts.py`, `strategy_intent.py`, one folder per
+Source: `bot/behavior/` (`contracts.py`, `opening_intent.py`, one folder per
 behavior), `bot/engine/missions/planning.py`.
 
 ## The shape of a behavior
@@ -79,8 +79,8 @@ vision requester and Defense's lost-attacker request
   margin ([engine/missions.md](../engine/missions.md#planning-helpers-planningpy)).
 - **`BehaviorServices`** -- shared capabilities; today only `vision`. Planners
   receive it at construction, executors as `context.services`.
-- **`StrategicIntent`** (`strategy_intent.py`) -- the one place a behavior
-  learns about the build. `BuildStrategicIntent.allows(capability, world)`
+- **`OpeningIntent`** (`opening_intent.py`) -- the one place a behavior
+  learns about the build. `BuildOpeningIntent.allows(capability, world)`
   maps the chosen opening to tactical capabilities: `BansheeCloak` and
   `BattleMech` allow `banshee_harass`.
 

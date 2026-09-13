@@ -19,7 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from bot.behavior.contracts import BehaviorLog
-from bot.behavior.strategy_intent import BuildStrategicIntent, StrategicIntent
+from bot.behavior.opening_intent import BuildOpeningIntent, OpeningIntent
 from bot.engine.missions.models import MissionMode, MissionProposal, UnitRequirement
 from bot.engine.missions.planning import (
     ProposalCadence,
@@ -46,7 +46,7 @@ class BansheeHarassPlanner:
     """Decides whether the cloaked Banshee raid should be running, and where."""
 
     config: BansheeHarassConfig = field(default_factory=BansheeHarassConfig)
-    strategic_intent: StrategicIntent = field(default_factory=BuildStrategicIntent)
+    opening_intent: OpeningIntent = field(default_factory=BuildOpeningIntent)
     logger: BotLogger | None = None
     planner_id: str = "banshee_harass_planner"
     # The candidate ranking is logged whenever the target changes, and at
@@ -73,7 +73,7 @@ class BansheeHarassPlanner:
 
     def __post_init__(self) -> None:
         self._assessor = BansheeHarassAssessor(
-            config=self.config, strategic_intent=self.strategic_intent
+            config=self.config, opening_intent=self.opening_intent
         )
         self._log = BehaviorLog(component=COMPONENT, logger=self.logger)
 

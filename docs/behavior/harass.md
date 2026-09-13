@@ -7,7 +7,7 @@ propose, so both can be live at once.
 
 Source: `bot/behavior/harass/reaper/`, `bot/behavior/harass/banshee/`
 (`model.py`, `assessment.py`, `planner.py`, `executor.py` each),
-`bot/behavior/strategy_intent.py`, `bot/engine/missions/planning.py`.
+`bot/behavior/opening_intent.py`, `bot/engine/missions/planning.py`.
 
 | | Reaper raid | Banshee raid |
 | --- | --- | --- |
@@ -167,7 +167,7 @@ cancels it, which releases the Reaper back to the standing army.
 | `banshees_alive`, `banshees_ready`, `banshees_pending` | every Banshee we own; ready ones; in production |
 | `cloak_ready`, `cloak_progress` | Cloaking Field done; research progress 0..1 |
 | `workers` | own workers |
-| `build_supports_harass` | `StrategicIntent.allows("banshee_harass")`: true for `BansheeCloak` and `BattleMech` |
+| `build_supports_harass` | `OpeningIntent.allows("banshee_harass")`: true for `BansheeCloak` and `BattleMech` |
 | `targets` | every candidate, best score first |
 | `known_anti_air_units` | remembered enemy units that can attack air |
 | `enemy_army_position` | the main force's centre -- descriptive, not a gate |
@@ -251,7 +251,7 @@ stateDiagram-v2
 | `proposal_cadence`, `priority` | 8 s, 62 |
 | `mission_timeout`, `failure_cooldown` | 70 s (not applied to standing), 30 s |
 | `minimum_unit_health`, `commitment_seconds` | 0.5, 5 s |
-| `strategic_intent`, `cloak_upgrade` | `banshee_harass`, `BANSHEECLOAK` |
+| `opening_capability`, `cloak_upgrade` | `banshee_harass`, `BANSHEECLOAK` |
 | `preferred_squad_size` | 2 (readiness only) |
 | `fallback_target_keys` | `("enemy_natural",)` |
 | `disengage_radius`, `arrival_radius`, `infiltration_radius` | 12, 3, 12 |

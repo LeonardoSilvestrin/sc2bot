@@ -135,7 +135,8 @@ class BansheeHarassConfig:
     failure_cooldown: float = 30.0
     minimum_unit_health: float = 0.5
     commitment_seconds: float = 5.0
-    strategic_intent: str = "banshee_harass"
+    # The capability the opening must allow (see `bot.behavior.opening_intent`).
+    opening_capability: str = "banshee_harass"
     cloak_upgrade: UpgradeId = UpgradeId.BANSHEECLOAK
     # Squad size the readiness score is measured against. Not a launch gate:
     # the raid still starts with one Banshee, this only says when it reads
@@ -185,8 +186,8 @@ class BansheeHarassConfig:
             raise ValueError("minimum_unit_health must be between 0 and 1")
         if self.commitment_seconds < 0.0:
             raise ValueError("commitment_seconds must not be negative")
-        if not self.strategic_intent.strip():
-            raise ValueError("strategic_intent must not be blank")
+        if not self.opening_capability.strip():
+            raise ValueError("opening_capability must not be blank")
         if self.preferred_squad_size < 1:
             raise ValueError("preferred_squad_size must be at least 1")
         for name in ("disengage_radius", "arrival_radius", "infiltration_radius"):
