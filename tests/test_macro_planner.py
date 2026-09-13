@@ -7,8 +7,10 @@ from sc2.position import Point2
 
 from bot.engine.economy.models import EconomicActionKind, ResourceCost
 from bot.macro import (
+    MacroContext,
     MacroPlanner,
     MacroPlannerConfig,
+    MacroPosture,
     ProductionGoal,
     bio_three_one_one,
     macro_config_for_opening,
@@ -23,7 +25,7 @@ from bot.world.attention import (
     UnitTypeCount,
     WorldFacts,
 )
-from bot.world.awareness import AwarenessService, MacroPosture
+from bot.world.awareness import AwarenessService
 
 MAP = MapFacts(
     center=Point2((50, 50)),
@@ -131,11 +133,11 @@ def proposals_for(
     *,
     posture: MacroPosture = MacroPosture.BALANCED,
 ):
-    awareness = replace(
+    return MacroPlanner().propose(
+        attention,
         AwarenessService().update(attention),
-        macro_posture=posture,
+        MacroContext(posture=posture),
     )
-    return MacroPlanner().propose(attention, awareness)
 
 
 def proposal_of_kind(proposals, kind: EconomicActionKind):
@@ -888,9 +890,7 @@ class TestMacroPlanner:
         attention = economy_attention(
             time=100.0, structures={UnitTypeId.BARRACKS: (0, 0)}
         )
-        awareness = replace(
-            AwarenessService().update(attention), macro_posture=MacroPosture.BALANCED
-        )
+        awareness = AwarenessService().update(attention)
 
         proposals = MacroPlanner(config=config).propose(attention, awareness)
         barracks_proposal = next(

@@ -46,9 +46,6 @@ class AwarenessService:
         *,
         location_stale_after: float = 90.0,
         own_base_threat_radius: float = 28.0,
-        defense_release_after: float = 10.0,
-        posture_min_hold: float = 8.0,
-        greed_safe_after: float = 20.0,
         enemy_base_stale_after: float = 120.0,
         enemy_base_heuristics: EnemyBaseHeuristics | None = None,
         enemy_force_heuristics: EnemyForceHeuristics | None = None,
@@ -62,11 +59,6 @@ class AwarenessService:
             raise ValueError("location_stale_after must be positive")
         if own_base_threat_radius <= 0.0:
             raise ValueError("own_base_threat_radius must be positive")
-        if min(defense_release_after, posture_min_hold, greed_safe_after) < 0.0:
-            raise ValueError("posture timings must not be negative")
-        # Kept as accepted constructor arguments for source compatibility.
-        # Strategic posture is now owned and configured by bot.strategy;
-        # Awareness deliberately does not retain or evaluate these values.
         self.location_stale_after = float(location_stale_after)
         self.own_base_threat_radius = float(own_base_threat_radius)
         self.economy_belief_config = economy_belief_config or EconomyBeliefConfig()

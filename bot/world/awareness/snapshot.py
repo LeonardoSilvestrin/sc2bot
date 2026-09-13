@@ -15,7 +15,6 @@ from .belief import (
     WorkerEstimate,
 )
 from .enemy import EnemyAwareness
-from .posture import MacroPosture
 from .spatial import SpatialField
 from .territory import TerritorySnapshot
 
@@ -71,21 +70,23 @@ class ThreatAssessment:
 
 @dataclass(frozen=True, slots=True)
 class AwarenessSnapshot:
-    """What the bot currently believes, derived from known facts."""
+    """What the bot currently believes, derived from known facts.
+
+    Descriptive only: estimates and how sure they are. No desired state,
+    objective, intent, priority, posture or controller state belongs here --
+    Strategy and macro derive their prescriptions from this, elsewhere.
+    """
 
     enemy: EnemyAwareness
     relative_strength: RelativeStrength
     threat: ThreatAssessment
     updated_at: float
-    # Deprecated compatibility transport. AwarenessService never derives or
-    # sets strategic posture; the Strategy-side shadow coordinator populates
-    # this copy before current behavior/macro consumers run.
-    macro_posture: MacroPosture = MacroPosture.BALANCED
     bases: BaseAwareness = field(default_factory=BaseAwareness)
     economy: EconomyBelief = field(default_factory=_default_economy_belief)
     army: ArmyBelief = field(default_factory=_default_army_belief)
     spatial: SpatialField = field(default_factory=SpatialField)
-    # Shadow mode: perceived territory, not yet read by any behavior or macro.
+    # Perceived territory: control per sample, region and passage, the
+    # frontline and ground security.
     territory: TerritorySnapshot = field(default_factory=TerritorySnapshot)
     # Populated only on the tick a stable economy/army belief actually
     # changes. ``FrameProcessor`` writes these diagnostics to the log;

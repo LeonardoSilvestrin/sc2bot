@@ -102,7 +102,8 @@ Every proposal is one step built by `build_proposal`: cost of one item,
 
 ## Decision rules
 
-Every rule reads `EconomyFacts`, the goal set and `awareness.macro_posture`.
+Every rule reads `EconomyFacts`, the goal set and the frame's
+`MacroContext.posture`.
 
 ### Supply (`construction/supply.py`)
 
@@ -231,8 +232,36 @@ one more per 400 minerals / 200 gas); the larger count is the bonus:
 
 Every category has a base priority; the macro posture shifts it by a fixed
 per-category offset (plus an army member's `priority_offset`), clamped to
-0..100. `BALANCED` applies none. How the posture is derived:
-[world/awareness.md](../world/awareness.md#macro-posture).
+0..100. `BALANCED` applies none.
+
+The posture is macro policy, not a belief. `MacroPostureDirector`
+(`bot/macro/posture.py`) derives it each frame from Awareness readings;
+`MacroContextRuntime` (`bot/app/macro_context.py`) runs it, logs each change
+as `macro.posture`, and passes `MacroContext(posture)` to
+`MacroPlanner.propose(attention, awareness, context)`. Without a context the
+planner uses `BALANCED`.
+
+```text
+candidate = DEFENSE    if an enemy combat unit is near an own base (28 tiles)
+          = DEFENSE    else if the last such threat was under 10 s ago
+          = RECOVERY   else if no townhall, or after 90 s with under 8 workers
+          = GREED      else if 20 s without threat, the army belief is stably ahead
+                       and we own at least 6 combat units
+          = BALANCED   otherwise
+posture   = candidate at once for DEFENSE and RECOVERY; any other change waits
+            until the current posture has held 8 s
+```
+
+| `MacroPostureConfig` | Default |
+| --- | --- |
+| `defense_release_after` | 10 s |
+| `greed_safe_after` | 20 s |
+| `minimum_hold_seconds` | 8 s |
+
+Each result carries a reason: `enemy_combat_near_base`,
+`base_threat_within_release_window`, `no_townhall_or_too_few_workers`,
+`safe_and_stably_ahead`, `no_special_condition`, or
+`minimum_hold_keeps_<posture>`.
 
 | Category | Base | `DEFENSE` | `GREED` | `RECOVERY` |
 | --- | ---: | ---: | ---: | ---: |

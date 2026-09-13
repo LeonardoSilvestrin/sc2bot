@@ -39,7 +39,8 @@ Every long-lived object was built once, before the game, by `compose_bot`
  9  register_baseline_behaviors(bot)                           Ares Mining + DepotToggle
 10  MissionController.tick(proposals, AresMissionCommands)      admit, allocate, execute (detail below)
  --- macro domain ---------------------------------------------------------------
-11  economic = MacroPlanner.propose(attention, awareness)
+11  context  = MacroContextRuntime.update(awareness)           macro posture; macro.posture on change
+    economic = MacroPlanner.propose(attention, awareness, context)
 12  result   = EconomyController.step(economic, AresEconomyCommands)   confirm, admit, dispatch
 13  MacroDiagnostics.report(attention, last_status, result)    macro.status, idle producers
  --- observers ------------------------------------------------------------------
@@ -109,8 +110,8 @@ After Awareness returns, `StrategyRuntime` translates the snapshot into
 `StrategyInputs` and updates `StrategicDirector`. Whenever the director
 produces a new snapshot, the runtime derives the `StrategicIntent` and the
 `ControlObjective`s and publishes them as the frame's `StrategicContext`; it
-emits cadenced `strategy.updated` telemetry, and still derives the legacy
-macro posture that macro receives through Awareness. Behavior planners read
+emits cadenced `strategy.updated` telemetry, and never writes back into
+Awareness. Behavior planners read
 that context. When any of them declared work, `StrategyRuntime.record_context()`
 first writes the context revision the evaluations will cite (once per
 revision, as `strategy.context`). `MissionRanker` then evaluates every
@@ -205,8 +206,8 @@ Every constant that turns elapsed time into forgetting or waiting.
 | Belief: sighting evidence / attrition | τ 20 s / τ 300 s | `EstimateConfig` |
 | Loss trade recovery | τ 120 s | `LossTracker` |
 | Stable belief must hold | economy 15 s, army 8 s | `RelativeBeliefConfig.persist_seconds` |
-| Legacy macro posture: DEFENSE release / GREED safe / minimum hold | 10 s / 20 s / 8 s | `MacroPostureDirector` |
-| Legacy RECOVERY by low workers | after 90 s game time, under 8 workers | `MacroPostureDirector` |
+| Macro posture: DEFENSE release / GREED safe / minimum hold | 10 s / 20 s / 8 s | `MacroPostureConfig` |
+| Macro posture RECOVERY by low workers | after 90 s game time, under 8 workers | `MacroPostureDirector` |
 | Producer utilization window | 20 s | `AresWorldObserver` |
 | Economic action dispatch / confirmation timeout | 5 s / 60 s | `EconomicProposal` |
 | Scan cooldown | 15 s within 13 tiles | `VisionServiceConfig` |

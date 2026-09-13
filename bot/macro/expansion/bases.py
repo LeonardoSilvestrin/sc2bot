@@ -5,7 +5,7 @@ from math import ceil
 from sc2.ids.unit_typeid import UnitTypeId
 
 from bot.engine.economy.models import EconomicActionKind, EconomicProposal
-from bot.strategy import MacroPosture
+from bot.macro.posture import MacroPosture
 from bot.world.attention import EconomyFacts
 
 from ..proposal_helpers import build_proposal, saturation_target

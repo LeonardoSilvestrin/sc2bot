@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import unittest
-from dataclasses import replace
 
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
@@ -24,7 +23,6 @@ from bot.world.attention import (
 )
 from bot.world.awareness import (
     AwarenessSnapshot,
-    MacroPosture,
     RelativeStrength,
     SpatialField,
     SpatialFieldSample,
@@ -189,20 +187,6 @@ class MapControlExecutorTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result.reason, "base_under_attack_retreating")
         self.assertEqual(commands.commands[0][3], MAP.own_start)
-
-    async def test_the_legacy_macro_posture_no_longer_sends_the_squad_home(self):
-        commands = FakeCommands()
-        squad = (marine(1, Point2((40, 40))),)
-        calm = context(assigned_units=squad, commands=commands)
-
-        result = await self.executor().step(
-            replace(
-                calm,
-                awareness=replace(calm.awareness, macro_posture=MacroPosture.DEFENSE),
-            )
-        )
-
-        self.assertEqual(result.reason, "patrolling_safe_map_route")
 
     async def test_fails_if_the_assigned_squad_disappears(self):
         commands = FakeCommands()

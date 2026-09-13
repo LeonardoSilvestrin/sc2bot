@@ -36,7 +36,6 @@ from bot.world.attention import (
 )
 from bot.world.awareness import (
     AwarenessSnapshot,
-    MacroPosture,
     RelativeStrength,
     SpatialField,
     SpatialFieldSample,
@@ -657,16 +656,9 @@ class StrategyConsumptionTests(unittest.TestCase):
         base = IntentConfig().profile(StrategicObjective.BUILD_ADVANTAGE)
         return StrategicContext(intent=replace(base, **intent))
 
-    def test_strategic_safety_is_not_derived_from_macro_posture(self):
+    def test_strategic_safety_is_not_part_of_the_assessment(self):
         fields = MapControlAssessment.__dataclass_fields__
         self.assertNotIn("strategically_safe", fields)
-        calm = MapControlPlanner().propose(attention(180.0), awareness(180.0))
-        legacy_danger = MapControlPlanner().propose(
-            attention(180.0),
-            replace(awareness(180.0), macro_posture=MacroPosture.DEFENSE),
-        )
-
-        self.assertEqual(rank_candidates(calm), rank_candidates(legacy_danger))
 
     def test_an_information_intent_sends_the_patrol_toward_unknown_space(self):
         state = self.frontier(10.0, west_knowledge=1.0, south_knowledge=0.0)

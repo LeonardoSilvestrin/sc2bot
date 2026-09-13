@@ -215,10 +215,18 @@ class RuntimePilotTests(unittest.IsolatedAsyncioTestCase):
             "attention.world_state",
             [event["name"] for event in runtime.logger.events],
         )
+        # One worker past 90 s: macro recovers. That is a macro decision,
+        # logged on its own -- never inside the Awareness summary.
+        postures = [
+            event["data"]
+            for event in runtime.logger.events
+            if event["name"] == "macro.posture"
+        ]
+        self.assertEqual(postures[0]["posture"], "RECOVERY")
+        self.assertEqual(postures[0]["reason"], "no_townhall_or_too_few_workers")
         self.assertEqual(
             knowledge_events[0]["data"],
             {
-                "posture": "RECOVERY",
                 "relative_strength": {
                     # One Reaper against one Marine and no military coverage:
                     # the military prior mirrors our known army. Projected

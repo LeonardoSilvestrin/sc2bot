@@ -52,7 +52,7 @@ place that knows which concrete objects a game runs with. Plain constructors,
 no container. It returns `BotComposition(opening, frame, missions,
 macro_planner, strategy, decision_configs, rng_seed, rng_seed_source)`.
 `decision_configs` names every configuration a decision reads -- Strategy,
-intent, spatial policy, legacy posture, Mission Policy, allocator margins,
+intent, spatial policy, macro posture, Mission Policy, allocator margin,
 every behavior and vision config, spatial spacing and model, macro -- and
 `game.started` records their fingerprints (`bot/app/run_identity.py`:
 canonical JSON, SHA-256; an unsupported value is refused, never stringified).
@@ -71,7 +71,7 @@ What it builds, in order:
 | Behavior domain | `IntelPlanner`, `ScoutingVisionRequester`, `BansheeHarassPlanner`, `ReaperHarassPlanner`, `DefensePlanner(services)`, `MapControlPlanner`, `StandingPlanner` |
 | Mission engine | `MissionController(executor_factories=build_executor_factories(...))`, which builds its own `UnitAllocator`, `MissionBoard`, `SquadController` |
 | Macro domain | `MacroPlanner(config, follow_opening=macro_config is None)`, `EconomyController`, `MacroDiagnostics` |
-| Strategy and policy | `StrategyRuntime` (director, intent, spatial policy, legacy posture), `MissionRanker` (Mission Policy config) |
+| Strategy and policy | `StrategyRuntime` (director, intent, spatial policy), `MissionRanker` (Mission Policy config), `MacroContextRuntime` (macro's posture director) |
 | Frame | `FrameProcessor(...)` with `FrameTelemetry`, `SpatialDebugView`, `SpatialSnapshotExporter` |
 | Start of game | `OpeningSelector(rng)` |
 

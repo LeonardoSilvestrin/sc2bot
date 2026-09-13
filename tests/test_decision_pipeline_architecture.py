@@ -121,7 +121,9 @@ class AwarenessDescriptiveTests(unittest.TestCase):
     """Awareness says where control exists, never where it is wanted."""
 
     def test_awareness_types_carry_no_prescription(self):
-        prescriptive = re.compile(r"desired|importance|priority|objective|intent")
+        prescriptive = re.compile(
+            r"desired|importance|priority|objective|intent|posture"
+        )
         found = [
             f"{relative(path)}: {cls.name}.{node.target.id}"
             for path in sorted((BOT / "world" / "awareness").rglob("*.py"))
@@ -135,13 +137,36 @@ class AwarenessDescriptiveTests(unittest.TestCase):
 
         self.assertEqual(found, [])
 
-    def test_awareness_never_imports_strategy(self):
+    def test_the_world_model_never_imports_a_prescribing_layer(self):
+        prescribing = (
+            "bot.strategy",
+            "bot.macro",
+            "bot.behavior",
+            "bot.app",
+            "bot.domain",
+        )
         found = [
-            relative(path)
+            f"{relative(path)}: {name}"
             for path in sorted((BOT / "world").rglob("*.py"))
-            if any(name.startswith("bot.strategy") for name in imported_modules(path))
+            for name in sorted(imported_modules(path))
+            if name.startswith(prescribing)
         ]
 
+        self.assertEqual(found, [])
+
+
+class NoSharedDumpingGroundTests(unittest.TestCase):
+    """Shared vocabulary lives with its owner: there is no ``bot.domain``."""
+
+    def test_bot_domain_is_gone_and_nothing_imports_it(self):
+        tests = BOT.parent / "tests"
+        found = [
+            path.relative_to(BOT.parent).as_posix()
+            for path in sorted((*BOT.rglob("*.py"), *tests.rglob("*.py")))
+            if any(name.startswith("bot.domain") for name in imported_modules(path))
+        ]
+
+        self.assertFalse((BOT / "domain").exists())
         self.assertEqual(found, [])
 
 

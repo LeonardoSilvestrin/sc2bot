@@ -27,7 +27,6 @@ from .enemy import (
     EnemyLocationKnowledge,
     EnemySighting,
 )
-from .posture import MacroPosture
 from .service import AwarenessService
 from .snapshot import (
     AwarenessSnapshot,
@@ -81,7 +80,6 @@ __all__ = [
     "EnemyLocationKnowledge",
     "EnemySighting",
     "EnemyUnitTypeCount",
-    "MacroPosture",
     "PassageTerritory",
     "RegionTerritory",
     "RelativeAssessment",

@@ -5,7 +5,6 @@ import unittest
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
-from bot.strategy import MacroPosture
 from bot.world.attention import (
     AttentionSnapshot,
     MapFacts,
@@ -70,7 +69,7 @@ class AwarenessServiceTests(unittest.TestCase):
         self.assertEqual(snapshot.threat.near_own_base_enemy_combat_units, 1)
         # Strategic posture is no longer derived by Awareness. The runtime's
         # Strategy-side compatibility coordinator populates this legacy slot.
-        self.assertEqual(snapshot.macro_posture, MacroPosture.BALANCED)
+        self.assertFalse(hasattr(snapshot, "macro_posture"))
 
     def test_enemy_workers_of_any_race_do_not_count_as_combat_threats(self):
         world = WorldFacts(

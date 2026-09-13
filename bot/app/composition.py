@@ -44,6 +44,7 @@ from .debug import (
     SpatialSnapshotExporter,
 )
 from .frame import FrameProcessor
+from .macro_context import MacroContextRuntime
 from .mission_ranking import MissionRanker
 from .opening import OpeningSelector
 from .strategy_runtime import StrategyRuntime
@@ -171,10 +172,12 @@ def compose_bot(
     # Macro domain: what to spend on, admitted against the bank. The
     # opening is unknown until the Ares build runner resolves it, so the
     # planner follows it -- unless a caller pins `macro_config` (tests).
+    # Its policy (the posture) is macro's own, handed over each frame.
     macro_planner = MacroPlanner(
         config=macro_config or MacroPlannerConfig(),
         follow_opening=macro_config is None,
     )
+    macro_context = MacroContextRuntime(logger=logger)
     economy = EconomyController(logger=logger)
     macro_diagnostics = MacroDiagnostics(logger=logger)
     strategy = StrategyRuntime(logger=logger)
@@ -203,12 +206,12 @@ def compose_bot(
         ),
         strategy=strategy,
         mission_ranker=mission_ranker,
+        macro_context=macro_context,
     )
     decision_configs: dict[str, object] = {
         "strategy": strategy.director.config,
         "intent": strategy.intent_config,
         "spatial_policy": strategy.spatial_config,
-        "legacy_macro_posture": strategy.legacy_posture.config,
         "mission_policy": mission_ranker.config,
         "allocator": {"preemption_margin": missions.allocator.preemption_margin},
         "intel": intel_config,
@@ -222,6 +225,7 @@ def compose_bot(
         "standing": standing_config,
         "spatial_sample_spacing": spatial_sample_spacing,
         "spatial_model": spatial_model_config,
+        "macro_posture": macro_context.director.config,
         # None: the macro profile follows whichever opening Ares resolves.
         "macro": macro_config,
     }

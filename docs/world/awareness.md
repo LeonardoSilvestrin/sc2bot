@@ -5,7 +5,7 @@ derived from it. It describes the world -- what was observed, what is still
 believed, and how reliable that belief is -- and decides nothing. No mission
 state, lease or cooldown enters it.
 
-Source: `bot/world/awareness/` (`service.py`, `snapshot.py`, `posture.py`,
+Source: `bot/world/awareness/` (`service.py`, `snapshot.py`,
 `enemy/`, `belief/`, `bases/`, `spatial/`, `territory/`).
 
 ## The service
@@ -17,10 +17,7 @@ frame. The order of its steps is in
 | Constructor argument | Default | Used for |
 | --- | --- | --- |
 | `location_stale_after` | 90 s (the game passes `IntelConfig.location_stale_after`) | enemy location freshness |
-| `own_base_threat_radius` | 28 | `ThreatAssessment` near-base counts, macro posture |
-| `defense_release_after` | 10 s | macro posture |
-| `posture_min_hold` | 8 s | macro posture |
-| `greed_safe_after` | 20 s | macro posture |
+| `own_base_threat_radius` | 28 | `ThreatAssessment` near-base counts |
 | `enemy_base_stale_after` | 120 s | enemy base slot freshness |
 | `enemy_base_heuristics`, `enemy_force_heuristics` | defaults | enemy bases and forces |
 | `economy_belief_config`, `army_belief_config` | defaults | beliefs |
@@ -38,9 +35,8 @@ frame. The order of its steps is in
 | `relative_strength` | `RelativeStrength` | telemetry |
 | `threat` | `ThreatAssessment` | standing (pressure), defense assessment, Banshee assessment, telemetry |
 | `updated_at` | float | telemetry |
-| `macro_posture` | `MacroPosture` | macro priorities and expansion, map control retreat, standing posture |
 | `bases` | `BaseAwareness` | defense, map control, Banshee retreat, standing anchor, spatial field, territory |
-| `economy`, `army` | `EconomyBelief`, `ArmyBelief` | standing posture (army), macro posture (army), telemetry |
+| `economy`, `army` | `EconomyBelief`, `ArmyBelief` | standing posture (army), macro's posture director (army, via `bot.app`), telemetry |
 | `spatial` | `SpatialField` | map control, territory, debug view |
 | `territory` | `TerritorySnapshot` | telemetry/debug; sample enemy control and knowledge are projected onto `spatial` for Map Control |
 | `belief_changes` | `tuple[str]` | `FrameProcessor` logs them |
@@ -309,14 +305,16 @@ data (synthetic tests), it falls back to visible unit counts.
 | `near_own_base_enemy_units` | visible enemy units within 28 of a ready, landed own structure (or our start) |
 | `near_own_base_enemy_combat_units` | the armed non-workers among them |
 
-## Legacy macro posture compatibility
+## No prescriptions
 
-Awareness no longer derives macro posture. `AwarenessSnapshot.macro_posture`
-is a deprecated transport slot retained while macro, its last consumer, is
-migrated; no behavior reads it. After Awareness returns, Strategy's
-`MacroPostureDirector` evaluates the unchanged compatibility policy and the
-app copies that value into the slot. Strategic interpretation reaches
-behaviors separately, as the live `StrategicContext` ([strategy.md](../strategy.md)).
+Awareness describes: it holds no desired state, objective, intent, priority or
+posture. Macro's posture is macro's own policy (`bot/macro/posture.py`),
+derived from these readings by `bot.app` and handed to `MacroPlanner` as a
+`MacroContext` ([macro/macro-planner.md](../macro/macro-planner.md#posture-adjusted-priorities));
+Strategy's prescriptions reach behaviors as the `StrategicContext`
+([strategy.md](../strategy.md)). `test_decision_pipeline_architecture.py`
+fails if an Awareness type grows a prescriptive field, or if the world model
+imports Strategy, macro, behavior or the app.
 
 ## Known gaps
 

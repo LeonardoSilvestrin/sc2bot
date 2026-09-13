@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from typing import Any
 
 from bot.ports.logging import BotLogger
 from bot.strategy import (
     IntentConfig,
-    MacroPostureDirector,
     SpatialPolicyConfig,
     StrategicContext,
     StrategicDirector,
@@ -17,7 +16,7 @@ from bot.strategy import (
     derive_control_objectives,
     derive_intent,
 )
-from bot.world.awareness import AwarenessSnapshot, RelativePosition
+from bot.world.awareness import AwarenessSnapshot
 
 COMPONENT = "strategy.director"
 
@@ -38,17 +37,14 @@ class StrategyRuntime:
     Policy's first decision under that revision. ``strategy.updated`` stays
     the change/heartbeat summary of the objective.
 
-    The returned Awareness copy still carries the legacy ``MacroPosture``
-    macro depends on; that field is compatibility transport only.
+    It never writes back into Awareness: Strategy's prescriptions travel only
+    as the context.
     """
 
     logger: BotLogger
     director: StrategicDirector = field(default_factory=StrategicDirector)
     intent_config: IntentConfig = field(default_factory=IntentConfig)
     spatial_config: SpatialPolicyConfig = field(default_factory=SpatialPolicyConfig)
-    legacy_posture: MacroPostureDirector = field(
-        default_factory=MacroPostureDirector
-    )
     log_interval_seconds: float = 10.0
     _last_logged_at: float = field(default=float("-inf"), init=False, repr=False)
     _context: StrategicContext = field(
@@ -71,41 +67,27 @@ class StrategyRuntime:
 
         return self._context
 
-    def update(self, awareness: AwarenessSnapshot) -> AwarenessSnapshot:
+    def update(self, awareness: AwarenessSnapshot) -> None:
         previous = self.director.snapshot
         strategy = self.director.update(
             build_strategy_inputs(awareness), awareness.updated_at
         )
-        if strategy is not previous:
-            intent = derive_intent(strategy, self.intent_config)
-            candidate = StrategicContext(
-                intent=intent,
-                spatial=derive_control_objectives(
-                    intent, awareness, self.spatial_config
-                ),
-                updated_at=strategy.game_time,
-                revision=self._context.revision + 1,
-            )
-            if self._context_snapshot is None or not candidate.materially_equals(
-                self._context
-            ):
-                self._context = candidate
-                self._context_snapshot = strategy
-        posture = self.legacy_posture.update(
-            now=awareness.updated_at,
-            workers=awareness.economy.own_workers,
-            townhalls=awareness.economy.own_bases,
-            own_combat=awareness.relative_strength.own_combat_units,
-            strength_is_stably_ahead=(
-                awareness.army.relative.stable_state is RelativePosition.AHEAD
-            ),
-            nearby_enemy_combat=(
-                awareness.threat.near_own_base_enemy_combat_units
-            ),
+        if strategy is previous:
+            return
+        intent = derive_intent(strategy, self.intent_config)
+        candidate = StrategicContext(
+            intent=intent,
+            spatial=derive_control_objectives(intent, awareness, self.spatial_config),
+            updated_at=strategy.game_time,
+            revision=self._context.revision + 1,
         )
-        if strategy is not previous and self._should_log(strategy, previous):
+        if self._context_snapshot is None or not candidate.materially_equals(
+            self._context
+        ):
+            self._context = candidate
+            self._context_snapshot = strategy
+        if self._should_log(strategy, previous):
             self._log(strategy, previous)
-        return replace(awareness, macro_posture=posture)
 
     def record_context(self) -> None:
         """Persist the published context, once per revision, exactly.

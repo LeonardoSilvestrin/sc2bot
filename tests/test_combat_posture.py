@@ -10,7 +10,6 @@ from bot.world.awareness import (
     ArmySupplyEstimate,
     AwarenessSnapshot,
     EnemyArmyKnowledge,
-    MacroPosture,
     RelativeAssessment,
     RelativePosition,
     RelativeStrength,
@@ -24,7 +23,6 @@ def snapshot(
     *,
     score: float = 0.0,
     confidence: float = 0.6,
-    macro_posture: MacroPosture = MacroPosture.BALANCED,
     threatened: bool = False,
     near_own_base_enemy_combat_units: int = 0,
 ) -> AwarenessSnapshot:
@@ -60,7 +58,6 @@ def snapshot(
             near_own_base_enemy_combat_units=near_own_base_enemy_combat_units,
         ),
         updated_at=0.0,
-        macro_posture=macro_posture,
         bases=BaseAwareness((base,)),
         army=ArmyBelief(
             own_supply=0.0,
@@ -84,17 +81,6 @@ class CombatPostureTests(unittest.TestCase):
             derive_combat_posture(awareness=snapshot(threatened=True)),
             CombatPosture.TURTLE,
         )
-
-    def test_the_legacy_macro_posture_is_not_reinterpreted(self):
-        """Strategic caution is Strategy's intent; the compatibility posture
-        macro still reads no longer turtles the army."""
-
-        for macro in (MacroPosture.DEFENSE, MacroPosture.RECOVERY):
-            with self.subTest(macro=macro):
-                self.assertEqual(
-                    derive_combat_posture(awareness=snapshot(macro_posture=macro)),
-                    CombatPosture.BALANCED,
-                )
 
     def test_turtles_when_confidently_behind(self):
         self.assertEqual(

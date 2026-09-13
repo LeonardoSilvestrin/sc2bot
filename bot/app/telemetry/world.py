@@ -11,7 +11,10 @@ from .gate import ChangeGate
 class WorldSnapshotTelemetry:
     """Logs the headline belief (``knowledge.updated``) and the raw
     observation behind it (``observation.updated``) together, whenever the
-    headline changes and on a ten-second heartbeat."""
+    headline changes and on a ten-second heartbeat.
+
+    Beliefs only: macro's posture is a decision, logged as ``macro.posture``.
+    """
 
     def __init__(self, *, logger: BotLogger) -> None:
         self._logger = logger
@@ -32,7 +35,6 @@ class WorldSnapshotTelemetry:
             mission for mission in missions if not mission.status.terminal
         )
         signature = (
-            awareness.macro_posture,
             round(strength.score, 3),
             strength.own_combat_units,
             strength.known_enemy_combat_units,
@@ -54,7 +56,6 @@ class WorldSnapshotTelemetry:
             component="world.awareness",
             game_time=world.time,
             data={
-                "posture": awareness.macro_posture.name,
                 "relative_strength": {
                     "score": round(strength.score, 3),
                     "confidence": round(strength.confidence, 3),

@@ -2,11 +2,9 @@
 
 The scoring/director core is pure and runtime-free: it reads ``StrategyInputs``
 and returns a ``StrategySnapshot``. ``derive_intent`` spells the objective out
-as a ``StrategicIntent``, and ``score_mission`` ranks every behavior's
+as a ``StrategicIntent``, and ``evaluate_mission`` values every behavior's
 opportunities under it on one scale. See ``docs/strategy.md``.
 """
-
-from bot.domain.posture import MacroPosture
 
 from .awareness_adapter import build_strategy_inputs
 from .config import (
@@ -45,7 +43,6 @@ from .model import (
     StrategyInputs,
     StrategySnapshot,
 )
-from .posture import MacroPostureConfig, MacroPostureDirector, MacroPostureState
 from .scoring import (
     assess_objectives,
     score_build_advantage,
@@ -76,10 +73,6 @@ __all__ = [
     "ControlObjective",
     "ControlTargetKind",
     "IntentConfig",
-    "MacroPosture",
-    "MacroPostureConfig",
-    "MacroPostureDirector",
-    "MacroPostureState",
     "MissionEvaluation",
     "MissionPolicyConfig",
     "MissionSignals",

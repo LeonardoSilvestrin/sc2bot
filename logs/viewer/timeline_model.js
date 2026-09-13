@@ -356,8 +356,11 @@
         anyShadow ||= detail.shadow;
         pushState(t.objective, time, data.objective, record, detail);
         pushSeries(t.strategyConfidence, time, detail.confidence);
-      } else if (KNOWLEDGE_EVENTS.has(event)) {
+      } else if (event === "macro.posture") {
         pushState(t.macroPosture, time, data.posture, record);
+      } else if (KNOWLEDGE_EVENTS.has(event)) {
+        // Logs written before macro.posture existed carried the posture here.
+        if (data.posture !== undefined) pushState(t.macroPosture, time, data.posture, record);
         pushSeries(t.relativeStrength, time, get(data, "relative_strength.score"));
         pushSeries(t.enemyNearBase, time, get(data, "threat.near_own_base_enemy_combat_units"));
       } else if (event === "standing.updated") {

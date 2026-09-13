@@ -72,12 +72,13 @@ written when it happens.
 ### `world.attention` / `world.awareness`
 
 Emitted together by `WorldSnapshotTelemetry`, on a change of the headline
-signature (posture, relative strength, threat counts, sighting count, live
-mission ids and statuses) and every 10 s.
+signature (relative strength, threat counts, sighting count, live mission ids
+and statuses) and every 10 s. Beliefs only: macro's posture is a decision,
+logged as `macro.posture`.
 
 | Event | Data |
 | --- | --- |
-| `knowledge.updated` (`world.awareness`) | `posture`; `relative_strength` {`score`, `confidence`, `own_combat_units`, `known_enemy_combat_units`}; `threat` {`visible_enemy_units`, `known_anti_air_units`, `visible_anti_air_units`, `visible_enemy_combat_units`, `near_own_base_enemy_units`, `near_own_base_enemy_combat_units`}; `enemy_sightings`; `active_missions` |
+| `knowledge.updated` (`world.awareness`) | `relative_strength` {`score`, `confidence`, `own_combat_units`, `known_enemy_combat_units`}; `threat` {`visible_enemy_units`, `known_anti_air_units`, `visible_anti_air_units`, `visible_enemy_combat_units`, `near_own_base_enemy_units`, `near_own_base_enemy_combat_units`}; `enemy_sightings`; `active_missions` |
 | `observation.updated` (`world.attention`) | `minerals`, `vespene`, `supply_used`, `supply_cap`; `economy` {`opening_name`, `opening_completed`, collection rates, `workers`, `townhalls` (existing/ready/pending), `ideal_harvesters`, `assigned_harvesters`, `supply_pending`}; `own_unit_count`, `own_structure_count`, `visible_enemy_unit_count` |
 
 ### `world.awareness.enemy`
@@ -186,6 +187,12 @@ Adapter waiting reasons: `minerals_unavailable_at_dispatch`,
 `addon_parent_busy`, `upgrade_prerequisite_or_researcher_unavailable`,
 `ares_no_progress_this_frame`.
 
+### `macro.posture`
+
+| Event | When | Data |
+| --- | --- | --- |
+| `macro.posture` | the first frame, then whenever `MacroContextRuntime` changes the posture | `posture`, `previous_posture` (`null` first), `reason`; `inputs` {`workers`, `townhalls`, `own_combat_units`, `army_stably_ahead`, `near_own_base_enemy_combat_units`} |
+
 ### `macro.planner`
 
 | Event | When | Data |
@@ -288,7 +295,7 @@ timeline modules in a headless Chromium-family browser.
 | Why did the raid go to that base? | `behavior.target_selection` (candidate scores) and `knowledge.enemy_model` at that time |
 | Why is the bot banking? | `macro.status` (`resources`, `capacity` reasons, `tech_blocked`) and `economic_proposal_deferred` reasons |
 | Why is a Factory idle? | `macro.idle_producer_unexplained`, or `capacity.FACTORY.reason` in `macro.status` |
-| Why did the army retreat / stop pushing? | `behavior.state_changed` (map control `RETREAT` reason), `knowledge.updated` posture, `awareness.belief_changed` |
+| Why did the army retreat / stop pushing? | `behavior.state_changed` (map control `RETREAT` reason), `standing.updated` `combat_posture`, `awareness.belief_changed` |
 | Did a scan fire? | `vision.request_selected` -> `vision.scan_executed` or `vision.request_deferred` |
 | Who holds the map? | `knowledge.territory`, and the SVG at that time |
 | Is the bot slow? | `spatial.perf` (`*_rebuilds` growing every heartbeat means a cache is not holding), `territory.perf` |

@@ -18,9 +18,9 @@ director every frame and, on each new snapshot, publishes a
 Behavior planners read that context to choose targets; the Mission Policy
 (`evaluate_mission`, run by `MissionRanker` in `bot/app/mission_ranking.py`)
 evaluates every planner's candidates under it and proposes only the viable
-ones. Macro does not read Strategy yet:
-it still receives the legacy `MacroPosture`. Every weight below remains a
-first guess until match logs show where it is wrong.
+ones. Macro does not read Strategy: its posture is macro's own policy
+(`bot/macro/posture.py`), handed to it as a `MacroContext`. Every weight below
+remains a first guess until match logs show where it is wrong.
 
 ```text
 AwarenessSnapshot --> awareness_adapter --> StrategyInputs
@@ -38,9 +38,8 @@ AwarenessSnapshot --> awareness_adapter --> StrategyInputs
 ```
 
 The scoring, direction, intent and policy core (`model`, `config`,
-`scoring`, `hysteresis`, `director`, `intent`, `mission_policy`, `posture`)
-imports only itself, `bot.domain` (the legacy posture enum) and the standard
-library, performs no I/O and knows no runtime, Ares, Attention, Awareness or
+`scoring`, `hysteresis`, `director`, `intent`, `mission_policy`) imports only
+itself and the standard library, performs no I/O and knows no runtime, Ares, Attention, Awareness or
 behavior. Only `awareness_adapter.py` and `spatial/policy.py` read Awareness.
 Runtime coordination and logging live in `bot.app`. `bot.macro.strategy`
 remains unrelated: it is macro's goal/opening vocabulary.
@@ -57,7 +56,6 @@ remains unrelated: it is macro's goal/opening vocabulary.
 | `spatial/` | `ControlObjective`, `SpatialStrategySnapshot`, `SpatialPolicyConfig`, `derive_control_objectives` |
 | `context.py` | `StrategicContext`: what behaviors and the Mission Policy read |
 | `mission_policy.py` | `MissionSignals`, `ControlMatch`, `ControlNeed`, `MissionPolicyConfig`, `MissionEvaluation`, `evaluate_mission`, `is_viable` |
-| `posture.py` | temporary owner of the legacy `MacroPosture` policy macro still consumes |
 
 ## Inputs
 
@@ -388,6 +386,5 @@ keeping the model/director unaware of Awareness. Current mappings are:
 
 The app logs the first result, objective transitions and periodic samples as
 `strategy.updated`. Gameplay reads the objective only through the intent and
-the control objectives. Macro, the last legacy consumer, still receives
-`MacroPosture`; its unchanged policy lives in Strategy (`posture.py`) and is
-copied into the deprecated Awareness snapshot field only for compatibility.
+the control objectives. Macro reads neither: its `MacroPosture` is macro's own
+policy ([macro/macro-planner.md](macro/macro-planner.md#posture-adjusted-priorities)).

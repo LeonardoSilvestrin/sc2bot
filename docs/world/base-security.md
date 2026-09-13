@@ -77,7 +77,8 @@ sizes how many defenders to ask for ([behavior/defense.md](../behavior/defense.m
 ## Deliberately not built
 
 - Hysteresis on `BaseSecurityLevel`: a scout wandering in and out of 25 tiles
-  flaps the level. `MacroPosture` shows the pattern if it is needed.
+  flaps the level. `MacroPostureDirector` (`bot/macro/posture.py`) shows the
+  pattern if it is needed.
 - Confidence: `SAFE` is instantaneous and unobserved space reads `SAFE`.
 - Combat-simulation scores instead of unit counts.
 - Worker rushes: enemy workers never count as a threat.

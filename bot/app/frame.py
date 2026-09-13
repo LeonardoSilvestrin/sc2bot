@@ -19,6 +19,7 @@ from bot.world.attention import AttentionService, AttentionSnapshot
 from bot.world.awareness import AwarenessService, AwarenessSnapshot
 
 from .debug import SpatialDebugView, SpatialSnapshotExporter
+from .macro_context import MacroContextRuntime
 from .mission_ranking import MissionRanker
 from .strategy_runtime import StrategyRuntime
 from .telemetry import FrameTelemetry
@@ -30,8 +31,10 @@ class FrameProcessor:
     One read side feeds two domains that never learn about each other:
     behavior planners, whose missions ``MissionController`` admits and runs on
     units, and ``MacroPlanner``, whose purchases ``EconomyController`` admits
-    against the bank. Diagnostics read the outcome last. The step order is
-    behavior, not presentation -- see ``docs/frame-lifecycle.md``.
+    against the bank. Each domain's policy travels explicitly -- Strategy's as
+    a ``StrategicContext``, macro's as a ``MacroContext`` -- never through
+    Awareness. Diagnostics read the outcome last. The step order is behavior,
+    not presentation -- see ``docs/frame-lifecycle.md``.
     """
 
     def __init__(
@@ -53,6 +56,7 @@ class FrameProcessor:
         spatial_snapshot: SpatialSnapshotExporter | None = None,
         strategy: StrategyRuntime | None = None,
         mission_ranker: MissionRanker | None = None,
+        macro_context: MacroContextRuntime | None = None,
     ) -> None:
         self._logger = logger
         self._world_observer = world_observer
@@ -70,6 +74,7 @@ class FrameProcessor:
         self._spatial_snapshot = spatial_snapshot
         self._strategy = strategy
         self._mission_ranker = mission_ranker or MissionRanker(logger=logger)
+        self._macro_context = macro_context or MacroContextRuntime(logger=logger)
 
     async def process(self, bot, *, iteration: int) -> None:
         # Every event this frame emits carries its iteration.
@@ -86,7 +91,7 @@ class FrameProcessor:
         self._log_belief_changes(awareness)
         strategy: StrategicContext | None = None
         if self._strategy is not None:
-            awareness = self._strategy.update(awareness)
+            self._strategy.update(awareness)
             strategy = self._strategy.context
 
         await self._step_behavior(bot, attention, awareness, strategy)
@@ -159,9 +164,10 @@ class FrameProcessor:
         # what we owe it is the money for the next ones, which the economy
         # controller withholds as protected. An unfinished opening is a set
         # of commitments, not a freeze on macro.
+        context = self._macro_context.update(awareness)
         economy_result = self._economy.step(
             attention=attention,
-            proposals=self._macro_planner.propose(attention, awareness),
+            proposals=self._macro_planner.propose(attention, awareness, context),
             commands=AresEconomyCommands(bot),
         )
         self._macro_diagnostics.report(

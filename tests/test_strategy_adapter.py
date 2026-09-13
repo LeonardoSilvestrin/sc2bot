@@ -8,9 +8,6 @@ from sc2.position import Point2
 from bot.app.strategy_runtime import StrategyRuntime
 from bot.app.strategy_shadow import StrategyShadow
 from bot.strategy import (
-    MacroPosture,
-    MacroPostureConfig,
-    MacroPostureDirector,
     StrategicDirector,
     StrategicObjective,
     StrategyConfig,
@@ -201,13 +198,11 @@ class StrategyRuntimeTests(unittest.TestCase):
         runner = StrategyRuntime(logger=logger)
         awareness = snapshot(near_base_combat=1)
 
-        compatible = runner.update(awareness)
+        runner.update(awareness)
 
         self.assertIsNotNone(runner.snapshot)
         self.assertEqual(runner.context.intent, derive_intent(runner.snapshot))
         self.assertEqual(runner.context.updated_at, awareness.updated_at)
-        self.assertIs(compatible.macro_posture, MacroPosture.DEFENSE)
-        self.assertIs(awareness.macro_posture, MacroPosture.BALANCED)
         event = logger.events[0]
         self.assertEqual(event["name"], "strategy.updated")
         self.assertEqual(event["data"]["mode"], "live")
@@ -285,29 +280,6 @@ class StrategyRuntimeTests(unittest.TestCase):
 
     def test_the_deprecated_shadow_name_is_the_runtime(self):
         self.assertIs(StrategyShadow, StrategyRuntime)
-
-    def test_legacy_posture_policy_keeps_its_defense_release_hysteresis(self):
-        director = MacroPostureDirector(
-            MacroPostureConfig(
-                defense_release_after=10.0,
-                greed_safe_after=20.0,
-                minimum_hold_seconds=0.0,
-            )
-        )
-        common = dict(
-            workers=6,
-            townhalls=0,
-            own_combat=1,
-            strength_is_stably_ahead=False,
-        )
-
-        danger = director.update(now=30.0, nearby_enemy_combat=1, **common)
-        held = director.update(now=35.0, nearby_enemy_combat=0, **common)
-        released = director.update(now=41.0, nearby_enemy_combat=0, **common)
-
-        self.assertIs(danger, MacroPosture.DEFENSE)
-        self.assertIs(held, MacroPosture.DEFENSE)
-        self.assertIs(released, MacroPosture.RECOVERY)
 
 
 if __name__ == "__main__":

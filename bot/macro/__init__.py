@@ -21,6 +21,8 @@ stays in one folder:
     construction/   structures to build: production capacity, add-ons,
                     supply, refineries
     expansion/      bases to take
+    posture.py      MacroPosture, its director, and the MacroContext the app
+                    hands the planner each frame
     planner.py      MacroPlanner, composing those into one tick's proposals
     diagnostics.py  why it is or is not spending, once the controller ran
     contracts.py    SpendPlanner, the contract `planner.py` keeps
@@ -40,6 +42,13 @@ from .composition import BIO, MECH, CompositionDoctrine
 from .contracts import SpendPlanner
 from .diagnostics import MacroDiagnostics
 from .planner import MacroPlanner, MacroStatus
+from .posture import (
+    MacroContext,
+    MacroPosture,
+    MacroPostureConfig,
+    MacroPostureDirector,
+    MacroPostureState,
+)
 from .strategy.config import MacroPlannerConfig, ResourceOverflowConfig
 from .strategy.goals import ArmyUnitGoal, MacroGoalSet, ProductionGoal, UpgradeGoal
 from .strategy.openings import MACRO_PROFILES, macro_config_for_opening
@@ -55,10 +64,15 @@ __all__ = [
     "MECH",
     "ArmyUnitGoal",
     "CompositionDoctrine",
+    "MacroContext",
     "MacroDiagnostics",
     "MacroGoalSet",
     "MacroPlanner",
     "MacroPlannerConfig",
+    "MacroPosture",
+    "MacroPostureConfig",
+    "MacroPostureDirector",
+    "MacroPostureState",
     "MacroStatus",
     "ProductionGoal",
     "ReferenceBuild",

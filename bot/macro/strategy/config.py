@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 
 from bot.engine.economy.models import ResourceCost
-from bot.strategy import MacroPosture
+from bot.macro.posture import MacroPosture
 
 from ..builds.bio_three_one_one import bio_three_one_one
 from .goals import MacroGoalSet

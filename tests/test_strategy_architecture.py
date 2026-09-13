@@ -18,7 +18,6 @@ STRATEGY = BOT / "strategy"
 # Everything bot.strategy may import besides itself.
 ALLOWED_IMPORTS = {
     "__future__",
-    "bot.domain",
     "collections.abc",
     "dataclasses",
     "enum",
@@ -62,13 +61,12 @@ PURE_CORE = (
     "intent",
     "mission_policy",
     "model",
-    "posture",
     "scoring",
 )
 
 
 class PurityTests(unittest.TestCase):
-    def test_strategy_core_imports_only_itself_domain_contracts_and_stdlib(self):
+    def test_strategy_core_imports_only_itself_and_the_standard_library(self):
         core = {f"bot.strategy.{name}" for name in PURE_CORE}
         found = [
             f"{path.relative_to(BOT).as_posix()}: {name}"

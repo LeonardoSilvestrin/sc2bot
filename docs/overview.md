@@ -49,8 +49,7 @@ In words:
    that is not observable in this frame.
 3. **Believe.** `AwarenessService` keeps memory across frames and derives
    beliefs: where enemy bases and armies are and how sure we are, whether we
-   are ahead in economy and army, how risky spending is, how threatened each
-   base is, a spatial field over the map, and a territory reading.
+   are ahead in economy and army, how threatened each base is, a spatial field over the map, and a territory reading.
 4. **Prescribe.** Strategy scores its objectives over Awareness, spells the
    one in force out as a `StrategicIntent` (how much defense, map control,
    harass and information are wanted, and how much risk) and derives the
@@ -108,14 +107,13 @@ a unit tag, mission or squad.
 | `bot/ports` | Protocols: `MissionCommands`, `EconomyCommands`, `VisionCommands`, `BotLogger` | -- | -- | holds logic |
 | `bot/world/attention` | Immutable facts of one frame | -- | `AttentionSnapshot` | remembers or infers |
 | `bot/world/awareness` | Memory and beliefs | Attention | `AwarenessSnapshot` | knows missions, leases or cooldowns |
-| `bot/domain` | Temporary: only the legacy `MacroPosture` enum, until macro policy stops travelling through Awareness | -- | `MacroPosture` | holds unit profiles, capabilities or any other policy |
 | `bot/behavior` | Six vertical behaviors: assess, plan, execute | Attention, Awareness | `MissionProposal`s, commands for leased units, vision requests | allocates units, proposes spend |
 | `bot/engine/missions` | Mission admission, lifecycle, unit leases | proposals, own units | `Mission`s, `MissionContext` | names a behavior or mission kind |
 | `bot/engine/squads` | Persistent squad identity | allocations | preferred tags | owns or commands units |
 | `bot/engine/services` | Capabilities shared by behaviors (active vision) | requests, Attention | vision request results, scans | knows who asked |
-| `bot/macro` | What to buy | Attention, Awareness | `EconomicProposal`s, `MacroStatus` | names a unit tag, mission or squad |
+| `bot/macro` | What to buy, and macro's own posture policy | Attention, Awareness, `MacroContext` | `EconomicProposal`s, `MacroStatus`, `MacroPosture` | names a unit tag, mission or squad |
 | `bot/engine/economy` | Spend admission against a virtual bank | proposals, Attention | `EconomicAction`s | knows units, missions or production policy |
-| `bot/strategy` | What matters and what world state is wanted: objective scoring, `StrategicIntent`, `ControlObjective`s, the Mission Policy | `AwarenessSnapshot` at its two boundary modules; otherwise `StrategyInputs` | `StrategicContext`, mission rankings; temporary legacy posture | performs runtime I/O, picks units or targets, or issues commands |
+| `bot/strategy` | What matters and what world state is wanted: objective scoring, `StrategicIntent`, `ControlObjective`s, the Mission Policy | `AwarenessSnapshot` at its two boundary modules; otherwise `StrategyInputs` | `StrategicContext`, mission rankings | performs runtime I/O, picks units or targets, or issues commands |
 | `bot/app` | Wiring, frame order, telemetry, debug views | everything | logs, debug drawings, SVGs | holds game rules |
 
 The rules behind this table, and the tests that keep it true, are in
@@ -125,9 +123,9 @@ The rules behind this table, and the tests that keep it true, are in
 
 | Piece | Status | Notes |
 | --- | --- | --- |
-| Attention, enemy memory, enemy bases and forces, beliefs, macro posture, base security, spatial field | live | [world/awareness.md](world/awareness.md), [world/spatial-field.md](world/spatial-field.md) |
+| Attention, enemy memory, enemy bases and forces, beliefs, base security, spatial field | live | [world/awareness.md](world/awareness.md), [world/spatial-field.md](world/spatial-field.md) |
 | Territory (control, frontline, ground security, regions and passages) | live | computed every second, logged and drawn; sample control/knowledge feed the spatial field; Strategy derives its control objectives from regions and passages, and Defense holds the passage into an attacked base ([world/territory.md](world/territory.md)) |
-| Strategy | live | objective, intent and control objectives reach planners as `StrategicContext`; the Mission Policy ranks every mission candidate; macro still reads the legacy posture ([strategy.md](strategy.md)) |
+| Strategy | live | objective, intent and control objectives reach planners as `StrategicContext`; the Mission Policy ranks every mission candidate; macro does not read Strategy ([strategy.md](strategy.md)) |
 | Standing army, map control, defense, Reaper harass, Banshee harass, scouting | live | [behavior/README.md](behavior/README.md) |
 | Defense roles (Tanks siege on an anchor, everything else screens) | pilot | inside `DefendBaseExecutor` only ([behavior/defense.md](behavior/defense.md)) |
 | Active vision | live | one provider, Scanner Sweep ([engine/vision.md](engine/vision.md)) |
@@ -172,7 +170,7 @@ These are the choices every layer follows; each component doc shows how.
 | Sighting | One enemy unit or structure as last seen, kept while Ares reports its tag. |
 | Force cluster | Remembered enemy combat units grouped by proximity, with strength and confidence. |
 | Belief (economy / army) | A running estimate of the enemy's workers or army supply, and the probability that we are ahead. |
-| Macro posture | `DEFENSE`, `BALANCED`, `GREED`, `RECOVERY`: how risky spending is right now. |
+| Macro posture | `DEFENSE`, `BALANCED`, `GREED`, `RECOVERY`: how risky spending is right now. Macro policy (`bot/macro/posture.py`), not a belief. |
 | Combat posture | `TURTLE`, `BALANCED`, `PRESSURE`: where the standing army should sit. Separate axis from macro posture. |
 | Proposal | A planner's argument for work (`MissionProposal`) or for a purchase (`EconomicProposal`). |
 | Mission | An admitted `MissionProposal`, with a lifecycle and leased units. |

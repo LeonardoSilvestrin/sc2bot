@@ -24,7 +24,6 @@ from bot.world.attention import AttentionSnapshot, MapFacts, UnitSnapshot, World
 from bot.world.awareness import (
     AwarenessService,
     AwarenessSnapshot,
-    MacroPosture,
     RelativeStrength,
     SpatialField,
     SpatialFieldSample,
@@ -115,7 +114,6 @@ def harass_proposal(now: float, *, priority: int = 60) -> MissionProposal:
 def posture_awareness(
     current: AttentionSnapshot,
     *,
-    macro_posture: MacroPosture = MacroPosture.BALANCED,
     score: float = 0.0,
     confidence: float = 0.0,
 ) -> AwarenessSnapshot:
@@ -133,7 +131,6 @@ def posture_awareness(
         ),
         threat=ThreatAssessment(0, 0, 0),
         updated_at=current.world.time,
-        macro_posture=macro_posture,
         bases=BaseSecurityAssessor().update(current.world),
         # One supported, known frontier sample: a patrol worth proposing.
         spatial=SpatialField(
@@ -527,10 +524,9 @@ class CrossPlannerPreemptionFromPositionTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_map_control_acquires_a_unit_previously_holding_position(self):
         # A manually-built AwarenessSnapshot (rather than the real
-        # AwarenessService) keeps macro_posture out of DEFENSE/RECOVERY, so
-        # MapControlExecutor patrols instead of immediately retreating home
-        # and completing -- this test is only about acquiring the unit, not
-        # about MapControlExecutor's own retreat behavior.
+        # AwarenessService) keeps the scene free of threats -- this test is
+        # only about acquiring the unit, not about MapControlExecutor's own
+        # retreat behavior.
         units = (marine(1),)
         controller = MissionController(
             logger=FakeLogger(), executor_factories=DEFAULT_EXECUTOR_FACTORIES

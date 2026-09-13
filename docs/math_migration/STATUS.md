@@ -6,7 +6,7 @@ migration. Rules: [PRINCIPLES.md](PRINCIPLES.md).
 
 ## Last completed commit
 
-`refactor: use behavior-owned unit requirements` (Stage 3).
+`refactor: remove prescriptive awareness transport` (Stage 4).
 
 ## Completed stages
 
@@ -25,7 +25,7 @@ migration. Rules: [PRINCIPLES.md](PRINCIPLES.md).
   `strategy.context` before the first decision citing it, provenance on
   `mission.evaluated`, spatial selection summary, `mission.progressed`,
   logged `preemption_cost` faults, joinable causal-chain tests.
-- **Stage 3 -- behavior-owned unit requirements.**
+- **Stage 3 -- behavior-owned unit requirements** (`6870bdd`).
   - Removed: `CombatCapabilities`, `Capability`, `CapabilityRequirement`,
     `Suitability`, `UNIT_PROFILES`, `COMBAT_UNIT_TYPES`, `is_combat_unit`
     (`bot/domain/capabilities.py`, `profiles.py`); `CombatRole`
@@ -49,13 +49,32 @@ migration. Rules: [PRINCIPLES.md](PRINCIPLES.md).
     (armed, not a worker), not from a profile table.
   - A test fails when a registered build's army contains a type with no
     roster decision (Standing roster or declared unarmed support).
+- **Stage 4 -- no prescriptive transport through Awareness.**
+  - Removed: `AwarenessSnapshot.macro_posture`; `bot/world/awareness/posture.py`,
+    `bot/strategy/posture.py`, `bot/domain/` (last file: the `MacroPosture`
+    enum); `AwarenessService`'s unused `defense_release_after`,
+    `posture_min_hold`, `greed_safe_after` arguments; `posture` in
+    `knowledge.updated`; `StrategyRuntime`'s legacy posture output.
+  - Macro posture is macro's policy: `MacroPosture`, `MacroContext`,
+    `MacroPostureConfig`, `MacroPostureDirector` in `bot/macro/posture.py`,
+    rules and timings unchanged, each result now carrying a reason.
+  - Transport: `bot/app/macro_context.py` (`MacroContextRuntime`) runs the
+    director on Awareness readings, logs `macro.posture` (posture, previous,
+    reason, inputs) on change, and passes `MacroContext` to
+    `MacroPlanner.propose(attention, awareness, context)`. Its config is
+    fingerprinted as `configs.macro_posture`.
+  - Architecture tests: no intent/desired/objective/priority/posture field on
+    an Awareness type; `bot.world` imports no Strategy, macro, behavior, app
+    or domain; the Strategy core imports only itself and the standard library
+    and never reaches behavior/engine/macro/app/adapters; the engine imports no
+    Strategy, behavior or app; behavior and macro stay apart; no `bot/domain`
+    directory and no `bot.domain` import.
 
 ## Tests and tooling
 
-At Stage 3 (Windows, project `.venv`, Python 3.12):
+At Stage 4 (Windows, project `.venv`, Python 3.12):
 
-- `pytest`: 816 passed (the capability test files were replaced by a smaller
-  concrete-requirement suite).
+- `pytest`: 818 passed.
 - `ruff check bot tests`: clean.
 - `mypy bot`: clean.
 - `git diff --check`: clean.
@@ -79,8 +98,15 @@ pytest/ruff/mypy).
 - Allocator shrink order now honors the requesting behavior's preference for
   every requirement (it used to apply only to capability requirements);
   equal preferences still go by distance, health and tag.
-- `bot/domain` survives Stage 3 only as the home of the legacy `MacroPosture`
-  enum; Stage 4 deletes it.
+- Boundary change (Stage 4): macro posture moved from Awareness/Strategy into
+  `bot.macro`, and `bot.app` became its transport. Reason: a posture prescribes
+  how to spend, so it violated "Awareness describes", and Strategy only hosted
+  it for compatibility. Replacement invariant: Awareness carries no
+  prescription; macro receives its policy only as an explicit `MacroContext`
+  argument; neither Awareness nor Strategy imports macro.
+- The frame keeps its order: `MacroContextRuntime.update` runs at the start of
+  the macro step, after the mission engine; its only inputs are the frame's
+  Awareness readings.
 
 ## Known issues
 
@@ -95,8 +121,8 @@ pytest/ruff/mypy).
   opening, `configs.macro` fingerprints `None`.
 - State summaries still round; the log viewer does not display the new
   records.
-- `AwarenessSnapshot.macro_posture` transports macro policy through
-  Awareness (Stage 4).
+- Logs recorded before Stage 4 carry posture in `knowledge.updated`; the
+  viewer still reads it there when no `macro.posture` event exists.
 - `MissionController` orders equal priorities by `admitted_at` only (Stage 5).
 - Untracked `.codex-pytest-strategy/` and `.pytest-run-spatial-fix/` are
   permission-locked test-output directories not created by this pass; left
@@ -111,8 +137,8 @@ pytest/ruff/mypy).
 
 ## Next stage
 
-Stage 4 -- remove prescriptive state from Awareness and delete `bot/domain`:
-drop `AwarenessSnapshot.macro_posture`; transport macro posture explicitly
-from the app to `MacroPlanner`; move posture reporting out of
-`knowledge.updated`; add architecture tests (no prescriptive Awareness
-fields, layer import boundaries, no `bot/domain`).
+Stage 5 -- lock replacement seams and behavioral invariants: kernel replay
+fixtures (Strategy, Mission Policy, spatial anchor, allocation), relational
+invariants (utility monotonicity, control contribution, rejection, leases,
+terminal missions, arbitration order, logged evaluation), and an explicit
+deterministic `MissionController` tie-break with shuffled-input tests.

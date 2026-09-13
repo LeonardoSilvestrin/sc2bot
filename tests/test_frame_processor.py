@@ -83,6 +83,7 @@ class FrameProcessorOrderTests(unittest.IsolatedAsyncioTestCase):
                 enabled=True, render=record("spatial_debug.render")
             ),
             mission_ranker=SimpleNamespace(rank=rank),
+            macro_context=SimpleNamespace(update=record("macro_context.update")),
         )
 
         with (
@@ -109,6 +110,7 @@ class FrameProcessorOrderTests(unittest.IsolatedAsyncioTestCase):
                 "vision.resolve",
                 "register_baseline_behaviors",
                 "missions.tick",
+                "macro_context.update",
                 "macro_planner.propose",
                 "economy.step",
                 "macro_diagnostics.report",

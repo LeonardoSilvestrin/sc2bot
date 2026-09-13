@@ -15,6 +15,7 @@ from .construction.capacity import (
 from .construction.gas import propose_gas
 from .construction.supply import propose_supply
 from .expansion.bases import propose_expansion
+from .posture import MacroContext
 from .production.army import propose_army
 from .production.army_demand import ArmyDemand, army_demand
 from .production.workers import propose_worker
@@ -76,11 +77,15 @@ class MacroPlanner:
         self,
         attention: AttentionSnapshot,
         awareness: AwarenessSnapshot,
+        context: MacroContext | None = None,
     ) -> tuple[EconomicProposal, ...]:
+        """``context`` is the macro policy ``bot.app`` hands over this frame;
+        ``None`` reads as the default context (tests, tools)."""
+
         world = attention.world
         economy = world.economy
         self._follow_opening(economy.opening_name)
-        posture = awareness.macro_posture
+        posture = (context or MacroContext()).posture
         proposals: list[EconomicProposal] = []
 
         demand = army_demand(
