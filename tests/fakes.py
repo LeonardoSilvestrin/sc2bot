@@ -71,6 +71,8 @@ def unit(
     attack_air: bool = True,
     worker: bool = False,
     structure: bool = False,
+    ready: bool = True,
+    role: str | None = None,
 ) -> UnitView:
     return UnitView(
         tag=tag,
@@ -84,6 +86,8 @@ def unit(
         can_attack_air=attack_air and power > 0.0,
         is_worker=worker,
         is_structure=structure,
+        is_ready=ready,
+        role=role,
     )
 
 
@@ -100,6 +104,7 @@ def attention(
     visibility: np.ndarray | None = None,
     workers: int = 12,
     opening_done: bool = True,
+    map_view: MapView = MAP,
 ) -> AttentionState:
     def by_tag(items) -> tuple:
         return tuple(sorted(items, key=lambda item: item.tag))
@@ -120,7 +125,7 @@ def attention(
         enemy_structures=by_tag(enemy_structures),
         bases=tuple(bases),
         dead_tags=frozenset(dead_tags),
-        map=MAP,
+        map=map_view,
         visibility=visibility,
     )
 
@@ -176,7 +181,11 @@ class FakeUnit:
         flying: bool = False,
         structure: bool = False,
         visible: bool = True,
+        ready: bool = True,
     ) -> None:
+        self.is_ready = ready
+        # Abilities this unit was ordered to use, in order.
+        self.commands: list = []
         self.tag = tag
         self.type_id = type_id
         self.position = Point2((float(x), float(y)))
@@ -194,6 +203,32 @@ class FakeUnit:
 
     def distance_to(self, other) -> float:
         return self.position.distance_to(getattr(other, "position", other))
+
+    def __call__(self, ability) -> None:
+        self.commands.append(ability)
+
+
+class FakeMediator:
+    """The Ares mediator surface Attention and the Engine use."""
+
+    def __init__(self) -> None:
+        self.get_ground_grid = np.ones((SIZE, SIZE))
+        self.get_air_grid = np.ones((SIZE, SIZE))
+        self.get_unit_role_dict: dict[str, set[int]] = {}
+        self.removed_from_minerals: list[int] = []
+
+    def assign_role(self, *, tag: int, role, remove_from_squad: bool = True) -> None:
+        for tags in self.get_unit_role_dict.values():
+            tags.discard(tag)
+        self.get_unit_role_dict.setdefault(role.name, set()).add(tag)
+
+    def remove_worker_from_mineral(self, *, worker_tag: int) -> None:
+        self.removed_from_minerals.append(worker_tag)
+
+    def role_of(self, tag: int) -> str | None:
+        return next(
+            (role for role, tags in self.get_unit_role_dict.items() if tag in tags), None
+        )
 
 
 class FakeDebugClient:
@@ -245,9 +280,7 @@ class FakeBot:
         self.build_order_runner = SimpleNamespace(
             chosen_opening="BioThreeOneOne", build_completed=True
         )
-        self.mediator = SimpleNamespace(
-            get_ground_grid=np.ones((SIZE, SIZE)), get_air_grid=np.ones((SIZE, SIZE))
-        )
+        self.mediator = FakeMediator()
         self.start_location = MAP.own_start
         self.enemy_start_locations = [MAP.enemy_start]
         self.main_base_ramp = SimpleNamespace(top_center=MAP.main_ramp)

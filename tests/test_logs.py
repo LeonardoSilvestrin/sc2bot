@@ -59,7 +59,7 @@ def test_the_jsonl_logger_writes_the_envelope_and_rejects_non_json(tmp_path) -> 
         json.loads(line) for line in logger.path.read_text(encoding="utf-8").splitlines()
     )
     assert first == {
-        "schema": 3,
+        "schema": 4,
         "run": "run-1",
         "seq": 1,
         "iteration": None,

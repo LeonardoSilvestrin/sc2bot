@@ -8,8 +8,10 @@ attention = observe(bot, iteration, map_view)                  ATTENTION
 awareness = awareness_model.infer(attention)                    AWARENESS
 strategy  = strategy_model.decide(attention, awareness)         STRATEGY
 proposals = defense.plan(...) + core_army.plan(...)             BEHAVIORS
+            + intel.plan(attention)
 economy   = economy.plan(attention, strategy)
-result    = engine.execute(bot, attention, proposals, economy)  ENGINE
+structures = structure_control.plan(attention)
+result    = engine.execute(bot, attention, proposals, economy, structures)  ENGINE
 logs.record(bot, attention, awareness, strategy, ...)           LOGS
 ```
 
@@ -23,8 +25,8 @@ resto lê estados imutáveis e é testável sem `AresBot`.
 | ATTENTION | [bot/attention.py](../bot/attention.py) | `AttentionState`, `MapView` | Lê o frame: recursos, unidades próprias e inimigas visíveis (ordenadas por tag), bases, mortes, visibilidade. `read_map` lê o mapa uma vez e congela lattice, expansões e `MapTopology` (regiões, passagens, adjacência e regiões dos starts). Não interpreta valor, ameaça ou controle territorial. |
 | AWARENESS | [bot/awareness/](../bot/awareness/) | `AwarenessState` | Memória de contatos com confiança `exp(-idade/τ)` e incerteza `min(cap, v·idade)`; esquece por morte confirmada, posição vista vazia (após carência) ou confiança < piso. Pressão por base e campo de influência. |
 | STRATEGY | [bot/strategy.py](../bot/strategy.py) | `StrategyState` | `STABILIZE` vs `BUILD_ADVANTAGE` com margem, permanência mínima e emergência; preferências contínuas `defense`, `army`, `economy`, `risk`; ponto de rally. |
-| BEHAVIORS | [bot/behaviors/](../bot/behaviors/) | `Proposal`, `EconomyPlan` | `defense`: uma proposta por base sob pressão. `core_army`: fallback com todas as unidades livres. `economy`: plano para os macro behaviors do Ares depois do opening. |
-| ENGINE | [bot/engine.py](../bot/engine.py) | `EngineResult` | Ordena por `(-priority, owner, proposal_id)`, concede cada unidade de exército a no máximo uma proposta (as que já eram dela primeiro, depois as mais próximas) e só comanda as concedidas, via `CombatManeuver`/`AMove`/`PathUnitToTarget`/`SiegeTankDecision`. Registra `Mining` e o `MacroPlan`. |
+| BEHAVIORS | [bot/behaviors/](../bot/behaviors/) | `Proposal`, `EconomyPlan`, `StructurePlan` | `defense`: uma proposta por base sob pressão. `core_army`: fallback com todas as unidades livres. `intel`: um SCV percorre a main inimiga no early game. `economy`: plano para os macro behaviors do Ares depois do opening. `structure_control`: quais depots abaixar. |
+| ENGINE | [bot/engine.py](../bot/engine.py) | `EngineResult` | Ordena por `(-priority, owner, proposal_id)`, concede cada unidade de exército a no máximo uma proposta (as que já eram dela primeiro, depois as mais próximas) e só comanda as concedidas, via `CombatManeuver`/`AMove`/`PathUnitToTarget`/`SiegeTankDecision`. Workers só vão para propostas que pedem um tipo de worker, só saem da mineração (role `GATHERING`) e voltam a ela quando nenhuma proposta os segura; o scout recebe role `SCOUTING`. Registra `Mining`, o `MacroPlan` e abaixa os depots do `StructurePlan`. |
 | LOGS | [bot/logs/](../bot/logs/) | — | Log JSONL, snapshots SVG do campo e overlay in-game. Nenhum deles muda decisão nem derruba partida. |
 
 ## Matemática
@@ -44,6 +46,13 @@ resto lê estados imutáveis e é testável sem `AresBot`.
 - Defense: `priority = threat · (0.5 + 0.5·strategy.defense)` (> 0 exatamente enquanto há
   atacante ao alcance, logo acima do CoreArmy, que é 0) e
   `count = ceil(1.5 · pressão / poder médio do exército)`. Ataque só aéreo pede só quem atira no ar.
+- Intel: com `workers ≥ 16` e antes de 240 s, pede um SCV. Rota: start inimigo, depois o
+  sample mais distante da região da main em cada um de 8 setores angulares, anti-horário a
+  partir da direção do nosso start. Um waypoint conta como visto na primeira vez em visão;
+  `priority = waypoints não vistos / total`. Termina com a rota vista, o scout morto (não
+  repõe) ou 90 s depois de sair; o SCV volta para a mineração.
+- StructureControl: abaixa todo depot pronto e levantado sem inimigo terrestre visível a
+  ≤ 6,5; nunca levanta.
 
 ## Visualização
 
@@ -60,7 +69,7 @@ resto lê estados imutáveis e é testável sem `AresBot`.
 
 ## Catálogo de eventos
 
-Envelope: `schema` (3), `run`, `seq`, `iteration`, `event`, `component` (a camada),
+Envelope: `schema` (4), `run`, `seq`, `iteration`, `event`, `component` (a camada),
 `game_time`, `data`. Resumos de estado passam por `ChangeGate` (mudança + heartbeat de
 10 s); decisões são escritas quando mudam.
 
@@ -74,6 +83,7 @@ Envelope: `schema` (3), `run`, `seq`, `iteration`, `event`, `component` (a camad
 | `strategy.decided` | strategy | troca de objetivo, heartbeat | `objective`, `previous`, `since`, `reason`, `defense`, `army`, `economy`, `risk`, `rally`, `inputs`, `scores` |
 | `behavior.proposed` | behaviors | o conjunto ranqueado de propostas muda | `proposals[]` {`proposal_id`, `owner`, `priority`, `command`, `target`, `count`, `unit_types`, `reason`, `inputs`} |
 | `behavior.economy_planned` | behaviors | o plano muda | `active`, `workers`, `gas`, `bases`, `expand`, `freeflow`, `reason`, `composition[]` |
+| `behavior.structures_planned` | behaviors | depots a abaixar ou razão mudam | `lower`, `reason` (`no_raised_depots`, `enemy_near`, `no_enemy_near`), `inputs` {`raised`, `held_up`, `ground_enemies`} |
 | `engine.granted` | engine | alguma concessão muda | `grants[]` {`proposal_id`, `owner`, `priority`, `requested`, `granted`, `tags`, `types`}, `transfers[]` {`tag`, `type`, `from`, `to`}, `unassigned` |
 | `engine.commanded` | engine | comando, alvo (grade de 3) ou unidades de uma concessão mudam | `proposal_id`, `owner`, `command`, `target`, `tags`, `types`, `priority`, `reason`, `inputs`, `strategy` {`objective`, `reason`, `defense`, `risk`}, `awareness` {`danger`, `contacts`, `enemy_power`}, `attention` {`army_units`, `visible_enemy_units`}; `tags: []` e `reason: no_units_granted` quando a concessão acaba |
 | `logs.frame_perf` | logs | heartbeat | `frames`, `last_ms`, `max_ms` por camada |
@@ -96,5 +106,5 @@ Envelope: `schema` (3), `run`, `seq`, `iteration`, `event`, `component` (a camad
 ## Fora desta fatia
 
 Belief probabilístico de exército, forças agregadas, avaliação dinâmica de território,
-scouting, map control, harass, preempção com compromisso e ciclo de siege próprio da
+scouting depois do early game, levantar depots, map control, harass, preempção com compromisso e ciclo de siege próprio da
 defesa. Cada um entra quando um problema de gameplay medido pedir.

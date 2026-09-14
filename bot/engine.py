@@ -2,13 +2,16 @@
 
 Behaviors propose; the Engine ranks proposals by ``(-priority, owner,
 proposal_id)``, grants every army unit to at most one of them and turns only
-those grants into Ares commands. It is also where the economy plan becomes
-Ares macro behaviors. It decides nothing about *what* the bot should do.
+those grants into Ares commands. Workers are granted only to proposals that
+name a worker type, only out of mining, and go back to mining when no
+proposal holds them any more. It is also where the economy and structure
+plans become Ares behaviors and commands. It decides nothing about *what* the
+bot should do.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
 
@@ -24,10 +27,12 @@ from ares.behaviors.macro import (
     ProductionController,
     SpawnController,
 )
+from ares.consts import UnitRole
+from sc2.ids.ability_id import AbilityId
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
-from bot.attention import AttentionState, UnitView
+from bot.attention import WORKER_TYPES, AttentionState, UnitView
 
 # Neither workers nor structures, and still not an army.
 _NOT_ARMY = frozenset(
@@ -53,6 +58,8 @@ ATTACK_ARRIVAL = 2.0
 ENGAGE_RADIUS = 10.0
 # How far a Siege Tank looks for the enemies it sieges against.
 TANK_SIGHT = 14.0
+# A scout this close to its point has reached it.
+SCOUT_ARRIVAL = 3.0
 
 
 def is_army(unit: UnitView) -> bool:
@@ -64,6 +71,8 @@ class Command(str, Enum):
     ATTACK = "ATTACK"
     # Walk to the target and fight whatever comes there.
     HOLD = "HOLD"
+    # Walk to the target and do nothing else; a worker stops mining for it.
+    SCOUT = "SCOUT"
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,7 +85,8 @@ class Proposal:
     reason: str
     # How many units; None asks for every eligible unit still free.
     count: int | None = None
-    # Which unit types; None accepts any army unit.
+    # Which unit types; None accepts any army unit. Only a proposal that names
+    # a worker type can be granted workers.
     unit_types: frozenset[UnitTypeId] | None = None
     # The values the priority and count were computed from.
     inputs: tuple[tuple[str, float], ...] = ()
@@ -98,6 +108,14 @@ class EconomyPlan:
 
 
 @dataclass(frozen=True, slots=True)
+class StructurePlan:
+    # Supply depots to lower, by tag.
+    lower: tuple[int, ...]
+    reason: str
+    inputs: tuple[tuple[str, float], ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class Grant:
     proposal: Proposal
     tags: tuple[int, ...]
@@ -110,6 +128,7 @@ class EngineResult:
     grants: tuple[Grant, ...]
     # (tag, proposal_id), by tag.
     owners: tuple[tuple[int, str], ...]
+    # Army units no proposal was granted.
     unassigned: tuple[int, ...]
 
     def owner_of(self, tag: int) -> str | None:
@@ -130,15 +149,27 @@ class Engine:
         attention: AttentionState,
         proposals: Sequence[Proposal],
         economy: EconomyPlan,
+        structures: StructurePlan,
     ) -> EngineResult:
+        previous = self._owners
         result = self.allocate(attention, proposals)
+        release_workers(bot, attention, previous, result)
         command_army(bot, result)
         run_economy(bot, economy)
+        run_structures(bot, structures)
         return result
 
     def allocate(self, attention: AttentionState, proposals: Sequence[Proposal]) -> EngineResult:
         army = {unit.tag: unit for unit in attention.own_units if is_army(unit)}
-        free = set(army)
+        # A worker is only taken out of mining, and stays with whoever took it.
+        workers = {
+            unit.tag: unit
+            for unit in attention.own_units
+            if unit.is_worker
+            and (unit.role == UnitRole.GATHERING.name or unit.tag in self._owners)
+        }
+        pool = {**army, **workers}
+        free = set(pool)
         grants: list[Grant] = []
         seen: set[str] = set()
         for proposal in rank(proposals):
@@ -147,9 +178,13 @@ class Engine:
             seen.add(proposal.proposal_id)
             candidates = sorted(
                 (
-                    army[tag]
+                    pool[tag]
                     for tag in free
-                    if proposal.unit_types is None or army[tag].type_id in proposal.unit_types
+                    if (
+                        tag in army
+                        if proposal.unit_types is None
+                        else pool[tag].type_id in proposal.unit_types
+                    )
                 ),
                 # Units this proposal already held stay with it first, so a
                 # grant does not churn as its units move.
@@ -169,8 +204,20 @@ class Engine:
             time=attention.time,
             grants=tuple(grants),
             owners=tuple(sorted(owners.items())),
-            unassigned=tuple(sorted(free)),
+            unassigned=tuple(sorted(tag for tag in free if tag in army)),
         )
+
+
+def release_workers(
+    bot, attention: AttentionState, previous: Mapping[int, str], result: EngineResult
+) -> None:
+    """A worker no proposal holds any more goes back to mining."""
+
+    owned = dict(result.owners)
+    workers = {unit.tag for unit in attention.own_units if unit.is_worker}
+    for tag in sorted(set(previous) - set(owned)):
+        if tag in workers:
+            bot.mediator.assign_role(tag=tag, role=UnitRole.GATHERING)
 
 
 def command_army(bot, result: EngineResult) -> None:
@@ -185,6 +232,11 @@ def command_army(bot, result: EngineResult) -> None:
         for tag in grant.tags:
             unit = units.get(tag)
             if unit is None:
+                continue
+            if proposal.command is Command.SCOUT:
+                bot.register_behavior(
+                    scout(bot, unit, proposal.target, air if unit.is_flying else ground)
+                )
                 continue
             close = [enemy for enemy in enemies if enemy.distance_to(unit) <= TANK_SIGHT]
             maneuver = CombatManeuver()
@@ -215,6 +267,25 @@ def command_army(bot, result: EngineResult) -> None:
             bot.register_behavior(maneuver)
 
 
+def scout(bot, unit, target: Point2, grid) -> PathUnitToTarget:
+    """The SCOUTING role keeps Ares' mining and building from taking the unit.
+
+    No danger avoidance: to Ares' grid the enemy's own workers are danger, and
+    a scout that keeps away from them never sees the mineral line.
+    """
+
+    if unit.type_id in WORKER_TYPES:
+        bot.mediator.remove_worker_from_mineral(worker_tag=unit.tag)
+    bot.mediator.assign_role(tag=unit.tag, role=UnitRole.SCOUTING)
+    return PathUnitToTarget(
+        unit=unit,
+        grid=grid,
+        target=target,
+        success_at_distance=SCOUT_ARRIVAL,
+        sense_danger=False,
+    )
+
+
 def run_economy(bot, plan: EconomyPlan) -> None:
     bot.register_behavior(Mining())
     if not plan.active:
@@ -232,3 +303,10 @@ def run_economy(bot, plan: EconomyPlan) -> None:
     macro.add(SpawnController(composition, freeflow_mode=plan.freeflow))
     macro.add(ProductionController(composition, base_location=bot.start_location))
     bot.register_behavior(macro)
+
+
+def run_structures(bot, plan: StructurePlan) -> None:
+    lower = set(plan.lower)
+    for structure in bot.structures:
+        if structure.tag in lower:
+            structure(AbilityId.MORPH_SUPPLYDEPOT_LOWER)

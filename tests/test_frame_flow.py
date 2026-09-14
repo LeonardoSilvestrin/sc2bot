@@ -65,6 +65,7 @@ def test_a_frame_flows_from_attention_to_logs() -> None:
         "strategy.decided",
         "behavior.proposed",
         "behavior.economy_planned",
+        "behavior.structures_planned",
         "engine.granted",
         "engine.commanded",
         "logs.frame_perf",

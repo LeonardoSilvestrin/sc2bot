@@ -16,7 +16,7 @@ from sc2.position import Point2
 
 from bot.attention import AttentionState, MapView
 from bot.awareness import AwarenessState
-from bot.engine import EconomyPlan, EngineResult, Proposal, is_army, rank
+from bot.engine import EconomyPlan, EngineResult, Proposal, StructurePlan, is_army, rank
 from bot.strategy import StrategyState
 
 from .identity import describe_build, fingerprint
@@ -37,6 +37,7 @@ class Telemetry:
         self._awareness = ChangeGate(heartbeat=heartbeat)
         self._strategy = ChangeGate(heartbeat=heartbeat)
         self._economy = ChangeGate()
+        self._structures = ChangeGate()
         self._perf = ChangeGate(heartbeat=heartbeat)
         self._proposals = ChangeGate()
         self._grants = ChangeGate()
@@ -103,6 +104,7 @@ class Telemetry:
         strategy: StrategyState,
         proposals: Sequence[Proposal],
         economy: EconomyPlan,
+        structures: StructurePlan,
         result: EngineResult,
         timings: Mapping[str, float],
     ) -> None:
@@ -111,9 +113,24 @@ class Telemetry:
         self._record_strategy(strategy)
         self._record_proposals(attention.time, proposals)
         self._record_economy(attention.time, economy)
+        self._record_structures(attention.time, structures)
         self._record_grants(attention, result)
         self._record_commands(attention, awareness, strategy, result)
         self._record_perf(attention.time, timings)
+
+    def _record_structures(self, now: float, structures: StructurePlan) -> None:
+        if not self._structures.admit((structures.lower, structures.reason), now=now):
+            return
+        self._event(
+            "behavior.structures_planned",
+            "behaviors",
+            now,
+            {
+                "lower": list(structures.lower),
+                "reason": structures.reason,
+                "inputs": dict(structures.inputs),
+            },
+        )
 
     def _record_attention(self, attention: AttentionState) -> None:
         army = [unit for unit in attention.own_units if is_army(unit)]

@@ -13,8 +13,9 @@ from sc2.data import Result
 
 from bot.attention import AttentionState, MapView, observe, read_map
 from bot.awareness import AwarenessModel, AwarenessState
-from bot.behaviors import core_army, defense, economy
-from bot.engine import EconomyPlan, Engine, EngineResult, Proposal
+from bot.behaviors import core_army, defense, economy, structure_control
+from bot.behaviors.intel import Intel
+from bot.engine import EconomyPlan, Engine, EngineResult, Proposal, StructurePlan
 from bot.logs import Logs
 from bot.strategy import StrategyModel, StrategyState
 
@@ -29,6 +30,7 @@ class Layers:
     logs: Logs
     awareness: AwarenessModel = field(default_factory=AwarenessModel)
     strategy: StrategyModel = field(default_factory=StrategyModel)
+    intel: Intel = field(default_factory=Intel)
     engine: Engine = field(default_factory=Engine)
 
     def configs(self) -> dict[str, object]:
@@ -42,6 +44,7 @@ class Frame:
     strategy: StrategyState
     proposals: tuple[Proposal, ...]
     economy: EconomyPlan
+    structures: StructurePlan
     result: EngineResult
 
 
@@ -55,14 +58,24 @@ def play_frame(bot, iteration: int, layers: Layers) -> Frame:
     laps.mark("strategy")
     proposals = defense.plan(attention, awareness, strategy)
     proposals += core_army.plan(attention, awareness, strategy)
+    proposals += layers.intel.plan(attention)
     economy_plan = economy.plan(attention, strategy)
+    structures = structure_control.plan(attention)
     laps.mark("behaviors")
-    result = layers.engine.execute(bot, attention, proposals, economy_plan)
+    result = layers.engine.execute(bot, attention, proposals, economy_plan, structures)
     laps.mark("engine")
     layers.logs.record(
-        bot, attention, awareness, strategy, proposals, economy_plan, result, laps.times
+        bot,
+        attention,
+        awareness,
+        strategy,
+        proposals,
+        economy_plan,
+        structures,
+        result,
+        laps.times,
     )
-    return Frame(attention, awareness, strategy, proposals, economy_plan, result)
+    return Frame(attention, awareness, strategy, proposals, economy_plan, structures, result)
 
 
 class MyBot(AresBot):

@@ -13,7 +13,7 @@ from time import perf_counter
 
 from bot.attention import AttentionState, MapView
 from bot.awareness import AwarenessState
-from bot.engine import EconomyPlan, EngineResult, Proposal
+from bot.engine import EconomyPlan, EngineResult, Proposal, StructurePlan
 from bot.strategy import StrategyState
 
 from .jsonl import BotLogger, ChangeGate, JsonlLogger, NullLogger
@@ -72,6 +72,7 @@ class Logs:
         strategy: StrategyState,
         proposals: Sequence[Proposal],
         economy: EconomyPlan,
+        structures: StructurePlan,
         result: EngineResult,
         timings: Mapping[str, float],
     ) -> None:
@@ -84,6 +85,7 @@ class Logs:
                 strategy,
                 proposals,
                 economy,
+                structures,
                 result,
                 {**timings, "logs": self._last_ms},
             )

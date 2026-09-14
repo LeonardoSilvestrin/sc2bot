@@ -19,7 +19,8 @@ COMPOSITION: tuple[tuple[UnitTypeId, float, int], ...] = (
     (UnitTypeId.SIEGETANK, 0.15, 0),
     (UnitTypeId.MEDIVAC, 0.1, 1),
 )
-MAX_WORKERS = 66
+
+MAX_WORKERS = 80
 # 16 on minerals and 6 on gas.
 WORKERS_PER_BASE = 22
 MINERAL_WORKERS_PER_BASE = 16

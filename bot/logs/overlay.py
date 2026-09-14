@@ -21,6 +21,7 @@ Color = tuple[int, int, int]
 OWNER_COLORS: dict[str, Color] = {
     "defense": (255, 121, 198),
     "core_army": (138, 212, 255),
+    "intel": (255, 214, 102),
 }
 OTHER_OWNER_COLOR: Color = (195, 166, 255)
 TEXT_COLOR: Color = (255, 255, 255)

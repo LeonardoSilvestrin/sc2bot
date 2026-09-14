@@ -8,7 +8,7 @@ static map (`MapView`) is read once per game by `read_map`.
 from __future__ import annotations
 
 import math
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -40,6 +40,9 @@ class UnitView:
     can_attack_air: bool
     is_worker: bool
     is_structure: bool
+    is_ready: bool = True
+    # The Ares role the unit holds, by name; None without one.
+    role: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -166,6 +169,7 @@ def pathable_lattice(
 
 def observe(bot, iteration: int, map_view: MapView) -> AttentionState:
     supply = _supply_lookup(bot)
+    roles = _roles(bot)
     runner = getattr(bot, "build_order_runner", None)
     state = bot.state
     return AttentionState(
@@ -182,8 +186,8 @@ def observe(bot, iteration: int, map_view: MapView) -> AttentionState:
         ),
         opening=str(getattr(runner, "chosen_opening", "") or ""),
         opening_done=bool(getattr(runner, "build_completed", True)),
-        own_units=_views(bot.units, supply),
-        own_structures=_views(bot.structures, supply),
+        own_units=_views(bot.units, supply, roles),
+        own_structures=_views(bot.structures, supply, roles),
         enemy_units=_views(_visible(bot.enemy_units), supply),
         enemy_structures=_views(_visible(bot.enemy_structures), supply),
         bases=_bases(bot.townhalls, map_view),
@@ -193,7 +197,11 @@ def observe(bot, iteration: int, map_view: MapView) -> AttentionState:
     )
 
 
-def unit_view(unit, supply: Callable[[UnitTypeId], float]) -> UnitView:
+def unit_view(
+    unit,
+    supply: Callable[[UnitTypeId], float],
+    roles: Mapping[int, str] | None = None,
+) -> UnitView:
     hit_points = float(unit.health) + float(unit.shield)
     max_hit_points = float(unit.health_max) + float(unit.shield_max)
     return UnitView(
@@ -208,15 +216,33 @@ def unit_view(unit, supply: Callable[[UnitTypeId], float]) -> UnitView:
         can_attack_air=bool(unit.can_attack_air),
         is_worker=unit.type_id in WORKER_TYPES,
         is_structure=bool(unit.is_structure),
+        is_ready=bool(unit.is_ready),
+        role=None if roles is None else roles.get(int(unit.tag)),
     )
 
 
 def _views(
-    units: Iterable, supply: Callable[[UnitTypeId], float]
+    units: Iterable,
+    supply: Callable[[UnitTypeId], float],
+    roles: Mapping[int, str] | None = None,
 ) -> tuple[UnitView, ...]:
     return tuple(
-        sorted((unit_view(unit, supply) for unit in units), key=lambda v: v.tag)
+        sorted((unit_view(unit, supply, roles) for unit in units), key=lambda v: v.tag)
     )
+
+
+def _roles(bot) -> dict[int, str]:
+    """Ares' role of every unit that has one, by tag."""
+
+    try:
+        by_role = bot.mediator.get_unit_role_dict
+    except (AttributeError, KeyError, RuntimeError, TypeError):
+        return {}
+    return {
+        int(tag): str(getattr(role, "name", role))
+        for role, tags in by_role.items()
+        for tag in tags
+    }
 
 
 def _visible(units: Iterable) -> Iterable:
