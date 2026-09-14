@@ -34,6 +34,13 @@ jobs:
         poetry install --no-interaction
         poetry run pip install pyinstaller
 
+    # nothing is built or uploaded unless tests and lint pass
+    - name: Test
+      run: poetry run pytest
+
+    - name: Lint
+      run: poetry run ruff check bot tests run.py
+
     - name: Debug Info
       run: |
         echo "Current directory:"

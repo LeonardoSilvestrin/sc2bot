@@ -26,6 +26,11 @@ jobs:
         run: poetry run pip install -U pip
       - name: Install requirements
         run: poetry install --no-root
+      # nothing is zipped or uploaded unless tests and lint pass
+      - name: Test
+        run: poetry run pytest
+      - name: Lint
+        run: poetry run ruff check bot tests run.py
       - name: Compile ladder zip
         run: poetry run python scripts/create_ladder_zip.py
       - uses: montudor/action-zip@v1
