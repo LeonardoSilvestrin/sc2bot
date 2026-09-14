@@ -1,0 +1,70 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "play",
+      "type": "debugpy",
+      "request": "launch",
+      "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "program": "${workspaceFolder}\\run.py",
+      "cwd": "${workspaceFolder}",
+      "args": ["--bot-log", "off"],
+      "console": "integratedTerminal",
+      "justMyCode": false
+    },
+    {
+      "name": "play_log",
+      "type": "debugpy",
+      "request": "launch",
+      "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "program": "${workspaceFolder}\\run.py",
+      "cwd": "${workspaceFolder}",
+      "args": ["--bot-log", "events"],
+      "console": "integratedTerminal",
+      "justMyCode": false
+    },
+    {
+      "name": "play_logs_imap",
+      "type": "debugpy",
+      "request": "launch",
+      "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "program": "${workspaceFolder}\\run.py",
+      "cwd": "${workspaceFolder}",
+      "args": ["--bot-log", "events", "--spatial-view"],
+      "console": "integratedTerminal",
+      "justMyCode": false
+    },
+    {
+      "name": "play_logs_SVG",
+      "type": "debugpy",
+      "request": "launch",
+      "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "program": "${workspaceFolder}\\run.py",
+      "cwd": "${workspaceFolder}",
+      "args": ["--bot-log", "events", "--spatial-snapshot"],
+      "console": "integratedTerminal",
+      "justMyCode": false
+    },
+    {
+      "name": "play_full_debug",
+      "type": "debugpy",
+      "request": "launch",
+      "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "program": "${workspaceFolder}\\run.py",
+      "cwd": "${workspaceFolder}",
+      "args": ["--bot-log", "events", "--spatial-view", "--spatial-snapshot"],
+      "console": "integratedTerminal",
+      "justMyCode": false
+    },
+    {
+      "name": "log_view",
+      "type": "debugpy",
+      "request": "launch",
+      "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "program": "${workspaceFolder}\\logs\\open_viewer.py",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": false
+    }
+  ]
+}

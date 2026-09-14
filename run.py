@@ -1,11 +1,11 @@
+import argparse
+import platform
 import random
 import sys
 from os import path
 from pathlib import Path
-import platform
-from typing import List
-from loguru import logger
 
+from loguru import logger
 from sc2 import maps
 from sc2.data import AIBuild, Difficulty, Race
 from sc2.main import run_game
@@ -17,6 +17,7 @@ sys.path.append("ares-sc2")
 
 import yaml
 
+from bot.logs import JsonlLogger, Logs, OverlayConfig, SnapshotConfig
 from bot.main import MyBot
 from ladder import run_ladder_game
 
@@ -30,9 +31,7 @@ elif plt == "Darwin":
 elif plt == "Linux":
     # path would look a bit like this on linux after installing
     # SC2 via lutris
-    MAPS_PATH: str = (
-        "~/<username>/Games/battlenet/drive_c/Program Files (x86)/StarCraft II/Maps"
-    )
+    MAPS_PATH: str = "~/<username>/Games/battlenet/drive_c/Program Files (x86)/StarCraft II/Maps"
 else:
     logger.error(f"{plt} not supported")
     sys.exit()
@@ -41,9 +40,76 @@ CONFIG_FILE: str = "config.yml"
 MAP_FILE_EXT: str = "SC2Map"
 MY_BOT_NAME: str = "MyBotName"
 MY_BOT_RACE: str = "MyBotRace"
+# Gap between markers drawn by --spatial-view; presentation only.
+DEFAULT_SPATIAL_VIEW_SPACING = 4
+
+
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return parsed
+
+
+def parse_local_args(args=None):
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument(
+        "--bot-log",
+        choices=("off", "events"),
+        default="off",
+        help="Write the structured event log to logs/game-<time>/game.jsonl.",
+    )
+    parser.add_argument(
+        "--spatial-view",
+        action="store_true",
+        help="Draw the influence field and decisions in the game window.",
+    )
+    parser.add_argument(
+        "--spatial-view-spacing",
+        type=_positive_int,
+        default=DEFAULT_SPATIAL_VIEW_SPACING,
+        metavar="UNITS",
+        help="Approximate gap between drawn markers (default: %(default)s).",
+    )
+    parser.add_argument(
+        "--spatial-snapshot",
+        action="store_true",
+        help="Write an SVG field snapshot every interval and on objective changes.",
+    )
+    parser.add_argument(
+        "--spatial-snapshot-interval",
+        type=float,
+        default=30.0,
+        metavar="SECONDS",
+        help="Game seconds between SVG snapshots (default: %(default)s).",
+    )
+    local_args, _ = parser.parse_known_args(args)
+    return local_args
+
+
+def build_logs(local_args, *, is_ladder: bool) -> Logs:
+    if is_ladder:
+        return Logs()
+    snapshots = local_args.spatial_snapshot
+    logger_ = JsonlLogger(Path("logs")) if local_args.bot_log == "events" or snapshots else None
+    if logger_ is not None:
+        print(f"Bot structured log: {logger_.path}")
+    return Logs(
+        logger_,
+        overlay=OverlayConfig(
+            enabled=local_args.spatial_view,
+            draw_spacing=float(local_args.spatial_view_spacing),
+        ),
+        snapshots=SnapshotConfig(
+            enabled=snapshots, interval_seconds=local_args.spatial_snapshot_interval
+        ),
+        snapshot_directory=None if logger_ is None else logger_.session_directory / "spatial",
+    )
 
 
 def main():
+    local_args = parse_local_args()
+
     bot_name: str = "MyBot"
     race: Race = Race.Random
 
@@ -58,22 +124,23 @@ def main():
             if MY_BOT_RACE in config:
                 race = Race[config[MY_BOT_RACE].title()]
 
-    bot1 = Bot(race, MyBot(), bot_name)
+    is_ladder = "--LadderServer" in sys.argv
+    bot1 = Bot(race, MyBot(logs=build_logs(local_args, is_ladder=is_ladder)), bot_name)
 
-    if "--LadderServer" in sys.argv:
+    if is_ladder:
         # Ladder game started by LadderManager
         print("Starting ladder game...")
         result, opponentid = run_ladder_game(bot1)
         print(result, " against opponent ", opponentid)
     else:
         # Local game
-        map_list: List[str] = [
+        map_list: list[str] = [
             p.name.replace(f".{MAP_FILE_EXT}", "")
             for p in Path(MAPS_PATH).glob(f"*.{MAP_FILE_EXT}")
             if p.is_file()
         ]
         if len(map_list) == 0:
-            logger.error(f"Can't find maps, please check `MAPS_PATH` in `run.py'")
+            logger.error("Can't find maps, please check `MAPS_PATH` in `run.py'")
             logger.info("Trying back up option")
             logger.info(
                 f"\nLooking for maps in {MAPS_PATH} but didn't find anything. \n"
@@ -83,7 +150,7 @@ def main():
             )
 
             # see if user has any recent ladder maps
-            map_list: List[str] = [
+            map_list = [
                 "PylonAIE_v4",
                 "PersephoneAIE_v4",
                 "TorchesAIE_v4",
@@ -98,7 +165,7 @@ def main():
             maps.get(random.choice(map_list)),
             [
                 bot1,
-                Computer(random_race, Difficulty.CheatVision, ai_build=AIBuild.Macro),
+                Computer(random_race, Difficulty.VeryHard, ai_build=AIBuild.Macro),
             ],
             realtime=False,
         )

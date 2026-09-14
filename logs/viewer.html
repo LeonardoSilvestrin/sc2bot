@@ -1,0 +1,1162 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>SC2 Bot Log Viewer</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f7f7f8;
+    --panel: #ffffff;
+    --border: #dcdde1;
+    --text: #1c1e21;
+    --muted: #6b7280;
+    --accent: #2563eb;
+    --telemetry: #9ca3af;
+    --ok: #16a34a;
+    --warn: #d97706;
+    --bad: #dc2626;
+    --layer-attention: #0891b2;
+    --layer-awareness: #7c3aed;
+    --layer-strategy: #db2777;
+    --layer-behaviors: #d97706;
+    --layer-engine: #2563eb;
+    --layer-logs: #6b7280;
+    --mono: "Cascadia Code", "Consolas", "SFMono-Regular", Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #17181c;
+      --panel: #202127;
+      --border: #34363d;
+      --text: #e7e8ea;
+      --muted: #9aa0aa;
+      --accent: #60a5fa;
+      --telemetry: #6b7280;
+      --ok: #4ade80;
+      --warn: #fbbf24;
+      --bad: #f87171;
+      --layer-attention: #22d3ee;
+      --layer-awareness: #a78bfa;
+      --layer-strategy: #f472b6;
+      --layer-behaviors: #fbbf24;
+      --layer-engine: #60a5fa;
+      --layer-logs: #9ca3af;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 13px/1.4 -apple-system, Segoe UI, Roboto, sans-serif;
+  }
+  #drop {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 12px;
+    z-index: 5;
+    padding: 16px;
+    text-align: center;
+  }
+  #drop.hidden { display: none; }
+  #drop.dragover { outline: 3px dashed var(--accent); outline-offset: -12px; }
+  #drop p { color: var(--muted); margin: 0; }
+  #drop button {
+    font: inherit;
+    padding: 10px 18px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--text);
+    cursor: pointer;
+  }
+  #drop .drop-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+  #drop .layers { font: 12px var(--mono); color: var(--muted); }
+  #app { display: none; height: 100vh; flex-direction: column; }
+  #app.active { display: flex; }
+  header {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 10px 16px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+  }
+  header .path { font-family: var(--mono); color: var(--muted); font-size: 12px; }
+  header input[type="text"] {
+    font: inherit;
+    padding: 6px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+    min-width: 220px;
+  }
+  header label { display: flex; align-items: center; gap: 5px; color: var(--muted); }
+  header .spacer { flex: 1; }
+  .stream-menu {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 2px;
+    padding: 3px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg);
+  }
+  .stream-menu button {
+    border: 0;
+    border-radius: 5px;
+    padding: 5px 9px;
+    color: var(--muted);
+    background: transparent;
+    font: inherit;
+    cursor: pointer;
+  }
+  .stream-menu button:hover { color: var(--text); }
+  .stream-menu button.active { color: var(--text); background: var(--panel); box-shadow: 0 0 0 1px var(--border); }
+  .stream-menu .count { margin-left: 4px; color: var(--telemetry); font: 11px var(--mono); }
+  header button.link {
+    background: none;
+    border: none;
+    color: var(--accent);
+    cursor: pointer;
+    font: inherit;
+  }
+  main { flex: 1; overflow: hidden; display: flex; }
+  #timeline { flex: 1 1 auto; min-width: 0; overflow-y: auto; padding: 8px 0; }
+  #side-panel {
+    flex: 0 0 340px;
+    min-width: 0;
+    border-left: 1px solid var(--border);
+    overflow-y: auto;
+    background: var(--panel);
+  }
+  #side-panel h2 {
+    margin: 0;
+    padding: 10px 14px;
+    font-size: 13px;
+    border-bottom: 1px solid var(--border);
+  }
+  .group-heading {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    padding: 7px 14px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--muted);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+  }
+  .group-heading .count { float: right; font: 11px var(--mono); }
+  .entity-card {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+  }
+  .entity-card:hover { background: var(--bg); }
+  .entity-card .id { font-family: var(--mono); font-weight: 600; overflow-wrap: anywhere; }
+  .entity-card .meta { color: var(--muted); font-size: 12px; margin-top: 2px; overflow-wrap: anywhere; }
+  .status-pill {
+    display: inline-block;
+    padding: 1px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    margin-left: 6px;
+  }
+  .status-STABILIZE { background: color-mix(in srgb, var(--bad) 20%, transparent); color: var(--bad); }
+  .status-BUILD_ADVANTAGE { background: color-mix(in srgb, var(--ok) 20%, transparent); color: var(--ok); }
+  .layer-chip {
+    display: inline-block;
+    padding: 0 6px;
+    border-radius: 4px;
+    font: 600 10px var(--mono);
+    text-transform: uppercase;
+    letter-spacing: .03em;
+    color: var(--layer, var(--muted));
+    background: color-mix(in srgb, var(--layer, var(--muted)) 16%, transparent);
+    white-space: nowrap;
+  }
+  .layer-attention { --layer: var(--layer-attention); }
+  .layer-awareness { --layer: var(--layer-awareness); }
+  .layer-strategy { --layer: var(--layer-strategy); }
+  .layer-behaviors { --layer: var(--layer-behaviors); }
+  .layer-engine { --layer: var(--layer-engine); }
+  .layer-logs { --layer: var(--layer-logs); }
+
+  .summary-view { padding: 18px; overflow-y: auto; height: 100%; }
+  .summary-hero {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(150px, 1fr));
+    gap: 10px;
+    margin-bottom: 18px;
+  }
+  .summary-card, .metric-card, .story-item {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 9px;
+  }
+  .summary-card { padding: 12px 14px; min-height: 82px; }
+  .summary-card .eyebrow, .metric-card .eyebrow {
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .05em;
+    text-transform: uppercase;
+  }
+  .summary-card .value { margin-top: 4px; font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .summary-card .detail { margin-top: 3px; color: var(--muted); font-size: 12px; }
+  .summary-card.result-win .value { color: var(--ok); }
+  .summary-card.result-loss .value, .summary-card.has-problem .value { color: var(--bad); }
+  .summary-section { margin: 18px 0; }
+  .summary-section-heading { display: flex; align-items: baseline; gap: 8px; margin: 0 0 9px; }
+  .summary-section-heading h2 { margin: 0; font-size: 16px; }
+  .summary-section-heading .detail { color: var(--muted); font-size: 12px; }
+  .metrics-grid { display: grid; grid-template-columns: repeat(3, minmax(180px, 1fr)); gap: 10px; }
+  .metric-card { padding: 11px 12px 7px; min-width: 0; }
+  .metric-card .metric-value { float: right; color: var(--text); font: 12px var(--mono); }
+  .metric-card svg { display: block; width: 100%; height: 62px; margin-top: 5px; overflow: visible; }
+  .metric-card .range { color: var(--muted); font: 11px var(--mono); }
+  .story-list { position: relative; display: grid; gap: 7px; }
+  .story-item {
+    display: grid;
+    grid-template-columns: 72px 8px minmax(0, 1fr);
+    gap: 10px;
+    padding: 10px 12px;
+    cursor: pointer;
+  }
+  .story-item:hover { border-color: var(--accent); }
+  .story-item .story-time { color: var(--muted); font: 12px var(--mono); padding-top: 2px; }
+  .story-item .story-marker { width: 8px; height: 8px; margin-top: 5px; border-radius: 50%; background: var(--accent); }
+  .story-item.severity-ok .story-marker { background: var(--ok); }
+  .story-item.severity-warning .story-marker { background: var(--warn); }
+  .story-item.severity-error .story-marker { background: var(--bad); }
+  .story-item .story-title { font-weight: 650; }
+  .story-item .story-reason { color: var(--muted); margin-top: 2px; }
+  .story-item .story-meta { color: var(--telemetry); font: 11px var(--mono); margin-top: 4px; }
+  .story-item pre, .row pre {
+    margin: 8px 0 0;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .story-item .story-jump { margin-left: 8px; border: 0; background: none; color: var(--accent); cursor: pointer; font: 11px var(--mono); padding: 0; }
+  .summary-alert { cursor: default; border-left: 3px solid var(--warn); }
+  .summary-alert.bad { border-left-color: var(--bad); }
+  .summary-alert.clickable { cursor: pointer; }
+  .summary-alert .id { font-family: inherit; }
+
+  .row {
+    display: grid;
+    grid-template-columns: 78px 92px 190px 1fr;
+    gap: 10px;
+    padding: 3px 16px;
+    font-family: var(--mono);
+    align-items: baseline;
+    cursor: pointer;
+  }
+  .row:hover { background: var(--panel); }
+  .row.telemetry { color: var(--telemetry); }
+  .row .time { color: var(--muted); }
+  .row .event { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row .fields { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row .reason { grid-column: 3 / -1; color: var(--text); white-space: normal; }
+  .row .reason::before { content: "why: "; color: var(--muted); }
+  .row.expanded .fields { white-space: normal; }
+  .row pre { grid-column: 1 / -1; margin: 4px 0 8px; }
+
+  .data-view { padding: 14px 16px; overflow: auto; height: 100%; }
+  .data-view h2 { margin: 0 0 10px; font-size: 16px; }
+  .data-view table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  .data-view th, .data-view td { padding: 6px 8px; border-bottom: 1px solid var(--border); text-align: right; }
+  .data-view th:first-child, .data-view td:first-child, .data-view td.text, .data-view th.text { text-align: left; }
+  .data-view th { position: sticky; top: 0; background: var(--bg); }
+  .load-more { display: block; margin: 12px auto; padding: 7px 14px; font: inherit; cursor: pointer; }
+  .notice { color: var(--muted); padding: 10px 14px; }
+  .parse-error { color: var(--bad); }
+
+  /* Decision Timeline */
+  .decision-view { height: 100%; overflow: auto; padding: 0 0 16px; }
+  .dt-toolbar {
+    position: sticky; top: 0; z-index: 3; display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+    padding: 6px 12px; background: var(--panel); border-bottom: 1px solid var(--border);
+  }
+  .dt-toolbar-label { color: var(--muted); }
+  .dt-time { font: 600 15px var(--mono); min-width: 74px; }
+  .dt-group { display: inline-flex; gap: 2px; }
+  .dt-button {
+    font: 12px var(--mono); padding: 2px 7px; border: 1px solid var(--border); border-radius: 4px;
+    background: var(--bg); color: var(--text); cursor: pointer;
+  }
+  .dt-button:hover { border-color: var(--accent); }
+  .dt-button.active { background: var(--accent); color: var(--panel); border-color: var(--accent); }
+  .dt-badge { margin-left: auto; font: 11px var(--mono); padding: 2px 7px; border-radius: 4px; border: 1px dashed var(--border); color: var(--muted); }
+  .dt-badge.live { border-style: solid; border-color: var(--ok); color: var(--ok); }
+  .dt-tracks { display: flex; border-bottom: 1px solid var(--border); }
+  .dt-labels { flex: 0 0 190px; border-right: 1px solid var(--border); background: var(--panel); }
+  .dt-label {
+    display: flex; align-items: center; justify-content: space-between; gap: 4px; padding: 0 8px;
+    font: 11px var(--mono); white-space: nowrap; overflow: hidden; border-bottom: 1px solid transparent;
+  }
+  .dt-label-group { background: var(--bg); color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: .04em; font-size: 10px; }
+  .dt-label-ruler { color: var(--muted); }
+  .dt-range { color: var(--telemetry); font-size: 10px; }
+  .dt-plot { flex: 1 1 auto; min-width: 0; overflow-x: auto; overflow-y: hidden; }
+  .dt-svg { display: block; cursor: crosshair; font-family: var(--mono); }
+  .dt-rowline { stroke: var(--border); stroke-width: 1; opacity: .5; }
+  .dt-group-bg { fill: var(--bg); }
+  .dt-tick { stroke: var(--muted); }
+  .dt-tick-label { fill: var(--muted); font-size: 10px; }
+  .dt-snap-mark { fill: none; stroke: var(--accent); cursor: pointer; }
+  .dt-snap-mark.loaded { fill: var(--accent); }
+  .dt-seg { stroke-width: 1; }
+  .dt-seg-label { font-size: 10px; fill: var(--text); pointer-events: none; }
+  .dt-seg.tone-neutral { fill: color-mix(in srgb, var(--accent) 22%, transparent); stroke: color-mix(in srgb, var(--accent) 60%, transparent); }
+  .dt-seg.tone-ok { fill: color-mix(in srgb, var(--ok) 25%, transparent); stroke: color-mix(in srgb, var(--ok) 60%, transparent); }
+  .dt-seg.tone-warn { fill: color-mix(in srgb, var(--warn) 25%, transparent); stroke: color-mix(in srgb, var(--warn) 60%, transparent); }
+  .dt-seg.tone-bad { fill: color-mix(in srgb, var(--bad) 28%, transparent); stroke: color-mix(in srgb, var(--bad) 65%, transparent); }
+  .dt-series { fill: none; stroke: var(--accent); stroke-width: 1.4; vector-effect: non-scaling-stroke; }
+  .dt-series.overlay { stroke: var(--bad); }
+  .dt-diag.sev-warning { fill: color-mix(in srgb, var(--warn) 35%, transparent); stroke: var(--warn); }
+  .dt-diag.sev-note { fill: color-mix(in srgb, var(--telemetry) 25%, transparent); stroke: var(--telemetry); }
+  .dt-na { fill: var(--muted); font-size: 11px; font-style: italic; }
+  .dt-cursor { stroke: var(--text); stroke-width: 1.5; pointer-events: none; }
+  .dt-bottom { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0; }
+  .dt-inspector { padding: 10px 12px; border-right: 1px solid var(--border); min-width: 0; }
+  .dt-inspector-title { font: 600 13px var(--mono); margin-bottom: 6px; }
+  .dt-inspector-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 14px; }
+  .dt-section { margin-bottom: 8px; min-width: 0; }
+  .dt-section.dt-wide { grid-column: 1 / -1; margin-top: 6px; }
+  .dt-section-title { color: var(--muted); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; border-bottom: 1px solid var(--border); margin-bottom: 2px; }
+  .dt-kv { display: flex; justify-content: space-between; gap: 8px; font: 12px var(--mono); }
+  .dt-kv.dt-sub { color: var(--muted); font-size: 11px; }
+  .dt-k { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .dt-v { text-align: right; overflow-wrap: anywhere; }
+  .dt-missing { color: var(--telemetry); }
+  .tone-text-bad { color: var(--bad); }
+  .tone-text-warn { color: var(--warn); }
+  .tone-text-ok { color: var(--ok); }
+  .dt-hint { color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+  .dt-diag-line { font: 12px var(--mono); }
+  .dt-diag-line.sev-warning { color: var(--warn); }
+  .dt-event { display: grid; grid-template-columns: 62px 190px minmax(0, 1fr); gap: 6px; font: 11px var(--mono); cursor: pointer; padding: 1px 0; }
+  .dt-event:hover { background: var(--panel); }
+  .dt-event-time { color: var(--muted); }
+  .dt-event-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dt-event-fields { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dt-event pre { grid-column: 1 / -1; margin: 3px 0 6px; padding: 6px 8px; background: var(--bg); border: 1px solid var(--border); white-space: pre-wrap; word-break: break-word; }
+  .dt-now { color: var(--accent); font: 11px var(--mono); }
+  .dt-snapshot { padding: 10px 12px; min-width: 0; }
+  .dt-snapshot-header { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px; font: 12px var(--mono); margin-bottom: 4px; }
+  .dt-snapshot-frame { margin-top: 6px; background: #11161d; border: 1px solid var(--border); border-radius: 4px; overflow: auto; }
+  .dt-snapshot-image { display: block; width: 100%; height: auto; }
+  .dt-cause { margin-top: 6px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); font: 11px var(--mono); }
+  .dt-cause-title { font-weight: 700; margin: 2px 0; }
+  .dt-changed { font-weight: 700; }
+  .dt-unchanged { color: var(--muted); }
+  .dt-transition .meta { font-family: var(--mono); }
+
+  @media (max-width: 900px) {
+    main { overflow: auto; flex-direction: column; }
+    #timeline { flex: 0 0 auto; width: 100%; min-height: 55vh; }
+    #side-panel { flex: 0 0 auto; width: 100%; border-left: 0; border-top: 1px solid var(--border); }
+    .row { grid-template-columns: 68px minmax(90px, 150px) minmax(150px, 1fr); }
+    .row .fields, .row .reason { grid-column: 2 / -1; }
+    .summary-hero { grid-template-columns: repeat(2, minmax(140px, 1fr)); }
+    .metrics-grid { grid-template-columns: 1fr; }
+    .dt-bottom, .dt-inspector-grid { grid-template-columns: 1fr; }
+    .dt-labels { flex-basis: 120px; }
+  }
+</style>
+</head>
+<body>
+
+<div id="drop">
+  <p>Drop a game folder (<code>game.jsonl</code> + <code>spatial/field-*.svg</code>) or a <code>.jsonl</code> bot log here, or</p>
+  <div class="drop-actions">
+    <button id="pick-folder">Choose game folder…</button>
+    <button id="pick">Choose log file…</button>
+  </div>
+  <p class="layers">attention → awareness → strategy → behaviors → engine → logs</p>
+  <input id="file-input" type="file" accept=".jsonl,.json,.log,.svg" multiple hidden />
+  <input id="folder-input" type="file" webkitdirectory multiple hidden />
+  <input id="svg-input" type="file" accept=".svg" multiple hidden />
+</div>
+
+<div id="app">
+  <header>
+    <span class="path" id="path-label"></span>
+    <label><input type="checkbox" id="all-events" /> show telemetry</label>
+    <input type="text" id="search" placeholder="filter (event, proposal, reason, tag…)" />
+    <nav class="stream-menu" id="stream-menu" aria-label="Log stream">
+      <button type="button" class="active" data-view="summary" title="important moments and outcomes">Summary<span class="count" data-count="summary">0</span></button>
+      <button type="button" data-view="decision" title="every layer on one timeline (count: hints)">Decision Timeline<span class="count" data-count="decision">0</span></button>
+      <button type="button" data-view="events" title="raw events">Events<span class="count" data-count="events">0</span></button>
+      <button type="button" data-view="attention" title="attention.observed">Attention<span class="count" data-count="attention">0</span></button>
+      <button type="button" data-view="awareness" title="awareness.updated">Awareness<span class="count" data-count="awareness">0</span></button>
+      <button type="button" data-view="engine" title="engine.granted">Engine<span class="count" data-count="engine">0</span></button>
+    </nav>
+    <span class="spacer"></span>
+    <button class="link" id="load-another">load another file</button>
+  </header>
+  <main>
+    <section id="timeline"></section>
+    <aside id="side-panel"></aside>
+  </main>
+</div>
+
+<script src="viewer/timeline_model.js"></script>
+<script src="viewer/diagnostics.js"></script>
+<script src="viewer/snapshots.js"></script>
+<script src="viewer/decision_view.js"></script>
+<script>
+const LAYERS = ["attention", "awareness", "strategy", "behaviors", "engine", "logs"];
+const NARRATIVE_EVENTS = new Set([
+  "game.started", "game.ended",
+  "strategy.decided",
+  "behavior.economy_planned",
+  "engine.commanded",
+  "logs.snapshot_failed",
+  "logging.record_rejected",
+]);
+
+const PAGE_SIZE = 500;
+let records = [];
+let parseWarnings = [];
+let currentView = "summary";
+let visibleRows = PAGE_SIZE;
+let streams = { attention: [], awareness: [], strategy: [], proposals: [], grants: [], commands: [], perf: [] };
+
+function humanize(value) {
+  if (value == null || value === "") return "unknown";
+  return String(value)
+    .replace(/^Result\./, "")
+    .replace(/^Race\./, "")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[_:.]+/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function formatTime(seconds) {
+  seconds = Number(seconds);
+  if (!Number.isFinite(seconds)) return "--:--.--";
+  seconds = Math.max(0, seconds);
+  const m = Math.floor(seconds / 60);
+  const s = (seconds - m * 60).toFixed(2).padStart(5, "0");
+  return `${String(m).padStart(2, "0")}:${s}`;
+}
+
+function fmt(value, digits = 2) {
+  const number = Number(value);
+  return value == null || !Number.isFinite(number) ? "—" : number.toFixed(digits);
+}
+
+function xy(point) {
+  return Array.isArray(point) ? `(${fmt(point[0], 1)}, ${fmt(point[1], 1)})` : "—";
+}
+
+function layerOf(record) {
+  const component = String(record?.component ?? "");
+  const head = component.split(".")[0];
+  return LAYERS.includes(head) ? head : "logs";
+}
+
+function typesSummary(types) {
+  return Object.entries(types || {}).map(([type, count]) => `${count}×${humanize(type)}`).join(", ") || "none";
+}
+
+function fieldsFor(record) {
+  const d = record.data || {};
+  switch (record.event) {
+    case "game.started":
+      return `map=${d.map} race=${humanize(d.race)} vs ${humanize(d.enemy_race)} opening=${d.opening} lattice=${d.lattice?.samples}`;
+    case "game.ended":
+      return `result=${d.result}`;
+    case "attention.observed":
+      return `minerals=${d.minerals} gas=${d.vespene} supply=${d.supply_used}/${d.supply_cap} workers=${d.workers} army=${d.army_units} power=${fmt(d.army_power, 1)} enemies=${d.visible_enemy_units}`;
+    case "awareness.updated":
+      return `danger=${fmt(d.danger)} contacts=${d.contacts} (${d.visible_contacts} visible) power own=${fmt(d.own_power, 1)} enemy=${fmt(d.enemy_power, 1)}`;
+    case "strategy.decided":
+      return `objective=${d.objective} previous=${d.previous} danger=${fmt(d.inputs?.danger)} defense=${fmt(d.defense)} army=${fmt(d.army)} risk=${fmt(d.risk)}`;
+    case "behavior.proposed":
+      return (d.proposals || []).map((p) => `${p.proposal_id} p=${fmt(p.priority)} n=${p.count ?? "all"}`).join("  ");
+    case "behavior.economy_planned":
+      return `active=${d.active} workers=${d.workers} gas=${d.gas} bases=${d.bases} expand=${d.expand} freeflow=${d.freeflow}`;
+    case "engine.granted":
+      return `${(d.grants || []).map((g) => `${g.proposal_id} ${g.granted}/${g.requested ?? "all"}`).join("  ")}  transfers=${(d.transfers || []).length} unassigned=${(d.unassigned || []).length}`;
+    case "engine.commanded":
+      return (d.tags || []).length ? `${d.proposal_id} ${d.command} → ${xy(d.target)} ${typesSummary(d.types)}` : `${d.proposal_id} released`;
+    case "logs.frame_perf":
+      return Object.entries(d.max_ms || {}).map(([layer, ms]) => `${layer}=${fmt(ms, 1)}`).join(" ");
+    case "logs.snapshot_written":
+      return `${SC2Snapshots.baseName(d.path)} trigger=${d.trigger}`;
+    default:
+      return Object.entries(d).filter(([key]) => key !== "reason").map(([key, value]) => `${key}=${JSON.stringify(value)}`).join("  ");
+  }
+}
+
+function reasonOf(record) {
+  return record.data?.reason ?? "";
+}
+
+function buildStreams() {
+  streams = { attention: [], awareness: [], strategy: [], proposals: [], grants: [], commands: [], perf: [] };
+  const byEvent = {
+    "attention.observed": "attention",
+    "awareness.updated": "awareness",
+    "strategy.decided": "strategy",
+    "behavior.proposed": "proposals",
+    "engine.granted": "grants",
+    "engine.commanded": "commands",
+    "logs.frame_perf": "perf",
+  };
+  for (const record of records) {
+    const stream = byEvent[record.event];
+    if (stream) streams[stream].push(record);
+  }
+}
+
+function appendTextElement(parent, tag, className, text) {
+  const element = document.createElement(tag);
+  if (className) element.className = className;
+  element.textContent = text;
+  parent.appendChild(element);
+  return element;
+}
+
+function appendLayerChip(parent, layer) {
+  return appendTextElement(parent, "span", `layer-chip layer-${layer}`, layer);
+}
+
+function appendGroupHeading(parent, label, count) {
+  const heading = appendTextElement(parent, "div", "group-heading", label || "unknown");
+  appendTextElement(heading, "span", "count", String(count));
+  return heading;
+}
+
+function lastOf(items) {
+  return items.length ? items[items.length - 1] : undefined;
+}
+
+function appendParseWarnings(parent) {
+  if (!parseWarnings.length) return;
+  appendTextElement(parent, "div", "notice parse-error",
+    `${parseWarnings.length} malformed line(s) skipped: ${parseWarnings.slice(0, 3).join("; ")}`);
+}
+
+function appendSummaryCard(parent, label, value, detail, className = "") {
+  const card = document.createElement("div");
+  card.className = `summary-card ${className}`.trim();
+  appendTextElement(card, "div", "eyebrow", label);
+  appendTextElement(card, "div", "value", value);
+  appendTextElement(card, "div", "detail", detail);
+  parent.appendChild(card);
+  return card;
+}
+
+function summaryHeading(parent, title, detail = "") {
+  const heading = document.createElement("div");
+  heading.className = "summary-section-heading";
+  appendTextElement(heading, "h2", "", title);
+  if (detail) appendTextElement(heading, "span", "detail", detail);
+  parent.appendChild(heading);
+}
+
+function buildStoryMoments() {
+  const moments = [];
+  let objective;
+  let openingDone = false;
+  const held = new Map();
+  const push = (record, title, reason = "", severity = "info") => moments.push({
+    time: record.game_time, title, reason, severity, layer: layerOf(record), event: record.event, record,
+  });
+  for (const record of records) {
+    const d = record.data || {};
+    if (record.event === "game.started") {
+      push(record, `Game started · ${d.map || "unknown map"}`, d.opening ? `opening ${d.opening}` : "");
+    } else if (record.event === "game.ended") {
+      const result = humanize(d.result).toUpperCase();
+      push(record, `Game ended · ${result}`, "", result.includes("VICTORY") ? "ok" : "error");
+    } else if (record.event === "attention.observed" && d.opening_done && !openingDone) {
+      openingDone = true;
+      push(record, "Opening handed over to the economy", d.opening || "", "ok");
+    } else if (record.event === "strategy.decided" && d.objective !== objective) {
+      push(record, `Objective → ${d.objective}`, `${humanize(d.reason)} · danger ${fmt(d.inputs?.danger)}`, d.objective === "STABILIZE" ? "warning" : "ok");
+      objective = d.objective;
+    } else if (record.event === "engine.commanded" && d.owner !== "core_army") {
+      const count = (d.tags || []).length;
+      const before = held.get(d.proposal_id) || 0;
+      if (count && !before) push(record, `${humanize(d.owner)} took ${count} unit${count === 1 ? "" : "s"}`, `${humanize(d.reason)} · ${d.proposal_id}`, "warning");
+      else if (!count && before) push(record, `${humanize(d.owner)} released its units`, d.proposal_id, "ok");
+      held.set(d.proposal_id, count);
+    } else if (record.event === "logs.snapshot_failed") {
+      push(record, "SVG snapshot failed", d.error, "error");
+    } else if (record.event === "logging.record_rejected") {
+      push(record, `Record rejected · ${d.rejected_event}`, d.error, "error");
+    }
+  }
+  return moments;
+}
+
+function renderMetricCard(parent, label, recordsForMetric, valueOf, color, formatter = (value) => String(value)) {
+  const points = recordsForMetric
+    .map((record) => ({ time: Number(record.game_time), value: Number(valueOf(record)) }))
+    .filter((point) => Number.isFinite(point.time) && Number.isFinite(point.value));
+  const card = document.createElement("div");
+  card.className = "metric-card";
+  const header = appendTextElement(card, "div", "eyebrow", label);
+  if (!points.length) {
+    appendTextElement(card, "div", "notice", "No data");
+    parent.appendChild(card);
+    return;
+  }
+  const values = points.map((point) => point.value);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const firstTime = points[0].time;
+  const lastTime = points[points.length - 1].time;
+  appendTextElement(header, "span", "metric-value", formatter(points[points.length - 1].value));
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 320 62");
+  svg.setAttribute("role", "img");
+  svg.setAttribute("aria-label", `${label} from ${formatter(min)} to ${formatter(max)}`);
+  const polyline = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+  const xSpan = Math.max(1, lastTime - firstTime);
+  const ySpan = Math.max(1e-9, max - min);
+  polyline.setAttribute("points", points.map((point) => {
+    const x = ((point.time - firstTime) / xSpan) * 320;
+    const y = max > min ? 57 - ((point.value - min) / ySpan) * 52 : 31;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(" "));
+  polyline.setAttribute("fill", "none");
+  polyline.setAttribute("stroke", color);
+  polyline.setAttribute("stroke-width", "2");
+  polyline.setAttribute("vector-effect", "non-scaling-stroke");
+  svg.appendChild(polyline);
+  card.appendChild(svg);
+  appendTextElement(card, "div", "range", `${formatter(min)} min · ${formatter(max)} max`);
+  parent.appendChild(card);
+}
+
+function renderSummary() {
+  const root = document.getElementById("timeline");
+  root.replaceChildren();
+  root.className = "summary-view";
+
+  const started = records.find((record) => record.event === "game.started");
+  const ended = [...records].reverse().find((record) => record.event === "game.ended");
+  const duration = records.reduce((max, record) => Math.max(max, Number(record.game_time) || 0), 0);
+  const result = ended ? humanize(ended.data?.result).toUpperCase() : "IN PROGRESS";
+  const resultClass = result.includes("VICTORY") ? "result-win" : (result.includes("DEFEAT") ? "result-loss" : "");
+  const model = DecisionView.model();
+  const stabilizing = model ? SC2Timeline.shareOf(model, model.t.objective, "STABILIZE") : undefined;
+  const defenses = buildStoryMoments().filter((moment) => moment.title.startsWith("Defense took")).length;
+  const worstFrame = streams.perf.reduce((max, record) => Math.max(max, Object.values(record.data?.max_ms || {}).reduce((a, b) => a + (Number(b) || 0), 0)), 0);
+
+  const hero = document.createElement("div");
+  hero.className = "summary-hero";
+  appendSummaryCard(hero, "Result", result, `${started?.data?.map || "Unknown map"} · ${formatTime(duration)}`, resultClass);
+  appendSummaryCard(hero, "Opening", humanize(started?.data?.opening || lastOf(streams.attention)?.data?.opening || "unknown"),
+    `${humanize(started?.data?.race)} vs ${humanize(started?.data?.enemy_race)}`);
+  appendSummaryCard(hero, "Stabilizing", stabilizing === undefined ? "—" : `${Math.round(stabilizing * 100)}%`,
+    `${defenses} defense${defenses === 1 ? "" : "s"} commanded`);
+  appendSummaryCard(hero, "Worst frame", `${fmt(worstFrame, 1)} ms`, "sum of per-layer maxima", worstFrame > 45 ? "has-problem" : "");
+  root.appendChild(hero);
+
+  const metrics = document.createElement("section");
+  metrics.className = "summary-section";
+  summaryHeading(metrics, "Match signals", "state summaries shown as trends");
+  const grid = document.createElement("div");
+  grid.className = "metrics-grid";
+  renderMetricCard(grid, "Minerals", streams.attention, (r) => r.data?.minerals, "var(--layer-attention)", (v) => Math.round(v).toString());
+  renderMetricCard(grid, "Supply used", streams.attention, (r) => r.data?.supply_used, "var(--layer-attention)", (v) => Math.round(v).toString());
+  renderMetricCard(grid, "Army power", streams.attention, (r) => r.data?.army_power, "var(--layer-attention)", (v) => Number(v).toFixed(1));
+  renderMetricCard(grid, "Danger", streams.awareness, (r) => r.data?.danger, "var(--layer-awareness)", (v) => Number(v).toFixed(2));
+  renderMetricCard(grid, "Enemy power", streams.awareness, (r) => r.data?.enemy_power, "var(--layer-awareness)", (v) => Number(v).toFixed(1));
+  renderMetricCard(grid, "Risk tolerance", streams.strategy, (r) => r.data?.risk, "var(--layer-strategy)", (v) => Number(v).toFixed(2));
+  metrics.appendChild(grid);
+  root.appendChild(metrics);
+
+  const moments = buildStoryMoments();
+  const story = document.createElement("section");
+  story.className = "summary-section";
+  summaryHeading(story, "Match story", `${moments.length} important moments`);
+  const list = document.createElement("div");
+  list.className = "story-list";
+  for (const moment of moments) {
+    const item = document.createElement("div");
+    item.className = `story-item severity-${moment.severity}`;
+    appendTextElement(item, "div", "story-time", formatTime(moment.time));
+    appendTextElement(item, "div", "story-marker", "");
+    const content = document.createElement("div");
+    appendTextElement(content, "div", "story-title", moment.title);
+    if (moment.reason) appendTextElement(content, "div", "story-reason", moment.reason);
+    const meta = appendTextElement(content, "div", "story-meta", "");
+    appendLayerChip(meta, moment.layer);
+    appendTextElement(meta, "span", "", ` ${moment.event}`);
+    const jump = appendTextElement(meta, "button", "story-jump", "open in timeline →");
+    jump.type = "button";
+    jump.addEventListener("click", (event) => {
+      event.stopPropagation();
+      openDecisionAt(moment.time);
+    });
+    item.appendChild(content);
+    item.addEventListener("click", () => {
+      const already = item.querySelector("pre");
+      if (already) { already.remove(); return; }
+      const pre = document.createElement("pre");
+      pre.textContent = JSON.stringify(moment.record, null, 2);
+      content.appendChild(pre);
+    });
+    list.appendChild(item);
+  }
+  if (!moments.length) appendTextElement(list, "div", "notice", "No important moments in this log.");
+  story.appendChild(list);
+  root.appendChild(story);
+  appendParseWarnings(root);
+}
+
+function proposalHistory() {
+  const byId = new Map();
+  for (const record of streams.proposals) {
+    for (const proposal of record.data?.proposals || []) {
+      let entry = byId.get(proposal.proposal_id);
+      if (!entry) {
+        entry = { id: proposal.proposal_id, owner: proposal.owner, first: record.game_time, last: record.game_time, maxPriority: -Infinity, reasons: new Set() };
+        byId.set(proposal.proposal_id, entry);
+      }
+      entry.last = record.game_time;
+      entry.maxPriority = Math.max(entry.maxPriority, Number(proposal.priority) || 0);
+      if (proposal.reason) entry.reasons.add(proposal.reason);
+    }
+  }
+  return [...byId.values()];
+}
+
+function renderSummaryPanel() {
+  const el = document.getElementById("side-panel");
+  el.replaceChildren();
+  const hints = DecisionView.diagnosticCount();
+  const rejected = records.filter((record) => record.event === "logging.record_rejected").length;
+  const failedSnapshots = records.filter((record) => record.event === "logs.snapshot_failed").length;
+  const alerts = (hints ? 1 : 0) + (rejected ? 1 : 0) + (failedSnapshots ? 1 : 0);
+  appendTextElement(el, "h2", "", `Alerts (${alerts})`);
+  if (hints) {
+    const card = appendTextElement(el, "div", "entity-card summary-alert clickable", "");
+    appendTextElement(card, "div", "id", `${hints} decision hint${hints === 1 ? "" : "s"}`);
+    appendTextElement(card, "div", "meta", "Open the Decision Timeline to see them against every layer.");
+    card.addEventListener("click", () => switchView("decision"));
+  }
+  if (rejected) {
+    const card = appendTextElement(el, "div", "entity-card summary-alert bad", "");
+    appendTextElement(card, "div", "id", `${rejected} log record${rejected === 1 ? "" : "s"} rejected`);
+    appendTextElement(card, "div", "meta", "A layer tried to log something that is not strict JSON.");
+  }
+  if (failedSnapshots) {
+    const card = appendTextElement(el, "div", "entity-card summary-alert bad", "");
+    appendTextElement(card, "div", "id", `${failedSnapshots} SVG snapshot${failedSnapshots === 1 ? "" : "s"} failed`);
+  }
+  if (!alerts) appendTextElement(el, "div", "notice", "No alerts in this log.");
+
+  const proposals = proposalHistory();
+  appendTextElement(el, "h2", "", `Proposals (${proposals.length})`);
+  const owners = new Map();
+  for (const proposal of proposals) {
+    if (!owners.has(proposal.owner)) owners.set(proposal.owner, []);
+    owners.get(proposal.owner).push(proposal);
+  }
+  for (const [owner, items] of owners) {
+    appendGroupHeading(el, humanize(owner), items.length);
+    for (const item of items) {
+      const card = appendTextElement(el, "div", "entity-card", "");
+      appendTextElement(card, "div", "id", item.id);
+      appendTextElement(card, "div", "meta", `${formatTime(item.first)} .. ${formatTime(item.last)} · max priority ${fmt(item.maxPriority)}`);
+      appendTextElement(card, "div", "meta", [...item.reasons].map(humanize).join(", "));
+      card.addEventListener("click", () => {
+        document.getElementById("search").value = item.id;
+        document.getElementById("all-events").checked = true;
+        switchView("events");
+      });
+    }
+  }
+}
+
+function renderEvents() {
+  const showAll = document.getElementById("all-events").checked;
+  const search = document.getElementById("search").value.trim().toLowerCase();
+  const timeline = document.getElementById("timeline");
+  timeline.className = "";
+  timeline.replaceChildren();
+  const matching = [];
+  for (const record of records) {
+    const isNarrative = NARRATIVE_EVENTS.has(record.event);
+    if (!showAll && !isNarrative) continue;
+    const fields = fieldsFor(record);
+    const reason = reasonOf(record);
+    const haystack = `${record.event} ${record.component} ${reason} ${fields}`.toLowerCase();
+    if (search && !haystack.includes(search)) continue;
+    matching.push({ record, isNarrative, fields, reason });
+  }
+  for (const { record, isNarrative, fields, reason } of matching.slice(0, visibleRows)) {
+    const row = document.createElement("div");
+    row.className = "row" + (isNarrative ? "" : " telemetry");
+    appendTextElement(row, "span", "time", formatTime(record.game_time));
+    const layerCell = appendTextElement(row, "span", "", "");
+    appendLayerChip(layerCell, layerOf(record));
+    appendTextElement(row, "span", "event", record.event);
+    appendTextElement(row, "span", "fields", fields);
+    if (reason) appendTextElement(row, "span", "reason", humanize(reason));
+    row.addEventListener("click", () => {
+      const already = row.querySelector("pre");
+      if (already) { already.remove(); row.classList.remove("expanded"); return; }
+      const pre = document.createElement("pre");
+      pre.textContent = JSON.stringify(record, null, 2);
+      row.appendChild(pre);
+      row.classList.add("expanded");
+    });
+    timeline.appendChild(row);
+  }
+  if (!matching.length) {
+    appendTextElement(timeline, "div", "notice", "No events match this filter.");
+  } else if (matching.length > visibleRows) {
+    const more = appendTextElement(timeline, "button", "load-more", `Load ${Math.min(PAGE_SIZE, matching.length - visibleRows)} more of ${matching.length}`);
+    more.type = "button";
+    more.addEventListener("click", () => { visibleRows += PAGE_SIZE; renderEvents(); });
+  }
+  appendParseWarnings(timeline);
+}
+
+function renderEventsPanel() {
+  const el = document.getElementById("side-panel");
+  el.replaceChildren();
+  appendTextElement(el, "h2", "", `Events by layer (${records.length})`);
+  const counts = new Map();
+  for (const record of records) {
+    const key = `${layerOf(record)}|${record.event}`;
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  for (const layer of LAYERS) {
+    const entries = [...counts.entries()].filter(([key]) => key.startsWith(`${layer}|`));
+    if (!entries.length) continue;
+    appendGroupHeading(el, layer, entries.reduce((total, [, count]) => total + count, 0));
+    for (const [key, count] of entries) {
+      const event = key.split("|")[1];
+      const card = appendTextElement(el, "div", "entity-card", "");
+      appendTextElement(card, "div", "id", event);
+      appendTextElement(card, "div", "meta", `${count} record${count === 1 ? "" : "s"}`);
+      card.addEventListener("click", () => {
+        document.getElementById("search").value = event;
+        document.getElementById("all-events").checked = true;
+        renderEvents();
+      });
+    }
+  }
+}
+
+function renderTable(title, headings, rows, emptyMessage, textColumns = new Set([0])) {
+  const root = document.getElementById("timeline");
+  root.replaceChildren();
+  root.className = "data-view";
+  appendTextElement(root, "h2", "", title);
+  if (!rows.length) {
+    appendTextElement(root, "div", "notice", emptyMessage);
+    appendParseWarnings(root);
+    return;
+  }
+  const table = document.createElement("table");
+  const head = document.createElement("thead");
+  const headRow = document.createElement("tr");
+  headings.forEach((heading, index) => appendTextElement(headRow, "th", textColumns.has(index) ? "text" : "", heading));
+  head.appendChild(headRow);
+  table.appendChild(head);
+  const body = document.createElement("tbody");
+  for (const values of rows.slice(0, visibleRows)) {
+    const tr = document.createElement("tr");
+    values.forEach((value, index) => appendTextElement(tr, "td", textColumns.has(index) ? "text" : "", String(value ?? "—")));
+    body.appendChild(tr);
+  }
+  table.appendChild(body);
+  root.appendChild(table);
+  if (rows.length > visibleRows) {
+    const more = appendTextElement(root, "button", "load-more", `Load ${Math.min(PAGE_SIZE, rows.length - visibleRows)} more of ${rows.length}`);
+    more.type = "button";
+    more.addEventListener("click", () => { visibleRows += PAGE_SIZE; render(); });
+  }
+  appendParseWarnings(root);
+}
+
+function renderLatestPanel(title, latest, lines) {
+  const el = document.getElementById("side-panel");
+  el.replaceChildren();
+  appendTextElement(el, "h2", "", title);
+  if (!latest) {
+    appendTextElement(el, "div", "notice", "No records.");
+    return;
+  }
+  const card = appendTextElement(el, "div", "entity-card", "");
+  appendTextElement(card, "div", "id", `latest @ ${formatTime(latest.game_time)}`);
+  for (const line of lines(latest.data || {})) appendTextElement(card, "div", "meta", line);
+}
+
+function renderAttention() {
+  renderTable(
+    "Attention · what the bot perceived",
+    ["time", "minerals", "gas", "supply", "workers", "army", "army power", "visible enemies", "bases", "opening done"],
+    streams.attention.map((r) => {
+      const d = r.data || {};
+      return [formatTime(r.game_time), d.minerals, d.vespene, `${d.supply_used}/${d.supply_cap}`, d.workers, d.army_units,
+        fmt(d.army_power, 1), d.visible_enemy_units, (d.bases || []).length, d.opening_done];
+    }),
+    "No attention.observed records in this log.",
+  );
+  renderLatestPanel("Attention", lastOf(streams.attention), (d) => [
+    `opening ${d.opening || "—"} · done ${d.opening_done}`,
+    `bases ${(d.bases || []).join(", ") || "—"}`,
+    `visible enemy structures ${d.visible_enemy_structures ?? "—"}`,
+  ]);
+}
+
+function renderAwareness() {
+  renderTable(
+    "Awareness · what the bot believed",
+    ["time", "danger", "contacts", "visible", "power own", "power enemy", "threatened samples", "max threat", "bases (threat)"],
+    streams.awareness.map((r) => {
+      const d = r.data || {};
+      return [formatTime(r.game_time), fmt(d.danger), d.contacts, d.visible_contacts, fmt(d.own_power, 1), fmt(d.enemy_power, 1),
+        d.field?.threatened, fmt(d.field?.max_threat), (d.bases || []).map((b) => `${b.base_id} ${fmt(b.threat)}`).join("  ")];
+    }),
+    "No awareness.updated records in this log.",
+    new Set([0, 8]),
+  );
+  renderLatestPanel("Awareness", lastOf(streams.awareness), (d) => [
+    `field own/contested/enemy ${d.field?.friendly}/${d.field?.contested}/${d.field?.enemy} of ${d.field?.samples}`,
+    ...(d.strongest_contacts || []).map((c) => `${humanize(c.type)} #${c.tag} ${xy(c.position)} conf ${fmt(c.confidence)}${c.visible ? "" : ` ±${fmt(c.uncertainty, 1)}`}`),
+  ]);
+}
+
+function renderEngine() {
+  renderTable(
+    "Engine · who owned the army",
+    ["time", "grants (granted/requested)", "transfers", "unassigned"],
+    streams.grants.map((r) => {
+      const d = r.data || {};
+      return [formatTime(r.game_time), (d.grants || []).map((g) => `${g.proposal_id} ${g.granted}/${g.requested ?? "all"}`).join("  "),
+        (d.transfers || []).length, (d.unassigned || []).length];
+    }),
+    "No engine.granted records in this log.",
+    new Set([0, 1]),
+  );
+  const el = document.getElementById("side-panel");
+  el.replaceChildren();
+  appendTextElement(el, "h2", "", `Commands (${streams.commands.length})`);
+  for (const record of streams.commands.slice(-200).reverse()) {
+    const d = record.data || {};
+    const card = appendTextElement(el, "div", "entity-card", "");
+    appendTextElement(card, "div", "id", `${formatTime(record.game_time)} ${d.proposal_id}`);
+    appendTextElement(card, "div", "meta", (d.tags || []).length ? `${d.command} → ${xy(d.target)} · ${typesSummary(d.types)}` : "released");
+    if (d.strategy) appendTextElement(card, "div", "meta", `strategy ${d.strategy.objective} · danger ${fmt(d.awareness?.danger)} · ${humanize(d.reason)}`);
+    card.addEventListener("click", () => openDecisionAt(record.game_time));
+  }
+}
+
+function render() {
+  if (currentView === "summary") {
+    renderSummary();
+    renderSummaryPanel();
+  } else if (currentView === "decision") {
+    DecisionView.render(document.getElementById("timeline"), document.getElementById("side-panel"));
+  } else if (currentView === "attention") {
+    renderAttention();
+  } else if (currentView === "awareness") {
+    renderAwareness();
+  } else if (currentView === "engine") {
+    renderEngine();
+  } else {
+    renderEvents();
+    renderEventsPanel();
+  }
+}
+
+function updateStreamCounts() {
+  const counts = {
+    summary: buildStoryMoments().length,
+    decision: DecisionView.diagnosticCount(),
+    events: records.length,
+    attention: streams.attention.length,
+    awareness: streams.awareness.length,
+    engine: streams.grants.length,
+  };
+  for (const [name, count] of Object.entries(counts)) {
+    document.querySelector(`[data-count="${name}"]`).textContent = String(count);
+  }
+}
+
+function openDecisionAt(time) {
+  DecisionView.focus(time);
+  switchView("decision");
+}
+
+function switchView(name) {
+  currentView = name;
+  visibleRows = PAGE_SIZE;
+  const eventControls = name === "events";
+  document.getElementById("all-events").disabled = !eventControls;
+  document.getElementById("search").disabled = !eventControls;
+  for (const menuButton of document.querySelectorAll("#stream-menu button")) {
+    const active = menuButton.dataset.view === name;
+    menuButton.classList.toggle("active", active);
+    menuButton.setAttribute("aria-current", active ? "page" : "false");
+  }
+  render();
+}
+
+function loadText(text, name, svgFiles = []) {
+  records = [];
+  parseWarnings = [];
+  for (const [index, rawLine] of text.split("\n").entries()) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    try {
+      const record = JSON.parse(line);
+      if (!record || typeof record !== "object" || Array.isArray(record) || typeof record.event !== "string") {
+        throw new Error("record has no event name");
+      }
+      const gameTime = Number(record.game_time);
+      const dataIsObject = record.data && typeof record.data === "object" && !Array.isArray(record.data);
+      if (!Number.isFinite(gameTime)) parseWarnings.push(`line ${index + 1}: invalid game_time; using 0`);
+      if (record.data != null && !dataIsObject) parseWarnings.push(`line ${index + 1}: data is not an object; using {}`);
+      records.push({
+        ...record,
+        component: typeof record.component === "string" ? record.component : "unknown",
+        game_time: Number.isFinite(gameTime) ? gameTime : 0,
+        data: dataIsObject ? record.data : {},
+      });
+    } catch (error) {
+      parseWarnings.push(`line ${index + 1}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  visibleRows = PAGE_SIZE;
+  buildStreams();
+  DecisionView.load(records, svgFiles);
+  updateStreamCounts();
+  document.getElementById("path-label").textContent = name;
+  document.getElementById("drop").classList.add("hidden");
+  document.getElementById("app").classList.add("active");
+  switchView("summary");
+}
+
+function showDropError(message) {
+  const element = document.querySelector("#drop p");
+  element.textContent = message;
+  element.classList.add("parse-error");
+}
+
+// A game folder holds game.jsonl and spatial/field-*.svg; a lone log still works.
+function loadFiles(fileList) {
+  const files = [...fileList];
+  const logs = files.filter((file) => /\.(jsonl|json|log)$/i.test(file.name));
+  const svgFiles = files.filter((file) => SC2Snapshots.timeFromName(file.name) !== undefined);
+  const log = logs.find((file) => file.name === "game.jsonl") || logs[0];
+  if (!log) {
+    if (svgFiles.length && records.length) {
+      DecisionView.attachSnapshotFiles(svgFiles);
+      render();
+      return;
+    }
+    showDropError("No .jsonl log found in the selection.");
+    return;
+  }
+  const folder = (log.webkitRelativePath || "").split("/").slice(0, -1).join("/");
+  const reader = new FileReader();
+  reader.onload = () => loadText(reader.result, folder ? `${folder}/${log.name}` : log.name, svgFiles);
+  reader.onerror = () => showDropError(`Could not read ${log.name}.`);
+  reader.readAsText(log);
+}
+
+function readEntry(entry) {
+  if (entry.isFile) return new Promise((resolve) => entry.file((file) => resolve([file]), () => resolve([])));
+  if (!entry.isDirectory) return Promise.resolve([]);
+  const reader = entry.createReader();
+  const pending = [];
+  return new Promise((resolve) => {
+    const next = () => reader.readEntries((entries) => {
+      if (!entries.length) {
+        Promise.all(pending).then((groups) => resolve(groups.flat()));
+        return;
+      }
+      pending.push(...entries.map(readEntry));
+      next();
+    }, () => resolve([]));
+    next();
+  });
+}
+
+// Entries must be taken synchronously, while the drop event is still live.
+function filesFromDrop(dataTransfer) {
+  const entries = [...(dataTransfer.items || [])]
+    .map((item) => (item.webkitGetAsEntry ? item.webkitGetAsEntry() : null))
+    .filter(Boolean);
+  if (!entries.length) return Promise.resolve([...dataTransfer.files]);
+  return Promise.all(entries.map(readEntry)).then((groups) => groups.flat());
+}
+
+const drop = document.getElementById("drop");
+drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("dragover"); });
+drop.addEventListener("dragleave", () => drop.classList.remove("dragover"));
+drop.addEventListener("drop", (e) => {
+  e.preventDefault();
+  drop.classList.remove("dragover");
+  filesFromDrop(e.dataTransfer).then((files) => {
+    if (files.length) loadFiles(files);
+  });
+});
+
+document.getElementById("pick").addEventListener("click", () => document.getElementById("file-input").click());
+document.getElementById("pick-folder").addEventListener("click", () => document.getElementById("folder-input").click());
+for (const id of ["file-input", "folder-input"]) {
+  document.getElementById(id).addEventListener("change", (e) => {
+    if (e.target.files.length) loadFiles(e.target.files);
+  });
+}
+document.getElementById("svg-input").addEventListener("change", (e) => {
+  if (!e.target.files.length) return;
+  DecisionView.attachSnapshotFiles([...e.target.files]);
+  e.target.value = "";
+  render();
+});
+DecisionView.setSvgFileRequester(() => document.getElementById("svg-input").click());
+document.getElementById("load-another").addEventListener("click", () => {
+  document.getElementById("app").classList.remove("active");
+  document.getElementById("drop").classList.remove("hidden");
+  document.getElementById("file-input").value = "";
+  document.getElementById("folder-input").value = "";
+});
+
+document.getElementById("all-events").addEventListener("change", render);
+document.getElementById("search").addEventListener("input", () => { visibleRows = PAGE_SIZE; render(); });
+for (const menuButton of document.querySelectorAll("#stream-menu button")) {
+  menuButton.addEventListener("click", () => switchView(menuButton.dataset.view));
+}
+document.addEventListener("keydown", (e) => {
+  if (currentView === "decision") DecisionView.handleKey(e);
+});
+let resizeTimer;
+window.addEventListener("resize", () => {
+  if (currentView !== "decision") return;
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => DecisionView.redraw(), 150);
+});
+</script>
+</body>
+</html>

@@ -129,3 +129,10 @@ dmypy.json
 .pyre/
 
 .idea
+
+# Local game logs and SVG snapshots (the viewer stays versioned)
+/logs/game-*/
+.ruff_cache/
+
+# AI-Arena upload build artifact
+bot.zip
