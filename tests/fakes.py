@@ -11,8 +11,38 @@ from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
 from bot.attention import AttentionState, BaseView, MapView, UnitView
+from bot.map_topology import MapPassage, MapRegion, MapTopology
 
 SIZE = 64
+EXPANSIONS = (Point2((10.5, 10.5)), Point2((30.5, 12.5)), Point2((53.5, 53.5)))
+LATTICE = tuple(
+    Point2((x + 0.5, y + 0.5)) for y in range(2, SIZE, 4) for x in range(2, SIZE, 4)
+)
+TOPOLOGY = MapTopology(
+    regions=(
+        MapRegion("region:0", Point2((10.5, 10.5)), expansions=(EXPANSIONS[0],)),
+        MapRegion("region:1", Point2((30.5, 12.5)), expansions=(EXPANSIONS[1],)),
+        MapRegion("region:2", Point2((53.5, 53.5)), expansions=(EXPANSIONS[2],)),
+    ),
+    passages=(
+        MapPassage(
+            "choke:0", Point2((20.5, 11.5)), 4.0, ("region:0", "region:1"), "choke"
+        ),
+        MapPassage(
+            "choke:1", Point2((42.5, 32.5)), 6.0, ("region:1", "region:2"), "choke"
+        ),
+    ),
+    adjacency=(
+        ("region:0", (("region:1", "choke:0"),)),
+        ("region:1", (("region:0", "choke:0"), ("region:2", "choke:1"))),
+        ("region:2", (("region:1", "choke:1"),)),
+    ),
+    expansion_to_region=tuple(
+        zip(EXPANSIONS, ("region:0", "region:1", "region:2"), strict=True)
+    ),
+    own_start_region="region:0",
+    enemy_start_region="region:2",
+)
 
 MAP = MapView(
     name="TestMap",
@@ -20,9 +50,10 @@ MAP = MapView(
     own_start=Point2((10.5, 10.5)),
     enemy_start=Point2((53.5, 53.5)),
     main_ramp=Point2((18.0, 18.0)),
-    expansions=(Point2((10.5, 10.5)), Point2((30.5, 12.5)), Point2((53.5, 53.5))),
-    lattice=tuple(Point2((x + 0.5, y + 0.5)) for y in range(2, SIZE, 4) for x in range(2, SIZE, 4)),
+    expansions=EXPANSIONS,
+    lattice=LATTICE,
     lattice_spacing=4.0,
+    topology=TOPOLOGY,
 )
 MAIN = BaseView(base_id="base:10:10", position=Point2((10.5, 10.5)), is_main=True)
 NATURAL = BaseView(base_id="base:30:12", position=Point2((30.5, 12.5)), is_main=False)
@@ -207,7 +238,9 @@ class FakeBot:
         self.townhalls: list[FakeUnit] = []
         self.state = SimpleNamespace(
             dead_units=set(),
-            visibility=SimpleNamespace(data_numpy=np.zeros((SIZE, SIZE), dtype=np.uint8)),
+            visibility=SimpleNamespace(
+                data_numpy=np.zeros((SIZE, SIZE), dtype=np.uint8)
+            ),
         )
         self.build_order_runner = SimpleNamespace(
             chosen_opening="BioThreeOneOne", build_completed=True

@@ -15,7 +15,11 @@ import numpy as np
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
-WORKER_TYPES = frozenset({UnitTypeId.SCV, UnitTypeId.PROBE, UnitTypeId.DRONE, UnitTypeId.MULE})
+from bot.map_topology import MapTopology, build_topology
+
+WORKER_TYPES = frozenset(
+    {UnitTypeId.SCV, UnitTypeId.PROBE, UnitTypeId.DRONE, UnitTypeId.MULE}
+)
 # sqrt(dps * hit points) of a Marine: `UnitView.power` is counted in Marines.
 MARINE_POWER = math.sqrt(9.8 * 45.0)
 # A townhall this close to an expansion location is that base.
@@ -57,6 +61,7 @@ class MapView:
     # Pathable points on a regular grid, row by row.
     lattice: tuple[Point2, ...]
     lattice_spacing: float
+    topology: MapTopology = field(default_factory=MapTopology)
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,24 +112,38 @@ def read_map(bot, *, lattice_spacing: int = 4) -> MapView:
         float(area.y + area.height),
     )
     own_start = _point(bot.start_location)
+    enemy_start = _point(bot.enemy_start_locations[0])
     try:
         main_ramp = _point(bot.main_base_ramp.top_center)
     except (AttributeError, IndexError, ValueError):
         main_ramp = own_start
+    expansions = tuple(
+        sorted(
+            {_point(location) for location in bot.expansion_locations_list},
+            key=lambda point: (point.x, point.y),
+        )
+    )
+    pathing = np.asarray(info.pathing_grid.data_numpy)
+    lattice = pathable_lattice(pathing, lattice_spacing, bounds)
+    topology = build_topology(
+        pathing,
+        lattice,
+        float(lattice_spacing),
+        expansions,
+        own_start,
+        enemy_start,
+        map_data=_map_data(bot),
+    )
     return MapView(
         name=str(info.map_name),
         bounds=bounds,
         own_start=own_start,
-        enemy_start=_point(bot.enemy_start_locations[0]),
+        enemy_start=enemy_start,
         main_ramp=main_ramp,
-        expansions=tuple(
-            sorted(
-                (_point(location) for location in bot.expansion_locations_list),
-                key=lambda point: (point.x, point.y),
-            )
-        ),
-        lattice=pathable_lattice(np.asarray(info.pathing_grid.data_numpy), lattice_spacing, bounds),
+        expansions=expansions,
+        lattice=lattice,
         lattice_spacing=float(lattice_spacing),
+        topology=topology,
     )
 
 
@@ -192,8 +211,12 @@ def unit_view(unit, supply: Callable[[UnitTypeId], float]) -> UnitView:
     )
 
 
-def _views(units: Iterable, supply: Callable[[UnitTypeId], float]) -> tuple[UnitView, ...]:
-    return tuple(sorted((unit_view(unit, supply) for unit in units), key=lambda v: v.tag))
+def _views(
+    units: Iterable, supply: Callable[[UnitTypeId], float]
+) -> tuple[UnitView, ...]:
+    return tuple(
+        sorted((unit_view(unit, supply) for unit in units), key=lambda v: v.tag)
+    )
 
 
 def _visible(units: Iterable) -> Iterable:
@@ -238,3 +261,10 @@ def _bases(townhalls: Iterable, map_view: MapView) -> tuple[BaseView, ...]:
 
 def _point(value) -> Point2:
     return Point2((float(value[0]), float(value[1])))
+
+
+def _map_data(bot):
+    try:
+        return bot.mediator.get_map_data_object
+    except (AttributeError, KeyError, RuntimeError, TypeError):
+        return None

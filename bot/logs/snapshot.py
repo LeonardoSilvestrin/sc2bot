@@ -138,6 +138,40 @@ def render_svg(
                 opacity=0.16 if strength < PRESENCE_FLOOR else 0.35 + 0.55 * strength,
             )
         )
+    parts.append('</g><g id="topology">')
+    topology = attention.map.topology
+    topology_regions = {region.region_id: region for region in topology.regions}
+    for passage in topology.passages:
+        px, py = projection.point(passage.position)
+        for region_id in passage.regions:
+            region = topology_regions[region_id]
+            rx, ry = projection.point(region.center)
+            parts.append(
+                _line(rx, ry, px, py, "#596779", 1.0, dashed=passage.kind == "border")
+            )
+        parts.append(
+            _circle(
+                px,
+                py,
+                3.5,
+                fill="#ffd166",
+                stroke="#11161d",
+                extra=f'data-passage="{escape(passage.passage_id)}"',
+            )
+        )
+    for region in topology.regions:
+        x, y = projection.point(region.center)
+        parts.append(
+            _circle(
+                x,
+                y,
+                4.5,
+                fill="#8ad4ff",
+                stroke="#11161d",
+                extra=f'data-region="{escape(region.region_id)}"',
+            )
+        )
+        parts.append(_text(x + 6, y - 5, region.region_id, "tiny"))
     parts.append('</g><g id="expansions">')
     for expansion in attention.map.expansions:
         x, y = projection.point(expansion)
@@ -154,7 +188,9 @@ def render_svg(
                 "label",
             )
         )
-        parts.append(_text(x + 10, y + 11, f"p {base.pressure:.1f} c {base.cover:.1f}", "tiny"))
+        parts.append(
+            _text(x + 10, y + 11, f"p {base.pressure:.1f} c {base.cover:.1f}", "tiny")
+        )
         if base.center is not None:
             cx, cy = projection.point(base.center)
             parts.append(_line(x, y, cx, cy, "#eb5757", 1.5, dashed=True))
@@ -163,7 +199,11 @@ def render_svg(
         x, y = projection.point(contact.position)
         opacity = 0.25 + 0.75 * contact.confidence
         if contact.is_structure:
-            parts.append(_rect(x - 3, y - 3, 6, 6, fill="#eb5757", stroke="none", opacity=opacity))
+            parts.append(
+                _rect(
+                    x - 3, y - 3, 6, 6, fill="#eb5757", stroke="none", opacity=opacity
+                )
+            )
             continue
         if contact.uncertainty > 0.0:
             parts.append(
@@ -191,7 +231,9 @@ def render_svg(
             )
         )
     parts.append('</g><g id="army">')
-    owner_of = {grant.proposal.proposal_id: grant.proposal.owner for grant in result.grants}
+    owner_of = {
+        grant.proposal.proposal_id: grant.proposal.owner for grant in result.grants
+    }
     owners = dict(result.owners)
     for unit in attention.own_units:
         if not is_army(unit):
@@ -237,7 +279,8 @@ def render_svg(
 
 
 class SvgWriter(Protocol):
-    def write(self, path: Path, svg: str) -> None: ...
+    def write(self, path: Path, svg: str) -> None:
+        ...
 
 
 class FileSvgWriter:
@@ -307,7 +350,8 @@ class SnapshotExporter:
                     "trigger": "objective_changed" if changed else "interval",
                     "objective": strategy.objective.value,
                     "elements": sum(
-                        svg.count(tag) for tag in ("<circle", "<line", "<rect", "<polygon", "<text")
+                        svg.count(tag)
+                        for tag in ("<circle", "<line", "<rect", "<polygon", "<text")
                     ),
                     "bytes": len(svg.encode("utf-8")),
                     "render_write_ms": round((perf_counter() - started) * 1000.0, 3),
@@ -350,21 +394,31 @@ def _panel(
         ("panel", f"Reason    {strategy.reason}"),
         ("panel", f"Since     {_clock(strategy.since)}"),
         ("panel", f"Danger {inputs['danger']:.2f}  Share {inputs['army_share']:.2f}"),
-        ("panel", f"Def {strategy.defense:.2f} Army {strategy.army:.2f} Risk {strategy.risk:.2f}"),
         (
             "panel",
-            "Scores " + "  ".join(f"{name[:5]} {value:.2f}" for name, value in scores.items()),
+            f"Def {strategy.defense:.2f} Army {strategy.army:.2f} Risk {strategy.risk:.2f}",
+        ),
+        (
+            "panel",
+            "Scores "
+            + "  ".join(f"{name[:5]} {value:.2f}" for name, value in scores.items()),
         ),
         ("panel", ""),
         ("head", "AWARENESS"),
         ("panel", f"Contacts  {len(awareness.contacts)} ({visible} visible)"),
-        ("panel", f"Power     own {awareness.own_power:.1f} enemy {awareness.enemy_power:.1f}"),
+        (
+            "panel",
+            f"Power     own {awareness.own_power:.1f} enemy {awareness.enemy_power:.1f}",
+        ),
         ("panel", f"Samples   {summary['samples']}"),
         (
             "panel",
             f"Own/Cont/Enemy {summary['friendly']}/{summary['contested']}/{summary['enemy']}",
         ),
-        ("panel", f"Threatened {summary['threatened']}  max {summary['max_threat']:.2f}"),
+        (
+            "panel",
+            f"Threatened {summary['threatened']}  max {summary['max_threat']:.2f}",
+        ),
     ]
     for base in awareness.bases:
         rows.append(
@@ -376,7 +430,9 @@ def _panel(
         )
     rows += [("panel", ""), ("head", "ENGINE")]
     for grant in result.grants:
-        rows.append(("panel", f"{grant.proposal.proposal_id[:22]:<22} {len(grant.tags):>3}u"))
+        rows.append(
+            ("panel", f"{grant.proposal.proposal_id[:22]:<22} {len(grant.tags):>3}u")
+        )
     rows.append(("panel", f"unassigned {len(result.unassigned)}"))
     result_parts = ['<g id="panel">']
     for index, (css, line) in enumerate(rows):
@@ -398,7 +454,9 @@ def _number(value: float) -> str:
     return f"{value:.2f}".rstrip("0").rstrip(".")
 
 
-def _circle(x, y, radius, *, fill, stroke="none", width=1.0, opacity=1.0, extra="") -> str:
+def _circle(
+    x, y, radius, *, fill, stroke="none", width=1.0, opacity=1.0, extra=""
+) -> str:
     suffix = f" {extra}" if extra else ""
     return (
         f'<circle cx="{_number(x)}" cy="{_number(y)}" r="{_number(radius)}" '
@@ -429,6 +487,11 @@ def _text(x, y, value: str, css_class: str) -> str:
 def _diamond(x, y, radius, *, fill) -> str:
     points = " ".join(
         f"{_number(px)},{_number(py)}"
-        for px, py in ((x, y - radius), (x + radius, y), (x, y + radius), (x - radius, y))
+        for px, py in (
+            (x, y - radius),
+            (x + radius, y),
+            (x, y + radius),
+            (x - radius, y),
+        )
     )
     return f'<polygon points="{points}" fill="{fill}" stroke="#11161d"/>'

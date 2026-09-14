@@ -20,7 +20,7 @@ resto lê estados imutáveis e é testável sem `AresBot`.
 
 | Camada | Arquivo | Estado público | O que faz |
 | --- | --- | --- | --- |
-| ATTENTION | [bot/attention.py](../bot/attention.py) | `AttentionState`, `MapView` | Lê o frame: recursos, unidades próprias e inimigas visíveis (ordenadas por tag), bases, mortes, visibilidade. `read_map` lê o mapa uma vez: lattice de pontos pathable, expansões, rampa. Não interpreta nada. |
+| ATTENTION | [bot/attention.py](../bot/attention.py) | `AttentionState`, `MapView` | Lê o frame: recursos, unidades próprias e inimigas visíveis (ordenadas por tag), bases, mortes, visibilidade. `read_map` lê o mapa uma vez e congela lattice, expansões e `MapTopology` (regiões, passagens, adjacência e regiões dos starts). Não interpreta valor, ameaça ou controle territorial. |
 | AWARENESS | [bot/awareness/](../bot/awareness/) | `AwarenessState` | Memória de contatos com confiança `exp(-idade/τ)` e incerteza `min(cap, v·idade)`; esquece por morte confirmada, posição vista vazia (após carência) ou confiança < piso. Pressão por base e campo de influência. |
 | STRATEGY | [bot/strategy.py](../bot/strategy.py) | `StrategyState` | `STABILIZE` vs `BUILD_ADVANTAGE` com margem, permanência mínima e emergência; preferências contínuas `defense`, `army`, `economy`, `risk`; ponto de rally. |
 | BEHAVIORS | [bot/behaviors/](../bot/behaviors/) | `Proposal`, `EconomyPlan` | `defense`: uma proposta por base sob pressão. `core_army`: fallback com todas as unidades livres. `economy`: plano para os macro behaviors do Ares depois do opening. |
@@ -51,8 +51,8 @@ resto lê estados imutáveis e é testável sem `AresBot`.
   verde (nosso) → amarelo (disputado) → vermelho (inimigo crível), laranja onde a ameaça é
   só possível; contatos com anel de incerteza, dono de cada unidade, rally e painel da estratégia.
 - **SVG** (`--spatial-snapshot`): `logs/game-*/spatial/field-SSSS.svg` a cada intervalo e em
-  toda troca de objetivo, com ameaça, influência, bases, contatos, exército por dono,
-  alvos das concessões e painel das camadas.
+  toda troca de objetivo, com o grafo estático de regiões/passagens, ameaça, influência,
+  bases, contatos, exército por dono, alvos das concessões e painel das camadas.
 - **Viewer** ([logs/viewer.html](../logs/viewer.html)): carregue a pasta do jogo. Summary,
   Decision Timeline (trilhas agrupadas por camada, inspetor de todas as camadas no instante
   selecionado, SVG mais próximo, dicas de contradição e causas das mudanças), Events,
@@ -67,6 +67,7 @@ Envelope: `schema` (3), `run`, `seq`, `iteration`, `event`, `component` (a camad
 | Evento | Camada | Quando | Dados |
 | --- | --- | --- | --- |
 | `game.started` | logs | `on_start` | `map`, `race`, `enemy_race`, `opening`, `build` {`commit`, `branch`}, `config_fingerprint`, `configs`, `lattice`, `bounds` |
+| `map.topology_built` | attention | `on_start` | `regions`, `passages`, `chokes`, `expansions`, `unresolved_expansions`, `own_start_region`, `enemy_start_region` |
 | `game.ended` | logs | `on_end` | `result` |
 | `attention.observed` | attention | bases, fim do opening ou inimigos à vista mudam; amostra a cada 5 s | `minerals`, `vespene`, `supply_used`, `supply_cap`, `workers`, `army_units`, `army_supply`, `army_power`, `visible_enemy_units`, `visible_enemy_structures`, `bases`, `opening`, `opening_done` |
 | `awareness.updated` | awareness | mudança de contatos/poder/ameaça por base, heartbeat | `contacts`, `visible_contacts`, `enemy_power`, `own_power`, `danger`, `bases[]` {`base_id`, `position`, `is_main`, `threat`, `pressure`, `cover`, `balance`, `air_share`, `center`}, `strongest_contacts[]`, `field` {`samples`, `friendly`, `contested`, `enemy`, `threatened`, `max_threat`} |
@@ -94,6 +95,6 @@ Envelope: `schema` (3), `run`, `seq`, `iteration`, `event`, `component` (a camad
 
 ## Fora desta fatia
 
-Belief probabilístico de exército, forças agregadas, território/regiões, scouting, map
-control, harass, preempção com compromisso e ciclo de siege próprio da defesa. Cada um
-entra quando um problema de gameplay medido pedir.
+Belief probabilístico de exército, forças agregadas, avaliação dinâmica de território,
+scouting, map control, harass, preempção com compromisso e ciclo de siege próprio da
+defesa. Cada um entra quando um problema de gameplay medido pedir.

@@ -66,9 +66,30 @@ class Telemetry:
                 "opening": opening,
                 "build": describe_build(),
                 "config_fingerprint": fingerprint(dict(configs)),
-                "configs": {name: fingerprint(config) for name, config in configs.items()},
-                "lattice": {"samples": len(map_view.lattice), "spacing": map_view.lattice_spacing},
+                "configs": {
+                    name: fingerprint(config) for name, config in configs.items()
+                },
+                "lattice": {
+                    "samples": len(map_view.lattice),
+                    "spacing": map_view.lattice_spacing,
+                },
                 "bounds": list(map_view.bounds),
+            },
+        )
+        topology = map_view.topology
+        self._event(
+            "map.topology_built",
+            "attention",
+            time,
+            {
+                "regions": len(topology.regions),
+                "passages": len(topology.passages),
+                "chokes": sum(passage.kind == "choke" for passage in topology.passages),
+                "expansions": len(topology.expansion_to_region),
+                "unresolved_expansions": len(map_view.expansions)
+                - len(topology.expansion_to_region),
+                "own_start_region": topology.own_start_region,
+                "enemy_start_region": topology.enemy_start_region,
             },
         )
 
@@ -96,7 +117,11 @@ class Telemetry:
 
     def _record_attention(self, attention: AttentionState) -> None:
         army = [unit for unit in attention.own_units if is_army(unit)]
-        signature = (len(attention.bases), attention.opening_done, bool(attention.enemy_units))
+        signature = (
+            len(attention.bases),
+            attention.opening_done,
+            bool(attention.enemy_units),
+        )
         if not self._attention.admit(signature, now=attention.time):
             return
         self._event(
@@ -139,7 +164,9 @@ class Telemetry:
             now,
             {
                 "contacts": len(awareness.contacts),
-                "visible_contacts": sum(contact.visible for contact in awareness.contacts),
+                "visible_contacts": sum(
+                    contact.visible for contact in awareness.contacts
+                ),
                 "enemy_power": awareness.enemy_power,
                 "own_power": awareness.own_power,
                 "danger": awareness.danger,
@@ -174,7 +201,9 @@ class Telemetry:
         )
 
     def _record_strategy(self, strategy: StrategyState) -> None:
-        if not self._strategy.admit((strategy.objective, strategy.since), now=strategy.time):
+        if not self._strategy.admit(
+            (strategy.objective, strategy.since), now=strategy.time
+        ):
             return
         self._event(
             "strategy.decided",
@@ -182,7 +211,9 @@ class Telemetry:
             strategy.time,
             {
                 "objective": strategy.objective.value,
-                "previous": None if strategy.previous is None else strategy.previous.value,
+                "previous": None
+                if strategy.previous is None
+                else strategy.previous.value,
                 "since": strategy.since,
                 "reason": strategy.reason,
                 "defense": strategy.defense,
@@ -226,7 +257,9 @@ class Telemetry:
                         "unit_types": (
                             None
                             if proposal.unit_types is None
-                            else sorted(unit_type.name for unit_type in proposal.unit_types)
+                            else sorted(
+                                unit_type.name for unit_type in proposal.unit_types
+                            )
                         ),
                         "reason": proposal.reason,
                         "inputs": dict(proposal.inputs),
@@ -261,7 +294,11 @@ class Telemetry:
                 "freeflow": economy.freeflow,
                 "reason": economy.reason,
                 "composition": [
-                    {"type": unit_type.name, "proportion": proportion, "priority": priority}
+                    {
+                        "type": unit_type.name,
+                        "proportion": proportion,
+                        "priority": priority,
+                    }
                     for unit_type, proportion, priority in economy.composition
                 ],
             },
@@ -269,14 +306,21 @@ class Telemetry:
 
     def _record_grants(self, attention: AttentionState, result: EngineResult) -> None:
         owners = dict(result.owners)
-        signature = tuple((grant.proposal.proposal_id, grant.tags) for grant in result.grants)
+        signature = tuple(
+            (grant.proposal.proposal_id, grant.tags) for grant in result.grants
+        )
         admitted = self._grants.admit(signature, now=attention.time)
         previous, self._owners = self._owners, owners
         if not admitted:
             return
         types = {unit.tag: unit.type_id.name for unit in attention.own_units}
         transfers = [
-            {"tag": tag, "type": types.get(tag), "from": previous.get(tag), "to": owners.get(tag)}
+            {
+                "tag": tag,
+                "type": types.get(tag),
+                "from": previous.get(tag),
+                "to": owners.get(tag),
+            }
             for tag in sorted(set(previous) | set(owners))
             if previous.get(tag) != owners.get(tag)
         ]
@@ -294,7 +338,11 @@ class Telemetry:
                         "granted": len(grant.tags),
                         "tags": list(grant.tags),
                         "types": dict(
-                            sorted(Counter(types.get(tag, "?") for tag in grant.tags).items())
+                            sorted(
+                                Counter(
+                                    types.get(tag, "?") for tag in grant.tags
+                                ).items()
+                            )
                         ),
                     }
                     for grant in result.grants
@@ -336,7 +384,9 @@ class Telemetry:
                     "target": _xy(proposal.target),
                     "tags": list(grant.tags),
                     "types": dict(
-                        sorted(Counter(types.get(tag, "?") for tag in grant.tags).items())
+                        sorted(
+                            Counter(types.get(tag, "?") for tag in grant.tags).items()
+                        )
                     ),
                     "priority": proposal.priority,
                     "reason": proposal.reason,
@@ -353,7 +403,9 @@ class Telemetry:
                         "enemy_power": awareness.enemy_power,
                     },
                     "attention": {
-                        "army_units": sum(1 for unit in attention.own_units if is_army(unit)),
+                        "army_units": sum(
+                            1 for unit in attention.own_units if is_army(unit)
+                        ),
                         "visible_enemy_units": len(attention.enemy_units),
                     },
                 },
@@ -387,14 +439,20 @@ class Telemetry:
             now,
             {
                 "frames": self._perf_frames,
-                "last_ms": {name: round(float(value), 3) for name, value in timings.items()},
-                "max_ms": {name: round(value, 3) for name, value in self._perf_max.items()},
+                "last_ms": {
+                    name: round(float(value), 3) for name, value in timings.items()
+                },
+                "max_ms": {
+                    name: round(value, 3) for name, value in self._perf_max.items()
+                },
             },
         )
         self._perf_frames = 0
         self._perf_max = {}
 
-    def _event(self, name: str, component: str, time: float, data: dict[str, Any]) -> None:
+    def _event(
+        self, name: str, component: str, time: float, data: dict[str, Any]
+    ) -> None:
         self.logger.event(name, component=component, game_time=time, data=data)
 
 
