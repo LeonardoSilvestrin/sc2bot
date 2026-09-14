@@ -29,9 +29,12 @@ design, não benchmark de equivalência ou qualidade.
 
 “Um incidente produz uma resposta” deve ser lido como **uma demanda coordenada
 com orçamento único**, não como obrigação de uma única proposta ou squad.
-`ThreatIncident` precisa identidade estável entre frames, continuidade temporal,
-compatibilidade ground/air, conectividade/rota alcançável e regras explícitas e
-determinísticas de associação, split e merge. A linhagem deve ser logada.
+`ThreatIncident` precisa de identidade determinística e estável entre frames,
+compatibilidade ground/air, alcance e uma regra determinística de associação que
+já decida o id quando contatos se separam ou se juntam. Linhagem explícita de
+split/merge, conectividade por pathing e cenários dedicados entram quando um caso
+reproduzível exigir; até lá, os contatos de cada incidente no log bastam para
+reconstruí-la.
 
 Um incidente pode exigir destacamentos distintos para ativos ou interceptações
 distantes. Nesse caso, o Ego reparte um único `minimum/desired_power`; não replica
@@ -61,7 +64,11 @@ P0.2 depende dele. Antecipe para a fatia defensiva somente:
 Suitability rica, travel/opportunity cost, coesão, deadline e preemption margin
 continuam adiados até haver disputa real que os exija.
 
-Substitua a leitura do roadmap como um grande P0 por estas fatias selecionáveis:
+Substitua a leitura do roadmap como um grande P0 por estas fatias selecionáveis.
+A numeração agrupa marcos; não é ordem de seleção. Sem escolha do usuário, bugs
+decisórios reproduzíveis e fatias de gameplay vêm antes de trabalho operacional,
+salvo quando este bloquear a verificação. O andamento fica em
+`docs/propostas_status.md`.
 
 1. **Gate de entrega:** pytest/ruff antes do artefato; independente do runner de
    partidas.
@@ -93,8 +100,13 @@ Cada fatia deve trocar adjetivos por assertions configuráveis. Exemplos:
 - defesa: um contato que afeta várias bases mantém um `incident_id` e um único
   orçamento; a soma concedida não duplica `required_power`; cobertura só conta
   uma vez; candidatos incompatíveis são rejeitados; churn respeita dwell/histerese;
-- desconhecido: falta de visão não produz estimativa zero com confiança alta; o
-  piso, decaimento e confiança têm unidade, limites e testes;
+- desconhecido: falta de visão não produz estimativa zero com confiança alta, nem
+  pior caso ilimitado que impeça qualquer ataque. O modelo separa
+  `known_enemy_power`, `estimated_enemy_power`, incerteza e cobertura de
+  informação; decisões ofensivas usam estimativa mais margem proporcional à
+  incerteza, não um piso fixo. Piso, decaimento e confiança têm unidade, limites
+  e testes, e um teste mostra que informação recente e ampla permite
+  comprometer-se;
 - ofensiva: transições respeitam dwell/cooldown definidos e cada transição tem
   razão; “encerra a partida” só é aceite depois de cenário/partida registrado;
 - harness: baseline e challenger usam a mesma matriz/seed e todo resultado liga

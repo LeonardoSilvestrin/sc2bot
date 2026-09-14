@@ -1,7 +1,8 @@
 Você está trabalhando no repositório `sc2bot`.
 
-Antes de editar código, leia integralmente `docs/propostas.md` e
-`docs/propostas_corrigidas.txt` e inspecione a implementação e os testes atuais.
+Antes de editar código, leia integralmente `docs/propostas.md`,
+`docs/propostas_corrigidas.txt` e `docs/propostas_status.md` e inspecione a
+implementação e os testes atuais.
 Use duas regras de precedência:
 
 - para **escopo e estado desejado**: pedido explícito do usuário → este prompt e
@@ -15,8 +16,17 @@ preservar um defeito que a fatia selecionada deve corrigir.
 # Escopo desta execução
 
 Implemente **uma única fatia selecionada**, não o roadmap inteiro. Se o usuário
-não indicar a fatia, escolha a menor fatia de maior prioridade cujos
-pré-requisitos já existam. Antes de editar, declare:
+não indicar a fatia, escolha entre as pendentes em `docs/propostas_status.md`
+nesta ordem de classes:
+
+1. bug decisório reproduzível por teste ou trace;
+2. fatia vertical de gameplay;
+3. trabalho operacional (CI, harness, documentação).
+
+Trabalho operacional só passa à frente quando sua ausência impedir verificar a
+fatia com segurança. Dentro da mesma classe, escolha a menor fatia cujos
+pré-requisitos já existam. A numeração da corrigenda agrupa marcos; não é ordem
+de seleção. Antes de editar, declare:
 
 - resultado observável pretendido e evidência concreta do problema;
 - arquivos e camadas que devem mudar;
@@ -66,15 +76,21 @@ Use estas fronteiras para resolver ambiguidades:
 
 Constraints discretas vêm antes de scores. Score contínuo só compara opções com
 semântica compatível. Ausência de visão nunca equivale a poder inimigo zero com
-certeza; use estimativa conservadora configurável quando a fatia depender disso.
+certeza, nem a um pior caso ilimitado que impeça qualquer compromisso; quando a
+fatia depender disso, use estimativa limitada e configurável, e decida com
+estimativa mais margem proporcional à incerteza.
 
-`ThreatIncident`, quando estiver na fatia, precisa de `incident_id` estável,
-continuidade temporal, contatos, confiança, capacidades, localização/rota
-alcançável, ativos afetados e regras determinísticas de split/merge. Um incidente
-gera **uma demanda defensiva coordenada e um orçamento total único**. Essa demanda
-pode justificar mais de um destacamento ou ponto de interceptação, mas não pode
-multiplicar o mesmo poder requerido por base; registre a linhagem de split/merge
-e a distribuição do orçamento.
+`ThreatIncident`, quando estiver na fatia, precisa de `incident_id`
+determinístico e estável enquanto seus contatos persistirem, contatos,
+confiança, capacidades ground/air, localização, alcance e ativos afetados. A
+regra que decide o id quando contatos se separam ou se juntam existe desde a
+primeira versão, porque sem ela o id não é estável. Eventos de linhagem
+split/merge, rota por pathing e cenários dedicados a divisão/fusão só entram
+quando um caso reproduzível exigir; até lá, os contatos de cada incidente no log
+bastam para reconstruir a linhagem. Um incidente gera **uma demanda defensiva
+coordenada e um orçamento total único**. Essa demanda pode justificar mais de um
+destacamento ou ponto de interceptação, mas não pode multiplicar o mesmo poder
+requerido por base; registre a distribuição do orçamento.
 
 Não trate nomes como `Manager`, número de consumidores ou quantidade de arquivos
 como regras taxonômicas. Uma abstração é aceitável com um consumidor se proteger
@@ -103,6 +119,7 @@ A fatia só termina quando:
    registrado sem alegar sucesso;
 5. o diff permanece na fatia declarada e não faz afirmação empírica sem baseline.
 
-Ao final, reporte: fatia concluída, arquivos, responsabilidade por camada,
+Ao final, atualize `docs/propostas_status.md` e reporte: fatia concluída,
+arquivos, responsabilidade por camada,
 assertions/logs adicionados, comandos e resultados de verificação, itens fora do
 escopo e risco restante.
