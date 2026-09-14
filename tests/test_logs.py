@@ -9,8 +9,9 @@ from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
 from bot.awareness import AwarenessModel
-from bot.behaviors import core_army, defense
-from bot.engine import Engine
+from bot.body.engine import Engine
+from bot.ego.planners import core_army, defense
+from bot.ego.strategy import StrategyModel
 from bot.logs import (
     ChangeGate,
     JsonlLogger,
@@ -22,7 +23,6 @@ from bot.logs import (
 )
 from bot.logs.overlay import influence_color, thin
 from bot.logs.snapshot import snapshot_filename
-from bot.strategy import StrategyModel
 
 from .fakes import MAP, FakeBot, FakeLogger, attention, unit
 

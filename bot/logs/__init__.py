@@ -13,8 +13,9 @@ from time import perf_counter
 
 from bot.attention import AttentionState, MapView
 from bot.awareness import AwarenessState
-from bot.engine import EconomyPlan, EngineResult, Proposal, StructurePlan
-from bot.strategy import StrategyState
+from bot.body.engine import EngineResult
+from bot.ego.planners import EconomyPlan, Proposal, StructurePlan
+from bot.ego.strategy import StrategyState
 
 from .jsonl import BotLogger, ChangeGate, JsonlLogger, NullLogger
 from .overlay import Overlay, OverlayConfig

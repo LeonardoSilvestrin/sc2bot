@@ -1,6 +1,6 @@
-"""The bot. Every frame, in order:
+"""The bot. The static map is read once, in ``on_start``; then every frame, in order:
 
-ATTENTION -> AWARENESS -> STRATEGY -> BEHAVIORS -> ENGINE -> LOGS
+ATTENTION -> AWARENESS -> EGO (strategy -> planners) -> BODY (engine -> behaviors) -> LOGS
 """
 
 from __future__ import annotations
@@ -13,11 +13,20 @@ from sc2.data import Result
 
 from bot.attention import AttentionState, MapView, observe, read_map
 from bot.awareness import AwarenessModel, AwarenessState
-from bot.behaviors import core_army, defense, economy, structure_control
-from bot.behaviors.intel import Intel
-from bot.engine import EconomyPlan, Engine, EngineResult, Proposal, StructurePlan
+from bot.body import behaviors
+from bot.body.engine import Engine, EngineResult
+from bot.ego.planners import (
+    EconomyPlan,
+    Proposal,
+    StructurePlan,
+    core_army,
+    defense,
+    economy,
+    structure_control,
+)
+from bot.ego.planners.intel import Intel
+from bot.ego.strategy import StrategyModel, StrategyState
 from bot.logs import Logs
-from bot.strategy import StrategyModel, StrategyState
 
 DEFAULT_LATTICE_SPACING = 4
 
@@ -61,9 +70,11 @@ def play_frame(bot, iteration: int, layers: Layers) -> Frame:
     proposals += layers.intel.plan(attention)
     economy_plan = economy.plan(attention, strategy)
     structures = structure_control.plan(attention)
-    laps.mark("behaviors")
-    result = layers.engine.execute(bot, attention, proposals, economy_plan, structures)
+    laps.mark("planners")
+    result = layers.engine.allocate(attention, proposals)
     laps.mark("engine")
+    behaviors.execute(bot, attention, result, economy_plan, structures)
+    laps.mark("behaviors")
     layers.logs.record(
         bot,
         attention,

@@ -21,7 +21,7 @@ from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
 from bot.attention import AttentionState, MapView
-from bot.engine import Command, Proposal
+from bot.ego.planners import Command, Proposal
 
 OWNER = "intel"
 SCOUT_TYPES = frozenset({UnitTypeId.SCV})
@@ -48,7 +48,7 @@ class Intel:
         if not self.route:
             self.route = scouting_route(attention.map)
         now = attention.time
-        # The Engine gives whoever it sends the SCOUTING role.
+        # The scout behavior gives whoever the Engine granted the SCOUTING role.
         scouting = any(
             unit.type_id in SCOUT_TYPES and unit.role == UnitRole.SCOUTING.name
             for unit in attention.own_units

@@ -3,8 +3,8 @@ from __future__ import annotations
 from sc2.ids.ability_id import AbilityId
 from sc2.ids.unit_typeid import UnitTypeId
 
-from bot.behaviors import structure_control
-from bot.engine import StructurePlan, run_structures
+from bot.body.behaviors import structure_control as structure_behavior
+from bot.ego.planners import StructurePlan, structure_control
 
 from .fakes import FakeBot, FakeUnit, attention, unit
 
@@ -58,14 +58,14 @@ def test_lowered_and_unfinished_depots_are_left_alone() -> None:
     assert plan.reason == "no_raised_depots"
 
 
-def test_the_engine_lowers_only_the_planned_depots() -> None:
+def test_the_behavior_lowers_only_the_planned_depots() -> None:
     bot = FakeBot()
     bot.structures = [
         FakeUnit(1, UnitTypeId.SUPPLYDEPOT, 20, 20, dps=0.0, structure=True),
         FakeUnit(2, UnitTypeId.SUPPLYDEPOT, 40, 40, dps=0.0, structure=True),
     ]
 
-    run_structures(bot, StructurePlan(lower=(1,), reason="test"))
+    structure_behavior.execute(bot, StructurePlan(lower=(1,), reason="test"))
 
     assert bot.structures[0].commands == [AbilityId.MORPH_SUPPLYDEPOT_LOWER]
     assert bot.structures[1].commands == []

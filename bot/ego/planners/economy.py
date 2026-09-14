@@ -1,8 +1,8 @@
 """Economy: how much to invest in workers, bases and army after the opening.
 
 The opening belongs to Ares' build runner. Afterwards this turns Strategy's
-preferences into an `EconomyPlan`, which the Engine runs as Ares macro
-behaviors.
+preferences into an `EconomyPlan`, which the Body's economy behavior runs as
+Ares macro behaviors.
 """
 
 from __future__ import annotations
@@ -10,8 +10,8 @@ from __future__ import annotations
 from sc2.ids.unit_typeid import UnitTypeId
 
 from bot.attention import AttentionState
-from bot.engine import EconomyPlan
-from bot.strategy import Objective, StrategyState
+from bot.ego.planners import EconomyPlan
+from bot.ego.strategy import Objective, StrategyState
 
 COMPOSITION: tuple[tuple[UnitTypeId, float, int], ...] = (
     (UnitTypeId.MARINE, 0.55, 2),

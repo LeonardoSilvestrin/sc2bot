@@ -8,8 +8,8 @@ from __future__ import annotations
 
 from bot.attention import AttentionState
 from bot.awareness import AwarenessState
-from bot.engine import Command, Proposal
-from bot.strategy import StrategyState
+from bot.ego.planners import Command, Proposal
+from bot.ego.strategy import StrategyState
 
 OWNER = "core_army"
 FALLBACK_PRIORITY = 0.0

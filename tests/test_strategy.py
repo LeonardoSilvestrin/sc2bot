@@ -5,7 +5,7 @@ import pytest
 from sc2.position import Point2
 
 from bot.awareness import AwarenessState, BaseThreat, InfluenceField
-from bot.strategy import Objective, StrategyModel
+from bot.ego.strategy import Objective, StrategyModel
 
 from .fakes import MAIN, MAP, NATURAL, attention
 

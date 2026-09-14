@@ -1,8 +1,8 @@
 """STRATEGY: what the bot is trying to achieve now, and how hard.
 
 `StrategyModel.decide` turns Awareness into one `StrategyState`: an objective
-held with hysteresis, plus continuous preferences that behaviors and the
-economy read directly. Strategy commands no unit.
+held with hysteresis, plus continuous preferences that the planners read
+directly. Strategy commands no unit.
 """
 
 from __future__ import annotations

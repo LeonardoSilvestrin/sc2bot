@@ -5,9 +5,9 @@ import math
 from sc2.ids.unit_typeid import UnitTypeId
 
 from bot.awareness import AwarenessModel
-from bot.behaviors import core_army, defense
-from bot.engine import Command, Engine
-from bot.strategy import StrategyModel
+from bot.body.engine import Engine
+from bot.ego.planners import Command, core_army, defense
+from bot.ego.strategy import StrategyModel
 
 from .fakes import MAIN, NATURAL, attention, unit
 

@@ -1,32 +1,37 @@
-# Arquitetura: seis camadas
+# Arquitetura: camadas
 
-Implementação da primeira fatia do [mapa de migração](migration-map.md). Um frame
-atravessa as camadas sempre na mesma ordem, em `play_frame` ([bot/main.py](../bot/main.py)):
+Implementação da primeira fatia do [mapa de migração](migration-map.md). No `on_start`,
+Attention lê o mapa físico uma vez (`read_map`). Depois, um frame atravessa as camadas
+sempre na mesma ordem, em `play_frame` ([bot/main.py](../bot/main.py)):
 
 ```text
 attention = observe(bot, iteration, map_view)                  ATTENTION
 awareness = awareness_model.infer(attention)                    AWARENESS
-strategy  = strategy_model.decide(attention, awareness)         STRATEGY
-proposals = defense.plan(...) + core_army.plan(...)             BEHAVIORS
+strategy  = strategy_model.decide(attention, awareness)         EGO / strategy
+proposals = defense.plan(...) + core_army.plan(...)             EGO / planners
             + intel.plan(attention)
 economy   = economy.plan(attention, strategy)
 structures = structure_control.plan(attention)
-result    = engine.execute(bot, attention, proposals, economy, structures)  ENGINE
+result    = engine.allocate(attention, proposals)               BODY / engine
+behaviors.execute(bot, attention, result, economy, structures)  BODY / behaviors
 logs.record(bot, attention, awareness, strategy, ...)           LOGS
 ```
 
-Só `observe`, `engine.execute` e os observadores de `logs` tocam o bot. Todo o
-resto lê estados imutáveis e é testável sem `AresBot`.
+Regra: **o Planner decide O QUÊ, o Engine decide QUEM recebe O QUÊ, o Behavior decide COMO.**
+
+Só `read_map`/`observe`, `behaviors.execute` e os observadores de `logs` tocam o bot.
+Todo o resto lê estados imutáveis e é testável sem `AresBot`.
 
 ## Camadas
 
 | Camada | Arquivo | Estado público | O que faz |
 | --- | --- | --- | --- |
-| ATTENTION | [bot/attention.py](../bot/attention.py) | `AttentionState`, `MapView` | Lê o frame: recursos, unidades próprias e inimigas visíveis (ordenadas por tag), bases, mortes, visibilidade. `read_map` lê o mapa uma vez e congela lattice, expansões e `MapTopology` (regiões, passagens, adjacência e regiões dos starts). Não interpreta valor, ameaça ou controle territorial. |
-| AWARENESS | [bot/awareness/](../bot/awareness/) | `AwarenessState` | Memória de contatos com confiança `exp(-idade/τ)` e incerteza `min(cap, v·idade)`; esquece por morte confirmada, posição vista vazia (após carência) ou confiança < piso. Pressão por base e campo de influência. |
-| STRATEGY | [bot/strategy.py](../bot/strategy.py) | `StrategyState` | `STABILIZE` vs `BUILD_ADVANTAGE` com margem, permanência mínima e emergência; preferências contínuas `defense`, `army`, `economy`, `risk`; ponto de rally. |
-| BEHAVIORS | [bot/behaviors/](../bot/behaviors/) | `Proposal`, `EconomyPlan`, `StructurePlan` | `defense`: uma proposta por base sob pressão. `core_army`: fallback com todas as unidades livres. `intel`: um SCV percorre a main inimiga no early game. `economy`: plano para os macro behaviors do Ares depois do opening. `structure_control`: quais depots abaixar. |
-| ENGINE | [bot/engine.py](../bot/engine.py) | `EngineResult` | Ordena por `(-priority, owner, proposal_id)`, concede cada unidade de exército a no máximo uma proposta (as que já eram dela primeiro, depois as mais próximas) e só comanda as concedidas, via `CombatManeuver`/`AMove`/`PathUnitToTarget`/`SiegeTankDecision`. Workers só vão para propostas que pedem um tipo de worker, só saem da mineração (role `GATHERING`) e voltam a ela quando nenhuma proposta os segura; o scout recebe role `SCOUTING`. Registra `Mining`, o `MacroPlan` e abaixa os depots do `StructurePlan`. |
+| ATTENTION | [bot/attention/](../bot/attention/) | `MapView`, `AttentionState` | Percepção. `map.py`/`topology.py`: no `on_start`, `read_map` congela lattice, expansões e `MapTopology` (regiões, passagens/chokes, adjacência, regiões dos starts) — "o mapa físico é assim". `frame.py`: `observe` lê o frame (recursos, unidades próprias e inimigas visíveis ordenadas por tag, bases, mortes, visibilidade) e classifica unidades (`is_army`). Não interpreta valor, ameaça ou controle. |
+| AWARENESS | [bot/awareness/](../bot/awareness/) | `AwarenessState` | Pinta o mapa ao longo da partida. Memória de contatos com confiança `exp(-idade/τ)` e incerteza `min(cap, v·idade)`; esquece por morte confirmada, posição vista vazia (após carência) ou confiança < piso. Pressão por base e campo de influência. |
+| EGO / strategy | [bot/ego/strategy.py](../bot/ego/strategy.py) | `StrategyState` | `STABILIZE` vs `BUILD_ADVANTAGE` com margem, permanência mínima e emergência; preferências contínuas `defense`, `army`, `economy`, `risk`; ponto de rally. |
+| EGO / planners | [bot/ego/planners/](../bot/ego/planners/) | `Proposal`, `Command`, `EconomyPlan`, `StructurePlan` | Decidem o que deve ser feito (tarefa, alvo, prioridade, requisitos) sem nomear unidades. `defense`: uma proposta `ATTACK` por base sob pressão. `core_army`: `HOLD` no rally, fallback com todas as unidades livres. `intel`: `SCOUT` de um SCV pela main inimiga no early game. `economy`: plano para os macro behaviors do Ares depois do opening. `structure_control`: quais depots abaixar. |
+| BODY / engine | [bot/body/engine.py](../bot/body/engine.py) | `EngineResult` | Só alocação. Ordena por `(-priority, owner, proposal_id)` e concede cada unidade de exército a no máximo uma proposta (as que já eram dela primeiro, depois as mais próximas). Workers só são elegíveis para propostas que pedem um tipo de worker, só saindo da mineração (role `GATHERING`) ou já sendo da proposta. `released` lista quem perdeu o dono. Não comanda nada. |
+| BODY / behaviors | [bot/body/behaviors/](../bot/body/behaviors/) | — | Executam os grants, despachados por `Command`. `defense` (`ATTACK`): `AMove`, Siege Tank decide o siege sem ficar preso ao ponto. `core_army` (`HOLD`): `PathUnitToTarget` até o ponto, `AMove` com inimigo a ≤ 10, Siege Tank fica sieged perto do ponto. `scout` (`SCOUT`): tira o worker da mineral, role `SCOUTING`, path sem evitar perigo. `economy`: workers liberados voltam a `GATHERING`, `Mining` e `MacroPlan`. `structure_control`: abaixa os depots do plano. `combat` guarda o que `defense` e `core_army` compartilham. |
 | LOGS | [bot/logs/](../bot/logs/) | — | Log JSONL, snapshots SVG do campo e overlay in-game. Nenhum deles muda decisão nem derruba partida. |
 
 ## Matemática
@@ -72,6 +77,12 @@ resto lê estados imutáveis e é testável sem `AresBot`.
 Envelope: `schema` (4), `run`, `seq`, `iteration`, `event`, `component` (a camada),
 `game_time`, `data`. Resumos de estado passam por `ChangeGate` (mudança + heartbeat de
 10 s); decisões são escritas quando mudam.
+
+Os nomes de evento e de componente são anteriores à separação Ego/Body e continuam os
+mesmos por compatibilidade com o viewer: `behavior.*`/`behaviors` são os planners, e
+`engine.commanded` registra o grant que os behaviors executaram. Em `logs.frame_perf`,
+as fatias de tempo são `attention`, `awareness`, `strategy`, `planners`, `engine`,
+`behaviors` e `logs`.
 
 | Evento | Camada | Quando | Dados |
 | --- | --- | --- | --- |

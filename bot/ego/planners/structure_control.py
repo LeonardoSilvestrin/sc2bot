@@ -9,7 +9,7 @@ from __future__ import annotations
 from sc2.ids.unit_typeid import UnitTypeId
 
 from bot.attention import AttentionState
-from bot.engine import StructurePlan
+from bot.ego.planners import StructurePlan
 
 # A ground enemy this close to a depot keeps it up.
 ENEMY_NEAR = 6.5

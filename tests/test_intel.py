@@ -8,9 +8,10 @@ from ares.consts import UnitRole
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
-from bot.behaviors import intel
-from bot.behaviors.intel import Intel, scouting_route
-from bot.engine import Command, EconomyPlan, Engine, Proposal, StructurePlan
+from bot.body import behaviors
+from bot.body.engine import Engine
+from bot.ego.planners import Command, EconomyPlan, Proposal, StructurePlan, intel
+from bot.ego.planners.intel import Intel, scouting_route
 
 from .fakes import LATTICE, MAP, SIZE, TOPOLOGY, FakeBot, FakeUnit, attention, seen_everywhere, unit
 
@@ -178,13 +179,15 @@ def test_the_scout_leaves_mining_and_goes_back_when_no_one_holds_it() -> None:
     engine = Engine()
     miner = frame(50.0, own_units=(scv(100),))
 
-    engine.execute(bot, miner, (scout_proposal(),), economy, structures)
+    granted = engine.allocate(miner, (scout_proposal(),))
+    behaviors.execute(bot, miner, granted, economy, structures)
 
     assert bot.mediator.role_of(100) == SCOUTING
     assert bot.mediator.removed_from_minerals == [100]
     (walk,) = [item for item in bot.registered if isinstance(item, PathUnitToTarget)]
     assert walk.unit.tag == 100 and walk.target == MAP.enemy_start
 
-    engine.execute(bot, frame(51.0, own_units=(scv(100, role=SCOUTING),)), (), economy, structures)
+    scouting = frame(51.0, own_units=(scv(100, role=SCOUTING),))
+    behaviors.execute(bot, scouting, engine.allocate(scouting, ()), economy, structures)
 
     assert bot.mediator.role_of(100) == GATHERING

@@ -11,10 +11,10 @@ from __future__ import annotations
 
 import math
 
-from bot.attention import AttentionState
+from bot.attention import AttentionState, is_army
 from bot.awareness import AwarenessState
-from bot.engine import Command, Proposal, is_army
-from bot.strategy import StrategyState
+from bot.ego.planners import Command, Proposal
+from bot.ego.strategy import StrategyState
 
 OWNER = "defense"
 # Answer an attack with this much more power than it brings.

@@ -5,11 +5,11 @@ from types import SimpleNamespace
 import numpy as np
 from sc2.position import Point2
 
-import bot.attention as attention_module
+import bot.attention.map as map_module
 from bot.attention import pathable_lattice, read_map
+from bot.attention.topology import MapTopology, build_topology
 from bot.logs import Logs
 from bot.main import Layers, play_frame
-from bot.map_topology import MapTopology, build_topology
 
 from .fakes import FakeBot, FakeLogger
 
@@ -123,14 +123,14 @@ def test_passages_and_adjacency_reference_valid_regions_symmetrically() -> None:
 
 def test_read_map_builds_once_and_frames_reuse_the_frozen_topology(monkeypatch) -> None:
     calls = 0
-    real_builder = attention_module.build_topology
+    real_builder = map_module.build_topology
 
     def counted_builder(*args, **kwargs):
         nonlocal calls
         calls += 1
         return real_builder(*args, **kwargs)
 
-    monkeypatch.setattr(attention_module, "build_topology", counted_builder)
+    monkeypatch.setattr(map_module, "build_topology", counted_builder)
     bot = FakeBot()
     bot.mediator.get_map_data_object = _map_data()
     map_view = read_map(bot, lattice_spacing=4)

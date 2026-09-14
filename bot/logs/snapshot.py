@@ -13,11 +13,11 @@ from typing import Protocol
 
 from sc2.position import Point2
 
-from bot.attention import AttentionState
+from bot.attention import AttentionState, is_army
 from bot.awareness import AwarenessState
 from bot.awareness.field import PRESENCE_FLOOR
-from bot.engine import EngineResult, is_army
-from bot.strategy import StrategyState
+from bot.body.engine import EngineResult
+from bot.ego.strategy import StrategyState
 
 from .jsonl import BotLogger, NullLogger
 from .overlay import OTHER_OWNER_COLOR, OWNER_COLORS, influence_color

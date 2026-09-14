@@ -13,8 +13,8 @@ from sc2.position import Point2, Point3
 
 from bot.attention import AttentionState
 from bot.awareness import AwarenessState
-from bot.engine import EngineResult
-from bot.strategy import StrategyState
+from bot.body.engine import EngineResult
+from bot.ego.strategy import StrategyState
 
 Color = tuple[int, int, int]
 

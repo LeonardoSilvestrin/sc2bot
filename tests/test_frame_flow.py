@@ -7,7 +7,7 @@ from ares.behaviors.macro import MacroPlan, Mining
 from sc2.ids.unit_typeid import UnitTypeId
 
 from bot.attention import observe, read_map
-from bot.behaviors import core_army, defense
+from bot.ego.planners import core_army, defense
 from bot.logs import Logs, OverlayConfig, SnapshotConfig
 from bot.main import Layers, play_frame
 

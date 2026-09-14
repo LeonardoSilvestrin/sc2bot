@@ -1,8 +1,7 @@
-"""ATTENTION: what the bot perceives this frame, before any interpretation.
+"""The frame: what the bot perceives this step, before any interpretation.
 
 `observe` reads Ares/python-sc2 once per frame and returns an immutable
-`AttentionState`; every later layer reads that state instead of the bot. The
-static map (`MapView`) is read once per game by `read_map`.
+`AttentionState`; every later layer reads that state instead of the bot.
 """
 
 from __future__ import annotations
@@ -15,10 +14,25 @@ import numpy as np
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
-from bot.map_topology import MapTopology, build_topology
+from .map import MapView, as_point
 
 WORKER_TYPES = frozenset(
     {UnitTypeId.SCV, UnitTypeId.PROBE, UnitTypeId.DRONE, UnitTypeId.MULE}
+)
+# Neither workers nor structures, and still not an army.
+_NOT_ARMY = frozenset(
+    {
+        UnitTypeId.MULE,
+        UnitTypeId.AUTOTURRET,
+        UnitTypeId.LARVA,
+        UnitTypeId.EGG,
+        UnitTypeId.BROODLING,
+        UnitTypeId.OVERLORD,
+        UnitTypeId.OVERSEER,
+        UnitTypeId.CHANGELING,
+        UnitTypeId.OBSERVER,
+        UnitTypeId.ADEPTPHASESHIFT,
+    }
 )
 # sqrt(dps * hit points) of a Marine: `UnitView.power` is counted in Marines.
 MARINE_POWER = math.sqrt(9.8 * 45.0)
@@ -50,21 +64,6 @@ class BaseView:
     base_id: str
     position: Point2
     is_main: bool
-
-
-@dataclass(frozen=True, slots=True)
-class MapView:
-    name: str
-    # Playable area: min x, min y, max x, max y.
-    bounds: tuple[float, float, float, float]
-    own_start: Point2
-    enemy_start: Point2
-    main_ramp: Point2
-    expansions: tuple[Point2, ...]
-    # Pathable points on a regular grid, row by row.
-    lattice: tuple[Point2, ...]
-    lattice_spacing: float
-    topology: MapTopology = field(default_factory=MapTopology)
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,68 +102,8 @@ def unit_power(dps: float, hit_points: float) -> float:
     return math.sqrt(max(0.0, dps) * max(0.0, hit_points)) / MARINE_POWER
 
 
-def read_map(bot, *, lattice_spacing: int = 4) -> MapView:
-    if lattice_spacing <= 0:
-        raise ValueError("lattice_spacing must be positive")
-    info = bot.game_info
-    area = info.playable_area
-    bounds = (
-        float(area.x),
-        float(area.y),
-        float(area.x + area.width),
-        float(area.y + area.height),
-    )
-    own_start = _point(bot.start_location)
-    enemy_start = _point(bot.enemy_start_locations[0])
-    try:
-        main_ramp = _point(bot.main_base_ramp.top_center)
-    except (AttributeError, IndexError, ValueError):
-        main_ramp = own_start
-    expansions = tuple(
-        sorted(
-            {_point(location) for location in bot.expansion_locations_list},
-            key=lambda point: (point.x, point.y),
-        )
-    )
-    pathing = np.asarray(info.pathing_grid.data_numpy)
-    lattice = pathable_lattice(pathing, lattice_spacing, bounds)
-    topology = build_topology(
-        pathing,
-        lattice,
-        float(lattice_spacing),
-        expansions,
-        own_start,
-        enemy_start,
-        map_data=_map_data(bot),
-    )
-    return MapView(
-        name=str(info.map_name),
-        bounds=bounds,
-        own_start=own_start,
-        enemy_start=enemy_start,
-        main_ramp=main_ramp,
-        expansions=expansions,
-        lattice=lattice,
-        lattice_spacing=float(lattice_spacing),
-        topology=topology,
-    )
-
-
-def pathable_lattice(
-    grid: np.ndarray, spacing: int, bounds: tuple[float, float, float, float]
-) -> tuple[Point2, ...]:
-    """Pathable cell centres every ``spacing`` cells, in row-major order."""
-
-    offset = spacing // 2
-    rows, columns = np.nonzero(grid[offset::spacing, offset::spacing])
-    min_x, min_y, max_x, max_y = bounds
-    points: list[Point2] = []
-    for row, column in zip(rows.tolist(), columns.tolist(), strict=True):
-        x = column * spacing + offset + 0.5
-        y = row * spacing + offset + 0.5
-        if min_x <= x <= max_x and min_y <= y <= max_y:
-            points.append(Point2((x, y)))
-    return tuple(points)
+def is_army(unit: UnitView) -> bool:
+    return not unit.is_worker and not unit.is_structure and unit.type_id not in _NOT_ARMY
 
 
 def observe(bot, iteration: int, map_view: MapView) -> AttentionState:
@@ -207,7 +146,7 @@ def unit_view(
     return UnitView(
         tag=int(unit.tag),
         type_id=unit.type_id,
-        position=_point(unit.position),
+        position=as_point(unit.position),
         health=hit_points / max_hit_points if max_hit_points > 0.0 else 0.0,
         power=unit_power(max(float(unit.ground_dps), float(unit.air_dps)), hit_points),
         supply=supply(unit.type_id),
@@ -268,7 +207,7 @@ def _bases(townhalls: Iterable, map_view: MapView) -> tuple[BaseView, ...]:
     for townhall in townhalls:
         if townhall.is_flying:
             continue
-        position = _point(townhall.position)
+        position = as_point(townhall.position)
         anchor = min(
             map_view.expansions,
             key=lambda point: (point.distance_to(position), point.x, point.y),
@@ -283,14 +222,3 @@ def _bases(townhalls: Iterable, map_view: MapView) -> tuple[BaseView, ...]:
             is_main=anchor.distance_to(map_view.own_start) <= _BASE_SNAP_DISTANCE,
         )
     return tuple(bases[key] for key in sorted(bases))
-
-
-def _point(value) -> Point2:
-    return Point2((float(value[0]), float(value[1])))
-
-
-def _map_data(bot):
-    try:
-        return bot.mediator.get_map_data_object
-    except (AttributeError, KeyError, RuntimeError, TypeError):
-        return None

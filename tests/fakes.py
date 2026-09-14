@@ -11,7 +11,8 @@ from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
 from bot.attention import AttentionState, BaseView, MapView, UnitView
-from bot.map_topology import MapPassage, MapRegion, MapTopology
+from bot.attention.topology import MapPassage, MapRegion, MapTopology
+from bot.ego.planners import Command, Proposal
 
 SIZE = 64
 EXPANSIONS = (Point2((10.5, 10.5)), Point2((30.5, 12.5)), Point2((53.5, 53.5)))
@@ -130,6 +131,31 @@ def attention(
     )
 
 
+PROPOSAL_TARGET = Point2((30.0, 30.0))
+
+
+def proposal(
+    proposal_id: str,
+    priority: float,
+    *,
+    owner: str | None = None,
+    count=None,
+    unit_types=None,
+    command=Command.ATTACK,
+    target=PROPOSAL_TARGET,
+) -> Proposal:
+    return Proposal(
+        proposal_id=proposal_id,
+        owner=owner or proposal_id.split(":")[0],
+        priority=priority,
+        command=command,
+        target=target,
+        reason="test",
+        count=count,
+        unit_types=unit_types,
+    )
+
+
 def seen_everywhere() -> np.ndarray:
     return np.full((SIZE, SIZE), 2, dtype=np.uint8)
 
@@ -167,7 +193,7 @@ class FakeLogger:
 
 
 class FakeUnit:
-    """The python-sc2 `Unit` surface Attention and the Engine read."""
+    """The python-sc2 `Unit` surface Attention and the behaviors read."""
 
     def __init__(
         self,
@@ -209,7 +235,7 @@ class FakeUnit:
 
 
 class FakeMediator:
-    """The Ares mediator surface Attention and the Engine use."""
+    """The Ares mediator surface Attention and the behaviors use."""
 
     def __init__(self) -> None:
         self.get_ground_grid = np.ones((SIZE, SIZE))

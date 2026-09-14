@@ -14,10 +14,11 @@ from typing import Any
 
 from sc2.position import Point2
 
-from bot.attention import AttentionState, MapView
+from bot.attention import AttentionState, MapView, is_army
 from bot.awareness import AwarenessState
-from bot.engine import EconomyPlan, EngineResult, Proposal, StructurePlan, is_army, rank
-from bot.strategy import StrategyState
+from bot.body.engine import EngineResult, rank
+from bot.ego.planners import EconomyPlan, Proposal, StructurePlan
+from bot.ego.strategy import StrategyState
 
 from .identity import describe_build, fingerprint
 from .jsonl import BotLogger, ChangeGate
