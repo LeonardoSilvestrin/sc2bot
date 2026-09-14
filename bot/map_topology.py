@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import heapq
 import math
-from collections import deque
-from collections.abc import Mapping, Sequence
+from collections import Counter, deque
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from itertools import combinations
 from typing import Literal
@@ -20,6 +20,18 @@ import numpy as np
 from sc2.position import Point2
 
 PassageKind = Literal["choke", "border"]
+ChokeReason = Literal[
+    "between_regions",
+    "splits_region",
+    "no_position",
+    "no_region",
+    "no_lattice_crossing",
+    "does_not_separate",
+    "side_too_small",
+]
+ACCEPTED_CHOKE_REASONS: frozenset[str] = frozenset({"between_regions", "splits_region"})
+# MapAnalyzer's MIN_REGION_AREA: less ground than this is no area at all.
+_MIN_REGION_AREA = 25.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,6 +59,33 @@ class MapPassage:
 
 
 @dataclass(frozen=True, slots=True)
+class ChokeCandidate:
+    """One MapAnalyzer choke and what the topology made of it; debug only.
+
+    ``source_regions`` are the regions MapAnalyzer gave the choke, which for
+    its terrain chokes is often one region twice.
+    """
+
+    position: Point2 | None
+    source_regions: tuple[str, ...]
+    reason: ChokeReason
+    passage_id: str | None = None
+
+    @property
+    def accepted(self) -> bool:
+        return self.reason in ACCEPTED_CHOKE_REASONS
+
+
+@dataclass(frozen=True, slots=True)
+class RegionSplit:
+    """A MapAnalyzer region cut into sub-regions by chokes lying inside it."""
+
+    region_id: str
+    into: tuple[str, ...]
+    passage_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class MapTopology:
     regions: tuple[MapRegion, ...] = ()
     passages: tuple[MapPassage, ...] = ()
@@ -55,6 +94,8 @@ class MapTopology:
     expansion_to_region: tuple[tuple[Point2, str], ...] = ()
     own_start_region: str | None = None
     enemy_start_region: str | None = None
+    choke_candidates: tuple[ChokeCandidate, ...] = ()
+    region_splits: tuple[RegionSplit, ...] = ()
 
     def region(self, region_id: str) -> MapRegion | None:
         return next(
@@ -73,6 +114,20 @@ class MapTopology:
             ),
             None,
         )
+
+
+@dataclass(slots=True)
+class _Choke:
+    """Build-time working record of one MapAnalyzer choke."""
+
+    position: Point2 | None
+    width: float | None
+    area: float
+    cells: frozenset[tuple[int, int]]
+    source_regions: tuple[str, ...]
+    reason: ChokeReason | None = None
+    regions: tuple[str, ...] = ()
+    passage_id: str | None = None
 
 
 def build_topology(
@@ -141,11 +196,62 @@ def build_topology(
         for index in members:
             sample_regions[index] = region_id
 
+    # MapAnalyzer's terrain chokes usually name one region on both sides: the
+    # region polygon runs straight through them.  Such a choke is judged by
+    # whether it really cuts that region's ground in two.
+    chokes = _read_chokes(map_data, raw_region_id)
+    internal: dict[str, list[_Choke]] = {}
+    for choke in chokes:
+        known = tuple(key for key in choke.source_regions if key in region_geometry)
+        if choke.position is None:
+            choke.reason = "no_position"
+        elif not known:
+            choke.reason = "no_region"
+        elif len(known) == 1:
+            internal.setdefault(known[0], []).append(choke)
+    splits: dict[str, tuple[str, ...]] = {}
+    for host, hosted in sorted(internal.items()):
+        children = _split_region(
+            host,
+            hosted,
+            lattice,
+            sample_edges,
+            sample_regions,
+            region_geometry,
+            lattice_spacing,
+        )
+        if children:
+            splits[host] = children
+
     valid_regions = set(region_geometry)
 
+    def resolve(region_id: str | None, point: Point2) -> str | None:
+        """A MapAnalyzer region id as the (sub-)region that holds ``point``."""
+
+        children = splits.get(region_id) if region_id is not None else None
+        if children:
+            return _reachable_region(
+                point, grid, lattice, sample_regions, allowed=frozenset(children)
+            )
+        return region_id if region_id in valid_regions else None
+
     def direct_region(point: Point2) -> str | None:
-        key = raw_region_id(_call_region(in_region, point))
-        return key if key in valid_regions else None
+        return resolve(raw_region_id(_call_region(in_region, point)), point)
+
+    for choke in chokes:
+        if choke.reason is not None or choke.position is None:
+            continue
+        position = choke.position
+        choke.regions = tuple(
+            sorted(
+                {
+                    region_id
+                    for source in choke.source_regions
+                    if (region_id := resolve(source, position)) is not None
+                }
+            )
+        )
+        choke.reason = "between_regions" if len(choke.regions) >= 2 else "no_region"
 
     expansion_mapping: list[tuple[Point2, str]] = []
     expansion_members: dict[str, list[Point2]] = {key: [] for key in valid_regions}
@@ -164,13 +270,7 @@ def build_topology(
         expansion_members.setdefault(region_id, []).append(expansion)
 
     passages = _passages(
-        map_data,
-        raw_region_id,
-        valid_regions,
-        lattice,
-        sample_regions,
-        sample_edges,
-        lattice_spacing,
+        chokes, lattice, sample_regions, sample_edges, lattice_spacing
     )
     regions = tuple(
         MapRegion(
@@ -207,6 +307,31 @@ def build_topology(
         expansion_to_region=tuple(expansion_mapping),
         own_start_region=locate(own_start),
         enemy_start_region=locate(enemy_start),
+        choke_candidates=tuple(
+            ChokeCandidate(
+                position=choke.position,
+                source_regions=choke.source_regions,
+                reason=choke.reason or "no_region",
+                passage_id=choke.passage_id,
+            )
+            for choke in chokes
+        ),
+        region_splits=tuple(
+            RegionSplit(
+                region_id=host,
+                into=children,
+                passage_ids=tuple(
+                    sorted(
+                        {
+                            choke.passage_id
+                            for choke in internal[host]
+                            if choke.passage_id is not None
+                        }
+                    )
+                ),
+            )
+            for host, children in sorted(splits.items())
+        ),
     )
     _validate(topology, canonical_expansions)
     return topology
@@ -239,6 +364,203 @@ def _label(region):
     except TypeError:
         return str(value)
     return value
+
+
+def _read_chokes(map_data, raw_region_id) -> list[_Choke]:
+    chokes: list[_Choke] = []
+    for choke in _items(map_data, "map_chokes"):
+        points = tuple(
+            filter(None, (_point(point) for point in _items(choke, "points")))
+        )
+        cells = frozenset((math.floor(point.x), math.floor(point.y)) for point in points)
+        chokes.append(
+            _Choke(
+                position=_point(_safe_attr(choke, "center")) or _mean(points),
+                width=_choke_width(choke),
+                area=_choke_area(choke, cells),
+                cells=cells,
+                source_regions=tuple(
+                    sorted(
+                        {
+                            region_id
+                            for raw in _items(choke, "regions")
+                            if (region_id := raw_region_id(raw)) is not None
+                        }
+                    )
+                ),
+            )
+        )
+    chokes.sort(
+        key=lambda choke: (
+            _point_key(choke.position or Point2((math.inf, math.inf))),
+            choke.source_regions,
+            len(choke.cells),
+            min(choke.cells, default=(0, 0)),
+        )
+    )
+    return chokes
+
+
+def _split_region(
+    host: str,
+    chokes: Sequence[_Choke],
+    lattice: tuple[Point2, ...],
+    sample_edges: Sequence[tuple[int, int]],
+    owners: list[str | None],
+    geometry: dict[str, tuple[Point2, tuple[int, ...]]],
+    spacing: float,
+) -> tuple[str, ...]:
+    """Cut ``host`` along the chokes MapAnalyzer placed wholly inside it.
+
+    The lattice steps crossing any of these chokes are removed and what falls
+    apart are pieces.  A piece with less ground than a choke it touches is a
+    notch in the wall or the choke's own strip, so it rejoins its largest
+    neighbour across that choke.  A choke is accepted when its steps still
+    join two different pieces; only then is ``host`` replaced by one
+    sub-region per such piece.  Pieces no accepted choke reaches (ground the
+    coarse lattice never joined) go to the nearest sub-region.  Sets every
+    choke's reason; mutates ``owners`` and ``geometry`` only on a split.
+    """
+
+    members = geometry[host][1]
+    inside = set(members)
+    local = [edge for edge in sample_edges if edge[0] in inside and edge[1] in inside]
+    crossings = [
+        tuple(
+            edge
+            for edge in local
+            if any(
+                cell in choke.cells
+                for cell in _segment_cells(lattice[edge[0]], lattice[edge[1]])
+            )
+        )
+        for choke in chokes
+    ]
+    blocked = {edge for edges in crossings for edge in edges}
+    piece_of = _pieces(members, [edge for edge in local if edge not in blocked])
+    initial_size = Counter(piece_of.values())
+    size = dict(initial_size)
+    root = {piece: piece for piece in size}
+
+    def find(piece: int) -> int:
+        while root[piece] != piece:
+            root[piece] = root[root[piece]]
+            piece = root[piece]
+        return piece
+
+    sample_area = spacing * spacing
+    while True:
+        need: dict[int, float] = {}
+        links: dict[int, set[int]] = {}
+        for choke, edges in zip(chokes, crossings, strict=True):
+            for first, second in edges:
+                pair = (find(piece_of[first]), find(piece_of[second]))
+                for piece in pair:
+                    need[piece] = max(need.get(piece, 0.0), choke.area)
+                if pair[0] != pair[1]:
+                    links.setdefault(pair[0], set()).add(pair[1])
+                    links.setdefault(pair[1], set()).add(pair[0])
+        small = [
+            piece
+            for piece, area in need.items()
+            if size[piece] * sample_area < area and links.get(piece)
+        ]
+        if not small:
+            break
+        victim = min(small, key=lambda piece: (size[piece], piece))
+        target = max(links[victim], key=lambda piece: (size[piece], -piece))
+        root[victim] = target
+        size[target] += size[victim]
+
+    touched_by: list[tuple[int, ...]] = []
+    for choke, edges in zip(chokes, crossings, strict=True):
+        ends = {sample for edge in edges for sample in edge}
+        touched = tuple(sorted({find(piece_of[sample]) for sample in ends}))
+        touched_by.append(touched)
+        if not edges:
+            choke.reason = "no_lattice_crossing"
+        elif len(touched) >= 2:
+            choke.reason = "splits_region"
+        elif (
+            sum(
+                initial_size[piece] * sample_area >= _MIN_REGION_AREA
+                for piece in {piece_of[sample] for sample in ends}
+            )
+            >= 2
+        ):
+            choke.reason = "side_too_small"
+        else:
+            choke.reason = "does_not_separate"
+
+    anchored = sorted(
+        {
+            piece
+            for choke, touched in zip(chokes, touched_by, strict=True)
+            if choke.reason == "splits_region"
+            for piece in touched
+        }
+    )
+    if not anchored:
+        return ()
+    by_piece: dict[int, list[int]] = {}
+    for sample in members:
+        by_piece.setdefault(find(piece_of[sample]), []).append(sample)
+    groups = {piece: list(by_piece[piece]) for piece in anchored}
+    for piece, samples in sorted(by_piece.items()):
+        if piece in groups:
+            continue
+        nearest = min(
+            anchored,
+            key=lambda other: (
+                min(
+                    lattice[first].distance_to(lattice[second])
+                    for first in samples
+                    for second in by_piece[other]
+                ),
+                other,
+            ),
+        )
+        groups[nearest].extend(samples)
+
+    ordered = sorted(anchored, key=lambda piece: min(groups[piece]))
+    child_of = {piece: f"{host}.{index}" for index, piece in enumerate(ordered)}
+    del geometry[host]
+    for piece in ordered:
+        samples = tuple(sorted(groups[piece]))
+        for sample in samples:
+            owners[sample] = child_of[piece]
+        geometry[child_of[piece]] = (
+            _mean(tuple(lattice[sample] for sample in samples)) or lattice[samples[0]],
+            samples,
+        )
+    for choke, touched in zip(chokes, touched_by, strict=True):
+        if choke.reason == "splits_region":
+            choke.regions = tuple(sorted(child_of[piece] for piece in touched))
+    return tuple(child_of[piece] for piece in ordered)
+
+
+def _pieces(
+    members: Sequence[int], edges: Sequence[tuple[int, int]]
+) -> dict[int, int]:
+    """Connected components of ``members``, each named by its lowest sample."""
+
+    neighbours: dict[int, list[int]] = {sample: [] for sample in members}
+    for first, second in edges:
+        neighbours[first].append(second)
+        neighbours[second].append(first)
+    piece_of: dict[int, int] = {}
+    for start in sorted(members):
+        if start in piece_of:
+            continue
+        piece_of[start] = start
+        queue = deque([start])
+        while queue:
+            sample = queue.popleft()
+            for other in neighbours[sample]:
+                if other not in piece_of:
+                    piece_of[other] = start
+                    queue.append(other)
+    return piece_of
 
 
 def _sample_edges(
@@ -317,38 +639,42 @@ def _unowned_components(
 
 
 def _passages(
-    map_data,
-    raw_region_id,
-    valid_regions: set[str],
+    chokes: Sequence[_Choke],
     lattice: tuple[Point2, ...],
     sample_regions: Sequence[str | None],
     sample_edges: Sequence[tuple[int, int]],
     spacing: float,
 ) -> tuple[MapPassage, ...]:
-    descriptors: list[tuple[PassageKind, Point2, float | None, tuple[str, ...]]] = []
-    for choke in _items(map_data, "map_chokes"):
-        position = _point(_safe_attr(choke, "center")) or _mean(
-            tuple(
-                filter(
-                    None,
-                    (_point(point) for point in _iter(_safe_attr(choke, "points", ()))),
-                )
+    """Accepted chokes, then clear borders no choke already represents.
+
+    Stamps each accepted choke with the id of the passage it became.
+    """
+
+    descriptors: list[
+        tuple[PassageKind, Point2, float | None, tuple[str, ...], tuple[_Choke, ...]]
+    ] = []
+    for strip in _strips(
+        [
+            choke
+            for choke in chokes
+            if choke.reason in ACCEPTED_CHOKE_REASONS and choke.position is not None
+        ]
+    ):
+        widths = [choke.width for choke in strip if choke.width is not None]
+        descriptors.append(
+            (
+                "choke",
+                _mean(tuple(choke.position for choke in strip if choke.position)),
+                min(widths, default=None),
+                strip[0].regions,
+                strip,
             )
         )
-        regions = tuple(
-            sorted(
-                {
-                    region_id
-                    for raw in _items(choke, "regions")
-                    if (region_id := raw_region_id(raw)) in valid_regions
-                }
-            )
-        )
-        if position is not None and len(regions) >= 2:
-            descriptors.append(("choke", position, _choke_width(choke), regions))
 
     represented = {
-        pair for _, _, _, regions in descriptors for pair in combinations(regions, 2)
+        pair
+        for _, _, _, regions, _ in descriptors
+        for pair in combinations(regions, 2)
     }
     crossings: dict[tuple[str, str], list[Point2]] = {}
     for first, second in sample_edges:
@@ -370,17 +696,20 @@ def _passages(
         for cluster in _clusters(midpoints, spacing):
             position = _mean(cluster)
             if position is not None:
-                descriptors.append(("border", position, None, pair))
+                descriptors.append(("border", position, None, pair, ()))
 
     descriptors.sort(key=_passage_key)
     counters = {"choke": 0, "border": 0}
     result: list[MapPassage] = []
-    for kind, position, width, regions in descriptors:
+    for kind, position, width, regions, sources in descriptors:
         index = counters[kind]
         counters[kind] += 1
+        passage_id = f"{kind}:{index}"
+        for source in sources:
+            source.passage_id = passage_id
         result.append(
             MapPassage(
-                passage_id=f"{kind}:{index}",
+                passage_id=passage_id,
                 position=position,
                 width=width,
                 regions=regions,
@@ -388,6 +717,45 @@ def _passages(
             )
         )
     return tuple(result)
+
+
+def _strips(chokes: Sequence[_Choke]) -> tuple[tuple[_Choke, ...], ...]:
+    """Chokes joining the same regions through touching cells, grouped.
+
+    MapAnalyzer often reports one constriction as parallel one-cell strips;
+    they are one passage.  Chokes without cells are never grouped.
+    """
+
+    parent = list(range(len(chokes)))
+
+    def find(index: int) -> int:
+        while parent[index] != index:
+            parent[index] = parent[parent[index]]
+            index = parent[index]
+        return index
+
+    for first, second in combinations(range(len(chokes)), 2):
+        if chokes[first].regions == chokes[second].regions and _cells_touch(
+            chokes[first].cells, chokes[second].cells
+        ):
+            parent[find(second)] = find(first)
+    groups: dict[int, list[_Choke]] = {}
+    for index, choke in enumerate(chokes):
+        groups.setdefault(find(index), []).append(choke)
+    return tuple(tuple(group) for group in groups.values())
+
+
+def _cells_touch(
+    first: frozenset[tuple[int, int]], second: frozenset[tuple[int, int]]
+) -> bool:
+    if len(first) > len(second):
+        first, second = second, first
+    return any(
+        (x + dx, y + dy) in second
+        for x, y in first
+        for dx in (-1, 0, 1)
+        for dy in (-1, 0, 1)
+    )
 
 
 def _clusters(
@@ -440,15 +808,18 @@ def _reachable_region(
     grid: np.ndarray,
     lattice: Sequence[Point2],
     sample_regions: Sequence[str | None],
+    *,
+    allowed: frozenset[str] | None = None,
 ) -> str | None:
-    """Nearest labelled sample reachable through the full static ground grid."""
+    """Nearest labelled sample reachable through the full static ground grid,
+    counting only ``allowed`` regions when given."""
 
     if grid.ndim < 2 or not lattice:
         return None
     height, width = int(grid.shape[0]), int(grid.shape[1])
     targets: dict[tuple[int, int], set[str]] = {}
     for sample, region_id in zip(lattice, sample_regions, strict=True):
-        if region_id is not None:
+        if region_id is not None and (allowed is None or region_id in allowed):
             targets.setdefault((math.floor(sample.x), math.floor(sample.y)), set()).add(
                 region_id
             )
@@ -499,15 +870,18 @@ def _nearest_region(
     )
 
 
-def _straight_step_clear(grid: np.ndarray, start: Point2, end: Point2) -> bool:
+def _segment_cells(start: Point2, end: Point2) -> Iterator[tuple[int, int]]:
     steps = max(1, math.ceil(start.distance_to(end) * 2.0))
     for step in range(steps + 1):
         fraction = step / steps
-        x = math.floor(start.x + (end.x - start.x) * fraction)
-        y = math.floor(start.y + (end.y - start.y) * fraction)
-        if not _pathable(grid, x, y):
-            return False
-    return True
+        yield (
+            math.floor(start.x + (end.x - start.x) * fraction),
+            math.floor(start.y + (end.y - start.y) * fraction),
+        )
+
+
+def _straight_step_clear(grid: np.ndarray, start: Point2, end: Point2) -> bool:
+    return all(_pathable(grid, x, y) for x, y in _segment_cells(start, end))
 
 
 def _pathable(grid: np.ndarray, x: int, y: int) -> bool:
@@ -534,10 +908,18 @@ def _choke_width(choke) -> float | None:
     return max(1.0, width)
 
 
+def _choke_area(choke, cells: frozenset[tuple[int, int]]) -> float:
+    try:
+        area = float(_safe_attr(choke, "area", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        area = 0.0
+    return max(area, float(len(cells)), _MIN_REGION_AREA)
+
+
 def _passage_key(
-    item: tuple[PassageKind, Point2, float | None, tuple[str, ...]]
+    item: tuple[PassageKind, Point2, float | None, tuple[str, ...], tuple[_Choke, ...]]
 ) -> tuple:
-    kind, position, width, regions = item
+    kind, position, width, regions, _ = item
     return (kind, regions, *_point_key(position), math.inf if width is None else width)
 
 
@@ -560,6 +942,9 @@ def _validate(topology: MapTopology, expansions: tuple[Point2, ...]) -> None:
             raise ValueError("passages must connect distinct regions")
         if not set(passage.regions) <= region_ids:
             raise ValueError("a passage references an unknown region")
+    for split in topology.region_splits:
+        if split.region_id in region_ids or not set(split.into) <= region_ids:
+            raise ValueError("a split region must be replaced by known sub-regions")
     reverse = {
         (region_id, neighbour, passage_id)
         for region_id, links in topology.adjacency

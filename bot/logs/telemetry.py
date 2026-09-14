@@ -78,6 +78,8 @@ class Telemetry:
             },
         )
         topology = map_view.topology
+        candidates = topology.choke_candidates
+        rejected = [candidate.reason for candidate in candidates if not candidate.accepted]
         self._event(
             "map.topology_built",
             "attention",
@@ -91,6 +93,29 @@ class Telemetry:
                 - len(topology.expansion_to_region),
                 "own_start_region": topology.own_start_region,
                 "enemy_start_region": topology.enemy_start_region,
+                "choke_candidates": len(candidates),
+                "chokes_accepted": len(candidates) - len(rejected),
+                "chokes_rejected": {
+                    reason: rejected.count(reason) for reason in sorted(set(rejected))
+                },
+                "region_splits": {
+                    split.region_id: list(split.into)
+                    for split in topology.region_splits
+                },
+                "candidates": [
+                    {
+                        "position": None
+                        if candidate.position is None
+                        else [
+                            round(float(candidate.position.x), 2),
+                            round(float(candidate.position.y), 2),
+                        ],
+                        "regions": list(candidate.source_regions),
+                        "reason": candidate.reason,
+                        "passage": candidate.passage_id,
+                    }
+                    for candidate in candidates
+                ],
             },
         )
 

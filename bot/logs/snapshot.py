@@ -159,6 +159,22 @@ def render_svg(
                 extra=f'data-passage="{escape(passage.passage_id)}"',
             )
         )
+    for candidate in topology.choke_candidates:
+        if candidate.accepted or candidate.position is None:
+            continue
+        cx, cy = projection.point(candidate.position)
+        parts.append(
+            _circle(
+                cx,
+                cy,
+                4.0,
+                fill="none",
+                stroke="#eb5757",
+                width=1.5,
+                extra=f'data-choke-rejected="{escape(candidate.reason)}"',
+            )
+        )
+        parts.append(_text(cx + 6, cy + 9, candidate.reason, "tiny"))
     for region in topology.regions:
         x, y = projection.point(region.center)
         parts.append(
@@ -428,6 +444,18 @@ def _panel(
                 f"p{base.pressure:.1f} c{base.cover:.1f}",
             )
         )
+    topology = attention.map.topology
+    candidates = topology.choke_candidates
+    accepted = sum(candidate.accepted for candidate in candidates)
+    rows += [
+        ("panel", ""),
+        ("head", "TOPOLOGY"),
+        ("panel", f"Chokes {accepted}/{len(candidates)} accepted"),
+        (
+            "panel",
+            f"Rejected {len(candidates) - accepted}  Splits {len(topology.region_splits)}",
+        ),
+    ]
     rows += [("panel", ""), ("head", "ENGINE")]
     for grant in result.grants:
         rows.append(
