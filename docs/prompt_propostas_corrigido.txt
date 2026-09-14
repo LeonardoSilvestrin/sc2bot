@@ -1,0 +1,108 @@
+Você está trabalhando no repositório `sc2bot`.
+
+Antes de editar código, leia integralmente `docs/propostas.md` e
+`docs/propostas_corrigidas.txt` e inspecione a implementação e os testes atuais.
+Use duas regras de precedência:
+
+- para **escopo e estado desejado**: pedido explícito do usuário → este prompt e
+  a corrigenda → roadmap original;
+- para **afirmações sobre o estado atual**: código/testes/traces existentes →
+  descrições dos documentos.
+
+Assim, o código prevalece como evidência descritiva, não como justificativa para
+preservar um defeito que a fatia selecionada deve corrigir.
+
+# Escopo desta execução
+
+Implemente **uma única fatia selecionada**, não o roadmap inteiro. Se o usuário
+não indicar a fatia, escolha a menor fatia de maior prioridade cujos
+pré-requisitos já existam. Antes de editar, declare:
+
+- resultado observável pretendido e evidência concreta do problema;
+- arquivos e camadas que devem mudar;
+- pré-requisitos mínimos incluídos na mesma fatia;
+- itens explicitamente fora do escopo;
+- assertions, limites e eventos de log que definirão conclusão.
+
+Um pré-requisito só pode entrar se for indispensável à fatia e no menor contrato
+possível. Não aproveite a mudança para implementar itens vizinhos.
+
+# Evidência disponível
+
+A análise de `propostas.md` foi feita por inspeção estática e por dois traces
+incompletos. Naquela análise, testes e partidas não foram executados e não havia
+baseline. Portanto:
+
+- descreva a arquitetura como explícita ou estruturalmente promissora, não como
+  comprovadamente forte, superior ou competitiva;
+- um trace sustenta uma regressão reproduzível, não frequência nem impacto em
+  win rate;
+- só afirme testes verdes, ganho de gameplay ou desempenho depois de executar
+  e registrar a evidência correspondente.
+
+# Invariantes e fronteiras
+
+Preserve o fluxo público `Attention → Awareness → Ego → Body`, o Engine como
+única autoridade de ownership, a ordem determinística, a liberação explícita e
+a trilha causal. Planner decide **o quê**; Engine decide **quem**; Behavior decide
+**como**. Roles/squads do Ares, se usados, apenas espelham o grant do Engine.
+
+Use estas fronteiras para resolver ambiguidades:
+
+- **Attention:** fatos observados e geometria física estática, inclusive
+  capacidades diretamente lidas das unidades.
+- **Awareness:** memória e inferências descritivas, como contatos, confiança,
+  incerteza, poder estimado, incidentes, continuidade e alcance espacial. Não
+  escolhe margem, prioridade ou missão.
+- **Ego:** política. Define valor estratégico, compatibilidade/suitability
+  desejada, margem e poder requerido, prioridade, alvo, lifecycle e a demanda
+  coordenada entregue ao Body.
+- **Body/Engine:** aplica constraints e custos de assignment ao contrato do Ego,
+  concede cada tag no máximo uma vez e informa `full`, `partial` ou `rejected`
+  quando a fatia precisar disso.
+- **Body/Behavior:** executa a intenção. Pode fazer reação evasiva/local para
+  preservar a execução, desde que não escolha objetivo global, prioridade,
+  orçamento ou ownership; a razão e os limites locais devem ser observáveis.
+
+Constraints discretas vêm antes de scores. Score contínuo só compara opções com
+semântica compatível. Ausência de visão nunca equivale a poder inimigo zero com
+certeza; use estimativa conservadora configurável quando a fatia depender disso.
+
+`ThreatIncident`, quando estiver na fatia, precisa de `incident_id` estável,
+continuidade temporal, contatos, confiança, capacidades, localização/rota
+alcançável, ativos afetados e regras determinísticas de split/merge. Um incidente
+gera **uma demanda defensiva coordenada e um orçamento total único**. Essa demanda
+pode justificar mais de um destacamento ou ponto de interceptação, mas não pode
+multiplicar o mesmo poder requerido por base; registre a linhagem de split/merge
+e a distribuição do orçamento.
+
+Não trate nomes como `Manager`, número de consumidores ou quantidade de arquivos
+como regras taxonômicas. Uma abstração é aceitável com um consumidor se proteger
+uma invariante concreta ou isolar mecanismo complexo; “dois consumidores” é uma
+heurística. Não crie nova autoridade decisória, event bus, solver global, utility
+universal ou framework paralelo sem problema medido e autorização de escopo.
+
+Não refatore a separação `executor/behavior` versus `command/action` por
+antecipação. Se a fatia introduzir duas verticais que usam a mesma ação, separe
+essas identidades no menor contrato possível.
+
+# Critério de conclusão
+
+Converta expressões vagas (`pequena`, `suficiente`, `sem oscilar`, `rápida`) em
+assertions ou parâmetros com unidade e tolerância. Para uma fatia defensiva, o
+caso do SCV deve provar um único incidente/demanda/orçamento, ausência de grants
+duplicados e desconto de cobertura compatível; um ataque real deve atingir o
+mínimo compatível ou produzir `partial/rejected` com razão, sem violar ownership.
+
+A fatia só termina quando:
+
+1. um teste/cenário reproduz o problema e protege a nova invariante;
+2. decisões, desempates e transições são determinísticos;
+3. inputs, demanda, grant/rejeição e razão final aparecem na trilha causal;
+4. testes focados, suíte relevante e lint foram executados, ou o bloqueio foi
+   registrado sem alegar sucesso;
+5. o diff permanece na fatia declarada e não faz afirmação empírica sem baseline.
+
+Ao final, reporte: fatia concluída, arquivos, responsabilidade por camada,
+assertions/logs adicionados, comandos e resultados de verificação, itens fora do
+escopo e risco restante.
