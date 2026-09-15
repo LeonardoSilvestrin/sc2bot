@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import replace
+from types import SimpleNamespace
 
+import pytest
 from ares.behaviors.combat import CombatManeuver
 from ares.behaviors.combat.individual import AMove, PathUnitToTarget, SiegeTankDecision
-from ares.behaviors.macro import ExpansionController, MacroPlan, Mining
+from ares.behaviors.macro import ExpansionController, MacroPlan, Mining, SpawnController
+from sc2.game_data import Cost
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
@@ -85,8 +89,9 @@ def test_the_economy_runs_mining_always_and_macro_only_after_the_opening() -> No
         reason="opening_runs",
     )
     bot = FakeBot()
-    economy_behavior.execute(bot, plan)
+    inactive = economy_behavior.execute(bot, plan)
     assert [type(behavior) for behavior in bot.registered] == [Mining]
+    assert inactive == economy_behavior.SpawnMode(freeflow=False, reason="plan_inactive")
 
     bot = FakeBot()
     economy_behavior.execute(
@@ -95,3 +100,142 @@ def test_the_economy_runs_mining_always_and_macro_only_after_the_opening() -> No
     mining, macro = bot.registered
     assert isinstance(mining, Mining) and isinstance(macro, MacroPlan)
     assert any(isinstance(item, ExpansionController) for item in macro.macros)
+
+
+# 11 Marines, 4 Marauders, 3 Siege Tanks and 2 Medivacs: every type exactly at
+# its share of the composition.
+EXACT = {
+    UnitTypeId.MARINE: 11,
+    UnitTypeId.MARAUDER: 4,
+    UnitTypeId.SIEGETANK: 3,
+    UnitTypeId.MEDIVAC: 2,
+}
+_COSTS = {
+    UnitTypeId.MARINE: (Cost(50, 0), 1.0),
+    UnitTypeId.MARAUDER: (Cost(100, 25), 2.0),
+    UnitTypeId.SIEGETANK: (Cost(150, 125), 3.0),
+    UnitTypeId.MEDIVAC: (Cost(100, 100), 2.0),
+}
+
+
+class ProductionStructure:
+    """An idle production structure; SpawnController keys its orders by it."""
+
+    def __init__(self, tag: int, type_id: UnitTypeId, trained: list[UnitTypeId]) -> None:
+        self.tag = tag
+        self.type_id = type_id
+        self._trained = trained
+
+    def train(self, unit_type: UnitTypeId) -> None:
+        self._trained.append(unit_type)
+
+
+class ProductionBot:
+    """The AresBot surface Ares' SpawnController reads: idle Barracks, Factory
+    and Starport, a bank, free supply and the army counts Ares keeps."""
+
+    def __init__(self, counts: dict[UnitTypeId, int]) -> None:
+        self.minerals = 5000
+        self.vespene = 3000
+        self.supply_left = 30.0
+        self.num_larva_left = 0
+        self.start_location = Point2((10.5, 10.5))
+        self.state = SimpleNamespace(upgrades=set())
+        self.registered: list = []
+        self.trained: list[UnitTypeId] = []
+        self.cost_dict = {unit_type: cost for unit_type, (cost, _) in _COSTS.items()}
+        self.production = [
+            self._structure(tag, type_id)
+            for tag, type_id in enumerate(
+                (UnitTypeId.BARRACKS, UnitTypeId.BARRACKS, UnitTypeId.FACTORY, UnitTypeId.STARPORT)
+            )
+        ]
+        self.mediator = SimpleNamespace(
+            get_own_structures_dict=defaultdict(list),
+            get_own_unit_count=lambda *, unit_type_id: counts.get(unit_type_id, 0),
+            clear_role=lambda *, tag: None,
+        )
+
+    def _structure(self, tag: int, type_id: UnitTypeId) -> ProductionStructure:
+        return ProductionStructure(tag, type_id, self.trained)
+
+    def tech_ready_for_unit(self, unit_type: UnitTypeId) -> bool:
+        return True
+
+    def get_build_structures(self, structure_types, unit_type, build_dict=None, ignored=None):
+        taken = {structure.tag for structure in (build_dict or {})}
+        return [
+            structure
+            for structure in self.production
+            if structure.type_id in structure_types and structure.tag not in taken
+        ]
+
+    def can_afford(self, unit_type: UnitTypeId) -> bool:
+        cost = self.cost_dict[unit_type]
+        return self.minerals >= cost.minerals and self.vespene >= cost.vespene
+
+    def calculate_supply_cost(self, unit_type: UnitTypeId) -> float:
+        return _COSTS[unit_type][1]
+
+    def register_behavior(self, behavior) -> None:
+        self.registered.append(behavior)
+
+
+def active_plan(**changes) -> EconomyPlan:
+    plan = EconomyPlan(
+        active=True,
+        workers=80,
+        gas=7,
+        bases=5,
+        expand=False,
+        freeflow=False,
+        composition=economy.COMPOSITION,
+        reason="build_economy",
+    )
+    return replace(plan, **changes)
+
+
+def spawner(bot) -> SpawnController:
+    (macro,) = [item for item in bot.registered if isinstance(item, MacroPlan)]
+    (spawn,) = [item for item in macro.macros if isinstance(item, SpawnController)]
+    return spawn
+
+
+def test_an_army_exactly_at_its_composition_keeps_growing() -> None:
+    # Traces 483722e (417.9-589.0 s, 11/4/3/2) and 3769f04 (481.5-573.5 s,
+    # 22/8/6/4): with every type exactly at its share, Ares' SpawnController
+    # skipped them all while 5,000 minerals piled up.
+    composition = {
+        unit_type: {"proportion": proportion, "priority": priority}
+        for unit_type, proportion, priority in economy.COMPOSITION
+    }
+    stuck = ProductionBot(EXACT)
+    assert not SpawnController(composition).execute(stuck, {}, stuck.mediator)
+    assert stuck.trained == []
+
+    bot = ProductionBot(EXACT)
+    mode = economy_behavior.execute(bot, active_plan())
+
+    assert spawner(bot).execute(bot, {}, bot.mediator)
+    assert UnitTypeId.SIEGETANK in bot.trained
+    assert (mode.freeflow, mode.reason) == (True, "composition_met")
+    assert dict(mode.counts) == EXACT
+
+
+@pytest.mark.parametrize(
+    "counts, freeflow, reason",
+    [
+        ({**EXACT, UnitTypeId.MARINE: 12}, False, "composition_short"),
+        ({}, False, "composition_short"),
+        ({**EXACT, UnitTypeId.MARINE: 12}, True, "plan_freeflow"),
+    ],
+)
+def test_the_spawn_mode_follows_the_plan_unless_the_composition_is_met(
+    counts: dict[UnitTypeId, int], freeflow: bool, reason: str
+) -> None:
+    bot = ProductionBot(counts)
+
+    mode = economy_behavior.execute(bot, active_plan(freeflow=freeflow))
+
+    assert (mode.freeflow, mode.reason) == (freeflow, reason)
+    assert spawner(bot).freeflow_mode is freeflow

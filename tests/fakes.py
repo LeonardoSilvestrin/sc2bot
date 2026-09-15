@@ -242,6 +242,11 @@ class FakeMediator:
         self.get_air_grid = np.ones((SIZE, SIZE))
         self.get_unit_role_dict: dict[str, set[int]] = {}
         self.removed_from_minerals: list[int] = []
+        # What Ares counts of each own unit type, aliases and production included.
+        self.own_unit_counts: dict[UnitTypeId, int] = {}
+
+    def get_own_unit_count(self, *, unit_type_id: UnitTypeId) -> int:
+        return self.own_unit_counts.get(unit_type_id, 0)
 
     def assign_role(self, *, tag: int, role, remove_from_squad: bool = True) -> None:
         for tags in self.get_unit_role_dict.values():

@@ -25,6 +25,7 @@ seleção (ver regra no prompt corrigido).
 | 6b | Ofensiva: engage/retreat/regroup | Pendente | — |
 | 6c | Ofensiva: search/finish | Pendente | — |
 | 7a | Macro: plano econômico estável (contagem de workers) | Feito | `economy: count workers inside gas buildings` |
+| 7b | Macro: produção não congela na composição exata | Feito | não commitado |
 | 7 | Macro resiliente (opening, supply/pending, reposição, upgrades, spending) | Pendente | — |
 | 8 | RegionState e micro | Pendente | — |
 
@@ -359,6 +360,69 @@ reproduz o par exato `(3, False, 4)`/`(4, True, 5)`.
 - Sem histerese nos limiares: uma mudança real da contagem exatamente no limiar
   (morte e reposição de um worker) ainda troca o plano, uma vez por mudança.
 - `army`/`risk` sem visão: fatia 5 (o nome `risk` não mudou).
+
+## 7b. Produção não congela na composição exata — feito
+
+Seleção: bug decisório reproduzível por trace (classe 1), à frente da ofensiva
+6a. O trace de teste de `8b7f5ba` (Torches AIE, contra Protoss, 290 s, fechado
+sem inimigo à vista) não mostrou bug novo; a busca por evidência de macro nos
+traces longos achou este.
+
+Evidência do problema: `army_supply` parado, banco crescendo e supply livre. Nas
+concessões do Engine, o exército estava exatamente nas proporções da composição
+(0,55/0,20/0,15/0,10):
+
+- `483722e`: 417,9–589,0 s (171 s), 11 Marines, 4 Marauders, 3 Siege Tanks e
+  2 Medivacs; minerais 460 → 5.520, gás 587 → 3.011, supply 141/179 no fim.
+- `3769f04`: 481,5–573,5 s (92 s), 22/8/6/4; minerais 580 → 3.600, gás
+  856 → 2.064, supply 166/200 no fim.
+
+Causa: o `SpawnController` do Ares pula todo tipo com
+`contagem / total ≥ proporção`, contando alias e unidades em produção. Com todos
+os tipos no alvo, não treina nada, e só volta com `freeflow` (STABILIZE aos 575 s
+em `483722e` e aos 566 s em `3769f04`) ou quando alguma unidade morre. O próprio
+controlador leva as contagens às proporções, e o empate cai em todo múltiplo de
+20 unidades dessa composição. O trecho não mudou no `dev` do Ares.
+
+**Feito**
+
+- Body (`behaviors/economy.py`), na fronteira com o Ares: `SpawnMode`
+  (`freeflow`, `reason`, `counts`). Com o plano ativo, conta cada tipo da
+  composição com `mediator.get_own_unit_count` (a contagem que o
+  `SpawnController` usa) e aplica o mesmo teste. Com todos os tipos atingidos,
+  `SpawnController(freeflow_mode=True)` naquele frame (`composition_met`); senão
+  segue o plano (`plan_freeflow`, `composition_short`), e `plan_inactive` no
+  opening. O Ego (plano, composição e `freeflow` do plano) e o Ares não mudaram.
+- `behaviors.execute` devolve o `SpawnMode`, que vai em `Frame.spawn`,
+  `Logs.record` e `Telemetry.record`.
+- Logs: `behavior.spawn_executed` {`freeflow`, `reason`, `counts`} quando
+  `freeflow` ou `reason` mudam.
+- Testes:
+  - O `SpawnController` real do Ares, sobre um fake de produção (2 Barracks,
+    Factory, Starport, 5.000/3.000 e 30 de supply livre), com 11/4/3/2 não
+    treina nada.
+  - No mesmo estado, o behavior do bot devolve `composition_met`, e o
+    `SpawnController` que ele registra treina (inclusive Siege Tank).
+  - 12/4/3/2 e exército vazio dão `composition_short` sem `freeflow`; o
+    `freeflow` do plano dá `plan_freeflow`; o plano inativo dá `plan_inactive`.
+  - Fluxo de frame com 11/4/3/2: `frame.spawn`, o `SpawnController` do
+    `MacroPlan` em `freeflow` e o evento com as contagens.
+- Com o `bot/` de `8b7f5ba` (extraído com `git archive`, testes novos por cima),
+  o teste de reprodução falha na decisão: o `SpawnController` devolve `False` e
+  não treina nada.
+- Verificação local: 121 testes (inclusive o viewer no navegador, com o evento
+  novo no log), ruff limpo.
+
+**Não feito**
+
+- Nenhuma partida: não se mediu banco, supply nem exército depois da correção.
+- O frame em `freeflow` gasta, por prioridade, em toda estrutura ociosa, sem
+  olhar proporção; o lote pode desviar a composição até o controlador corrigir.
+- O `MacroPlan` do Ares para no primeiro behavior que age (`any`): no frame em
+  que supply, workers, gás ou expansão agem, `SpawnController` e
+  `ProductionController` não rodam.
+- Banco depois de 200/200 (os dois traces passam de 10 mil minerais): o exército
+  não ataca (6a) e não há upgrades nem tech depois do opening (fatia 7).
 
 ## Itens de `propostas.md` fora de qualquer fatia concluída
 

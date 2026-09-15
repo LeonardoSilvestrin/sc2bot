@@ -5,6 +5,8 @@ the Engine released go back to mining, each grant is carried out by the
 behavior for its command, then the economy and structure plans run. Ares runs
 a behavior as soon as it is registered, so the order is the order of effects.
 A behavior never picks its units; it commands only the ones it was granted.
+`execute` returns how the army composition went to Ares' SpawnController, for
+the log.
 """
 
 from __future__ import annotations
@@ -31,11 +33,12 @@ def execute(
     result: EngineResult,
     economy_plan: EconomyPlan,
     structures: StructurePlan,
-) -> None:
+) -> economy.SpawnMode:
     economy.release_workers(bot, attention, result)
     command_units(bot, result)
-    economy.execute(bot, economy_plan)
+    spawn = economy.execute(bot, economy_plan)
     structure_control.execute(bot, structures)
+    return spawn
 
 
 def command_units(bot, result: EngineResult) -> None:

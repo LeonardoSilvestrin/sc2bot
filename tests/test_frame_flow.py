@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 from ares.behaviors.combat import CombatManeuver
-from ares.behaviors.macro import MacroPlan, Mining
+from ares.behaviors.macro import MacroPlan, Mining, SpawnController
 from sc2.ids.ability_id import AbilityId
 from sc2.ids.unit_typeid import UnitTypeId
 
@@ -69,6 +69,7 @@ def test_a_frame_flows_from_attention_to_logs() -> None:
         "strategy.decided",
         "behavior.proposed",
         "behavior.economy_planned",
+        "behavior.spawn_executed",
         "behavior.structures_planned",
         "engine.granted",
         "engine.commanded",
@@ -206,6 +207,31 @@ def test_the_fog_does_not_let_a_threatened_bot_expand_as_if_the_enemy_had_no_arm
     (planned,) = logger.named("behavior.economy_planned")
     assert planned["data"]["inputs"]["strategy_economy"] == pytest.approx(frame.strategy.economy)
     assert planned["data"]["expand"] is False
+
+
+def test_an_army_exactly_at_its_composition_spawns_freely_and_the_log_says_why() -> None:
+    logger = FakeLogger()
+    bot = build_bot(attackers=0)
+    bot.mediator.own_unit_counts = {
+        UnitTypeId.MARINE: 11,
+        UnitTypeId.MARAUDER: 4,
+        UnitTypeId.SIEGETANK: 3,
+        UnitTypeId.MEDIVAC: 2,
+    }
+
+    frame = play_frame(bot, 0, Layers(map_view=MAP, logs=Logs(logger)))
+
+    assert not frame.economy.freeflow
+    assert (frame.spawn.freeflow, frame.spawn.reason) == (True, "composition_met")
+    (macro,) = [item for item in bot.registered if isinstance(item, MacroPlan)]
+    (spawner,) = [item for item in macro.macros if isinstance(item, SpawnController)]
+    assert spawner.freeflow_mode
+    (executed,) = logger.named("behavior.spawn_executed")
+    assert executed["data"] == {
+        "freeflow": True,
+        "reason": "composition_met",
+        "counts": {"MARINE": 11, "MARAUDER": 4, "SIEGETANK": 3, "MEDIVAC": 2},
+    }
 
 
 def test_units_return_to_the_core_army_when_the_attack_dies() -> None:

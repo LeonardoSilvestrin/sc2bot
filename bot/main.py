@@ -14,6 +14,7 @@ from sc2.data import Result
 from bot.attention import AttentionState, MapView, observe, read_map
 from bot.awareness import AwarenessModel, AwarenessState
 from bot.body import behaviors
+from bot.body.behaviors.economy import SpawnMode
 from bot.body.engine import Engine, EngineResult
 from bot.ego.planners import (
     EconomyPlan,
@@ -60,6 +61,7 @@ class Frame:
     economy: EconomyPlan
     structures: StructurePlan
     result: EngineResult
+    spawn: SpawnMode
 
 
 def play_frame(bot, iteration: int, layers: Layers) -> Frame:
@@ -78,7 +80,7 @@ def play_frame(bot, iteration: int, layers: Layers) -> Frame:
     laps.mark("planners")
     result = layers.engine.allocate(attention, proposals)
     laps.mark("engine")
-    behaviors.execute(bot, attention, result, economy_plan, structures)
+    spawn = behaviors.execute(bot, attention, result, economy_plan, structures)
     laps.mark("behaviors")
     layers.logs.record(
         bot,
@@ -89,9 +91,12 @@ def play_frame(bot, iteration: int, layers: Layers) -> Frame:
         economy_plan,
         structures,
         result,
+        spawn,
         laps.times,
     )
-    return Frame(attention, awareness, strategy, proposals, economy_plan, structures, result)
+    return Frame(
+        attention, awareness, strategy, proposals, economy_plan, structures, result, spawn
+    )
 
 
 class MyBot(AresBot):

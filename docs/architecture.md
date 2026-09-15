@@ -13,8 +13,9 @@ proposals = defense.plan(...) + core_army.plan(...)             EGO / planners
 economy   = economy.plan(attention, strategy)
 structures = structure_control.plan(attention)
 result    = engine.allocate(attention, proposals)               BODY / engine
-behaviors.execute(bot, attention, result, economy, structures)  BODY / behaviors
-logs.record(bot, attention, awareness, strategy, ...)           LOGS
+spawn     = behaviors.execute(bot, attention, result,           BODY / behaviors
+                              economy, structures)
+logs.record(bot, attention, awareness, strategy, ..., spawn)    LOGS
 ```
 
 Regra: **o Planner decide O QUÊ, o Engine decide QUEM recebe O QUÊ, o Behavior decide COMO.**
@@ -31,7 +32,7 @@ Todo o resto lê estados imutáveis e é testável sem `AresBot`.
 | EGO / strategy | [bot/ego/strategy.py](../bot/ego/strategy.py) | `StrategyState` | `STABILIZE` vs `BUILD_ADVANTAGE` com margem, permanência mínima e emergência; preferências contínuas `defense`, `army`, `economy`, `risk`, com o inimigo planejado como estimativa mais `commit_margin` da incerteza; ponto de rally. |
 | EGO / planners | [bot/ego/planners/](../bot/ego/planners/) | `Proposal`, `Command`, `EconomyPlan`, `StructurePlan` | Decidem o que deve ser feito (tarefa, alvo, prioridade, requisitos) sem nomear unidades. `defense`: uma demanda `ATTACK` por incidente, com um orçamento de poder repartido entre a parte aérea e a terrestre. `core_army`: `HOLD` no rally, fallback com todas as unidades livres. `intel`: `SCOUT` de um SCV pela main inimiga no early game. `economy`: plano para os macro behaviors do Ares depois do opening. `structure_control`: quais depots levantar e quais abaixar. |
 | BODY / engine | [bot/body/engine.py](../bot/body/engine.py) | `EngineResult` | Só alocação. Ordena por `(-priority, owner, proposal_id)` e concede cada unidade de exército a no máximo uma proposta. Restrições duras vêm antes de qualquer ordem: `unit_types`, `must_attack` (`GROUND`/`AIR`) e, num pedido de poder, `power > 0`. Entre as elegíveis livres, as que já eram da proposta primeiro, depois as mais próximas. Pede-se `minimum_power` (unidades até atingir o poder), `count` ou todas as livres; cada `Grant` traz `power`, `status` (`FULL`/`PARTIAL`/`REJECTED`) e `reason`. Workers só são elegíveis para propostas que pedem um tipo de worker, só saindo da mineração (role `GATHERING`) ou já sendo da proposta. `released` lista quem perdeu o dono. Não comanda nada. |
-| BODY / behaviors | [bot/body/behaviors/](../bot/body/behaviors/) | — | Executam os grants, despachados por `Command`. `defense` (`ATTACK`): `AMove`, Siege Tank decide o siege sem ficar preso ao ponto. `core_army` (`HOLD`): `PathUnitToTarget` até o ponto, `AMove` com inimigo a ≤ 10, Siege Tank fica sieged perto do ponto. `scout` (`SCOUT`): tira o worker da mineral, role `SCOUTING`, path sem evitar perigo. `economy`: workers liberados voltam a `GATHERING`, `Mining` e `MacroPlan`. `structure_control`: abaixa e levanta os depots do plano. `combat` guarda o que `defense` e `core_army` compartilham. |
+| BODY / behaviors | [bot/body/behaviors/](../bot/body/behaviors/) | — | Executam os grants, despachados por `Command`. `defense` (`ATTACK`): `AMove`, Siege Tank decide o siege sem ficar preso ao ponto. `core_army` (`HOLD`): `PathUnitToTarget` até o ponto, `AMove` com inimigo a ≤ 10, Siege Tank fica sieged perto do ponto. `scout` (`SCOUT`): tira o worker da mineral, role `SCOUTING`, path sem evitar perigo. `economy`: workers liberados voltam a `GATHERING`, `Mining` e `MacroPlan`; devolve o `SpawnMode` (com a composição inteira exatamente na proporção, o `SpawnController` roda em `freeflow` naquele frame). `structure_control`: abaixa e levanta os depots do plano. `combat` guarda o que `defense` e `core_army` compartilham. |
 | LOGS | [bot/logs/](../bot/logs/) | — | Log JSONL, snapshots SVG do campo e overlay in-game. Nenhum deles muda decisão nem derruba partida. |
 
 ## Matemática
@@ -85,6 +86,11 @@ Todo o resto lê estados imutáveis e é testável sem `AresBot`.
   dentro de refinarias, que somem de `bot.units` enquanto estão lá, e exclui os em produção.
   `bases = max(1, townhalls no chão)`; satura com `workers ≥ 16·bases` e expande saturado com
   `strategy.economy ≥ 0,5`; `gas = min(2·bases, 1 + workers // 12)`.
+- Spawn (Body): o `SpawnController` do Ares pula um tipo com `contagem / total ≥ proporção` (contagem do
+  Ares, com alias e unidades em produção). Com todos os tipos da composição atingidos ao mesmo tempo — contagens
+  num múltiplo exato das proporções, como 11/4/3/2 para 0,55/0,20/0,15/0,10 — ele não treinaria nada; nesse
+  frame roda em `freeflow` (`composition_met`). Senão segue o plano: `plan_freeflow`, `composition_short`, e
+  `plan_inactive` no opening.
 - StructureControl: um depot pronto sobe no frame em que um inimigo terrestre visível está a
   ≤ `raise_reach` (8) dele e desce quando nenhum esteve a essa distância por `lower_after` (3 s),
   com a última ameaça guardada por tag. Voadores não contam. Subir empurra nossas unidades de cima
@@ -126,6 +132,7 @@ as fatias de tempo são `attention`, `awareness`, `strategy`, `planners`, `engin
 | `strategy.decided` | strategy | troca de objetivo, heartbeat | `objective`, `previous`, `since`, `reason`, `defense`, `army`, `economy`, `risk`, `rally`, `inputs` {`danger`, `danger_now`, `army_share`, `own_power`, `enemy_power`, `estimated_enemy_power`, `enemy_uncertainty`, `planned_enemy_power`}, `scores` |
 | `behavior.proposed` | behaviors | o conjunto ranqueado de propostas muda | `proposals[]` {`proposal_id`, `owner`, `priority`, `command`, `target`, `count`, `minimum_power`, `must_attack`, `demand_id`, `unit_types`, `reason`, `inputs`} |
 | `behavior.economy_planned` | behaviors | o plano muda | `active`, `workers`, `gas`, `bases`, `expand`, `freeflow`, `reason`, `composition[]`, `inputs` {`workers`, `bases`, `saturated_at`, `strategy_economy`} |
+| `behavior.spawn_executed` | behaviors | `freeflow` ou razão do spawn mudam | `freeflow`, `reason` (`plan_inactive`, `plan_freeflow`, `composition_met`, `composition_short`), `counts` {tipo: contagem do Ares} |
 | `behavior.structures_planned` | behaviors | depots a abaixar/levantar ou razão mudam | `lower`, `raise`, `reason` (`no_depots`, `enemy_near`, `enemy_recently_near`, `no_enemy_near`), `inputs` {`depots`, `lowered`, `enemy_near`, `recently_near`, `ground_enemies`, `friendly_on_raising`, `nearest_ground_enemy` (só com depot e inimigo terrestre)} |
 | `engine.granted` | engine | alguma concessão muda | `grants[]` {`proposal_id`, `owner`, `priority`, `requested`, `minimum_power`, `granted`, `granted_power`, `status`, `reason`, `tags`, `types`}, `transfers[]` {`tag`, `type`, `from`, `to`}, `unassigned` |
 | `engine.commanded` | engine | comando, alvo (grade de 3) ou unidades de uma concessão mudam | `proposal_id`, `owner`, `command`, `target`, `tags`, `types`, `priority`, `reason`, `demand_id`, `inputs`, `strategy` {`objective`, `reason`, `defense`, `risk`}, `awareness` {`danger`, `contacts`, `enemy_power`}, `attention` {`army_units`, `visible_enemy_units`}; `tags: []` e `reason: no_units_granted` quando a concessão acaba |
@@ -153,7 +160,8 @@ scouting depois do early game, map control, harass, preempção com compromisso 
 defesa. No wall: antecipar o fechamento por contato lembrado ou pela rota, alcance pela velocidade do inimigo, distinguir
 os depots do wall e política para unidades nossas empurradas ou presas do lado de fora. Na defesa: distinguir scout, worker rush e ataque; histerese de admissão/liberação; alcance por pathing em vez de
 distância; eventos explícitos de linhagem de incidentes; `desired_power`, suitability e custos de assignment. Na economia:
-bases por `ready + pending` explícito, CC voando, cooldown do alvo e interrupção do opening. Na estratégia: rally alternando
+bases por `ready + pending` explícito, CC voando, cooldown do alvo, interrupção do opening, upgrades depois do opening
+e o `MacroPlan` do Ares, que para no primeiro behavior que age. Na estratégia: rally alternando
 entre bases de ameaça quase igual e reforços que ainda não foram vistos (o objetivo lê só `danger`, não a estimativa). No desconhecido: estimativa por produção ou economia vista, informação ampla que mostre
 um exército menor que o esperado, scouting recorrente, calibração de `army_growth`/`army_cap`, o gatilho ofensivo que vai usar
 a estimativa e renomear `risk`. Cada um entra quando um problema de gameplay medido pedir.

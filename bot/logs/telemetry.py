@@ -16,6 +16,7 @@ from sc2.position import Point2
 
 from bot.attention import AttentionState, MapView, is_army
 from bot.awareness import AwarenessState
+from bot.body.behaviors.economy import SpawnMode
 from bot.body.engine import EngineResult, rank
 from bot.ego.planners import EconomyPlan, Proposal, StructurePlan
 from bot.ego.strategy import StrategyState
@@ -38,6 +39,7 @@ class Telemetry:
         self._awareness = ChangeGate(heartbeat=heartbeat)
         self._strategy = ChangeGate(heartbeat=heartbeat)
         self._economy = ChangeGate()
+        self._spawn = ChangeGate()
         self._structures = ChangeGate()
         self._perf = ChangeGate(heartbeat=heartbeat)
         self._proposals = ChangeGate()
@@ -132,6 +134,7 @@ class Telemetry:
         economy: EconomyPlan,
         structures: StructurePlan,
         result: EngineResult,
+        spawn: SpawnMode,
         timings: Mapping[str, float],
     ) -> None:
         self._record_attention(attention)
@@ -139,6 +142,7 @@ class Telemetry:
         self._record_strategy(strategy)
         self._record_proposals(attention.time, proposals)
         self._record_economy(attention.time, economy)
+        self._record_spawn(attention.time, spawn)
         self._record_structures(attention.time, structures)
         self._record_grants(attention, result)
         self._record_commands(attention, awareness, strategy, result)
@@ -378,6 +382,20 @@ class Telemetry:
                     for unit_type, proportion, priority in economy.composition
                 ],
                 "inputs": dict(economy.inputs),
+            },
+        )
+
+    def _record_spawn(self, now: float, spawn: SpawnMode) -> None:
+        if not self._spawn.admit((spawn.freeflow, spawn.reason), now=now):
+            return
+        self._event(
+            "behavior.spawn_executed",
+            "behaviors",
+            now,
+            {
+                "freeflow": spawn.freeflow,
+                "reason": spawn.reason,
+                "counts": {unit_type.name: count for unit_type, count in spawn.counts},
             },
         )
 
