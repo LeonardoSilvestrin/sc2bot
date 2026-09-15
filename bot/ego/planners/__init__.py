@@ -25,6 +25,13 @@ class Command(str, Enum):
     SCOUT = "SCOUT"
 
 
+class Domain(str, Enum):
+    """Where a target is, so what a unit must be able to shoot at."""
+
+    GROUND = "GROUND"
+    AIR = "AIR"
+
+
 @dataclass(frozen=True, slots=True)
 class Proposal:
     proposal_id: str
@@ -38,8 +45,16 @@ class Proposal:
     # Which unit types; None accepts any army unit. Only a proposal that names
     # a worker type can be granted workers.
     unit_types: frozenset[UnitTypeId] | None = None
-    # The values the priority and count were computed from.
+    # The values the priority and size were computed from.
     inputs: tuple[tuple[str, float], ...] = ()
+    # Power, in Marines, the grant should reach: the Engine grants units until
+    # it does. None sizes the grant by `count` instead.
+    minimum_power: float | None = None
+    # What every granted unit must be able to shoot at; None asks nothing.
+    must_attack: Domain | None = None
+    # The coordinated demand this proposal is one part of; its parts share one
+    # budget. None for a proposal that stands alone.
+    demand_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

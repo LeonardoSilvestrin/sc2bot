@@ -4,7 +4,9 @@ Enemy contacts are remembered with a confidence that decays with age,
 ``exp(-age / tau)``, and a position uncertainty that grows with it. A contact
 is forgotten when it is confirmed dead, when its last position is back in
 vision without it, or once its confidence has faded out. From those beliefs
-Awareness reads the pressure on each of our bases and a coarse influence field.
+Awareness reads the pressure on each of our bases, the threat incidents -- the
+attackers in reach of our bases that belong together -- and a coarse influence
+field.
 """
 
 from __future__ import annotations
@@ -38,6 +40,8 @@ class AwarenessConfig:
     base_reach: float = 30.0
     # Power, in Marines, whose pressure saturates to 1 - 1/e.
     full_pressure: float = 4.0
+    # Attackers within this distance of one another are one incident.
+    incident_link: float = 12.0
     field_sigma: float = 7.0
     # Presence a structure lends the field, in Marines.
     structure_presence: float = 0.5
@@ -50,6 +54,7 @@ class AwarenessConfig:
             "base_sigma",
             "base_reach",
             "full_pressure",
+            "incident_link",
             "field_sigma",
         ):
             if getattr(self, name) <= 0.0:
@@ -98,6 +103,45 @@ class BaseThreat:
 
 
 @dataclass(frozen=True, slots=True)
+class ThreatIncident:
+    """Attackers in reach of our bases chained within `incident_link` of one
+    another, however many bases they reach.
+
+    The id is the lowest member tag, so it holds while that contact stays in
+    the incident. When an incident splits, the part without that contact takes
+    its own lowest tag; when incidents merge, the lowest tag of all wins.
+    """
+
+    incident_id: str
+    # Member contact tags, ascending.
+    contacts: tuple[int, ...]
+    # sum(power * confidence) of the members on the ground and in the air.
+    ground_power: float
+    air_power: float
+    # Mean confidence of the members, weighted by power.
+    confidence: float
+    # (power * confidence)-weighted position of the members.
+    center: Point2
+    # (base_id, sum(power * confidence * K) of the members) for every base a
+    # member is in reach of, by base id.
+    pressure_by_base: tuple[tuple[str, float], ...]
+    # S(pressure on the base it presses hardest / full_pressure)
+    threat: float
+
+    @property
+    def power(self) -> float:
+        return self.ground_power + self.air_power
+
+    @property
+    def pressure(self) -> float:
+        return max((pressure for _, pressure in self.pressure_by_base), default=0.0)
+
+    @property
+    def affected_bases(self) -> tuple[str, ...]:
+        return tuple(base_id for base_id, _ in self.pressure_by_base)
+
+
+@dataclass(frozen=True, slots=True)
 class AwarenessState:
     time: float
     contacts: tuple[Contact, ...]
@@ -105,6 +149,8 @@ class AwarenessState:
     own_power: float
     enemy_power: float
     influence: InfluenceField = field(compare=False)
+    # By lowest member tag.
+    incidents: tuple[ThreatIncident, ...] = ()
 
     @property
     def danger(self) -> float:
@@ -145,6 +191,7 @@ class AwarenessModel:
                 if not contact.is_structure
             ),
             influence=self._field(attention, contacts, army),
+            incidents=self._incidents(attention.bases, contacts),
         )
 
     def _remember(self, attention: AttentionState) -> tuple[Contact, ...]:
@@ -188,6 +235,16 @@ class AwarenessModel:
         self._contacts = remembered
         return tuple(remembered[tag] for tag in sorted(remembered))
 
+    def _pressure(self, contact: Contact, position: Point2) -> float | None:
+        """power * confidence * K of a contact at a base; None beyond its reach."""
+
+        config = self.config
+        squared = (contact.position.x - position.x) ** 2 + (contact.position.y - position.y) ** 2
+        if squared > (config.base_reach + contact.uncertainty) ** 2:
+            return None
+        spread = config.base_sigma + contact.uncertainty
+        return contact.power * contact.confidence * math.exp(-0.5 * squared / (spread * spread))
+
     def _base_threat(
         self, base: BaseView, contacts: tuple[Contact, ...], army: tuple[UnitView, ...]
     ) -> BaseThreat:
@@ -197,13 +254,9 @@ class AwarenessModel:
         for contact in contacts:
             if contact.power <= 0.0:
                 continue
-            squared = (contact.position.x - bx) ** 2 + (contact.position.y - by) ** 2
-            if squared > (config.base_reach + contact.uncertainty) ** 2:
+            weight = self._pressure(contact, base.position)
+            if weight is None:
                 continue
-            spread = config.base_sigma + contact.uncertainty
-            weight = (
-                contact.power * contact.confidence * math.exp(-0.5 * squared / (spread * spread))
-            )
             pressure += weight
             weighted_x += weight * contact.position.x
             weighted_y += weight * contact.position.y
@@ -227,6 +280,86 @@ class AwarenessModel:
             center=(
                 Point2((weighted_x / pressure, weighted_y / pressure)) if pressure > 0.0 else None
             ),
+        )
+
+    def _incidents(
+        self, bases: tuple[BaseView, ...], contacts: tuple[Contact, ...]
+    ) -> tuple[ThreatIncident, ...]:
+        """Single-link groups of the attackers in reach of some base."""
+
+        members: list[Contact] = []
+        pressures: list[tuple[float | None, ...]] = []
+        for contact in contacts:
+            if contact.power <= 0.0:
+                continue
+            at_bases = tuple(self._pressure(contact, base.position) for base in bases)
+            if any(pressure is not None for pressure in at_bases):
+                members.append(contact)
+                pressures.append(at_bases)
+        if not members:
+            return ()
+        xy = np.array([(member.position.x, member.position.y) for member in members])
+        squared = ((xy[:, None, :] - xy[None, :, :]) ** 2).sum(axis=2)
+        linked = squared <= self.config.incident_link**2
+        group = np.full(len(members), -1)
+        incidents: list[ThreatIncident] = []
+        # Contacts come by tag, so every group is seeded by its lowest tag.
+        for seed in range(len(members)):
+            if group[seed] >= 0:
+                continue
+            group[seed] = seed
+            frontier = [seed]
+            while frontier:
+                joined = np.flatnonzero(linked[frontier.pop()] & (group < 0))
+                group[joined] = seed
+                frontier.extend(joined.tolist())
+            indices = np.flatnonzero(group == seed).tolist()
+            incidents.append(
+                self._incident(
+                    [members[index] for index in indices],
+                    [pressures[index] for index in indices],
+                    bases,
+                )
+            )
+        return tuple(incidents)
+
+    def _incident(
+        self,
+        members: list[Contact],
+        pressures: list[tuple[float | None, ...]],
+        bases: tuple[BaseView, ...],
+    ) -> ThreatIncident:
+        weights = [member.power * member.confidence for member in members]
+        total = sum(weights)
+        pressure_by_base = tuple(
+            (
+                base.base_id,
+                sum(at_bases[index] for at_bases in pressures if at_bases[index] is not None),
+            )
+            for index, base in enumerate(bases)
+            if any(at_bases[index] is not None for at_bases in pressures)
+        )
+        strongest = max(pressure for _, pressure in pressure_by_base)
+        return ThreatIncident(
+            incident_id=f"incident:{members[0].tag}",
+            contacts=tuple(member.tag for member in members),
+            ground_power=sum(
+                weight
+                for member, weight in zip(members, weights, strict=True)
+                if not member.is_flying
+            ),
+            air_power=sum(
+                weight for member, weight in zip(members, weights, strict=True) if member.is_flying
+            ),
+            confidence=total / sum(member.power for member in members),
+            center=Point2(
+                (
+                    sum(w * m.position.x for m, w in zip(members, weights, strict=True)) / total,
+                    sum(w * m.position.y for m, w in zip(members, weights, strict=True)) / total,
+                )
+            ),
+            pressure_by_base=pressure_by_base,
+            threat=1.0 - math.exp(-strongest / self.config.full_pressure),
         )
 
     def _field(

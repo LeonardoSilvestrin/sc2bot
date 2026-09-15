@@ -194,6 +194,8 @@ class Telemetry:
             sum(contact.visible for contact in awareness.contacts),
             round(awareness.enemy_power),
             tuple((base.base_id, round(base.threat, 1)) for base in awareness.bases),
+            # Membership, so every split and merge is written.
+            tuple((incident.incident_id, incident.contacts) for incident in awareness.incidents),
         )
         if not self._awareness.admit(signature, now=now):
             return
@@ -226,6 +228,20 @@ class Telemetry:
                         "center": None if base.center is None else _xy(base.center),
                     }
                     for base in awareness.bases
+                ],
+                "incidents": [
+                    {
+                        "incident_id": incident.incident_id,
+                        "contacts": list(incident.contacts),
+                        "center": _xy(incident.center),
+                        "power": incident.power,
+                        "ground_power": incident.ground_power,
+                        "air_power": incident.air_power,
+                        "confidence": incident.confidence,
+                        "threat": incident.threat,
+                        "pressure_by_base": dict(incident.pressure_by_base),
+                    }
+                    for incident in awareness.incidents
                 ],
                 "strongest_contacts": [
                     {
@@ -276,6 +292,9 @@ class Telemetry:
                 proposal.proposal_id,
                 round(proposal.priority, 1),
                 proposal.count,
+                None if proposal.minimum_power is None else round(proposal.minimum_power, 1),
+                proposal.must_attack,
+                proposal.demand_id,
                 proposal.command,
                 _cell(proposal.target),
                 proposal.reason,
@@ -297,6 +316,11 @@ class Telemetry:
                         "command": proposal.command.value,
                         "target": _xy(proposal.target),
                         "count": proposal.count,
+                        "minimum_power": proposal.minimum_power,
+                        "must_attack": (
+                            None if proposal.must_attack is None else proposal.must_attack.value
+                        ),
+                        "demand_id": proposal.demand_id,
                         "unit_types": (
                             None
                             if proposal.unit_types is None
@@ -350,7 +374,7 @@ class Telemetry:
     def _record_grants(self, attention: AttentionState, result: EngineResult) -> None:
         owners = dict(result.owners)
         signature = tuple(
-            (grant.proposal.proposal_id, grant.tags) for grant in result.grants
+            (grant.proposal.proposal_id, grant.tags, grant.status) for grant in result.grants
         )
         admitted = self._grants.admit(signature, now=attention.time)
         previous, self._owners = self._owners, owners
@@ -378,7 +402,11 @@ class Telemetry:
                         "owner": grant.proposal.owner,
                         "priority": grant.proposal.priority,
                         "requested": grant.proposal.count,
+                        "minimum_power": grant.proposal.minimum_power,
                         "granted": len(grant.tags),
+                        "granted_power": grant.power,
+                        "status": grant.status.value,
+                        "reason": grant.reason,
                         "tags": list(grant.tags),
                         "types": dict(
                             sorted(
@@ -433,6 +461,7 @@ class Telemetry:
                     ),
                     "priority": proposal.priority,
                     "reason": proposal.reason,
+                    "demand_id": proposal.demand_id,
                     "inputs": dict(proposal.inputs),
                     "strategy": {
                         "objective": strategy.objective.value,

@@ -476,6 +476,13 @@ function typesSummary(types) {
   return Object.entries(types || {}).map(([type, count]) => `${count}×${humanize(type)}`).join(", ") || "none";
 }
 
+function grantText(g) {
+  const asked = g.minimum_power != null
+    ? `${fmt(g.granted_power, 1)}/≥${fmt(g.minimum_power, 1)}pw`
+    : `${g.granted}/${g.requested ?? "all"}`;
+  return `${g.proposal_id} ${asked}${g.status && g.status !== "FULL" ? ` ${g.status} (${g.reason})` : ""}`;
+}
+
 function fieldsFor(record) {
   const d = record.data || {};
   switch (record.event) {
@@ -490,11 +497,11 @@ function fieldsFor(record) {
     case "strategy.decided":
       return `objective=${d.objective} previous=${d.previous} danger=${fmt(d.inputs?.danger)} defense=${fmt(d.defense)} army=${fmt(d.army)} risk=${fmt(d.risk)}`;
     case "behavior.proposed":
-      return (d.proposals || []).map((p) => `${p.proposal_id} p=${fmt(p.priority)} n=${p.count ?? "all"}`).join("  ");
+      return (d.proposals || []).map((p) => `${p.proposal_id} p=${fmt(p.priority)} n=${p.minimum_power != null ? `≥${fmt(p.minimum_power, 1)}pw` : p.count ?? "all"}`).join("  ");
     case "behavior.economy_planned":
       return `active=${d.active} workers=${d.workers} gas=${d.gas} bases=${d.bases} expand=${d.expand} freeflow=${d.freeflow}`;
     case "engine.granted":
-      return `${(d.grants || []).map((g) => `${g.proposal_id} ${g.granted}/${g.requested ?? "all"}`).join("  ")}  transfers=${(d.transfers || []).length} unassigned=${(d.unassigned || []).length}`;
+      return `${(d.grants || []).map(grantText).join("  ")}  transfers=${(d.transfers || []).length} unassigned=${(d.unassigned || []).length}`;
     case "engine.commanded":
       return (d.tags || []).length ? `${d.proposal_id} ${d.command} → ${xy(d.target)} ${typesSummary(d.types)}` : `${d.proposal_id} released`;
     case "logs.frame_perf":
@@ -951,7 +958,7 @@ function renderEngine() {
     ["time", "grants (granted/requested)", "transfers", "unassigned"],
     streams.grants.map((r) => {
       const d = r.data || {};
-      return [formatTime(r.game_time), (d.grants || []).map((g) => `${g.proposal_id} ${g.granted}/${g.requested ?? "all"}`).join("  "),
+      return [formatTime(r.game_time), (d.grants || []).map(grantText).join("  "),
         (d.transfers || []).length, (d.unassigned || []).length];
     }),
     "No engine.granted records in this log.",

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from ares.behaviors.combat import CombatManeuver
 from ares.behaviors.macro import MacroPlan, Mining
 from sc2.ids.unit_typeid import UnitTypeId
@@ -46,7 +47,7 @@ def test_a_frame_flows_from_attention_to_logs() -> None:
     frame = play_frame(bot, 7, Layers(map_view=MAP, logs=Logs(logger)))
 
     granted = grants(frame)
-    defended = granted[f"defense:{MAIN.base_id}"]
+    (defended,) = [grant.tags for grant in frame.result.grants if grant.proposal.owner == "defense"]
     held = granted[core_army.OWNER]
     assert defended and held
     assert set(defended).isdisjoint(held)
@@ -79,6 +80,26 @@ def test_a_frame_flows_from_attention_to_logs() -> None:
     assert command["data"]["command"] == "ATTACK"
     assert command["data"]["inputs"]["threat"] > 0.0
     assert set(command["data"]) >= {"attention", "awareness", "strategy", "reason", "priority"}
+
+    # The causal trail of the defense: incident -> demand -> grant.
+    (incident,) = logger.named("awareness.updated")[0]["data"]["incidents"]
+    assert incident["contacts"] == [900, 901, 902]
+    (proposed,) = [
+        item
+        for item in logger.named("behavior.proposed")[0]["data"]["proposals"]
+        if item["owner"] == defense.OWNER
+    ]
+    assert proposed["demand_id"] == command["data"]["demand_id"] == incident["incident_id"]
+    assert proposed["must_attack"] == "GROUND"
+    assert proposed["minimum_power"] == pytest.approx(1.5 * incident["power"])
+    (grant,) = [
+        item
+        for item in logger.named("engine.granted")[0]["data"]["grants"]
+        if item["owner"] == defense.OWNER
+    ]
+    assert (grant["status"], grant["reason"]) == ("FULL", "minimum_power_met")
+    assert grant["granted_power"] >= grant["minimum_power"]
+    assert grant["tags"] == list(defended)
 
 
 def test_units_return_to_the_core_army_when_the_attack_dies() -> None:

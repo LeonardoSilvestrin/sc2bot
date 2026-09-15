@@ -1,8 +1,12 @@
 """ENGINE: who gets what.
 
 Planners propose; the Engine ranks proposals by ``(-priority, owner,
-proposal_id)`` and grants every army unit to at most one of them -- the units a
-proposal already held first, then the nearest. Workers are eligible only for
+proposal_id)`` and grants every army unit to at most one of them. A unit is a
+candidate only if it meets the proposal's hard constraints -- its unit types,
+what it must be able to shoot at -- and candidates go the units a proposal
+already held first, then the nearest. A proposal asks for power, a head count
+or every candidate still free, and each grant says whether it got that (FULL),
+less (PARTIAL) or nothing (REJECTED), and why. Workers are eligible only for
 proposals that name a worker type, only out of mining, and stay with the
 proposal that took them. A unit no proposal holds any more is released. The
 Engine commands nothing: what to do is the planners' decision, how to do it
@@ -11,19 +15,33 @@ the behaviors'.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from enum import Enum
 
 from ares.consts import UnitRole
 
-from bot.attention import AttentionState, is_army
-from bot.ego.planners import Proposal
+from bot.attention import AttentionState, UnitView, is_army
+from bot.ego.planners import Domain, Proposal
+
+# Absorbs float noise so a grant exactly at its minimum power counts.
+_TOLERANCE = 1e-9
+
+
+class GrantStatus(str, Enum):
+    FULL = "FULL"
+    PARTIAL = "PARTIAL"
+    REJECTED = "REJECTED"
 
 
 @dataclass(frozen=True, slots=True)
 class Grant:
     proposal: Proposal
     tags: tuple[int, ...]
+    # Sum of the granted units' power, in Marines.
+    power: float
+    status: GrantStatus
+    reason: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,16 +85,9 @@ class Engine:
             if proposal.proposal_id in seen:
                 raise ValueError(f"duplicate proposal id {proposal.proposal_id!r}")
             seen.add(proposal.proposal_id)
+            eligible = [unit for unit in pool.values() if _meets(proposal, unit, army)]
             candidates = sorted(
-                (
-                    pool[tag]
-                    for tag in free
-                    if (
-                        tag in army
-                        if proposal.unit_types is None
-                        else pool[tag].type_id in proposal.unit_types
-                    )
-                ),
+                (unit for unit in eligible if unit.tag in free),
                 # Units this proposal already held stay with it first, so a
                 # grant does not churn as its units move.
                 key=lambda unit: (
@@ -85,10 +96,12 @@ class Engine:
                     unit.tag,
                 ),
             )
-            chosen = candidates if proposal.count is None else candidates[: max(0, proposal.count)]
+            chosen = _choose(proposal, candidates)
+            power = sum(unit.power for unit in chosen)
+            status, reason = _judge(proposal, chosen, power, bool(eligible))
             tags = tuple(sorted(unit.tag for unit in chosen))
             free.difference_update(tags)
-            grants.append(Grant(proposal=proposal, tags=tags))
+            grants.append(Grant(proposal, tags, power, status, reason))
         owners = {tag: grant.proposal.proposal_id for grant in grants for tag in grant.tags}
         released = tuple(sorted(set(self._owners) - set(owners)))
         self._owners = owners
@@ -99,3 +112,54 @@ class Engine:
             unassigned=tuple(sorted(tag for tag in free if tag in army)),
             released=released,
         )
+
+
+def _meets(proposal: Proposal, unit: UnitView, army: Mapping[int, UnitView]) -> bool:
+    """The proposal's hard constraints; no score can buy a unit past them."""
+
+    if proposal.unit_types is None:
+        if unit.tag not in army:
+            return False
+    elif unit.type_id not in proposal.unit_types:
+        return False
+    # A unit that adds no power cannot help reach a minimum power.
+    if proposal.minimum_power is not None and unit.power <= 0.0:
+        return False
+    if proposal.must_attack is Domain.GROUND:
+        return unit.can_attack_ground
+    if proposal.must_attack is Domain.AIR:
+        return unit.can_attack_air
+    return True
+
+
+def _choose(proposal: Proposal, candidates: list[UnitView]) -> list[UnitView]:
+    limit = len(candidates) if proposal.count is None else max(0, proposal.count)
+    if proposal.minimum_power is None:
+        return candidates[:limit]
+    chosen: list[UnitView] = []
+    power = 0.0
+    for unit in candidates[:limit]:
+        if power >= proposal.minimum_power - _TOLERANCE:
+            break
+        chosen.append(unit)
+        power += unit.power
+    return chosen
+
+
+def _judge(
+    proposal: Proposal, chosen: list[UnitView], power: float, any_eligible: bool
+) -> tuple[GrantStatus, str]:
+    if proposal.minimum_power is not None:
+        if power >= proposal.minimum_power - _TOLERANCE:
+            return GrantStatus.FULL, "minimum_power_met"
+        short = "insufficient_power"
+    elif proposal.count is not None:
+        if len(chosen) >= proposal.count:
+            return GrantStatus.FULL, "count_met"
+        short = "insufficient_units"
+    else:
+        return GrantStatus.FULL, "every_free_unit"
+    if chosen:
+        return GrantStatus.PARTIAL, short
+    # Nothing at all could serve it, or everything that could was ranked above.
+    return GrantStatus.REJECTED, "eligible_units_taken" if any_eligible else "no_eligible_units"

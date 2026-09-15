@@ -32,7 +32,8 @@ SVG = "{http://www.w3.org/2000/svg}"
 def frame_layers(time: float = 0.0):
     frame = attention(
         time=time,
-        own_units=(unit(1, x=20, y=20), unit(2, UnitTypeId.SIEGETANK, 22, 20, power=2.8)),
+        # The Tank alone answers the Zergling, so both owners are drawn.
+        own_units=(unit(1, x=22, y=20), unit(2, UnitTypeId.SIEGETANK, 20, 20, power=2.8)),
         enemy_units=(
             unit(90, UnitTypeId.ZERGLING, 14, 11, power=0.9),
             unit(91, UnitTypeId.ROACH, 40, 40, power=1.5),

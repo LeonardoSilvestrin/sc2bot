@@ -25,7 +25,7 @@
   ]);
 
   const TONES = {
-    bad: new Set(["STABILIZE", "emergency_threat", "base_under_threat", "base_under_pressure", "air_attack_on_base", "stabilize_spend_on_army"]),
+    bad: new Set(["STABILIZE", "emergency_threat", "base_under_threat", "base_under_pressure", "air_attack_on_base", "ground_attackers_in_reach", "air_attackers_in_reach", "stabilize_spend_on_army"]),
     warn: new Set(["ATTACK", "opening_runs"]),
     ok: new Set(["BUILD_ADVANTAGE", "HOLD", "no_immediate_threat", "mineral_lines_saturated", "build_economy"]),
   };
@@ -569,7 +569,7 @@
     if (!state.proposals.length) add(behaviors, "div", "dt-hint", "none");
     for (const { item, status } of state.proposals) {
       const proposal = (status?.record?.data?.proposals ?? []).find((entry) => entry.proposal_id === item.id);
-      kv(behaviors, item.id, proposal ? `p ${na(proposal.priority)} · ${proposal.count ?? "all"} · ${proposal.command}` : status?.value);
+      kv(behaviors, item.id, proposal ? `p ${na(proposal.priority)} · ${proposal.minimum_power != null ? `≥${na(proposal.minimum_power, 1)} power` : proposal.count ?? "all"} · ${proposal.command}` : status?.value);
       if (proposal?.reason) add(behaviors, "div", "dt-hint", `reason: ${proposal.reason}`);
     }
     if (state.economy) kv(behaviors, "economy", state.economy.value);

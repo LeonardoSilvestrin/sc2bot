@@ -9,7 +9,7 @@ from sc2.position import Point2
 
 from bot.awareness import AwarenessModel
 
-from .fakes import MAIN, attention, seen_everywhere, unit
+from .fakes import MAIN, NATURAL, attention, seen_everywhere, unit
 
 
 def zergling(tag: int, x: float, y: float):
@@ -89,6 +89,7 @@ def test_an_attacker_beyond_reach_puts_no_pressure() -> None:
     assert state.bases[0].pressure == 0.0
     assert state.danger == 0.0
     assert state.most_threatened is None
+    assert state.incidents == ()
 
 
 def test_air_share_is_the_flying_part_of_the_pressure() -> None:
@@ -119,6 +120,70 @@ def test_cover_counts_our_army_at_the_base() -> None:
     assert base.cover == pytest.approx(math.exp(-0.5 * 1.5**2 / 14.0**2))
     assert 0.0 < base.balance < 1.0
     assert state.own_power == pytest.approx(1.0)
+
+
+def test_one_attacker_in_reach_of_two_bases_is_one_incident() -> None:
+    state = AwarenessModel().infer(
+        attention(bases=(MAIN, NATURAL), enemy_units=(zergling(7, 20, 12),))
+    )
+
+    (incident,) = state.incidents
+    assert (incident.incident_id, incident.contacts) == ("incident:7", (7,))
+    assert incident.affected_bases == (MAIN.base_id, NATURAL.base_id)
+    assert incident.center == Point2((20.0, 12.0))
+    assert incident.ground_power == pytest.approx(0.9)
+    assert incident.air_power == 0.0
+    assert incident.threat == pytest.approx(state.danger)
+    for base in state.bases:
+        assert dict(incident.pressure_by_base)[base.base_id] == pytest.approx(base.pressure)
+
+
+def test_attackers_chained_close_together_are_one_incident_named_by_its_lowest_tag() -> None:
+    state = AwarenessModel().infer(
+        attention(
+            bases=(MAIN, NATURAL),
+            enemy_units=(
+                zergling(5, 14, 10),
+                zergling(3, 24, 10),
+                zergling(8, 34, 10),
+                mutalisk(2, 10, 30),
+            ),
+        )
+    )
+
+    assert [(item.incident_id, item.contacts) for item in state.incidents] == [
+        ("incident:2", (2,)),
+        ("incident:3", (3, 5, 8)),
+    ]
+    air, ground = state.incidents
+    assert (air.air_power, air.ground_power) == (pytest.approx(1.2), 0.0)
+    assert ground.power == pytest.approx(2.7)
+    # Every attacker in reach is in exactly one incident: they add up to each base.
+    for base in state.bases:
+        assert sum(
+            dict(item.pressure_by_base).get(base.base_id, 0.0) for item in state.incidents
+        ) == pytest.approx(base.pressure)
+
+
+def test_an_incident_id_holds_splits_merges_and_is_remembered_by_rule() -> None:
+    model = AwarenessModel()
+
+    def incidents(time: float, *enemies):
+        state = model.infer(attention(time=time, enemy_units=enemies))
+        return [(item.incident_id, item.contacts) for item in state.incidents]
+
+    assert incidents(0.0, zergling(3, 14, 10), zergling(5, 20, 10)) == [("incident:3", (3, 5))]
+    assert incidents(1.0, zergling(3, 15, 11), zergling(5, 21, 11)) == [("incident:3", (3, 5))]
+    assert incidents(2.0, zergling(3, 14, 10), zergling(5, 14, 32)) == [
+        ("incident:3", (3,)),
+        ("incident:5", (5,)),
+    ]
+    assert incidents(3.0, zergling(3, 14, 10), zergling(5, 16, 12)) == [("incident:3", (3, 5))]
+    # Out of sight, the remembered contacts keep the incident, fading.
+    assert incidents(4.0) == [("incident:3", (3, 5))]
+    assert model.infer(attention(time=5.0)).incidents[0].confidence == pytest.approx(
+        math.exp(-2.0 / 20.0)
+    )
 
 
 def test_uncertainty_widens_possible_threat_but_not_credible_presence() -> None:

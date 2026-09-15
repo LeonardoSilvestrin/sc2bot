@@ -1,5 +1,12 @@
 from .field import InfluenceField, Source, accumulate, kernel, saturate
-from .model import AwarenessConfig, AwarenessModel, AwarenessState, BaseThreat, Contact
+from .model import (
+    AwarenessConfig,
+    AwarenessModel,
+    AwarenessState,
+    BaseThreat,
+    Contact,
+    ThreatIncident,
+)
 
 __all__ = [
     "AwarenessConfig",
@@ -9,6 +16,7 @@ __all__ = [
     "Contact",
     "InfluenceField",
     "Source",
+    "ThreatIncident",
     "accumulate",
     "kernel",
     "saturate",
