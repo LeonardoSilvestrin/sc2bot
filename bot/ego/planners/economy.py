@@ -29,7 +29,8 @@ WORKERS_PER_GAS_BUILDING = 12
 
 def plan(attention: AttentionState, strategy: StrategyState) -> EconomyPlan:
     bases = max(1, len(attention.bases))
-    saturated = attention.workers >= MINERAL_WORKERS_PER_BASE * bases
+    saturated_at = MINERAL_WORKERS_PER_BASE * bases
+    saturated = attention.workers >= saturated_at
     expand = strategy.economy >= 0.5 and saturated
     wanted_bases = bases + (1 if expand else 0)
     stabilizing = strategy.objective is Objective.STABILIZE
@@ -50,4 +51,10 @@ def plan(attention: AttentionState, strategy: StrategyState) -> EconomyPlan:
         freeflow=stabilizing,
         composition=COMPOSITION,
         reason=reason,
+        inputs=(
+            ("workers", float(attention.workers)),
+            ("bases", float(bases)),
+            ("saturated_at", float(saturated_at)),
+            ("strategy_economy", strategy.economy),
+        ),
     )

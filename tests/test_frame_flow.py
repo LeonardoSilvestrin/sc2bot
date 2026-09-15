@@ -120,6 +120,44 @@ def test_a_lowered_depot_in_the_attack_path_rises_and_the_log_says_why() -> None
     assert planned["data"]["inputs"]["enemy_near"] == 1.0
 
 
+def test_a_worker_inside_a_gas_building_does_not_flip_the_economy_plan() -> None:
+    # Counting listed units, 48 SCVs on three bases read 47 whenever one was
+    # inside a refinery, so the plan flipped every step or two (trace 788af1d,
+    # 362.9-367.3 s: expand with 5 gas against no expand with 4).
+    logger = FakeLogger()
+    bot = build_bot(attackers=0)
+    bot.townhalls = [
+        FakeUnit(
+            1 + index, UnitTypeId.COMMANDCENTER, x, y, dps=0.0, hit_points=1500.0, structure=True
+        )
+        for index, (x, y) in enumerate(MAP.expansions)
+    ]
+    bot.structures = list(bot.townhalls)
+    army = [unit for unit in bot.units if unit.type_id is not UnitTypeId.SCV]
+    scvs = [
+        FakeUnit(100 + index, UnitTypeId.SCV, 12, 8 + index % 4, dps=5.0) for index in range(48)
+    ]
+    layers = Layers(map_view=MAP, logs=Logs(logger))
+
+    plans, workers = [], []
+    for iteration in range(8):
+        # Every other step one SCV is inside a gas building.
+        inside = iteration % 2
+        bot.time = 300.0 + 0.5 * iteration
+        bot.units = [*scvs[inside:], *army]
+        bot.workers_in_gas = inside
+        frame = play_frame(bot, iteration, layers)
+        plans.append((frame.economy.bases, frame.economy.expand, frame.economy.gas))
+        workers.append(frame.attention.workers)
+
+    assert set(plans) == {(4, True, 5)}
+    assert set(workers) == {48}
+    (planned,) = logger.named("behavior.economy_planned")
+    assert planned["data"]["inputs"] == pytest.approx(
+        {"workers": 48.0, "bases": 3.0, "saturated_at": 48.0, "strategy_economy": 0.9}
+    )
+
+
 def test_units_return_to_the_core_army_when_the_attack_dies() -> None:
     bot = build_bot()
     layers = Layers(map_view=MAP, logs=Logs())

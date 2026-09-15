@@ -370,6 +370,7 @@ class Telemetry:
                     }
                     for unit_type, proportion, priority in economy.composition
                 ],
+                "inputs": dict(economy.inputs),
             },
         )
 

@@ -320,10 +320,17 @@ class FakeBot:
         )
         self.client = FakeDebugClient()
         self.registered: list[Any] = []
+        # SCVs inside a gas building: the game counts them, `units` does not list them.
+        self.workers_in_gas = 0
 
     @property
     def unit_tag_dict(self) -> dict[int, FakeUnit]:
         return {unit.tag: unit for unit in self.units}
+
+    @property
+    def supply_workers(self) -> int:
+        listed = sum(1 for unit in self.units if unit.type_id is UnitTypeId.SCV)
+        return listed + self.workers_in_gas
 
     def calculate_supply_cost(self, type_id: UnitTypeId) -> float:
         return _SUPPLY.get(type_id, 0.0)

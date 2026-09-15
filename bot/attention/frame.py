@@ -118,11 +118,10 @@ def observe(bot, iteration: int, map_view: MapView) -> AttentionState:
         vespene=int(bot.vespene),
         supply_used=float(bot.supply_used),
         supply_cap=float(bot.supply_cap),
-        workers=sum(
-            1
-            for unit in bot.units
-            if unit.type_id in WORKER_TYPES and unit.type_id is not UnitTypeId.MULE
-        ),
+        # The game's count, like Ares' BuildWorkers: a worker inside a gas
+        # building is missing from `bot.units` while it is there, so counting
+        # the listed ones flickers. Workers in production are not included.
+        workers=int(bot.supply_workers),
         opening=str(getattr(runner, "chosen_opening", "") or ""),
         opening_done=bool(getattr(runner, "build_completed", True)),
         own_units=_views(bot.units, supply, roles),

@@ -23,7 +23,8 @@ seleção (ver regra no prompt corrigido).
 | 6a | Ofensiva: assemble/advance | Pendente | — |
 | 6b | Ofensiva: engage/retreat/regroup | Pendente | — |
 | 6c | Ofensiva: search/finish | Pendente | — |
-| 7 | Macro resiliente (opening, supply, reposição, upgrades, spending) | Pendente | — |
+| 7a | Macro: plano econômico estável (contagem de workers) | Feito | `economy: count workers inside gas buildings` |
+| 7 | Macro resiliente (opening, supply/pending, reposição, upgrades, spending) | Pendente | — |
 | 8 | RegionState e micro | Pendente | — |
 
 ## 1. Gate de entrega — feito (`5ab151a`)
@@ -139,6 +140,58 @@ a distância.
   presas do lado de fora nem para o comando repetido enquanto um inimigo está em
   cima.
 - Viewer, overlay e SVG não mostram depots.
+
+## 7a. Plano econômico estável — feito
+
+Seleção: bug decisório reproduzível por trace (classe 1), à frente da fatia 5.
+`enemy_power = 0` sem visão leva `army` a 0,1, mas `army` só entra no gatilho
+de expansão (`economy ≥ 0,5`), que com `danger = 0` passa com qualquer
+`army_share`; nenhum trace mostra decisão mudada por isso.
+
+Evidência do problema: nos dois traces o plano alterna a cada 1–2 passos depois
+do opening — trace `788af1d`, 362,9–367,3 s, 15 eventos entre
+`bases=4, expand, gas=5` e `bases=3, build_economy, gas=4`. Contando como oscilação um plano que volta ao de
+dois eventos antes em ≤ 1 s, com o plano ativo: 13 em `788af1d` (363–423 s) e 92
+em `483722e` (358–1.212 s, espalhadas entre os minutos 5 e 20). Pela aritmética do plano, com 3 townhalls nos dois
+lados, `expand` e `gas=5` exigem 48 ≤ workers < 60 e o outro lado
+36 ≤ workers < 48: a contagem de workers cruza 48 e volta, com os townhalls
+fixos. O diagnóstico de `propostas.md` (contagem de townhalls oscilando) não
+confere com o trace. No opening, `gas` alterna do mesmo jeito com `bases` fixo.
+Causa: Attention contava workers em `bot.units`, e um SCV dentro da refinaria
+não aparece ali enquanto está lá. O teste novo, rodado antes da correção,
+reproduz o par exato `(3, False, 4)`/`(4, True, 5)`.
+
+**Feito**
+
+- Attention: `workers = bot.supply_workers`, a contagem do jogo, a mesma que
+  `BuildWorkers` e o build runner do Ares usam. Inclui workers dentro de
+  refinarias; exclui os em produção. Intel (`workers ≥ 16`) lê o mesmo campo.
+- Ego/economy: `EconomyPlan.inputs` com `workers`, `bases`, `saturated_at` e
+  `strategy_economy`. Nenhuma regra do plano mudou.
+- Logs: `behavior.economy_planned.inputs`; a assinatura do gate não inclui os
+  inputs, então o evento continua sendo escrito só quando o plano muda.
+- Testes: 48 SCVs em 3 bases, um deles dentro da refinaria a cada dois passos
+  por 8 passos → `workers = 48` em todos, plano `(4, expand, gas 5)` em todos e
+  exatamente um `behavior.economy_planned`, com os inputs.
+- Verificação local: 101 testes, ruff limpo.
+- Verificação da premissa numa partida local curta (script fora do repositório;
+  Persephone AIE, contra IA Terran VeryEasy, 0–480 s, 5.377 passos; o bot saiu
+  aos 480 s, então o resultado não conta): a contagem listada mudou 723 vezes
+  (337 quedas); `supply_workers` mudou 64 vezes (1 queda). A diferença entre as
+  duas ficou entre 0 e os SCVs atribuídos a gás em todos os passos. Recalculando
+  `(saturado, gas)` do plano por passo, houve 76 trocas com a contagem listada e
+  11 com `supply_workers`. Não é baseline nem medida de gameplay.
+
+**Não feito**
+
+- Nenhuma medida de gameplay: não se sabe quanto a oscilação atrasava expansão
+  ou gás, nem se a correção muda o resultado.
+- Bases: `townhalls` inclui CC em construção e exclui CC voando (trace
+  `483722e`, 93 s: `bases` 2 → 1 no opening); `ready + pending` explícito,
+  cooldown do alvo e interrupção do opening continuam na fatia 7.
+- Sem histerese nos limiares: uma mudança real da contagem exatamente no limiar
+  (morte e reposição de um worker) ainda troca o plano, uma vez por mudança.
+- A semântica de `army`/`risk` sem visão continua na fatia 5.
 
 ## Itens de `propostas.md` fora de qualquer fatia concluída
 

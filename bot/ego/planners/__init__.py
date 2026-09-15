@@ -70,6 +70,8 @@ class EconomyPlan:
     # (unit type, proportion, priority): lower priority numbers build first.
     composition: tuple[tuple[UnitTypeId, float, int], ...]
     reason: str
+    # The values the plan was computed from.
+    inputs: tuple[tuple[str, float], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
