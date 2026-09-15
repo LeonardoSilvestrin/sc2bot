@@ -217,12 +217,14 @@ class Telemetry:
                 "enemy_power": awareness.enemy_power,
                 "own_power": awareness.own_power,
                 "danger": awareness.danger,
+                "danger_now": awareness.danger_now,
                 "bases": [
                     {
                         "base_id": base.base_id,
                         "position": _xy(base.position),
                         "is_main": base.is_main,
                         "threat": base.threat,
+                        "recent_threat": base.recent_threat,
                         "pressure": base.pressure,
                         "cover": base.cover,
                         "balance": base.balance,

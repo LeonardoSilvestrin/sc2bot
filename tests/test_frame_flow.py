@@ -83,8 +83,12 @@ def test_a_frame_flows_from_attention_to_logs() -> None:
     assert set(command["data"]) >= {"attention", "awareness", "strategy", "reason", "priority"}
 
     # The causal trail of the defense: incident -> demand -> grant.
-    (incident,) = logger.named("awareness.updated")[0]["data"]["incidents"]
+    updated = logger.named("awareness.updated")[0]["data"]
+    (incident,) = updated["incidents"]
     assert incident["contacts"] == [900, 901, 902]
+    assert updated["danger"] == updated["danger_now"] == updated["bases"][0]["recent_threat"]
+    decided = logger.named("strategy.decided")[0]["data"]
+    assert decided["inputs"]["danger_now"] == updated["danger_now"]
     (proposed,) = [
         item
         for item in logger.named("behavior.proposed")[0]["data"]["proposals"]

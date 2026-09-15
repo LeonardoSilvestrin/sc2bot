@@ -42,6 +42,9 @@ class AwarenessConfig:
     full_pressure: float = 4.0
     # Attackers within this distance of one another are one incident.
     incident_link: float = 12.0
+    # tau of a base's remembered threat: an attack that thins out or steps back
+    # is still believed for a while, and a stronger one counts at once.
+    threat_memory: float = 20.0
     field_sigma: float = 7.0
     # Presence a structure lends the field, in Marines.
     structure_presence: float = 0.5
@@ -55,6 +58,7 @@ class AwarenessConfig:
             "base_reach",
             "full_pressure",
             "incident_link",
+            "threat_memory",
             "field_sigma",
         ):
             if getattr(self, name) <= 0.0:
@@ -89,6 +93,9 @@ class BaseThreat:
     cover: float
     # S(pressure / full_pressure)
     threat: float
+    # max(threat, last recent_threat * exp(-dt / threat_memory)); the faded part
+    # is forgotten below forget_below.
+    recent_threat: float
     # Share of the pressure that flies.
     air_share: float
     # Pressure-weighted position of the attack; None without pressure.
@@ -154,14 +161,20 @@ class AwarenessState:
 
     @property
     def danger(self) -> float:
+        """The most any base is remembered threatened."""
+
+        return max((base.recent_threat for base in self.bases), default=0.0)
+
+    @property
+    def danger_now(self) -> float:
         return max((base.threat for base in self.bases), default=0.0)
 
     @property
     def most_threatened(self) -> BaseThreat | None:
-        threatened = [base for base in self.bases if base.pressure > 0.0]
+        threatened = [base for base in self.bases if base.recent_threat > 0.0]
         if not threatened:
             return None
-        return max(threatened, key=lambda base: (base.threat, base.base_id))
+        return max(threatened, key=lambda base: (base.recent_threat, base.base_id))
 
     def base(self, base_id: str) -> BaseThreat | None:
         return next((base for base in self.bases if base.base_id == base_id), None)
@@ -171,6 +184,8 @@ class AwarenessModel:
     def __init__(self, config: AwarenessConfig | None = None) -> None:
         self.config = config or AwarenessConfig()
         self._contacts: dict[int, Contact] = {}
+        # (time, recent_threat) by base id.
+        self._threats: dict[str, tuple[float, float]] = {}
         self._lattice: tuple[Point2, ...] | None = None
         self._xs = np.zeros(0)
         self._ys = np.zeros(0)
@@ -180,10 +195,11 @@ class AwarenessModel:
         army = tuple(
             unit for unit in attention.own_units if not unit.is_worker and unit.power > 0.0
         )
+        bases = tuple(self._base_threat(base, contacts, army) for base in attention.bases)
         return AwarenessState(
             time=attention.time,
             contacts=contacts,
-            bases=tuple(self._base_threat(base, contacts, army) for base in attention.bases),
+            bases=self._remember_threats(attention.time, bases),
             own_power=sum(unit.power for unit in army),
             enemy_power=sum(
                 contact.power * contact.confidence
@@ -276,11 +292,33 @@ class AwarenessModel:
             pressure=pressure,
             cover=cover,
             threat=1.0 - math.exp(-pressure / config.full_pressure),
+            # Until `_remember_threats` adds what the base remembers.
+            recent_threat=1.0 - math.exp(-pressure / config.full_pressure),
             air_share=air / pressure if pressure > 0.0 else 0.0,
             center=(
                 Point2((weighted_x / pressure, weighted_y / pressure)) if pressure > 0.0 else None
             ),
         )
+
+    def _remember_threats(
+        self, now: float, bases: tuple[BaseThreat, ...]
+    ) -> tuple[BaseThreat, ...]:
+        """Each base's threat, held against its own fading memory of the last frames."""
+
+        config = self.config
+        remembered: list[BaseThreat] = []
+        threats: dict[str, tuple[float, float]] = {}
+        for base in bases:
+            then, last = self._threats.get(base.base_id, (now, 0.0))
+            faded = last * math.exp(-max(0.0, now - then) / config.threat_memory)
+            if faded < config.forget_below:
+                faded = 0.0
+            recent = max(base.threat, faded)
+            threats[base.base_id] = (now, recent)
+            remembered.append(replace(base, recent_threat=recent))
+        # A base that is gone takes its memory with it.
+        self._threats = threats
+        return tuple(remembered)
 
     def _incidents(
         self, bases: tuple[BaseView, ...], contacts: tuple[Contact, ...]

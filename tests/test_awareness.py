@@ -83,6 +83,33 @@ def test_base_pressure_grows_with_proximity_and_numbers() -> None:
     assert many.center == Point2((16.0, 10.5))
 
 
+def test_a_base_remembers_its_threat_fading_and_a_stronger_attack_counts_at_once() -> None:
+    model = AwarenessModel()
+    tau = model.config.threat_memory
+    x, y = MAIN.position
+    first = model.infer(
+        attention(time=0.0, enemy_units=tuple(unit(tag, x=x, y=y) for tag in range(1, 5)))
+    )
+    lull = model.infer(attention(time=5.0, dead_tags=range(1, 5)))
+    later = model.infer(attention(time=10.0))
+    stronger = model.infer(
+        attention(time=11.0, enemy_units=tuple(unit(tag, x=x, y=y) for tag in range(11, 17)))
+    )
+    model.infer(attention(time=12.0, dead_tags=range(11, 17)))
+    faded = stronger.bases[0].threat * math.exp(-(80.0 - 11.0) / tau)
+    gone = model.infer(attention(time=80.0))
+
+    peak = 1.0 - math.exp(-1.0)
+    assert first.bases[0].threat == first.bases[0].recent_threat == pytest.approx(peak)
+    assert lull.bases[0].threat == lull.danger_now == 0.0
+    assert lull.danger == pytest.approx(peak * math.exp(-5.0 / tau))
+    assert lull.most_threatened is not None and lull.most_threatened.base_id == MAIN.base_id
+    assert later.danger == pytest.approx(peak * math.exp(-10.0 / tau))
+    assert stronger.danger == stronger.bases[0].threat == pytest.approx(1.0 - math.exp(-1.5))
+    assert faded < model.config.forget_below
+    assert gone.danger == 0.0 and gone.most_threatened is None
+
+
 def test_an_attacker_beyond_reach_puts_no_pressure() -> None:
     state = AwarenessModel().infer(attention(enemy_units=(zergling(1, 50, 50),)))
 

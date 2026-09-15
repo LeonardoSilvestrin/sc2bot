@@ -18,6 +18,7 @@ seleção (ver regra no prompt corrigido).
 | 1 | Gate de entrega (pytest/ruff antes do artefato) | Feito | `5ab151a` |
 | 2 | Harness/baseline de partidas | Pendente | — |
 | 3 | Contrato defensivo mínimo + `ThreatIncident` | Feito | `defense: one incident, one demand, one budget` |
+| 3a | Ameaça lembrada por base (objetivo não abandona ataque em pausa) | Feito | `awareness: remember each base's threat` |
 | 4 | Wall bidirecional | Feito | `wall: raise depots when ground enemies come near` |
 | 5 | Desconhecido conservador mínimo | Pendente | — |
 | 6a | Ofensiva: assemble/advance | Pendente | — |
@@ -93,6 +94,72 @@ sobre o cenário do teste novo, reproduz o mesmo trio.
   anterior): um atacante no limite do alcance pede o poder inteiro. Contatos
   lembrados pedem `poder·confiança`, que decai — o desconhecido conservador é a
   fatia 5.
+
+## 3a. Ameaça lembrada por base — feito
+
+Seleção: bug decisório reproduzível por trace (classe 1). A regra de objetivo
+(`strategy.py`) e a ameaça por base não mudaram desde `483722e`.
+
+Evidência do problema: no trace `483722e`, 21 trocas de objetivo em 772 s, 6
+janelas com menos de 10 s. Duas saídas de STABILIZE voltaram por
+`emergency_threat` depois de 4,3 s (1.017,1 s) e 2,1 s (1.318,7 s). Em 1.318,7 s,
+depois de 44 s em STABILIZE, `danger` caiu de 0,63 para 0,33 num passo quando
+atacantes morreram. O rally foi da base (37,5; 34,5) para a frente
+(126,75; 34,18), ~90 células, e voltou 2,1 s depois, com 26 contatos novos
+chegando. Em 1.017,1 s, `danger` ficou ≤ 0,45 por 3,5 s e subiu de novo. A
+decisão lia só a ameaça do frame.
+
+Direção: corrigir a estimativa, não pôr espera na decisão. Um "calmo por N s"
+foi descartado pela preferência do projeto por crença persistente com
+histerese só como última camada.
+
+Replay (script fora do repositório): a regra de objetivo reaplicada à série de
+ameaças por base do log, em passos de 0,089 s, reproduz as 21 trocas nos mesmos
+instantes. Com memória τ: 5 s e 10 s mantêm as duas voltas por emergência; 20 s
+dá 13 trocas, 2 janelas < 10 s, nenhuma volta por emergência e 6 s em
+STABILIZE sem ameaça alguma; 30 s traz uma volta por emergência de novo.
+Escolhido τ = 20 s, o mesmo tempo da memória de unidades.
+
+Partida nova com o código de `3769f04` (Persephone AIE, contra Zerg VeryHard
+Macro, 900 s; o bot saiu aos 900 s, sem resultado): 8 trocas e nenhuma volta
+por emergência, ou seja, o caso não aconteceu nessa partida. O replay com
+τ = 20 s mostra o custo: janelas < 10 s de 2 para 1, e STABILIZE sem ameaça
+alguma de 4 s para 18 s. Depois que um ataque termina, o exército volta à frente
+mais tarde: de 0,6 até 0,45 leva 5,8 s; de 0,9, 13,9 s.
+
+**Feito**
+
+- Awareness: `AwarenessConfig.threat_memory` (20 s, validado; muda o hash de
+  `configs.awareness`). `BaseThreat.recent_threat =
+  max(threat, anterior · exp(-Δt / threat_memory))`; a parte decaída é esquecida
+  abaixo de `forget_below`, e uma base que some leva a memória. `danger` passa a
+  ser o maior `recent_threat`, `danger_now` o maior `threat`, e `most_threatened`
+  escolhe pela `recent_threat`, então o rally de STABILIZE fica na base lembrada.
+- Strategy: nenhuma regra mudou; lê o `danger` lembrado e registra `danger_now`.
+- Outros leitores de `danger` passam a ver a memória: prioridade da defesa
+  (`0,5 + 0,5·defense`, só enquanto há incidente), `army`, overlay, SVG e viewer.
+- Logs: `awareness.updated.danger_now`, `bases[].recent_threat`;
+  `strategy.decided.inputs.danger_now`.
+- Testes: base sem atacantes lembra `pico · exp(-Δt/τ)` aos 5 s e aos 10 s, com
+  `danger_now = 0` e a mesma base em `most_threatened`; um ataque mais forte conta
+  no mesmo frame; a memória é esquecida abaixo de `forget_below`. Strategy com
+  Awareness real: 44 s de ataque, 3 de 4 atacantes morrem, 2 s depois chegam 5,
+  aos 60 s todos morrem → STABILIZE e rally na base até o primeiro frame (0,5 s)
+  depois de `60 + τ·ln(pico / 0,45)`. Com o `bot/` anterior esse teste falha:
+  o objetivo sai aos 44,5 s. Fluxo de frame: `danger`, `danger_now`,
+  `recent_threat` e `inputs.danger_now` no log.
+- Verificação local: 103 testes, ruff limpo.
+
+**Não feito**
+
+- Nenhuma medida de gameplay; τ escolhido só por replay de dois logs.
+- STABILIZE de exatamente 8 s quando a ameaça de entrada é baixa: entrando a 0,57,
+  a memória cai a 0,45 em 4,7 s, antes do dwell (replay mantém 1.213,4 s).
+- Rally alternando entre bases de ameaça quase igual (1.089–1.093 s, 0,80 contra
+  0,79): argmax com desempate por id, uma rajada no trace.
+- Reforços ainda não vistos (a segunda onda): desconhecido conservador, fatia 5.
+- Uma base destruída perde a memória; a prioridade da defesa elevada pela
+  memória não foi medida.
 
 ## 4. Wall bidirecional — feito
 

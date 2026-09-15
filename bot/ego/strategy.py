@@ -96,6 +96,7 @@ class StrategyModel:
             rally=self._rally(attention, awareness, objective),
             inputs=(
                 ("danger", danger),
+                ("danger_now", awareness.danger_now),
                 ("army_share", army_share),
                 ("own_power", awareness.own_power),
                 ("enemy_power", awareness.enemy_power),

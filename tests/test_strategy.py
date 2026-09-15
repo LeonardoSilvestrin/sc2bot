@@ -1,13 +1,21 @@
 from __future__ import annotations
 
+import math
+
 import numpy as np
 import pytest
 from sc2.position import Point2
 
-from bot.awareness import AwarenessState, BaseThreat, InfluenceField
-from bot.ego.strategy import Objective, StrategyModel
+from bot.awareness import (
+    AwarenessConfig,
+    AwarenessModel,
+    AwarenessState,
+    BaseThreat,
+    InfluenceField,
+)
+from bot.ego.strategy import Objective, StrategyConfig, StrategyModel
 
-from .fakes import MAIN, MAP, NATURAL, attention
+from .fakes import MAIN, MAP, NATURAL, attention, unit
 
 EMPTY_FIELD = InfluenceField((), 4.0, np.zeros(0), np.zeros(0), np.zeros(0))
 
@@ -23,6 +31,7 @@ def awareness(
             pressure=1.0 if danger > 0.0 and index == 0 else 0.0,
             cover=0.0,
             threat=danger if index == 0 else 0.0,
+            recent_threat=danger if index == 0 else 0.0,
             air_share=0.0,
             center=Point2((base.position.x + 5.0, base.position.y))
             if danger > 0.0 and index == 0
@@ -112,6 +121,44 @@ def test_preferences_stay_in_the_unit_interval(danger: float, own: float, enemy:
     for value in (state.defense, state.army, state.economy, state.risk):
         assert 0.0 <= value <= 1.0
     assert state.army + state.economy == pytest.approx(1.0)
+
+
+def test_a_lull_in_an_attack_does_not_send_the_army_away() -> None:
+    # Trace 483722e, 1318.7 s: after 44 s of STABILIZE danger fell from 0.63 to
+    # 0.33 in one step as attackers died, the rally went ~90 cells to the front,
+    # and an emergency brought it back 2.1 s later as 26 more arrived.
+    awareness, strategy = AwarenessModel(), StrategyModel()
+    x, y = MAIN.position
+    first_wave = tuple(unit(tag, x=x, y=y) for tag in range(1, 5))
+    straggler = first_wave[-1:]
+    second_wave = straggler + tuple(unit(tag, x=x, y=y) for tag in range(10, 15))
+    decided = []
+    for step in range(181):
+        now = 0.5 * step
+        if now <= 44.0:
+            enemies, dead = first_wave, ()
+        elif now <= 46.0:
+            enemies, dead = straggler, (1, 2, 3)
+        elif now <= 60.0:
+            enemies, dead = second_wave, ()
+        else:
+            enemies, dead = (), (4, 10, 11, 12, 13, 14)
+        frame = attention(time=now, enemy_units=enemies, dead_tags=dead)
+        decided.append(strategy.decide(frame, awareness.infer(frame)))
+
+    left = [state.time for state in decided if state.objective is Objective.BUILD_ADVANTAGE]
+    assert left and left[0] > 60.0
+    # Once the attack is over, the army goes back when the remembered threat of
+    # the second wave has faded to the switch point, on the first frame after.
+    peak = 1.0 - math.exp(-6.0 / AwarenessConfig().full_pressure)
+    switch_point = (1.0 - StrategyConfig().switch_margin) / 2.0
+    calm_at = 60.0 + AwarenessConfig().threat_memory * math.log(peak / switch_point)
+    assert calm_at <= left[0] < calm_at + 0.5
+    lull = decided[89]
+    assert lull.time == 44.5
+    assert dict(lull.inputs)["danger_now"] == pytest.approx(1.0 - math.exp(-0.25))
+    assert lull.defense == pytest.approx((1.0 - math.exp(-1.0)) * math.exp(-0.5 / 20.0))
+    assert all(state.rally == MAIN.position for state in decided if state.time < left[0])
 
 
 def test_the_same_awareness_decides_the_same_strategy() -> None:
