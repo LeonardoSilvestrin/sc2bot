@@ -145,7 +145,8 @@ class Telemetry:
         self._record_perf(attention.time, timings)
 
     def _record_structures(self, now: float, structures: StructurePlan) -> None:
-        if not self._structures.admit((structures.lower, structures.reason), now=now):
+        signature = (structures.lower, structures.raise_, structures.reason)
+        if not self._structures.admit(signature, now=now):
             return
         self._event(
             "behavior.structures_planned",
@@ -153,6 +154,7 @@ class Telemetry:
             now,
             {
                 "lower": list(structures.lower),
+                "raise": list(structures.raise_),
                 "reason": structures.reason,
                 "inputs": dict(structures.inputs),
             },

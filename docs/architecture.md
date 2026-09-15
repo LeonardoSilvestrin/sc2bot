@@ -29,9 +29,9 @@ Todo o resto lê estados imutáveis e é testável sem `AresBot`.
 | ATTENTION | [bot/attention/](../bot/attention/) | `MapView`, `AttentionState` | Percepção. `map.py`/`topology.py`: no `on_start`, `read_map` congela lattice, expansões e `MapTopology` (regiões, passagens/chokes, adjacência, regiões dos starts) — "o mapa físico é assim". `frame.py`: `observe` lê o frame (recursos, unidades próprias e inimigas visíveis ordenadas por tag, bases, mortes, visibilidade) e classifica unidades (`is_army`). Não interpreta valor, ameaça ou controle. |
 | AWARENESS | [bot/awareness/](../bot/awareness/) | `AwarenessState` | Pinta o mapa ao longo da partida. Memória de contatos com confiança `exp(-idade/τ)` e incerteza `min(cap, v·idade)`; esquece por morte confirmada, posição vista vazia (após carência) ou confiança < piso. Pressão por base, incidentes de ameaça (`ThreatIncident`) e campo de influência. Descreve; não escolhe margem nem prioridade. |
 | EGO / strategy | [bot/ego/strategy.py](../bot/ego/strategy.py) | `StrategyState` | `STABILIZE` vs `BUILD_ADVANTAGE` com margem, permanência mínima e emergência; preferências contínuas `defense`, `army`, `economy`, `risk`; ponto de rally. |
-| EGO / planners | [bot/ego/planners/](../bot/ego/planners/) | `Proposal`, `Command`, `EconomyPlan`, `StructurePlan` | Decidem o que deve ser feito (tarefa, alvo, prioridade, requisitos) sem nomear unidades. `defense`: uma demanda `ATTACK` por incidente, com um orçamento de poder repartido entre a parte aérea e a terrestre. `core_army`: `HOLD` no rally, fallback com todas as unidades livres. `intel`: `SCOUT` de um SCV pela main inimiga no early game. `economy`: plano para os macro behaviors do Ares depois do opening. `structure_control`: quais depots abaixar. |
+| EGO / planners | [bot/ego/planners/](../bot/ego/planners/) | `Proposal`, `Command`, `EconomyPlan`, `StructurePlan` | Decidem o que deve ser feito (tarefa, alvo, prioridade, requisitos) sem nomear unidades. `defense`: uma demanda `ATTACK` por incidente, com um orçamento de poder repartido entre a parte aérea e a terrestre. `core_army`: `HOLD` no rally, fallback com todas as unidades livres. `intel`: `SCOUT` de um SCV pela main inimiga no early game. `economy`: plano para os macro behaviors do Ares depois do opening. `structure_control`: quais depots levantar e quais abaixar. |
 | BODY / engine | [bot/body/engine.py](../bot/body/engine.py) | `EngineResult` | Só alocação. Ordena por `(-priority, owner, proposal_id)` e concede cada unidade de exército a no máximo uma proposta. Restrições duras vêm antes de qualquer ordem: `unit_types`, `must_attack` (`GROUND`/`AIR`) e, num pedido de poder, `power > 0`. Entre as elegíveis livres, as que já eram da proposta primeiro, depois as mais próximas. Pede-se `minimum_power` (unidades até atingir o poder), `count` ou todas as livres; cada `Grant` traz `power`, `status` (`FULL`/`PARTIAL`/`REJECTED`) e `reason`. Workers só são elegíveis para propostas que pedem um tipo de worker, só saindo da mineração (role `GATHERING`) ou já sendo da proposta. `released` lista quem perdeu o dono. Não comanda nada. |
-| BODY / behaviors | [bot/body/behaviors/](../bot/body/behaviors/) | — | Executam os grants, despachados por `Command`. `defense` (`ATTACK`): `AMove`, Siege Tank decide o siege sem ficar preso ao ponto. `core_army` (`HOLD`): `PathUnitToTarget` até o ponto, `AMove` com inimigo a ≤ 10, Siege Tank fica sieged perto do ponto. `scout` (`SCOUT`): tira o worker da mineral, role `SCOUTING`, path sem evitar perigo. `economy`: workers liberados voltam a `GATHERING`, `Mining` e `MacroPlan`. `structure_control`: abaixa os depots do plano. `combat` guarda o que `defense` e `core_army` compartilham. |
+| BODY / behaviors | [bot/body/behaviors/](../bot/body/behaviors/) | — | Executam os grants, despachados por `Command`. `defense` (`ATTACK`): `AMove`, Siege Tank decide o siege sem ficar preso ao ponto. `core_army` (`HOLD`): `PathUnitToTarget` até o ponto, `AMove` com inimigo a ≤ 10, Siege Tank fica sieged perto do ponto. `scout` (`SCOUT`): tira o worker da mineral, role `SCOUTING`, path sem evitar perigo. `economy`: workers liberados voltam a `GATHERING`, `Mining` e `MacroPlan`. `structure_control`: abaixa e levanta os depots do plano. `combat` guarda o que `defense` e `core_army` compartilham. |
 | LOGS | [bot/logs/](../bot/logs/) | — | Log JSONL, snapshots SVG do campo e overlay in-game. Nenhum deles muda decisão nem derruba partida. |
 
 ## Matemática
@@ -65,8 +65,11 @@ Todo o resto lê estados imutáveis e é testável sem `AresBot`.
   partir da direção do nosso start. Um waypoint conta como visto na primeira vez em visão;
   `priority = waypoints não vistos / total`. Termina com a rota vista, o scout morto (não
   repõe) ou 90 s depois de sair; o SCV volta para a mineração.
-- StructureControl: abaixa todo depot pronto e levantado sem inimigo terrestre visível a
-  ≤ 6,5; nunca levanta.
+- StructureControl: um depot pronto sobe no frame em que um inimigo terrestre visível está a
+  ≤ `raise_reach` (8) dele e desce quando nenhum esteve a essa distância por `lower_after` (3 s),
+  com a última ameaça guardada por tag. Voadores não contam. Subir empurra nossas unidades de cima
+  para a borda mais próxima (contadas em `friendly_on_raising`); um inimigo em cima impede a
+  subida, e o comando se repete enquanto o plano pedir.
 
 ## Visualização
 
@@ -103,7 +106,7 @@ as fatias de tempo são `attention`, `awareness`, `strategy`, `planners`, `engin
 | `strategy.decided` | strategy | troca de objetivo, heartbeat | `objective`, `previous`, `since`, `reason`, `defense`, `army`, `economy`, `risk`, `rally`, `inputs`, `scores` |
 | `behavior.proposed` | behaviors | o conjunto ranqueado de propostas muda | `proposals[]` {`proposal_id`, `owner`, `priority`, `command`, `target`, `count`, `minimum_power`, `must_attack`, `demand_id`, `unit_types`, `reason`, `inputs`} |
 | `behavior.economy_planned` | behaviors | o plano muda | `active`, `workers`, `gas`, `bases`, `expand`, `freeflow`, `reason`, `composition[]` |
-| `behavior.structures_planned` | behaviors | depots a abaixar ou razão mudam | `lower`, `reason` (`no_raised_depots`, `enemy_near`, `no_enemy_near`), `inputs` {`raised`, `held_up`, `ground_enemies`} |
+| `behavior.structures_planned` | behaviors | depots a abaixar/levantar ou razão mudam | `lower`, `raise`, `reason` (`no_depots`, `enemy_near`, `enemy_recently_near`, `no_enemy_near`), `inputs` {`depots`, `lowered`, `enemy_near`, `recently_near`, `ground_enemies`, `friendly_on_raising`, `nearest_ground_enemy` (só com depot e inimigo terrestre)} |
 | `engine.granted` | engine | alguma concessão muda | `grants[]` {`proposal_id`, `owner`, `priority`, `requested`, `minimum_power`, `granted`, `granted_power`, `status`, `reason`, `tags`, `types`}, `transfers[]` {`tag`, `type`, `from`, `to`}, `unassigned` |
 | `engine.commanded` | engine | comando, alvo (grade de 3) ou unidades de uma concessão mudam | `proposal_id`, `owner`, `command`, `target`, `tags`, `types`, `priority`, `reason`, `demand_id`, `inputs`, `strategy` {`objective`, `reason`, `defense`, `risk`}, `awareness` {`danger`, `contacts`, `enemy_power`}, `attention` {`army_units`, `visible_enemy_units`}; `tags: []` e `reason: no_units_granted` quando a concessão acaba |
 | `logs.frame_perf` | logs | heartbeat | `frames`, `last_ms`, `max_ms` por camada |
@@ -126,6 +129,7 @@ as fatias de tempo são `attention`, `awareness`, `strategy`, `planners`, `engin
 ## Fora desta fatia
 
 Belief probabilístico de exército, forças agregadas, avaliação dinâmica de território,
-scouting depois do early game, levantar depots, map control, harass, preempção com compromisso e ciclo de siege próprio da
-defesa. Na defesa: distinguir scout, worker rush e ataque; histerese de admissão/liberação; alcance por pathing em vez de
+scouting depois do early game, map control, harass, preempção com compromisso e ciclo de siege próprio da
+defesa. No wall: antecipar o fechamento por contato lembrado ou pela rota, alcance pela velocidade do inimigo, distinguir
+os depots do wall e política para unidades nossas empurradas ou presas do lado de fora. Na defesa: distinguir scout, worker rush e ataque; histerese de admissão/liberação; alcance por pathing em vez de
 distância; eventos explícitos de linhagem de incidentes; `desired_power`, suitability e custos de assignment. Cada um entra quando um problema de gameplay medido pedir.

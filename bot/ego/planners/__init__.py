@@ -78,3 +78,5 @@ class StructurePlan:
     lower: tuple[int, ...]
     reason: str
     inputs: tuple[tuple[str, float], ...] = ()
+    # Supply depots to raise, by tag.
+    raise_: tuple[int, ...] = ()

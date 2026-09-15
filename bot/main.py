@@ -22,9 +22,9 @@ from bot.ego.planners import (
     core_army,
     defense,
     economy,
-    structure_control,
 )
 from bot.ego.planners.intel import Intel
+from bot.ego.planners.structure_control import StructureControl
 from bot.ego.strategy import StrategyModel, StrategyState
 from bot.logs import Logs
 
@@ -40,10 +40,15 @@ class Layers:
     awareness: AwarenessModel = field(default_factory=AwarenessModel)
     strategy: StrategyModel = field(default_factory=StrategyModel)
     intel: Intel = field(default_factory=Intel)
+    structure_control: StructureControl = field(default_factory=StructureControl)
     engine: Engine = field(default_factory=Engine)
 
     def configs(self) -> dict[str, object]:
-        return {"awareness": self.awareness.config, "strategy": self.strategy.config}
+        return {
+            "awareness": self.awareness.config,
+            "strategy": self.strategy.config,
+            "structure_control": self.structure_control.config,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,7 +74,7 @@ def play_frame(bot, iteration: int, layers: Layers) -> Frame:
     proposals += core_army.plan(attention, awareness, strategy)
     proposals += layers.intel.plan(attention)
     economy_plan = economy.plan(attention, strategy)
-    structures = structure_control.plan(attention)
+    structures = layers.structure_control.plan(attention)
     laps.mark("planners")
     result = layers.engine.allocate(attention, proposals)
     laps.mark("engine")

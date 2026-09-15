@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 from ares.behaviors.combat import CombatManeuver
 from ares.behaviors.macro import MacroPlan, Mining
+from sc2.ids.ability_id import AbilityId
 from sc2.ids.unit_typeid import UnitTypeId
 
 from bot.attention import observe, read_map
@@ -100,6 +101,23 @@ def test_a_frame_flows_from_attention_to_logs() -> None:
     assert (grant["status"], grant["reason"]) == ("FULL", "minimum_power_met")
     assert grant["granted_power"] >= grant["minimum_power"]
     assert grant["tags"] == list(defended)
+
+
+def test_a_lowered_depot_in_the_attack_path_rises_and_the_log_says_why() -> None:
+    logger = FakeLogger()
+    bot = build_bot()
+    depot = FakeUnit(
+        2, UnitTypeId.SUPPLYDEPOTLOWERED, 16, 14, dps=0.0, hit_points=400.0, structure=True
+    )
+    bot.structures.append(depot)
+
+    frame = play_frame(bot, 0, Layers(map_view=MAP, logs=Logs(logger)))
+
+    assert frame.structures.raise_ == (2,)
+    assert depot.commands == [AbilityId.MORPH_SUPPLYDEPOT_RAISE]
+    (planned,) = logger.named("behavior.structures_planned")
+    assert (planned["data"]["raise"], planned["data"]["reason"]) == ([2], "enemy_near")
+    assert planned["data"]["inputs"]["enemy_near"] == 1.0
 
 
 def test_units_return_to_the_core_army_when_the_attack_dies() -> None:

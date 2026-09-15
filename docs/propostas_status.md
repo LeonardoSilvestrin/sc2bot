@@ -18,7 +18,7 @@ seleção (ver regra no prompt corrigido).
 | 1 | Gate de entrega (pytest/ruff antes do artefato) | Feito | `5ab151a` |
 | 2 | Harness/baseline de partidas | Pendente | — |
 | 3 | Contrato defensivo mínimo + `ThreatIncident` | Feito | `defense: one incident, one demand, one budget` |
-| 4 | Wall bidirecional | Pendente | — |
+| 4 | Wall bidirecional | Feito | `wall: raise depots when ground enemies come near` |
 | 5 | Desconhecido conservador mínimo | Pendente | — |
 | 6a | Ofensiva: assemble/advance | Pendente | — |
 | 6b | Ofensiva: engage/retreat/regroup | Pendente | — |
@@ -93,10 +93,57 @@ sobre o cenário do teste novo, reproduz o mesmo trio.
   lembrados pedem `poder·confiança`, que decai — o desconhecido conservador é a
   fatia 5.
 
+## 4. Wall bidirecional — feito
+
+Evidência do problema: o planner só considerava `SUPPLYDEPOT` levantado e o
+behavior só conhecia `MORPH_SUPPLYDEPOT_LOWER`. Sobre um depot abaixado com um
+Zergling a 2 células, o planner de `eb43a59` devolve `lower=()` e
+`no_raised_depots`, sem ordem nenhuma. Nos dois traces locais todo depot é
+abaixado e sai do plano no frame seguinte, inclusive aos 138 s com 20 inimigos
+terrestres visíveis; o log não trazia posição de depot, então o trace não mostra
+a distância.
+
+**Feito**
+
+- Ego: `StructureControl` passa a ter estado. Depot pronto, levantado ou
+  abaixado, sobe no frame em que um inimigo terrestre visível está a
+  ≤ `raise_reach` (8 células) e só desce quando nenhum esteve a essa distância
+  por `lower_after` (3 s). A última ameaça fica por tag e é podada quando o depot
+  some. Voadores não contam. `StructureConfig` é validada e entra no fingerprint
+  (`configs.structure_control`).
+- Body: `MORPH_SUPPLYDEPOT_RAISE` para `StructurePlan.raise_`.
+- Logs: `behavior.structures_planned` com `raise`; razões `no_depots`,
+  `enemy_near`, `enemy_recently_near`, `no_enemy_near`; inputs `depots`,
+  `lowered`, `enemy_near`, `recently_near`, `ground_enemies`,
+  `friendly_on_raising`, `nearest_ground_enemy`.
+- Testes: depot abaixado sobe com inimigo exatamente a `raise_reach`, só o
+  ameaçado; voador em cima e terrestre a `raise_reach + 0,5` não o levantam;
+  ainda de pé a `lower_after − 0,1` s, desce em exatamente `lower_after`; um
+  Zergling cruzando a borda do alcance a cada 0,5 s por 10 s gera exatamente uma
+  subida (0 s) e uma descida (12,25 s = último frame dentro + 3 s); unidades
+  terrestres nossas sobre um depot que sobe são contadas; depot inacabado é
+  ignorado; configuração inválida é rejeitada; o behavior só ordena os depots do
+  plano; fluxo de frame attention → plano → `RAISE` → log.
+- Verificação local: 100 testes, ruff limpo.
+
+**Não feito**
+
+- Nenhuma partida: sem evidência de gameplay. `raise_reach` e `lower_after` não
+  foram calibrados; o tempo de morph do depot não foi verificado.
+- Antecipar o fechamento por contato lembrado ou pela rota/choke; alcance
+  proporcional à velocidade do inimigo.
+- Distinguir os depots do wall: qualquer depot sobe com inimigo terrestre perto.
+- Tráfego amigo: no SC2, subir empurra nossas unidades de cima para a borda mais
+  próxima (talvez para fora do wall), e um inimigo em cima impede a subida. A
+  fatia só registra `friendly_on_raising`; não há política para unidades nossas
+  presas do lado de fora nem para o comando repetido enquanto um inimigo está em
+  cima.
+- Viewer, overlay e SVG não mostram depots.
+
 ## Itens de `propostas.md` fora de qualquer fatia concluída
 
 - P0.2: distinguir scout, worker rush e ataque; histerese de admissão/liberação
-  da defesa; wall.
+  da defesa; antecipação e tráfego amigo do wall.
 - P0.3–P0.4: toda a ofensiva e a macro resiliente.
 - P1.1–P1.5 e P2: scouting recorrente, RegionState, micro, contrato completo de
   Proposal/Engine (desired_power, suitability, custos, preemption), builds por
