@@ -4,6 +4,7 @@ import math
 
 import numpy as np
 import pytest
+from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
 from bot.awareness import (
@@ -159,6 +160,34 @@ def test_a_lull_in_an_attack_does_not_send_the_army_away() -> None:
     assert dict(lull.inputs)["danger_now"] == pytest.approx(1.0 - math.exp(-0.25))
     assert lull.defense == pytest.approx((1.0 - math.exp(-1.0)) * math.exp(-0.5 / 20.0))
     assert all(state.rally == MAIN.position for state in decided if state.time < left[0])
+
+
+def test_the_fog_is_no_advantage_but_a_fresh_look_at_the_whole_army_is() -> None:
+    # Trace 3769f04, 240-560 s: no enemy army in sight, so enemy_power 0,
+    # army_share 1.0 and risk 1.0 -- until 45 Marines of it arrived at 575 s.
+    x, y = MAIN.position
+    own = tuple(unit(tag, x=x, y=y, power=4.7) for tag in range(100, 110))
+    config = AwarenessConfig()
+    expected = config.army_growth * (500.0 - config.army_onset)
+    margin = StrategyConfig().commit_margin
+
+    def inputs(*enemies) -> dict[str, float]:
+        frame = attention(time=500.0, own_units=own, enemy_units=enemies)
+        return dict(StrategyModel().decide(frame, AwarenessModel().infer(frame)).inputs)
+
+    fog = inputs()
+    # 26 Roaches far from our bases: 39 Marines, a little more than expected by now.
+    whole = inputs(*(unit(tag, UnitTypeId.ROACH, 50, 50, power=1.5) for tag in range(1, 27)))
+
+    assert fog["enemy_power"] == 0.0
+    assert fog["enemy_uncertainty"] == pytest.approx(expected)
+    assert fog["planned_enemy_power"] == pytest.approx((1.0 + margin) * expected)
+    assert fog["army_share"] == pytest.approx(47.0 / (47.0 + (1.0 + margin) * expected))
+    assert 0.0 < fog["army_share"] < 0.5
+    assert whole["enemy_uncertainty"] == 0.0
+    assert whole["planned_enemy_power"] == pytest.approx(39.0)
+    assert whole["army_share"] == pytest.approx(47.0 / 86.0)
+    assert whole["army_share"] > 0.5
 
 
 def test_the_same_awareness_decides_the_same_strategy() -> None:

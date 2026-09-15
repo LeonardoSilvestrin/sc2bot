@@ -215,6 +215,11 @@ class Telemetry:
                     contact.visible for contact in awareness.contacts
                 ),
                 "enemy_power": awareness.enemy_power,
+                "seen_enemy_power": awareness.seen_enemy_power,
+                "expected_enemy_power": awareness.expected_enemy_power,
+                "estimated_enemy_power": awareness.estimated_enemy_power,
+                "enemy_uncertainty": awareness.enemy_uncertainty,
+                "enemy_coverage": awareness.enemy_coverage,
                 "own_power": awareness.own_power,
                 "danger": awareness.danger,
                 "danger_now": awareness.danger_now,

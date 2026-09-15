@@ -7,6 +7,12 @@ vision without it, or once its confidence has faded out. From those beliefs
 Awareness reads the pressure on each of our bases, the threat incidents -- the
 attackers in reach of our bases that belong together -- and a coarse influence
 field.
+
+The enemy army is believed to exist far longer than it is believed to be where
+it was seen: a unit seen alive and not seen die fades with ``army_memory``, and
+an enemy never seen is still expected to have an army that grows with game
+time. The estimate is the larger of the two; the part of it no contact places
+is its uncertainty.
 """
 
 from __future__ import annotations
@@ -18,7 +24,7 @@ import numpy as np
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
-from bot.attention import AttentionState, BaseView, UnitView
+from bot.attention import AttentionState, BaseView, UnitView, is_army
 
 from .field import InfluenceField, Source, build_field
 
@@ -45,6 +51,15 @@ class AwarenessConfig:
     # tau of a base's remembered threat: an attack that thins out or steps back
     # is still believed for a while, and a stronger one counts at once.
     threat_memory: float = 20.0
+    # tau of the belief that an enemy army unit seen alive, and not seen die,
+    # still exists: an army does not vanish into the fog, but a unit can die
+    # unseen or run out of timed life.
+    army_memory: float = 180.0
+    # The army, in Marines, expected of an enemy with no sighting: it grows
+    # this much per second from `army_onset` on, up to `army_cap`.
+    army_growth: float = 0.1
+    army_onset: float = 120.0
+    army_cap: float = 100.0
     field_sigma: float = 7.0
     # Presence a structure lends the field, in Marines.
     structure_presence: float = 0.5
@@ -65,6 +80,12 @@ class AwarenessConfig:
                 raise ValueError(f"{name} must be positive")
         if not 0.0 < self.forget_below < 1.0:
             raise ValueError("forget_below must be between 0 and 1")
+        # Otherwise a contact could place more of the army than is believed alive.
+        if self.army_memory < self.unit_memory:
+            raise ValueError("army_memory must not be shorter than unit_memory")
+        for name in ("army_growth", "army_onset", "army_cap"):
+            if getattr(self, name) < 0.0:
+                raise ValueError(f"{name} must not be negative")
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,10 +175,37 @@ class AwarenessState:
     contacts: tuple[Contact, ...]
     bases: tuple[BaseThreat, ...]
     own_power: float
+    # sum(power * confidence) of the remembered enemy army: the part of it a
+    # contact still places. Workers and structures are no army.
     enemy_power: float
     influence: InfluenceField = field(compare=False)
     # By lowest member tag.
     incidents: tuple[ThreatIncident, ...] = ()
+    # sum(power * exp(-age / army_memory)) of the enemy army units seen alive
+    # and not seen die.
+    seen_enemy_power: float = 0.0
+    # The army an enemy is expected to have by now without any sighting.
+    expected_enemy_power: float = 0.0
+
+    @property
+    def estimated_enemy_power(self) -> float:
+        """The enemy army believed to exist: everything seen alive, and never
+        less than an enemy is expected to have by now."""
+
+        return max(self.enemy_power, self.seen_enemy_power, self.expected_enemy_power)
+
+    @property
+    def enemy_uncertainty(self) -> float:
+        """The part of the estimate no contact places."""
+
+        return self.estimated_enemy_power - self.enemy_power
+
+    @property
+    def enemy_coverage(self) -> float:
+        """The share of the estimate a contact places; 1 while nothing is believed."""
+
+        estimated = self.estimated_enemy_power
+        return self.enemy_power / estimated if estimated > 0.0 else 1.0
 
     @property
     def danger(self) -> float:
@@ -186,12 +234,16 @@ class AwarenessModel:
         self._contacts: dict[int, Contact] = {}
         # (time, recent_threat) by base id.
         self._threats: dict[str, tuple[float, float]] = {}
+        # (last seen, power) of every enemy army unit believed alive, by tag.
+        self._army: dict[int, tuple[float, float]] = {}
         self._lattice: tuple[Point2, ...] | None = None
         self._xs = np.zeros(0)
         self._ys = np.zeros(0)
 
     def infer(self, attention: AttentionState) -> AwarenessState:
+        config = self.config
         contacts = self._remember(attention)
+        seen_enemy = self._remember_army(attention)
         army = tuple(
             unit for unit in attention.own_units if not unit.is_worker and unit.power > 0.0
         )
@@ -201,13 +253,19 @@ class AwarenessModel:
             contacts=contacts,
             bases=self._remember_threats(attention.time, bases),
             own_power=sum(unit.power for unit in army),
+            # The army memory outlasts every contact of an army unit.
             enemy_power=sum(
                 contact.power * contact.confidence
                 for contact in contacts
-                if not contact.is_structure
+                if contact.tag in self._army
             ),
             influence=self._field(attention, contacts, army),
             incidents=self._incidents(attention.bases, contacts),
+            seen_enemy_power=seen_enemy,
+            expected_enemy_power=min(
+                config.army_cap,
+                config.army_growth * max(0.0, attention.time - config.army_onset),
+            ),
         )
 
     def _remember(self, attention: AttentionState) -> tuple[Contact, ...]:
@@ -250,6 +308,27 @@ class AwarenessModel:
             )
         self._contacts = remembered
         return tuple(remembered[tag] for tag in sorted(remembered))
+
+    def _remember_army(self, attention: AttentionState) -> float:
+        """sum(power * exp(-age / army_memory)) of the enemy army units seen
+        alive and not seen die, wherever they went since."""
+
+        config = self.config
+        now = attention.time
+        army = {tag: seen for tag, seen in self._army.items() if tag not in attention.dead_tags}
+        for unit in attention.enemy_units:
+            if is_army(unit) and unit.power > 0.0:
+                army[unit.tag] = (now, unit.power)
+        self._army = {}
+        power = 0.0
+        for tag in sorted(army):
+            seen_at, unit_power = army[tag]
+            existence = math.exp(-max(0.0, now - seen_at) / config.army_memory)
+            if existence < config.forget_below:
+                continue
+            self._army[tag] = army[tag]
+            power += unit_power * existence
+        return power
 
     def _pressure(self, contact: Contact, position: Point2) -> float | None:
         """power * confidence * K of a contact at a base; None beyond its reach."""

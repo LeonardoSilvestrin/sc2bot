@@ -27,8 +27,8 @@ Todo o resto lê estados imutáveis e é testável sem `AresBot`.
 | Camada | Arquivo | Estado público | O que faz |
 | --- | --- | --- | --- |
 | ATTENTION | [bot/attention/](../bot/attention/) | `MapView`, `AttentionState` | Percepção. `map.py`/`topology.py`: no `on_start`, `read_map` congela lattice, expansões e `MapTopology` (regiões, passagens/chokes, adjacência, regiões dos starts) — "o mapa físico é assim". `frame.py`: `observe` lê o frame (recursos, workers pela contagem do jogo, unidades próprias e inimigas visíveis ordenadas por tag, bases, mortes, visibilidade) e classifica unidades (`is_army`). Não interpreta valor, ameaça ou controle. |
-| AWARENESS | [bot/awareness/](../bot/awareness/) | `AwarenessState` | Pinta o mapa ao longo da partida. Memória de contatos com confiança `exp(-idade/τ)` e incerteza `min(cap, v·idade)`; esquece por morte confirmada, posição vista vazia (após carência) ou confiança < piso. Pressão por base com a ameaça lembrada (`recent_threat`, τ = `threat_memory`), incidentes de ameaça (`ThreatIncident`) e campo de influência. Descreve; não escolhe margem nem prioridade. |
-| EGO / strategy | [bot/ego/strategy.py](../bot/ego/strategy.py) | `StrategyState` | `STABILIZE` vs `BUILD_ADVANTAGE` com margem, permanência mínima e emergência; preferências contínuas `defense`, `army`, `economy`, `risk`; ponto de rally. |
+| AWARENESS | [bot/awareness/](../bot/awareness/) | `AwarenessState` | Pinta o mapa ao longo da partida. Memória de contatos com confiança `exp(-idade/τ)` e incerteza `min(cap, v·idade)`; esquece por morte confirmada, posição vista vazia (após carência) ou confiança < piso. Pressão por base com a ameaça lembrada (`recent_threat`, τ = `threat_memory`), incidentes de ameaça (`ThreatIncident`), estimativa do exército inimigo (conhecido, visto vivo, esperado sem avistamento, incerteza e cobertura) e campo de influência. Descreve; não escolhe margem nem prioridade. |
+| EGO / strategy | [bot/ego/strategy.py](../bot/ego/strategy.py) | `StrategyState` | `STABILIZE` vs `BUILD_ADVANTAGE` com margem, permanência mínima e emergência; preferências contínuas `defense`, `army`, `economy`, `risk`, com o inimigo planejado como estimativa mais `commit_margin` da incerteza; ponto de rally. |
 | EGO / planners | [bot/ego/planners/](../bot/ego/planners/) | `Proposal`, `Command`, `EconomyPlan`, `StructurePlan` | Decidem o que deve ser feito (tarefa, alvo, prioridade, requisitos) sem nomear unidades. `defense`: uma demanda `ATTACK` por incidente, com um orçamento de poder repartido entre a parte aérea e a terrestre. `core_army`: `HOLD` no rally, fallback com todas as unidades livres. `intel`: `SCOUT` de um SCV pela main inimiga no early game. `economy`: plano para os macro behaviors do Ares depois do opening. `structure_control`: quais depots levantar e quais abaixar. |
 | BODY / engine | [bot/body/engine.py](../bot/body/engine.py) | `EngineResult` | Só alocação. Ordena por `(-priority, owner, proposal_id)` e concede cada unidade de exército a no máximo uma proposta. Restrições duras vêm antes de qualquer ordem: `unit_types`, `must_attack` (`GROUND`/`AIR`) e, num pedido de poder, `power > 0`. Entre as elegíveis livres, as que já eram da proposta primeiro, depois as mais próximas. Pede-se `minimum_power` (unidades até atingir o poder), `count` ou todas as livres; cada `Grant` traz `power`, `status` (`FULL`/`PARTIAL`/`REJECTED`) e `reason`. Workers só são elegíveis para propostas que pedem um tipo de worker, só saindo da mineração (role `GATHERING`) ou já sendo da proposta. `released` lista quem perdeu o dono. Não comanda nada. |
 | BODY / behaviors | [bot/body/behaviors/](../bot/body/behaviors/) | — | Executam os grants, despachados por `Command`. `defense` (`ATTACK`): `AMove`, Siege Tank decide o siege sem ficar preso ao ponto. `core_army` (`HOLD`): `PathUnitToTarget` até o ponto, `AMove` com inimigo a ≤ 10, Siege Tank fica sieged perto do ponto. `scout` (`SCOUT`): tira o worker da mineral, role `SCOUTING`, path sem evitar perigo. `economy`: workers liberados voltam a `GATHERING`, `Mining` e `MacroPlan`. `structure_control`: abaixa e levanta os depots do plano. `combat` guarda o que `defense` e `core_army` compartilham. |
@@ -44,6 +44,15 @@ Todo o resto lê estados imutáveis e é testável sem `AresBot`.
   τ = 20 s; a parte que decaiu é esquecida abaixo de `forget_below`, e uma base que some leva a memória.
   `danger` é o maior `recent_threat`, `danger_now` o maior `threat`, e `most_threatened` a base de maior
   `recent_threat`. Um ataque que rareia ou recua continua acreditado; um mais forte conta no mesmo frame.
+- Exército inimigo, em Marines. Workers e estruturas não são exército.
+  - `enemy_power` (conhecido): `Σ poder·confiança` dos contatos de exército, a parte que um contato ainda localiza.
+  - `seen_enemy_power` (visto vivo): `Σ poder·exp(-idade / army_memory)` das unidades de exército vistas vivas e não
+    vistas morrer, τ = 180 s; sai com a morte confirmada ou abaixo de `forget_below`, não quando a última posição
+    volta à visão vazia. Como `army_memory ≥ unit_memory`, conhecido ≤ visto vivo.
+  - `expected_enemy_power` (esperado sem avistamento): `min(army_cap, army_growth · max(0, t − army_onset))`,
+    0,1 Marine/s a partir de 120 s, teto 100.
+  - `estimated_enemy_power = max(conhecido, visto vivo, esperado)`, `enemy_uncertainty = estimado − conhecido`,
+    `enemy_coverage = conhecido / estimado` (1 enquanto o estimado é 0).
 - Campo por ponto do lattice:
   - `threat`: presença possível, σ alargado pela incerteza;
   - `enemy`: presença crível, sem alargamento;
@@ -52,6 +61,9 @@ Todo o resto lê estados imutáveis e é testável sem `AresBot`.
 - Strategy: scores `STABILIZE = danger`, `BUILD_ADVANTAGE = 1 - danger`; troca só com
   vantagem ≥ `switch_margin` e `minimum_dwell` cumprido (STABILIZE pula a permanência
   com `danger ≥ emergency_danger`). Empate inicial é conservador.
+- Preferências: inimigo planejado `= estimated_enemy_power + commit_margin · enemy_uncertainty` (margem 0,5);
+  `army_share = own / (own + planejado)` (0,5 sem poder algum); `army = clamp(0,3 + 0,5·danger + 0,4·(0,5 − army_share))`,
+  `economy = 1 − army`, `risk = army_share · (1 − danger)`. Com `danger = 0`, `economy ≥ 0,5` com qualquer `army_share`.
 - Incidente: atacantes (poder > 0) ao alcance de alguma base, ligados em cadeia a
   ≤ `incident_link` (12) um do outro, quantas bases tocarem. `incident_id = incident:<menor tag>`:
   vale enquanto esse contato estiver no grupo; numa divisão, a parte sem ele leva a própria menor
@@ -110,8 +122,8 @@ as fatias de tempo são `attention`, `awareness`, `strategy`, `planners`, `engin
 | `map.topology_built` | attention | `on_start` | `regions`, `passages`, `chokes`, `expansions`, `unresolved_expansions`, `own_start_region`, `enemy_start_region` |
 | `game.ended` | logs | `on_end` | `result` |
 | `attention.observed` | attention | bases, fim do opening ou inimigos à vista mudam; amostra a cada 5 s | `minerals`, `vespene`, `supply_used`, `supply_cap`, `workers`, `army_units`, `army_supply`, `army_power`, `visible_enemy_units`, `visible_enemy_structures`, `bases`, `opening`, `opening_done` |
-| `awareness.updated` | awareness | mudança de contatos/poder/ameaça por base, heartbeat | `contacts`, `visible_contacts`, `enemy_power`, `own_power`, `danger`, `danger_now`, `bases[]` {`base_id`, `position`, `is_main`, `threat`, `recent_threat`, `pressure`, `cover`, `balance`, `air_share`, `center`}, `incidents[]` {`incident_id`, `contacts`, `center`, `power`, `ground_power`, `air_power`, `confidence`, `threat`, `pressure_by_base`} (escrito também quando os membros de um incidente mudam), `strongest_contacts[]`, `field` {`samples`, `friendly`, `contested`, `enemy`, `threatened`, `max_threat`} |
-| `strategy.decided` | strategy | troca de objetivo, heartbeat | `objective`, `previous`, `since`, `reason`, `defense`, `army`, `economy`, `risk`, `rally`, `inputs` {`danger`, `danger_now`, `army_share`, `own_power`, `enemy_power`}, `scores` |
+| `awareness.updated` | awareness | mudança de contatos/poder/ameaça por base, heartbeat | `contacts`, `visible_contacts`, `enemy_power`, `seen_enemy_power`, `expected_enemy_power`, `estimated_enemy_power`, `enemy_uncertainty`, `enemy_coverage`, `own_power`, `danger`, `danger_now`, `bases[]` {`base_id`, `position`, `is_main`, `threat`, `recent_threat`, `pressure`, `cover`, `balance`, `air_share`, `center`}, `incidents[]` {`incident_id`, `contacts`, `center`, `power`, `ground_power`, `air_power`, `confidence`, `threat`, `pressure_by_base`} (escrito também quando os membros de um incidente mudam), `strongest_contacts[]`, `field` {`samples`, `friendly`, `contested`, `enemy`, `threatened`, `max_threat`} |
+| `strategy.decided` | strategy | troca de objetivo, heartbeat | `objective`, `previous`, `since`, `reason`, `defense`, `army`, `economy`, `risk`, `rally`, `inputs` {`danger`, `danger_now`, `army_share`, `own_power`, `enemy_power`, `estimated_enemy_power`, `enemy_uncertainty`, `planned_enemy_power`}, `scores` |
 | `behavior.proposed` | behaviors | o conjunto ranqueado de propostas muda | `proposals[]` {`proposal_id`, `owner`, `priority`, `command`, `target`, `count`, `minimum_power`, `must_attack`, `demand_id`, `unit_types`, `reason`, `inputs`} |
 | `behavior.economy_planned` | behaviors | o plano muda | `active`, `workers`, `gas`, `bases`, `expand`, `freeflow`, `reason`, `composition[]`, `inputs` {`workers`, `bases`, `saturated_at`, `strategy_economy`} |
 | `behavior.structures_planned` | behaviors | depots a abaixar/levantar ou razão mudam | `lower`, `raise`, `reason` (`no_depots`, `enemy_near`, `enemy_recently_near`, `no_enemy_near`), `inputs` {`depots`, `lowered`, `enemy_near`, `recently_near`, `ground_enemies`, `friendly_on_raising`, `nearest_ground_enemy` (só com depot e inimigo terrestre)} |
@@ -142,4 +154,6 @@ defesa. No wall: antecipar o fechamento por contato lembrado ou pela rota, alcan
 os depots do wall e política para unidades nossas empurradas ou presas do lado de fora. Na defesa: distinguir scout, worker rush e ataque; histerese de admissão/liberação; alcance por pathing em vez de
 distância; eventos explícitos de linhagem de incidentes; `desired_power`, suitability e custos de assignment. Na economia:
 bases por `ready + pending` explícito, CC voando, cooldown do alvo e interrupção do opening. Na estratégia: rally alternando
-entre bases de ameaça quase igual e reforços que ainda não foram vistos. Cada um entra quando um problema de gameplay medido pedir.
+entre bases de ameaça quase igual e reforços que ainda não foram vistos (o objetivo lê só `danger`, não a estimativa). No desconhecido: estimativa por produção ou economia vista, informação ampla que mostre
+um exército menor que o esperado, scouting recorrente, calibração de `army_growth`/`army_cap`, o gatilho ofensivo que vai usar
+a estimativa e renomear `risk`. Cada um entra quando um problema de gameplay medido pedir.

@@ -9,7 +9,9 @@ from sc2.ids.ability_id import AbilityId
 from sc2.ids.unit_typeid import UnitTypeId
 
 from bot.attention import observe, read_map
+from bot.awareness import AwarenessConfig
 from bot.ego.planners import core_army, defense
+from bot.ego.strategy import StrategyConfig
 from bot.logs import Logs, OverlayConfig, SnapshotConfig
 from bot.main import Layers, play_frame
 
@@ -143,7 +145,7 @@ def test_a_worker_inside_a_gas_building_does_not_flip_the_economy_plan() -> None
     ]
     layers = Layers(map_view=MAP, logs=Logs(logger))
 
-    plans, workers = [], []
+    plans, workers, economies = [], [], []
     for iteration in range(8):
         # Every other step one SCV is inside a gas building.
         inside = iteration % 2
@@ -153,13 +155,57 @@ def test_a_worker_inside_a_gas_building_does_not_flip_the_economy_plan() -> None
         frame = play_frame(bot, iteration, layers)
         plans.append((frame.economy.bases, frame.economy.expand, frame.economy.gas))
         workers.append(frame.attention.workers)
+        economies.append(frame.strategy.economy)
 
     assert set(plans) == {(4, True, 5)}
     assert set(workers) == {48}
     (planned,) = logger.named("behavior.economy_planned")
     assert planned["data"]["inputs"] == pytest.approx(
-        {"workers": 48.0, "bases": 3.0, "saturated_at": 48.0, "strategy_economy": 0.9}
+        {"workers": 48.0, "bases": 3.0, "saturated_at": 48.0, "strategy_economy": economies[0]}
     )
+
+
+def test_the_fog_does_not_let_a_threatened_bot_expand_as_if_the_enemy_had_no_army() -> None:
+    # Trace 3769f04, 240-560 s: with no enemy army in sight enemy_power was 0 and
+    # army_share 1.0 until 45 Marines of it arrived at 575 s. Under that belief
+    # a Zergling at the main barely moved the plan: a saturated bot with 9
+    # Marines of army at 10 minutes still expanded, as if that Zergling were
+    # the whole enemy army.
+    logger = FakeLogger()
+    bot = build_bot(attackers=1)
+    bot.time = 600.0
+    bot.townhalls = [
+        FakeUnit(
+            1 + index, UnitTypeId.COMMANDCENTER, x, y, dps=0.0, hit_points=1500.0, structure=True
+        )
+        for index, (x, y) in enumerate(MAP.expansions)
+    ]
+    bot.structures = list(bot.townhalls)
+    army = [unit for unit in bot.units if unit.type_id is not UnitTypeId.SCV]
+    scvs = [
+        FakeUnit(100 + index, UnitTypeId.SCV, 12, 8 + index % 4, dps=5.0) for index in range(48)
+    ]
+    bot.units = [*scvs, *army]
+
+    frame = play_frame(bot, 0, Layers(map_view=MAP, logs=Logs(logger)))
+
+    assert frame.awareness.danger > 0.0
+    assert frame.strategy.economy < 0.5
+    assert (frame.economy.expand, frame.economy.reason) == (False, "build_economy")
+    config = AwarenessConfig()
+    expected = config.army_growth * (600.0 - config.army_onset)
+    updated = logger.named("awareness.updated")[0]["data"]
+    assert updated["enemy_power"] == pytest.approx(frame.awareness.incidents[0].power)
+    assert updated["expected_enemy_power"] == pytest.approx(expected)
+    assert updated["estimated_enemy_power"] == pytest.approx(expected)
+    assert updated["enemy_uncertainty"] == pytest.approx(expected - updated["enemy_power"])
+    decided = logger.named("strategy.decided")[0]["data"]["inputs"]
+    assert decided["planned_enemy_power"] == pytest.approx(
+        expected + StrategyConfig().commit_margin * updated["enemy_uncertainty"]
+    )
+    (planned,) = logger.named("behavior.economy_planned")
+    assert planned["data"]["inputs"]["strategy_economy"] == pytest.approx(frame.strategy.economy)
+    assert planned["data"]["expand"] is False
 
 
 def test_units_return_to_the_core_army_when_the_attack_dies() -> None:

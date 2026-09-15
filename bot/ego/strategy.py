@@ -39,12 +39,15 @@ class StrategyConfig:
     emergency_danger: float = 0.6
     # How far in front of the forward base the army holds.
     rally_forward: float = 6.0
+    # The enemy army planned against is its estimate plus this share of the
+    # part no contact places.
+    commit_margin: float = 0.5
 
     def __post_init__(self) -> None:
         if not 0.0 <= self.switch_margin < 1.0:
             raise ValueError("switch_margin must be in [0, 1)")
-        if self.minimum_dwell < 0.0 or self.rally_forward < 0.0:
-            raise ValueError("minimum_dwell and rally_forward must not be negative")
+        if min(self.minimum_dwell, self.rally_forward, self.commit_margin) < 0.0:
+            raise ValueError("minimum_dwell, rally_forward and commit_margin must not be negative")
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,7 +79,12 @@ class StrategyModel:
     def decide(self, attention: AttentionState, awareness: AwarenessState) -> StrategyState:
         now = attention.time
         danger = awareness.danger
-        total_power = awareness.own_power + awareness.enemy_power
+        # The fog is no advantage: the army no contact places still counts, with a margin.
+        planned_enemy = (
+            awareness.estimated_enemy_power
+            + self.config.commit_margin * awareness.enemy_uncertainty
+        )
+        total_power = awareness.own_power + planned_enemy
         army_share = awareness.own_power / total_power if total_power > 0.0 else 0.5
         scores = {Objective.STABILIZE: danger, Objective.BUILD_ADVANTAGE: 1.0 - danger}
         self._select(scores, danger, now)
@@ -100,6 +108,9 @@ class StrategyModel:
                 ("army_share", army_share),
                 ("own_power", awareness.own_power),
                 ("enemy_power", awareness.enemy_power),
+                ("estimated_enemy_power", awareness.estimated_enemy_power),
+                ("enemy_uncertainty", awareness.enemy_uncertainty),
+                ("planned_enemy_power", planned_enemy),
             ),
             scores=tuple((item.value, scores[item]) for item in Objective),
         )

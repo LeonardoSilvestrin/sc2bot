@@ -20,7 +20,7 @@ seleção (ver regra no prompt corrigido).
 | 3 | Contrato defensivo mínimo + `ThreatIncident` | Feito | `defense: one incident, one demand, one budget` |
 | 3a | Ameaça lembrada por base (objetivo não abandona ataque em pausa) | Feito | `awareness: remember each base's threat` |
 | 4 | Wall bidirecional | Feito | `wall: raise depots when ground enemies come near` |
-| 5 | Desconhecido conservador mínimo | Pendente | — |
+| 5 | Desconhecido conservador mínimo | Feito | `awareness: believe the unseen enemy army` |
 | 6a | Ofensiva: assemble/advance | Pendente | — |
 | 6b | Ofensiva: engage/retreat/regroup | Pendente | — |
 | 6c | Ofensiva: search/finish | Pendente | — |
@@ -92,8 +92,7 @@ sobre o cenário do teste novo, reproduz o mesmo trio.
   fingerprint de configuração (`incident_link` entra, via Awareness).
 - O poder do incidente não é atenuado pela distância à base (era, na fórmula
   anterior): um atacante no limite do alcance pede o poder inteiro. Contatos
-  lembrados pedem `poder·confiança`, que decai — o desconhecido conservador é a
-  fatia 5.
+  lembrados pedem `poder·confiança`, que decai; a fatia 5 não mudou a defesa.
 
 ## 3a. Ameaça lembrada por base — feito
 
@@ -157,7 +156,8 @@ mais tarde: de 0,6 até 0,45 leva 5,8 s; de 0,9, 13,9 s.
   a memória cai a 0,45 em 4,7 s, antes do dwell (replay mantém 1.213,4 s).
 - Rally alternando entre bases de ameaça quase igual (1.089–1.093 s, 0,80 contra
   0,79): argmax com desempate por id, uma rajada no trace.
-- Reforços ainda não vistos (a segunda onda): desconhecido conservador, fatia 5.
+- Reforços ainda não vistos (a segunda onda): a fatia 5 estima o exército não
+  visto, mas o objetivo lê só `danger`.
 - Uma base destruída perde a memória; a prioridade da defesa elevada pela
   memória não foi medida.
 
@@ -207,6 +207,106 @@ a distância.
   presas do lado de fora nem para o comando repetido enquanto um inimigo está em
   cima.
 - Viewer, overlay e SVG não mostram depots.
+
+## 5. Desconhecido conservador mínimo — feito
+
+Seleção: nenhum bug decisório novo reproduzível. O trace de `6455342`
+(Incorporeal AIE, contra Zerg) termina aos 404 s em `Result.Defeat` sem inimigo
+visível, com 4 bases e `danger` 0 no último evento; não conta como resultado.
+Entre as fatias de gameplay pendentes, esta é a menor com pré-requisitos prontos,
+e a corrigenda a põe antes de qualquer gatilho ofensivo.
+
+Evidência do problema:
+
+- Trace `3769f04` (Persephone AIE, contra Zerg VeryHard Macro): de 240 s a 560 s,
+  `strategy.decided` registra `enemy_power = 0`, `army_share = 1,00` e
+  `risk = 1,00` sem nenhum exército inimigo avistado. Aos 565,6 s entra em
+  STABILIZE e aos 575,6 s tem `enemy_power` 45,3 contra `own_power` 45,5.
+- Trace `6455342`: de 95 s a 180 s, `enemy_power` 9,3–10,4 vinha de ~20 Drones
+  minerando na main inimiga, vistos pelo SCV scout (`strongest_contacts` só
+  com DRONE). Com `own_power` entre 0 e 1, dava `army_share` 0–0,09 e
+  `economy` 0,44–0,48, abaixo do gate de expansão. Awareness somava workers ao
+  poder inimigo, e `own_power` não os soma.
+- Nenhum trace mostra decisão mudada por isso: o opening ainda rodava, e com
+  `danger = 0` o gate `economy ≥ 0,5` passa com qualquer `army_share`.
+
+**Feito**
+
+- Awareness, só descrição, em Marines:
+  - `enemy_power` (conhecido) passa a somar só contatos de exército; workers e
+    estruturas saem.
+  - `seen_enemy_power` (visto vivo): unidades de exército vistas vivas e não
+    vistas morrer, por tag, com `exp(-idade / army_memory)` (180 s). Saem com a
+    morte confirmada ou abaixo de `forget_below`, não quando a última posição
+    volta à visão vazia.
+  - `expected_enemy_power` (esperado sem avistamento):
+    `min(army_cap, army_growth · max(0, t − army_onset))`, com 0,1 Marine/s a
+    partir de 120 s e teto 100.
+  - `estimated_enemy_power = max(conhecido, visto vivo, esperado)`,
+    `enemy_uncertainty = estimado − conhecido` e
+    `enemy_coverage = conhecido / estimado` (1 enquanto o estimado é 0).
+  - `AwarenessConfig` valida `army_memory ≥ unit_memory` (garante conhecido ≤
+    visto vivo) e `army_growth`, `army_onset`, `army_cap` ≥ 0; o hash de
+    `configs.awareness` muda.
+- Strategy (política): `commit_margin` 0,5, validado; o hash de
+  `configs.strategy` muda. O inimigo planejado é
+  `estimado + commit_margin · incerteza`, e `army_share = own / (own + planejado)`
+  alimenta `army`, `economy` e `risk` com as mesmas fórmulas. Objetivo, `danger`
+  e rally não mudaram.
+- Logs: `awareness.updated` com `seen_enemy_power`, `expected_enemy_power`,
+  `estimated_enemy_power`, `enemy_uncertainty` e `enemy_coverage`;
+  `strategy.decided.inputs` com `estimated_enemy_power`, `enemy_uncertainty` e
+  `planned_enemy_power`. Overlay e SVG mostram o estimado ao lado do conhecido.
+- Testes:
+  - 16 Drones, uma Hatchery e uma Spine não são exército: só o Zergling conta.
+  - Um exército fora de vista: o contato decai com τ = 20 s, e o visto vivo
+    com 180 s continua depois que a posição volta à visão vazia. As mortes
+    confirmadas descontam no frame; o visto vivo é esquecido abaixo de
+    `forget_below`; conhecido ≤ visto vivo em todo passo.
+  - Sem avistamento, o esperado vale 0, 20, 48 e 100 aos 60, 320, 600 e 2.000 s,
+    e é todo incerteza.
+  - Um avistamento acima do esperado deixa incerteza 0 e cobertura 1.
+  - Configuração inválida é rejeitada.
+  - Strategy aos 500 s com 47 de exército: na névoa, `army_share` fica em
+    47 / (47 + 1,5 · 38) = 0,45, acima de 0 e abaixo de 0,5; com 39 de exército
+    inimigo à vista, fica em 47/86 > 0,5.
+  - Fluxo de frame aos 600 s: saturado em 3 bases, 8,9 de exército, um Zergling
+    na main e nenhum exército à vista → `economy < 0,5`, sem expansão, e a
+    trilha estimado → planejado → `strategy_economy` no log.
+  - O teste do gás lê a `economy` do próprio frame.
+- Com o `bot/` de `6455342` (extraído com `git archive`, testes novos por cima),
+  o fluxo de frame falha na decisão: `economy` 0,767 e expansão. Os testes de
+  Awareness falham por falta dos campos. Mesmos cenários, antes → depois:
+  Drones + Zergling, `enemy_power` 9,7 → 0,9; névoa aos 500 s, `army_share` e
+  `risk` 1,0 → 0,452; 600 s sob ameaça, `economy` 0,767 com expansão → 0,448 com
+  `build_economy`.
+- Verificação local: 116 testes, ruff limpo.
+- Replay aproximado (script fora do repositório): a regra de preferências foi
+  reaplicada às amostras de `strategy.decided` depois do opening. O visto vivo
+  não se reconstrói pelo log, então estimado = max(`enemy_power` do log,
+  esperado). O gate de expansão muda em 5 de 64 amostras em `3769f04` (565,6;
+  599,8; 645,7; 836,2; 873,2 s, `danger` 0,44–0,66), em 0 de 12 em `6455342` e
+  em 25 de 116 em `483722e` (`danger` 0,23–0,72). Nenhuma mudança com `danger = 0`.
+
+**Não feito**
+
+- Nenhuma partida. `army_growth`, `army_onset`, `army_cap`, `army_memory` e
+  `commit_margin` não foram calibrados; 0,1 Marine/s só tem a ordem de grandeza
+  dos 45 Marines vistos aos 575 s em `3769f04`. Não se sabe se deixar de expandir
+  sob ameaça ajuda ou atrapalha.
+- O esperado é piso: informação ampla que mostre um exército menor que o esperado
+  não baixa a estimativa. Faltam estimativa por produção ou economia vista e
+  scouting recorrente. Hoje só um avistamento maior que o esperado zera a
+  incerteza.
+- `enemy_coverage` mede a parte do estimado que um contato localiza, não área
+  vista nem idade da informação.
+- O visto vivo pode contar a mais unidades de vida limitada (Interceptor, Locust),
+  alucinações e mortes fora da visão; a memória de 180 s limita o erro.
+- Nenhum gatilho ofensivo usa a estimativa (fatia 6a). `risk` mantém o nome.
+- Incidentes e defesa ainda contam workers com poder > 0: o Drone scout de
+  `6455342` gerou incidente aos 95,8 s e puxou o Reaper aos 134,5 s (distinguir
+  scout é P0.2).
+- O viewer não mostra os campos novos; lê `enemy_power`, agora só exército.
 
 ## 7a. Plano econômico estável — feito
 
@@ -258,14 +358,15 @@ reproduz o par exato `(3, False, 4)`/`(4, True, 5)`.
   cooldown do alvo e interrupção do opening continuam na fatia 7.
 - Sem histerese nos limiares: uma mudança real da contagem exatamente no limiar
   (morte e reposição de um worker) ainda troca o plano, uma vez por mudança.
-- A semântica de `army`/`risk` sem visão continua na fatia 5.
+- `army`/`risk` sem visão: fatia 5 (o nome `risk` não mudou).
 
 ## Itens de `propostas.md` fora de qualquer fatia concluída
 
 - P0.2: distinguir scout, worker rush e ataque; histerese de admissão/liberação
   da defesa; antecipação e tráfego amigo do wall.
 - P0.3–P0.4: toda a ofensiva e a macro resiliente.
-- P1.1–P1.5 e P2: scouting recorrente, RegionState, micro, contrato completo de
+- P1.1–P1.5 e P2: scouting recorrente e estimativa do inimigo por produção ou
+  economia vista, RegionState, micro, contrato completo de
   Proposal/Engine (desired_power, suitability, custos, preemption), builds por
   matchup, calibração.
 

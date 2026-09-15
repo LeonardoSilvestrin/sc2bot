@@ -7,7 +7,7 @@ import pytest
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
-from bot.awareness import AwarenessModel
+from bot.awareness import AwarenessConfig, AwarenessModel
 
 from .fakes import MAIN, NATURAL, attention, seen_everywhere, unit
 
@@ -18,6 +18,10 @@ def zergling(tag: int, x: float, y: float):
 
 def mutalisk(tag: int, x: float, y: float):
     return unit(tag, UnitTypeId.MUTALISK, x, y, power=1.2, supply=2.0, flying=True)
+
+
+def roach(tag: int, x: float, y: float):
+    return unit(tag, UnitTypeId.ROACH, x, y, power=1.5, supply=2.0, attack_air=False)
 
 
 def test_a_contact_out_of_sight_is_remembered_fading_and_drifting() -> None:
@@ -211,6 +215,94 @@ def test_an_incident_id_holds_splits_merges_and_is_remembered_by_rule() -> None:
     assert model.infer(attention(time=5.0)).incidents[0].confidence == pytest.approx(
         math.exp(-2.0 / 20.0)
     )
+
+
+def test_enemy_workers_and_structures_are_no_army() -> None:
+    # Trace 6455342, 95-180 s: a worker scout's look at a Zerg mineral line put
+    # ~20 Drones into enemy_power, 9.3 Marines against no army of ours.
+    drones = tuple(
+        unit(tag, UnitTypeId.DRONE, 50 + tag % 4, 50, power=0.55, worker=True, attack_air=False)
+        for tag in range(1, 17)
+    )
+    structures = (
+        unit(30, UnitTypeId.HATCHERY, 53, 53, power=0.0, structure=True),
+        unit(31, UnitTypeId.SPINECRAWLER, 48, 53, power=1.4, structure=True, attack_air=False),
+    )
+    state = AwarenessModel().infer(
+        attention(
+            time=100.0,
+            enemy_units=(*drones, zergling(20, 45, 45)),
+            enemy_structures=structures,
+        )
+    )
+
+    assert len(state.contacts) == 19
+    assert state.enemy_power == state.seen_enemy_power == pytest.approx(0.9)
+
+
+def test_an_army_out_of_sight_is_believed_alive_until_it_is_seen_to_die() -> None:
+    config = AwarenessConfig(army_growth=0.0)
+    model = AwarenessModel(config)
+    tau = config.army_memory
+    seen = model.infer(
+        attention(time=200.0, enemy_units=tuple(roach(tag, 40, 40) for tag in range(1, 6)))
+    )
+    # Out of sight, a fading contact still places part of it ...
+    hidden = model.infer(attention(time=210.0))
+    # ... and none does once its last position is back in sight without it.
+    moved = model.infer(attention(time=213.0, visibility=seen_everywhere()))
+    later = model.infer(attention(time=290.0))
+    fewer = model.infer(attention(time=291.0, dead_tags=(1, 2, 3)))
+    gone = model.infer(attention(time=200.0 + tau * math.log(1.0 / config.forget_below) + 1.0))
+
+    assert seen.enemy_power == seen.estimated_enemy_power == pytest.approx(7.5)
+    assert (seen.enemy_uncertainty, seen.enemy_coverage) == (0.0, 1.0)
+    assert hidden.enemy_power == pytest.approx(7.5 * math.exp(-10.0 / config.unit_memory))
+    assert hidden.seen_enemy_power == pytest.approx(7.5 * math.exp(-10.0 / tau))
+    assert hidden.enemy_uncertainty == pytest.approx(
+        hidden.seen_enemy_power - hidden.enemy_power
+    )
+    assert moved.contacts == () and moved.enemy_power == 0.0
+    assert moved.seen_enemy_power == pytest.approx(7.5 * math.exp(-13.0 / tau))
+    assert moved.enemy_uncertainty == moved.estimated_enemy_power == moved.seen_enemy_power
+    assert moved.enemy_coverage == 0.0
+    assert later.seen_enemy_power == pytest.approx(7.5 * math.exp(-90.0 / tau))
+    assert fewer.seen_enemy_power == pytest.approx(3.0 * math.exp(-91.0 / tau))
+    assert gone.seen_enemy_power == gone.estimated_enemy_power == 0.0
+    for state in (seen, hidden, moved, later, fewer, gone):
+        assert state.enemy_power <= state.seen_enemy_power
+
+
+@pytest.mark.parametrize(
+    "time, expected", [(60.0, 0.0), (320.0, 20.0), (600.0, 48.0), (2000.0, 100.0)]
+)
+def test_an_enemy_never_seen_is_expected_an_army_growing_to_a_cap(
+    time: float, expected: float
+) -> None:
+    state = AwarenessModel().infer(attention(time=time))
+
+    assert state.enemy_power == state.seen_enemy_power == 0.0
+    assert state.estimated_enemy_power == pytest.approx(expected)
+    assert state.enemy_uncertainty == pytest.approx(expected)
+    assert state.enemy_coverage == (1.0 if expected == 0.0 else 0.0)
+
+
+def test_a_fresh_sighting_of_more_than_the_expected_army_leaves_no_uncertainty() -> None:
+    army = tuple(roach(tag, 50, 50) for tag in range(1, 41))
+    state = AwarenessModel().infer(attention(time=600.0, enemy_units=army))
+
+    assert state.expected_enemy_power == pytest.approx(48.0)
+    assert state.enemy_power == state.estimated_enemy_power == pytest.approx(60.0)
+    assert (state.enemy_uncertainty, state.enemy_coverage) == (0.0, 1.0)
+
+
+@pytest.mark.parametrize(
+    "change",
+    [{"army_memory": 10.0}, {"army_growth": -0.1}, {"army_onset": -1.0}, {"army_cap": -1.0}],
+)
+def test_an_invalid_army_estimate_is_rejected(change: dict[str, float]) -> None:
+    with pytest.raises(ValueError):
+        AwarenessConfig(**change)
 
 
 def test_uncertainty_widens_possible_threat_but_not_credible_presence() -> None:

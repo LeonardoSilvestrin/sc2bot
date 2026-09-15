@@ -168,7 +168,7 @@ def panel_text(awareness: AwarenessState, strategy: StrategyState, result: Engin
         f"danger {awareness.danger:.2f}  army share {dict(strategy.inputs)['army_share']:.2f}",
         f"defense {strategy.defense:.2f}  army {strategy.army:.2f}  risk {strategy.risk:.2f}",
         f"contacts {len(awareness.contacts)} ({visible} visible)  "
-        f"enemy power {awareness.enemy_power:.1f}",
+        f"enemy power {awareness.enemy_power:.1f} (est {awareness.estimated_enemy_power:.1f})",
         "ENGINE",
     ]
     for grant in result.grants:
