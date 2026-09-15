@@ -16,6 +16,7 @@ from bot.awareness import AwarenessState
 from bot.body.behaviors.economy import SpawnMode
 from bot.body.engine import EngineResult
 from bot.ego.planners import EconomyPlan, Proposal, StructurePlan
+from bot.ego.planners.offense import OffensePlan
 from bot.ego.strategy import StrategyState
 
 from .jsonl import BotLogger, ChangeGate, JsonlLogger, NullLogger
@@ -72,6 +73,7 @@ class Logs:
         attention: AttentionState,
         awareness: AwarenessState,
         strategy: StrategyState,
+        offense: OffensePlan,
         proposals: Sequence[Proposal],
         economy: EconomyPlan,
         structures: StructurePlan,
@@ -86,6 +88,7 @@ class Logs:
                 attention,
                 awareness,
                 strategy,
+                offense,
                 proposals,
                 economy,
                 structures,

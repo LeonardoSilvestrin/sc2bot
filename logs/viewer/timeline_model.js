@@ -7,8 +7,8 @@
 (function (root) {
   "use strict";
 
-  const OWNER_ORDER = ["defense", "core_army"];
-  const OWNER_LABELS = { defense: "Defense", core_army: "Core army" };
+  const OWNER_ORDER = ["defense", "offense", "core_army"];
+  const OWNER_LABELS = { defense: "Defense", offense: "Offense", core_army: "Core army" };
 
   function finite(value) {
     const number = Number(value);

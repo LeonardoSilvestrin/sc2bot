@@ -19,6 +19,7 @@ from bot.awareness import AwarenessState
 from bot.body.behaviors.economy import SpawnMode
 from bot.body.engine import EngineResult, rank
 from bot.ego.planners import EconomyPlan, Proposal, StructurePlan
+from bot.ego.planners.offense import OffensePlan
 from bot.ego.strategy import StrategyState
 
 from .identity import describe_build, fingerprint
@@ -38,6 +39,7 @@ class Telemetry:
         self._attention = ChangeGate(heartbeat=ATTENTION_HEARTBEAT)
         self._awareness = ChangeGate(heartbeat=heartbeat)
         self._strategy = ChangeGate(heartbeat=heartbeat)
+        self._offense = ChangeGate()
         self._economy = ChangeGate()
         self._spawn = ChangeGate()
         self._structures = ChangeGate()
@@ -130,6 +132,7 @@ class Telemetry:
         attention: AttentionState,
         awareness: AwarenessState,
         strategy: StrategyState,
+        offense: OffensePlan,
         proposals: Sequence[Proposal],
         economy: EconomyPlan,
         structures: StructurePlan,
@@ -140,6 +143,7 @@ class Telemetry:
         self._record_attention(attention)
         self._record_awareness(attention.time, awareness)
         self._record_strategy(strategy)
+        self._record_offense(attention.time, offense)
         self._record_proposals(attention.time, proposals)
         self._record_economy(attention.time, economy)
         self._record_spawn(attention.time, spawn)
@@ -295,6 +299,34 @@ class Telemetry:
                 "rally": _xy(strategy.rally),
                 "inputs": dict(strategy.inputs),
                 "scores": dict(strategy.scores),
+            },
+        )
+
+    def _record_offense(self, now: float, offense: OffensePlan) -> None:
+        signature = (
+            offense.stage,
+            offense.since,
+            offense.blocked_by,
+            offense.target_tag,
+            None if offense.target is None else _cell(offense.target),
+        )
+        if not self._offense.admit(signature, now=now):
+            return
+        self._event(
+            "behavior.offense_planned",
+            "behaviors",
+            now,
+            {
+                "stage": offense.stage.value,
+                "previous": None if offense.previous is None else offense.previous.value,
+                "since": offense.since,
+                "reason": offense.reason,
+                "blocked_by": offense.blocked_by,
+                "committed_power": offense.committed_power,
+                "target": None if offense.target is None else _xy(offense.target),
+                "target_tag": offense.target_tag,
+                "target_kind": offense.target_kind,
+                "inputs": dict(offense.inputs),
             },
         )
 

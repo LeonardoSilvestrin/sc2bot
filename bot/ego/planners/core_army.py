@@ -1,7 +1,7 @@
 """CoreArmy: the fallback owner of every army unit no one else needs.
 
-Always proposed, always last: it asks for every free army unit and holds them
-at the rally point Strategy chose.
+Always proposed, always last -- below Defense and the offense: it asks for
+every free army unit and holds them at the rally point Strategy chose.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from bot.ego.planners import Command, Proposal
 from bot.ego.strategy import StrategyState
 
 OWNER = "core_army"
-FALLBACK_PRIORITY = 0.0
+FALLBACK_PRIORITY = -1.0
 
 
 def plan(

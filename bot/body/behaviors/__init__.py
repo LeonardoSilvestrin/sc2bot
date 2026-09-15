@@ -17,11 +17,12 @@ from bot.attention import AttentionState
 from bot.body.engine import EngineResult
 from bot.ego.planners import Command, EconomyPlan, StructurePlan
 
-from . import core_army, defense, economy, scout, structure_control
+from . import attack, core_army, economy, scout, structure_control
 
-# The behavior that carries out each command with the units granted to it.
+# The behavior that carries out each command with the units granted to it,
+# whichever planner proposed it.
 BY_COMMAND: dict[Command, Callable[..., None]] = {
-    Command.ATTACK: defense.execute,
+    Command.ATTACK: attack.execute,
     Command.HOLD: core_army.execute,
     Command.SCOUT: scout.execute,
 }

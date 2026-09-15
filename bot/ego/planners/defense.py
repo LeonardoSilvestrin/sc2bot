@@ -12,7 +12,7 @@ first at equal priority), since fewer units shoot up.
 
 Priority is the incident's threat on the base it presses hardest, raised by how
 much Strategy wants defense, so it is positive exactly while an attacker is in
-reach -- always above the CoreArmy fallback.
+reach -- always above the offense (0) and the CoreArmy fallback (-1).
 """
 
 from __future__ import annotations

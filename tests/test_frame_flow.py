@@ -10,7 +10,7 @@ from sc2.ids.unit_typeid import UnitTypeId
 
 from bot.attention import observe, read_map
 from bot.awareness import AwarenessConfig
-from bot.ego.planners import core_army, defense
+from bot.ego.planners import core_army, defense, offense
 from bot.ego.strategy import StrategyConfig
 from bot.logs import Logs, OverlayConfig, SnapshotConfig
 from bot.main import Layers, play_frame
@@ -232,6 +232,79 @@ def test_an_army_exactly_at_its_composition_spawns_freely_and_the_log_says_why()
         "reason": "composition_met",
         "counts": {"MARINE": 11, "MARAUDER": 4, "SIEGETANK": 3, "MEDIVAC": 2},
     }
+
+
+def test_a_maxed_army_attacks_the_known_enemy_base_and_the_log_says_why() -> None:
+    # Trace 3769f04, 675-896 s: supply 190-200, no threat at home and 75-82
+    # Marines of army, while 4,210 minerals grew to 11,970 and every unit held
+    # the rally.
+    logger = FakeLogger()
+    bot = build_bot(attackers=0)
+    bot.time, bot.supply_used, bot.supply_cap = 700.0, 200.0, 200.0
+    bot.units += [
+        FakeUnit(400 + index, UnitTypeId.MARINE, 16 + index % 5, 17 + index // 5)
+        for index in range(20)
+    ]
+    hatchery = FakeUnit(
+        800, UnitTypeId.HATCHERY, 53.5, 53.5, dps=0.0, hit_points=1500.0, structure=True
+    )
+    bot.enemy_structures = [hatchery]
+    army = tuple(sorted({*ARMY_TAGS, *range(400, 420)}))
+    layers = Layers(map_view=MAP, logs=Logs(logger))
+
+    first = play_frame(bot, 0, layers)
+    bot.time = 700.5
+    bot.registered = []
+    second = play_frame(bot, 1, layers)
+
+    assert grants(first)[core_army.OWNER] == army
+    assert grants(second) == {core_army.OWNER: (), offense.OWNER: army}
+    maneuvers = [item for item in bot.registered if isinstance(item, CombatManeuver)]
+    assert sorted(maneuver.micros[-1].unit.tag for maneuver in maneuvers) == list(army)
+    assert {maneuver.micros[-1].target for maneuver in maneuvers} == {hatchery.position}
+
+    planned = [event["data"] for event in logger.named("behavior.offense_planned")]
+    assert [(item["stage"], item["reason"]) for item in planned] == [
+        ("ASSEMBLE", "supply_maxed"),
+        ("ADVANCE", "army_assembled"),
+    ]
+    assert planned[0]["committed_power"] == pytest.approx(first.awareness.own_power)
+    assert planned[0]["inputs"]["army_share"] < 0.5
+    assert planned[0]["inputs"]["supply_used"] == 200.0
+    assert (planned[1]["target"], planned[1]["target_tag"], planned[1]["target_kind"]) == (
+        [53.5, 53.5],
+        800,
+        "known_base",
+    )
+    proposed = {
+        item["owner"]: item for item in logger.named("behavior.proposed")[-1]["data"]["proposals"]
+    }
+    assert (proposed[offense.OWNER]["priority"], proposed[core_army.OWNER]["priority"]) == (
+        0.0,
+        -1.0,
+    )
+    granted = {
+        item["owner"]: item for item in logger.named("engine.granted")[-1]["data"]["grants"]
+    }
+    assert (granted[offense.OWNER]["status"], granted[offense.OWNER]["reason"]) == (
+        "FULL",
+        "every_free_unit",
+    )
+    assert (granted[core_army.OWNER]["status"], granted[core_army.OWNER]["reason"]) == (
+        "REJECTED",
+        "eligible_units_taken",
+    )
+    (command,) = [
+        event["data"]
+        for event in logger.named("engine.commanded")
+        if event["data"]["owner"] == offense.OWNER
+    ]
+    assert (command["command"], command["target"], command["reason"]) == (
+        "ATTACK",
+        [53.5, 53.5],
+        "advance_on_known_base",
+    )
+    assert command["tags"] == list(army)
 
 
 def test_units_return_to_the_core_army_when_the_attack_dies() -> None:

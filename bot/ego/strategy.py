@@ -63,6 +63,8 @@ class StrategyState:
     army: float
     economy: float
     risk: float
+    # Our army's share of it and the enemy army planned against: 1/2 when even.
+    army_share: float
     rally: Point2
     inputs: tuple[tuple[str, float], ...]
     scores: tuple[tuple[str, float], ...]
@@ -101,6 +103,7 @@ class StrategyModel:
             army=army,
             economy=1.0 - army,
             risk=army_share * (1.0 - danger),
+            army_share=army_share,
             rally=self._rally(attention, awareness, objective),
             inputs=(
                 ("danger", danger),

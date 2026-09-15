@@ -425,6 +425,7 @@ const LAYERS = ["attention", "awareness", "strategy", "behaviors", "engine", "lo
 const NARRATIVE_EVENTS = new Set([
   "game.started", "game.ended",
   "strategy.decided",
+  "behavior.offense_planned",
   "behavior.economy_planned",
   "engine.commanded",
   "logs.snapshot_failed",
@@ -498,6 +499,8 @@ function fieldsFor(record) {
       return `objective=${d.objective} previous=${d.previous} danger=${fmt(d.inputs?.danger)} defense=${fmt(d.defense)} army=${fmt(d.army)} risk=${fmt(d.risk)}`;
     case "behavior.proposed":
       return (d.proposals || []).map((p) => `${p.proposal_id} p=${fmt(p.priority)} n=${p.minimum_power != null ? `≥${fmt(p.minimum_power, 1)}pw` : p.count ?? "all"}`).join("  ");
+    case "behavior.offense_planned":
+      return `stage=${d.stage} previous=${d.previous} blocked_by=${d.blocked_by ?? "—"} target=${d.target_kind ?? "—"} ${xy(d.target)} committed=${fmt(d.committed_power, 1)}`;
     case "behavior.economy_planned":
       return `active=${d.active} workers=${d.workers} gas=${d.gas} bases=${d.bases} expand=${d.expand} freeflow=${d.freeflow}`;
     case "engine.granted":

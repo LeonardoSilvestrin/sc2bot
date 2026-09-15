@@ -25,6 +25,7 @@ from bot.ego.planners import (
     economy,
 )
 from bot.ego.planners.intel import Intel
+from bot.ego.planners.offense import Offense, OffensePlan
 from bot.ego.planners.structure_control import StructureControl
 from bot.ego.strategy import StrategyModel, StrategyState
 from bot.logs import Logs
@@ -40,6 +41,7 @@ class Layers:
     logs: Logs
     awareness: AwarenessModel = field(default_factory=AwarenessModel)
     strategy: StrategyModel = field(default_factory=StrategyModel)
+    offense: Offense = field(default_factory=Offense)
     intel: Intel = field(default_factory=Intel)
     structure_control: StructureControl = field(default_factory=StructureControl)
     engine: Engine = field(default_factory=Engine)
@@ -48,6 +50,7 @@ class Layers:
         return {
             "awareness": self.awareness.config,
             "strategy": self.strategy.config,
+            "offense": self.offense.config,
             "structure_control": self.structure_control.config,
         }
 
@@ -57,6 +60,7 @@ class Frame:
     attention: AttentionState
     awareness: AwarenessState
     strategy: StrategyState
+    offense: OffensePlan
     proposals: tuple[Proposal, ...]
     economy: EconomyPlan
     structures: StructurePlan
@@ -74,6 +78,8 @@ def play_frame(bot, iteration: int, layers: Layers) -> Frame:
     laps.mark("strategy")
     proposals = defense.plan(attention, awareness, strategy)
     proposals += core_army.plan(attention, awareness, strategy)
+    offense = layers.offense.plan(attention, awareness, strategy)
+    proposals += offense.proposals
     proposals += layers.intel.plan(attention)
     economy_plan = economy.plan(attention, strategy)
     structures = layers.structure_control.plan(attention)
@@ -87,6 +93,7 @@ def play_frame(bot, iteration: int, layers: Layers) -> Frame:
         attention,
         awareness,
         strategy,
+        offense,
         proposals,
         economy_plan,
         structures,
@@ -95,7 +102,7 @@ def play_frame(bot, iteration: int, layers: Layers) -> Frame:
         laps.times,
     )
     return Frame(
-        attention, awareness, strategy, proposals, economy_plan, structures, result, spawn
+        attention, awareness, strategy, offense, proposals, economy_plan, structures, result, spawn
     )
 
 
