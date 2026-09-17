@@ -452,6 +452,7 @@ class Telemetry:
             economy.orbitals,
             economy.mules,
             economy.interrupt_opening,
+            economy.max_production,
         )
         if not self._economy.admit(signature, now=now):
             return
@@ -480,6 +481,7 @@ class Telemetry:
                 "orbitals": economy.orbitals,
                 "mules": economy.mules,
                 "interrupt_opening": economy.interrupt_opening,
+                "max_production": economy.max_production,
             },
         )
 

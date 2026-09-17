@@ -13,6 +13,10 @@ The opening is a fixed script and cannot answer an attack. If the bot is
 stabilizing against a threat of at least `OPENING_ABORT_DANGER` before the
 opening is over, the plan interrupts it: from that frame on this plan runs,
 spending on the army first.
+
+Ares adds production as income allows, up to a ceiling per structure type. A
+fixed ceiling of 12 Barracks capped the army's growth once the bot had more
+than three bases (`bench/7b`), so the ceiling grows with the bases.
 """
 
 from __future__ import annotations
@@ -56,6 +60,8 @@ MAX_WORKERS = 80
 WORKERS_PER_BASE = 22
 MINERAL_WORKERS_PER_BASE = 16
 WORKERS_PER_GAS_BUILDING = 12
+# Ares' default ceiling of 12 production structures of a type, per three bases.
+PRODUCTION_PER_BASE = 4
 
 
 def plan(attention: AttentionState, strategy: StrategyState) -> EconomyPlan:
@@ -95,9 +101,11 @@ def plan(attention: AttentionState, strategy: StrategyState) -> EconomyPlan:
             ("strategy_economy", strategy.economy),
             ("upgrades_done", float(sum(item in attention.upgrades for item in UPGRADES))),
             ("danger", strategy.defense),
+            ("production_per_base", float(PRODUCTION_PER_BASE)),
         ),
         upgrades=UPGRADES if active and not stabilizing else (),
         orbitals=active,
         mules=active,
         interrupt_opening=interrupt,
+        max_production=PRODUCTION_PER_BASE * bases,
     )

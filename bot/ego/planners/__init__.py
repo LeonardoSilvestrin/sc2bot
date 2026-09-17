@@ -83,6 +83,9 @@ class EconomyPlan:
     mules: bool = False
     # Stop Ares' build runner: the opening is over from this frame on.
     interrupt_opening: bool = False
+    # The most structures of one production type (Barracks, Factory, Starport)
+    # Ares may build; how many it builds within that is its income rule.
+    max_production: int = 12
 
 
 @dataclass(frozen=True, slots=True)

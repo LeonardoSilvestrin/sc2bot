@@ -108,7 +108,13 @@ def execute(
     # Only in a frame the SpawnController did not act: on its own it would add
     # a Tech Lab to a Barracks the SpawnController just ordered to train, and
     # the last order wins (`bench/7/002`).
-    macro.add(ProductionController(composition, base_location=bot.start_location))
+    macro.add(
+        ProductionController(
+            composition,
+            base_location=bot.start_location,
+            max_production_structures=plan.max_production,
+        )
+    )
     bot.register_behavior(macro)
     if plan.mules:
         call_mules(bot, reserve=energy_reserve, busy=busy)

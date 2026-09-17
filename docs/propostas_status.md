@@ -31,7 +31,8 @@ seleção (ver regra no prompt corrigido).
 | 7d | Macro: banco com supply livre | Investigado; mudança revertida, causa em aberto | `macro: detection and opening interrupt; hold stim` |
 | 7e | Macro: detecção (scan, Missile Turret, reserva de energia) | Feito | `macro: detection and opening interrupt; hold stim` |
 | 7f | Macro: interrupção do opening por emergência | Feito (sem evidência de partida) | `macro: detection and opening interrupt; hold stim` |
-| 7 | Resto da macro (banco com supply livre, bases `ready + pending`, supply antecipado, reação a rush) | Pendente | — |
+| 7g | Macro: teto de produção cresce com as bases | Feito | `macro: let the production ceiling grow with the bases` |
+| 7 | Resto da macro (bases `ready + pending`, supply antecipado, reação a rush, Reactors, pico de banco) | Pendente | — |
 | 8a | Micro: Stim e Medivac acompanhando o grupo | Feito | `offense: fight, retreat and search; macro upgrades; bio micro` |
 | 8b | Micro: Stim no HOLD | Feito | `macro: detection and opening interrupt; hold stim` |
 | 8 | `RegionState` e o resto do micro | Pendente | — |
@@ -880,13 +881,82 @@ chega a 10 de uma unidade no rally, e só o `attack` usava Stim.
 - Interrupção do opening: não aconteceu em nenhuma partida (esperado contra a
   IA Macro).
 
+## 7g. Teto de produção cresce com as bases — feito
+
+Seleção: pedido explícito do usuário ("aplique as propostas e fatias", depois
+"continue com o próximo feature"). É a hipótese da 7d com evidência de
+partida; supply block, a outra hipótese, não tem evidência (≤ 4 amostras de
+`attention.observed` com supply cheio abaixo de 200 por partida, em `bench/7b`
+e `bench/all3`).
+
+Evidência do problema: as três partidas de `bench/7b` chegaram a 12 Barracks
+aos 606–641 s, o `max_production_structures` padrão do `ProductionController`
+do Ares, e nunca passaram disso. Em `bench/7b/001` (Terran), com 6 bases, 83
+workers e 6 Orbitals, o banco foi de 4.155 minerais (608,9 s) a 9.930
+(773,1 s) enquanto o exército caía para 31 unidades com 37 de supply livre, e
+a composição estava abaixo da proporção de Marines (15/13/11/9 aos 805 s). Pela
+conta de capacidade (estimativa, não medida): 12 Barracks (1 Reactor, 6 Tech
+Labs), 2 Factories e 1 Starport gastam ~3,9 mil minerais/min, e a renda com 83
+workers e 6 MULEs passa de ~5 mil/min; a regra de renda do próprio Ares
+(`renda / (custo · 4,5)`) pediria ~22 Barracks. O `get_build_structures` e o
+`SpawnController` foram lidos e não mostram outro bloqueio.
+
+**Feito**
+
+- Ego/economy: `PRODUCTION_PER_BASE = 4` e
+  `EconomyPlan.max_production = 4 · bases` (3 bases = 12, o padrão do Ares;
+  6 bases = 24). Input `production_per_base`.
+- Body/economy: `ProductionController(max_production_structures=plan.max_production)`.
+  Quantas estruturas construir dentro do teto continua sendo a regra de renda e
+  de banco do Ares.
+- Logs: `behavior.economy_planned.max_production` (entra na assinatura do
+  gate) e `inputs.production_per_base`.
+- Testes (`tests/test_economy.py`): teto 4/12/24 com 1/3/6 bases; o
+  `ProductionController` real do Ares, sobre um fake com renda de seis bases,
+  banco de 9.930/3.041, Barracks todas ocupadas e Marines abaixo da proporção,
+  pede a 13ª Barracks com 6 bases, nada com 3 bases e 12 Barracks, uma com 3
+  bases e 11, e nada com 6 bases e 24. Com o Body anterior o teste das 6 bases
+  falha (não passa de 12). Fluxo de frame: `max_production` no log igual ao
+  plano e a `production_per_base · bases`.
+- Verificação local: 242 testes, ruff limpo.
+
+**Partidas** (mesma matriz: Persephone AIE, IA VeryHard Macro, seed 1,
+1.200 s; `bench/7g` rodou da árvore de trabalho, `dirty: true`, sobre
+`f8da5b0`, que tem o mesmo código de `bench/7b`). Uma partida por raça: nenhuma
+diferença é estatisticamente significativa.
+
+| Execução | Zerg | Terran | Protoss |
+| --- | --- | --- | --- |
+| `bench/7b` (linha de base) | vitória, 707 s | timeout | vitória, 861 s |
+| `bench/7g` | vitória, 702 s | vitória, 891 s | vitória, 868 s |
+
+Depois de 600 s (amostras de `attention.observed`; Zerg / Terran / Protoss):
+
+| Execução | Máximo de Barracks | Amostras com ≥ 4 mil minerais, ≥ 19 de supply livre e < 190 usados | Pico de minerais |
+| --- | --- | --- | --- |
+| `bench/7b` | 12 / 12 / 12 | 0 de 22 / 63 de 140 / 2 de 57 | 9.465 / 10.245 / 16.275 |
+| `bench/7g` | 20 / 24 / 24 | 0 de 21 / 12 de 65 / 2 de 58 | 7.870 / 17.890 / 14.300 |
+
+Nenhum `Traceback` no stdout. O `config_fingerprint` não mudou
+(`ab57813d0bfcc3fe`): a economia não tem config no fingerprint.
+
+**Não feito**
+
+- O banco ainda chega a 14–18 mil minerais: com o supply cheio não há onde
+  gastar, e o teto não resolve isso. Reactors nas Barracks sem add-on (5 de 12
+  em `bench/7b/001`) não foram tratados.
+- `PRODUCTION_PER_BASE` não foi calibrado nem entra no fingerprint; a vitória
+  contra Terran é uma partida só e pode ter outras causas.
+- Bases `ready + pending`, supply antecipado e reação a rush continuam
+  pendentes.
+
 ## Itens de `propostas.md` fora de qualquer fatia concluída
 
 - P0.2: distinguir scout, worker rush e ataque; histerese de admissão/liberação
   da defesa; antecipação e tráfego amigo do wall.
 - P0.3: combat simulation, poder com alcance/splash, coesão e reforços da
   ofensiva; encerrar partidas contra Terran (timeout nas duas execuções).
-- P0.4: causa do banco com supply livre (7d), bases por `ready + pending`,
+- P0.4: banco que continua alto com supply cheio (7g), Reactors, bases por `ready + pending`,
   supply antecipado; reação a rush além da interrupção do opening
   (bunker, reparo, worker pull, proxy); Raven e scan de informação.
 - P1.1–P1.5 e P2: scouting recorrente e estimativa do inimigo por produção ou

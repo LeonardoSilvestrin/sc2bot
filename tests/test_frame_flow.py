@@ -172,6 +172,7 @@ def test_a_worker_inside_a_gas_building_does_not_flip_the_economy_plan() -> None
             "strategy_economy": economies[0],
             "upgrades_done": 0.0,
             "danger": dangers[0],
+            "production_per_base": 4.0,
         }
     )
 
@@ -216,6 +217,12 @@ def test_finished_upgrades_reach_the_log_and_the_economy_plan() -> None:
     assert planned["data"]["inputs"]["upgrades_done"] == 2.0
     assert planned["data"]["upgrades"][0] == "STIMPACK"
     assert (planned["data"]["orbitals"], planned["data"]["mules"]) == (True, True)
+    # The production ceiling the Body hands to Ares, and what it came from.
+    bases = planned["data"]["inputs"]["bases"]
+    assert planned["data"]["max_production"] == frame.economy.max_production
+    assert frame.economy.max_production == (
+        planned["data"]["inputs"]["production_per_base"] * bases
+    )
 
 
 def test_the_fog_does_not_let_a_threatened_bot_expand_as_if_the_enemy_had_no_army() -> None:
