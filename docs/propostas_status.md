@@ -38,6 +38,7 @@ seleção (ver regra no prompt corrigido).
 | 7g | Macro: teto de produção cresce com as bases | Feito | `macro: let the production ceiling grow with the bases` |
 | 7h | Macro: Reactors nas Barracks sem add-on | Feito (sem evidência de partida) | `macro: a reactor on every barracks with no add-on` |
 | 7i | Macro: gás pelos geysers das bases | Feito (sem evidência de partida) | `macro: a refinery on every geyser the workers can mine` |
+| 6f | Ofensiva: a luta é do grupo, não do núcleo | Feito (a medir) | `offense: the fight belongs to the group, not to its core` |
 | 7 | Resto da macro (bases `ready + pending`, supply antecipado, reação a rush, reposição de produção, pico de banco) | Pendente | — |
 | 8a | Micro: Stim e Medivac acompanhando o grupo | Feito | `offense: fight, retreat and search; macro upgrades; bio micro` |
 | 8b | Micro: Stim no HOLD | Feito | `macro: detection and opening interrupt; hold stim` |
@@ -1355,12 +1356,73 @@ Siege Tank 125, Medivac 100) e cada Tech Lab custa mais 25.
   partidas terminam com Tech Lab em todas as Factories e um Reactor no
   Starport, postos pelo `TechUp` do Ares.
 
+## 6f. A luta local é do grupo, não do núcleo — feito (a medir)
+
+Seleção: bug decisório reproduzível por trace (classe 1), achado na linha de
+base de 9 partidas. Pré-requisitos todos no lugar: a luta local, o núcleo e o
+`engage_radius` já existem desde a 6b.
+
+Evidência do problema (`bench/base3/007`, Terran, a única partida da linha de
+base que não termina em vitória):
+
+| t (s) | estágio | `own_power` | `enemy_power` da luta | poder inimigo visto | distância dos Siege Tanks ao núcleo |
+| --- | --- | --- | --- | --- | --- |
+| 515,4 | ENGAGE `favorable_fight` | 48,6 | 6,8 (share 0,88) | 13 | 22–27 |
+| 517,8 | ENGAGE `favorable_fight` | 47,5 | 4,3 (share 0,92) | 12 | 25–29 |
+| 520,7 | ADVANCE **`fight_won`** | 42,2 | **0,0** | 36 | 18–23 (mais um Thor a 20) |
+| 534,6 | IDLE `army_depleted` | 15 | 28 (share 0,35) | 33 | — |
+
+O núcleo é a unidade do esquadrão com mais poder de esquadrão em volta: numa
+bola de bio com 25 células de comprimento ele fica atrás, e os Siege Tanks em
+siege que atiram na frente ficam a 18–29 células — fora do `engage_radius` de
+16. A luta era medida só em volta do núcleo, então a ofensiva entrou com
+`share` 0,88, declarou a luta ganha com 36 de poder inimigo à vista e andou
+para dentro da linha de tanques; o esquadrão caiu de 62 para 27 de poder em
+20 s. Nessa partida isso aconteceu três vezes (`army_depleted` aos 535, 655 e
+843 s) e o jogo bateu no limite de 1.200 s.
+
+**Feito**
+
+- Ego/offense (`_local_fight`): o inimigo passa a ser medido contra o **grupo
+  do núcleo** — as unidades do esquadrão dentro do `engage_radius` do núcleo,
+  exatamente as que formam o `own_power` — e não contra o núcleo sozinho. Um
+  contato entra na luta quando está a `engage_radius` (mais a sua incerteza) de
+  **alguma** unidade do grupo. Os dois lados passam a descrever o mesmo corpo
+  de unidades: o grupo e tudo que o alcança.
+- Nada mudou no raio, no modelo de poder, nas parcelas (`engage_share`,
+  `retreat_share`, `won_share`) nem em qualquer outra camada: a fatia é uma
+  função pura da ofensiva.
+- Custo por frame: uma matriz de distâncias grupo × contatos, 0,2 ms no pior
+  caso medido (70 unidades × 150 contatos, `numpy`); o `logs.frame_perf`
+  continua sendo o observável.
+- Testes (`tests/test_offense.py`): um esquadrão em dois grupos a 14 células —
+  o núcleo cai no de trás — com 6 Siege Tanks em siege a 26 células do núcleo e
+  12 da frente: a luta conta os 13,8 de poder e a parcela é 0,68 (com o código
+  anterior, 0 e nenhuma luta); com 20 tanques a parcela fica abaixo de
+  `engage_share` e o avanço vira RETREAT `unfavorable_fight`; e um inimigo além
+  do alcance do grupo inteiro continua fora da luta. Os dois primeiros falham
+  no código anterior, o terceiro passa nos dois.
+- Verificação local: 261 testes e `ruff check bot tests harness run.py
+  bench.py` limpos.
+
+**Não feito**
+
+- Nenhuma partida foi jogada ainda: a fatia muda quando a ofensiva luta e
+  recua, e isso só se mede contra `bench/base3` com a mesma matriz de 9
+  partidas. O risco é o oposto do defeito: com o inimigo inteiro na conta, o
+  exército pode recuar cedo demais e as partidas irem ao limite de tempo.
+- O `own_power` continua sendo o do grupo do núcleo: um esquadrão partido em
+  dois grupos distantes continua sendo julgado onde está a maior parte dele.
+- O modelo de poder continua `sqrt(dps · vida)`: um Siege Tank em siege vale
+  2,3 Marines, sem alcance nem splash. É o outro candidato da análise contra
+  Terran e continua pendente.
+
 ## Itens de `propostas.md` fora de qualquer fatia concluída
 
 - P0.2: distinguir scout, worker rush e ataque; histerese de admissão/liberação (a 3b tirou a troca de id, não a do poder)
   da defesa; antecipação e tráfego amigo do wall.
 - P0.3: combat simulation com contatos fora de visão (6d medida e revertida), poder com alcance/splash, coesão e reforços da
-  ofensiva; encerrar partidas contra Terran (timeout nas duas execuções).
+  ofensiva (a 6f pôs o grupo inteiro na conta da luta, falta medir); encerrar partidas contra Terran.
 - P0.4: banco que continua alto com supply cheio (7g; a 7h deu aos Reactors um
   destino para ele e a 7i deu ao gás, nenhuma das duas com partida que o meça),
   bases por `ready + pending` e expansão presa em 6 bases, reposição de produção

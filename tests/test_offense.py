@@ -716,3 +716,75 @@ def test_the_same_frames_plan_the_same_offense() -> None:
 def test_an_invalid_offense_config_is_rejected(changes: dict[str, float]) -> None:
     with pytest.raises(ValueError):
         OffenseConfig(**changes)
+
+
+TANK_POWER = 2.3
+
+
+def strung_out() -> tuple:
+    """The granted squad in two clumps 14 cells apart: the core falls in the
+    back one, which holds as much power as the front one and the lower tag."""
+
+    return marines(20, FRONT.x, FRONT.y) + marines(
+        10, FRONT.x, FRONT.y + 14.0, first_tag=120
+    )
+
+
+def sieged(count: int, *, y: float, first_tag: int = 900) -> tuple:
+    return tuple(
+        unit(
+            first_tag + index,
+            UnitTypeId.SIEGETANKSIEGED,
+            FRONT.x,
+            y,
+            power=TANK_POWER,
+            attack_air=False,
+        )
+        for index in range(count)
+    )
+
+
+def test_the_enemy_on_the_front_of_the_group_is_in_the_fight() -> None:
+    # bench/base3/007, 515-521 s: the core of a bio ball 25 cells long read
+    # 6.8 of enemy power against six sieged Siege Tanks and two Thors standing
+    # 18-29 cells off, engaged at a share of 0.88 and then called the fight
+    # won with 0 of enemy power, while the squad fell from 62 of power to 27.
+    game, _ = advancing_game()
+    squad = strung_out()
+    # 26 cells from the core, 12 from the front of the group.
+    tanks = sieged(6, y=FRONT.y + 26.0)
+    game.step(701.0, army=squad, enemies=tanks, supply=MAXED)
+
+    *_, plan = game.step(701.5, army=squad, enemies=tanks, supply=MAXED)
+
+    fight = plan.fight
+    assert fight.center == FRONT
+    assert fight.own_power == 30.0
+    assert fight.enemy_power == pytest.approx(6 * TANK_POWER)
+    assert fight.share == pytest.approx(30.0 / (30.0 + 6 * TANK_POWER))
+
+
+def test_a_fight_is_not_won_while_the_enemy_shoots_the_front_of_the_group() -> None:
+    # Measured from the core alone those tanks are no enemy at all, so the
+    # squad kept advancing into them.
+    game, _ = advancing_game()
+    squad = strung_out()
+    tanks = sieged(20, y=FRONT.y + 26.0)
+
+    *_, plan = game.step(701.0, army=squad, enemies=tanks, supply=MAXED)
+
+    assert plan.fight.enemy_power == pytest.approx(20 * TANK_POWER)
+    assert plan.fight.share < CONFIG.engage_share
+    assert (plan.stage, plan.reason) == (Stage.RETREAT, "unfavorable_fight")
+
+
+def test_an_enemy_beyond_the_reach_of_the_whole_group_is_not_in_the_fight() -> None:
+    game, _ = advancing_game()
+    squad = strung_out()
+    # 16 cells past the front of the group, 30 past the core.
+    tanks = sieged(20, y=FRONT.y + 14.0 + CONFIG.engage_radius + 0.5)
+
+    *_, plan = game.step(701.0, army=squad, enemies=tanks, supply=MAXED)
+
+    assert plan.fight.enemy_power == 0.0
+    assert plan.stage is Stage.ADVANCE

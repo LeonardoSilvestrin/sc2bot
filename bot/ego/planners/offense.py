@@ -28,9 +28,12 @@ fell below `depleted_share` of the power it committed with.
 
 The fight is judged locally. The squad is what the Engine granted the offense
 last frame; its core is the squad unit with the most squad power within
-`engage_radius` of it. Its local share is that power against the remembered
-enemy fighters (`power * confidence`, workers aside) within that radius plus
-each contact's uncertainty. A fight the squad holds at least `won_share` of is
+`engage_radius` of it, and the core group is what that power is made of -- the
+squad units within `engage_radius` of the core. Its local share is that power
+against the remembered enemy fighters (`power * confidence`, workers aside)
+within `engage_radius` of any unit of the core group, plus each contact's
+uncertainty: an enemy shooting the front of the group is in the fight even
+when the core stands at the back of it. A fight the squad holds at least `won_share` of is
 no contest: the attack-move on the way settles it, so it counts as no enemy
 near. While advancing, the squad engages at a local share of at least
 `engage_share` and retreats below it; once engaged, it retreats
@@ -511,7 +514,14 @@ def _local_fight(
     """The fight around the squad's core: the unit with the most squad power
     within `radius` of it (the lowest tag on a tie). A squad strung out between
     home and the front is judged where most of it stands, not at an empty
-    point between its parts."""
+    point between its parts.
+
+    The enemy side is every remembered fighter within `radius` of any unit of
+    that core group. Measured from the core alone, a bio ball 25 cells long
+    read 6.8 of enemy power against six sieged Siege Tanks and two Thors
+    standing 18-29 cells away (`bench/base3/007`, 515-521 s): `share` 0.88,
+    then `fight_won` with `enemy_power` 0, while the squad fell from 62 of
+    power to 27."""
 
     fighters = [unit for unit in squad if unit.power > 0.0]
     if not fighters:
@@ -523,16 +533,23 @@ def _local_fight(
     best = max(range(len(fighters)), key=lambda index: (held[index], -fighters[index].tag))
     center = fighters[best].position
     own = float(held[best])
+    # What the core's power is made of: the enemy is measured against those
+    # units, not against the core alone.
+    group = xy[near[best]]
+    fighting = [
+        contact for contact in contacts if contact.power > 0.0 and not contact.is_worker
+    ]
     enemy = weighted_x = weighted_y = 0.0
-    for contact in contacts:
-        if contact.power <= 0.0 or contact.is_worker:
-            continue
-        if contact.position.distance_to(center) > radius + contact.uncertainty:
-            continue
-        weight = contact.power * contact.confidence
-        enemy += weight
-        weighted_x += weight * contact.position.x
-        weighted_y += weight * contact.position.y
+    if fighting:
+        there = np.array([(item.position.x, item.position.y) for item in fighting])
+        gaps = np.sqrt(((group[:, None, :] - there[None, :, :]) ** 2).sum(axis=2)).min(axis=0)
+        for contact, gap in zip(fighting, gaps, strict=True):
+            if gap > radius + contact.uncertainty:
+                continue
+            weight = contact.power * contact.confidence
+            enemy += weight
+            weighted_x += weight * contact.position.x
+            weighted_y += weight * contact.position.y
     return LocalFight(
         center=center,
         own_power=own,
