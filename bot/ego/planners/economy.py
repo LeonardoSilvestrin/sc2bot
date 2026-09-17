@@ -3,11 +3,17 @@
 The opening belongs to Ares' build runner. Afterwards this turns Strategy's
 preferences into an `EconomyPlan`, which the Body's economy behavior runs as
 Ares macro behaviors.
+
+After the opening, Command Centers become Orbital Commands and every Orbital's
+energy goes to MULEs. The upgrades of the composition are researched in
+`UPGRADES` order -- except while stabilizing, when every resource goes to the
+army.
 """
 
 from __future__ import annotations
 
 from sc2.ids.unit_typeid import UnitTypeId
+from sc2.ids.upgrade_id import UpgradeId
 
 from bot.attention import AttentionState
 from bot.ego.planners import EconomyPlan
@@ -18,6 +24,23 @@ COMPOSITION: tuple[tuple[UnitTypeId, float, int], ...] = (
     (UnitTypeId.MARAUDER, 0.2, 1),
     (UnitTypeId.SIEGETANK, 0.15, 0),
     (UnitTypeId.MEDIVAC, 0.1, 1),
+)
+
+# Bio research first, then infantry weapons and armor level by level; the tanks'
+# weapons come after the second infantry level.
+UPGRADES: tuple[UpgradeId, ...] = (
+    UpgradeId.STIMPACK,
+    UpgradeId.SHIELDWALL,
+    UpgradeId.TERRANINFANTRYWEAPONSLEVEL1,
+    UpgradeId.PUNISHERGRENADES,
+    UpgradeId.TERRANINFANTRYARMORSLEVEL1,
+    UpgradeId.TERRANINFANTRYWEAPONSLEVEL2,
+    UpgradeId.TERRANINFANTRYARMORSLEVEL2,
+    UpgradeId.TERRANVEHICLEWEAPONSLEVEL1,
+    UpgradeId.TERRANINFANTRYWEAPONSLEVEL3,
+    UpgradeId.TERRANINFANTRYARMORSLEVEL3,
+    UpgradeId.TERRANVEHICLEWEAPONSLEVEL2,
+    UpgradeId.TERRANVEHICLEWEAPONSLEVEL3,
 )
 
 MAX_WORKERS = 80
@@ -56,5 +79,9 @@ def plan(attention: AttentionState, strategy: StrategyState) -> EconomyPlan:
             ("bases", float(bases)),
             ("saturated_at", float(saturated_at)),
             ("strategy_economy", strategy.economy),
+            ("upgrades_done", float(sum(item in attention.upgrades for item in UPGRADES))),
         ),
+        upgrades=UPGRADES if attention.opening_done and not stabilizing else (),
+        orbitals=attention.opening_done,
+        mules=attention.opening_done,
     )

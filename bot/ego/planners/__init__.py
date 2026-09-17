@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 from sc2.ids.unit_typeid import UnitTypeId
+from sc2.ids.upgrade_id import UpgradeId
 from sc2.position import Point2
 
 
@@ -23,6 +24,8 @@ class Command(str, Enum):
     HOLD = "HOLD"
     # Go and look at the target; a worker stops mining for it.
     SCOUT = "SCOUT"
+    # Walk back to the target without stopping to fight.
+    RETREAT = "RETREAT"
 
 
 class Domain(str, Enum):
@@ -72,6 +75,12 @@ class EconomyPlan:
     reason: str
     # The values the plan was computed from.
     inputs: tuple[tuple[str, float], ...] = ()
+    # Upgrades to research, in order; the tech they need is built on the way.
+    upgrades: tuple[UpgradeId, ...] = ()
+    # Turn idle Command Centers into Orbital Commands.
+    orbitals: bool = False
+    # Orbital Commands spend their energy on MULEs.
+    mules: bool = False
 
 
 @dataclass(frozen=True, slots=True)

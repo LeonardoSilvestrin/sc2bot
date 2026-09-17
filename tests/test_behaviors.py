@@ -6,13 +6,21 @@ from types import SimpleNamespace
 
 import pytest
 from ares.behaviors.combat import CombatManeuver
-from ares.behaviors.combat.individual import AMove, PathUnitToTarget, SiegeTankDecision
+from ares.behaviors.combat.individual import (
+    AMove,
+    PathUnitToTarget,
+    SiegeTankDecision,
+    UseAbility,
+)
 from ares.behaviors.macro import ExpansionController, MacroPlan, Mining, SpawnController
 from sc2.game_data import Cost
+from sc2.ids.ability_id import AbilityId
+from sc2.ids.buff_id import BuffId
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
 from bot.body import behaviors
+from bot.body.behaviors import attack
 from bot.body.behaviors import economy as economy_behavior
 from bot.body.engine import Engine
 from bot.ego.planners import Command, EconomyPlan, economy
@@ -75,6 +83,128 @@ def test_a_tank_stays_sieged_only_while_holding_and_a_holder_fights_what_comes()
     assert [type(micro) for micro in held[1]] == [AMove]
     assert not attacking[2][0].stay_sieged_near_target
     assert isinstance(attacking[2][1], AMove)
+
+
+def test_a_retreat_walks_back_without_fighting_and_unsieges_tanks_first() -> None:
+    bot = FakeBot()
+    tank = FakeUnit(2, UnitTypeId.SIEGETANKSIEGED, 40, 40, dps=40, hit_points=175)
+    marine = FakeUnit(1, UnitTypeId.MARINE, 41, 40)
+    medivac = FakeUnit(3, UnitTypeId.MEDIVAC, 40, 41, dps=0.0, flying=True)
+    # An enemy right beside them does not stop the retreat.
+    bot.enemy_units = [FakeUnit(90, UnitTypeId.ZERGLING, 42, 40, hit_points=35.0)]
+    rally = Point2((18, 18))
+
+    behaviors.BY_COMMAND[Command.RETREAT](
+        bot,
+        [tank, marine, medivac],
+        proposal("offense", 0.0, command=Command.RETREAT, target=rally),
+    )
+
+    by_tag = maneuvers(bot)
+    assert [type(micro) for micro in by_tag[1]] == [PathUnitToTarget]
+    assert [type(micro) for micro in by_tag[2]] == [SiegeTankDecision, PathUnitToTarget]
+    assert by_tag[2][0].force_unsiege
+    assert by_tag[3][0].grid is bot.mediator.get_air_grid
+    assert by_tag[1][0].grid is bot.mediator.get_ground_grid
+    assert {micros[-1].target for micros in by_tag.values()} == {rally}
+    assert not any(micros[-1].sense_danger for micros in by_tag.values())
+
+
+STIM_MARINE = AbilityId.EFFECT_STIM_MARINE
+
+
+def bio(tag, type_id=UnitTypeId.MARINE, x=30.0, y=30.0, **kw):
+    ability = attack.STIMS[type_id][0] if type_id in attack.STIMS else None
+    kw.setdefault("abilities", () if ability is None else (ability,))
+    return FakeUnit(tag, type_id, x, y, **kw)
+
+
+@pytest.mark.parametrize(
+    "marine, enemy, stims",
+    [
+        # An enemy exactly at the stim range.
+        (bio(1), FakeUnit(90, UnitTypeId.ZERGLING, 30 + attack.STIM_RANGE, 30), True),
+        (bio(1), FakeUnit(90, UnitTypeId.ZERGLING, 30.5 + attack.STIM_RANGE, 30), False),
+        # Already stimmed.
+        (bio(1, buffs=(BuffId.STIMPACK,)), FakeUnit(90, UnitTypeId.ZERGLING, 32, 30), False),
+        # Not researched, or on cooldown: the game does not offer it.
+        (bio(1, abilities=()), FakeUnit(90, UnitTypeId.ZERGLING, 32, 30), False),
+        # Exactly half its health, and just below.
+        (bio(1, health=22.5), FakeUnit(90, UnitTypeId.ZERGLING, 32, 30), True),
+        (bio(1, health=22.0), FakeUnit(90, UnitTypeId.ZERGLING, 32, 30), False),
+        # A worker is no fight.
+        (bio(1), FakeUnit(90, UnitTypeId.DRONE, 32, 30), False),
+    ],
+)
+def test_bio_stims_only_near_a_fight_with_the_health_to_spare(marine, enemy, stims) -> None:
+    bot = FakeBot()
+    bot.enemy_units = [enemy]
+
+    report = behaviors.BY_COMMAND[Command.ATTACK](bot, [marine], proposal("offense", 0.0))
+
+    micros = maneuvers(bot)[1]
+    if stims:
+        assert [type(micro) for micro in micros] == [UseAbility, AMove]
+        assert (micros[0].ability, micros[0].unit) == (STIM_MARINE, marine)
+        assert report.stimmed == (1,)
+    else:
+        assert [type(micro) for micro in micros] == [AMove]
+        assert report.stimmed == ()
+
+
+def test_a_marauder_uses_its_own_stim() -> None:
+    bot = FakeBot()
+    marauder = bio(2, UnitTypeId.MARAUDER, hit_points=125.0)
+    bot.enemy_units = [FakeUnit(90, UnitTypeId.ROACH, 33, 30)]
+
+    behaviors.BY_COMMAND[Command.ATTACK](bot, [marauder], proposal("defense:x", 1.0))
+
+    assert maneuvers(bot)[2][0].ability is AbilityId.EFFECT_STIM_MARAUDER
+
+
+def test_a_medivac_follows_its_group_instead_of_flying_ahead() -> None:
+    bot = FakeBot()
+    marine = bio(1, x=30, y=30)
+    marauder = bio(2, UnitTypeId.MARAUDER, x=34, y=30)
+    medivac = FakeUnit(3, UnitTypeId.MEDIVAC, 50, 50, dps=0.0, flying=True)
+    target = Point2((60, 60))
+
+    report = behaviors.BY_COMMAND[Command.ATTACK](
+        bot, [marine, marauder, medivac], proposal("offense", 0.0, target=target)
+    )
+
+    by_tag = maneuvers(bot)
+    assert by_tag[3][-1].target == Point2((32, 30))
+    assert {by_tag[1][-1].target, by_tag[2][-1].target} == {target}
+    assert report.escorts == (3,)
+
+    bot = FakeBot()
+    alone = behaviors.BY_COMMAND[Command.ATTACK](
+        bot, [medivac], proposal("offense", 0.0, target=target)
+    )
+    assert maneuvers(bot)[3][-1].target == target
+    assert alone.escorts == ()
+
+
+def test_every_grant_reports_its_reactions_once() -> None:
+    bot = FakeBot()
+    bot.units = [bio(1), bio(2, x=31), FakeUnit(3, UnitTypeId.MEDIVAC, 30, 31, dps=0.0)]
+    bot.enemy_units = [FakeUnit(90, UnitTypeId.ZERGLING, 32, 30)]
+    frame = attention(
+        own_units=(unit(1, x=30, y=30), unit(2, x=31, y=30), unit(3, UnitTypeId.MEDIVAC, 30, 31))
+    )
+    result = Engine().allocate(
+        frame,
+        (
+            proposal("defense:a", 1.0, count=1),
+            proposal("offense", 0.0),
+            proposal("core_army", -1.0, command=Command.HOLD),
+        ),
+    )
+
+    report = behaviors.command_units(bot, result)
+
+    assert report == attack.MicroReport(stimmed=(1, 2), escorts=(3,))
 
 
 def test_the_economy_runs_mining_always_and_macro_only_after_the_opening() -> None:

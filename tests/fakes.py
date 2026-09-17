@@ -208,14 +208,24 @@ class FakeUnit:
         structure: bool = False,
         visible: bool = True,
         ready: bool = True,
+        energy: float = 0.0,
+        minerals: int = 0,
+        abilities=(),
+        buffs=(),
+        health: float | None = None,
     ) -> None:
+        # What the unit can use now, and the buffs it carries.
+        self.abilities = set(abilities)
+        self.buffs = set(buffs)
         self.is_ready = ready
+        self.energy = energy
+        self.mineral_contents = minerals
         # Abilities this unit was ordered to use, in order.
         self.commands: list = []
         self.tag = tag
         self.type_id = type_id
         self.position = Point2((float(x), float(y)))
-        self.health = hit_points
+        self.health = hit_points if health is None else health
         self.health_max = hit_points
         self.shield = 0.0
         self.shield_max = 0.0
@@ -227,11 +237,18 @@ class FakeUnit:
         self.is_structure = structure
         self.is_visible = visible
 
+    @property
+    def health_percentage(self) -> float:
+        return self.health / self.health_max if self.health_max else 0.0
+
+    def has_buff(self, buff) -> bool:
+        return buff in self.buffs
+
     def distance_to(self, other) -> float:
         return self.position.distance_to(getattr(other, "position", other))
 
-    def __call__(self, ability) -> None:
-        self.commands.append(ability)
+    def __call__(self, ability, target=None) -> None:
+        self.commands.append(ability if target is None else (ability, target))
 
 
 class FakeMediator:
@@ -302,6 +319,7 @@ class FakeBot:
         self.enemy_units: list[FakeUnit] = []
         self.enemy_structures: list[FakeUnit] = []
         self.townhalls: list[FakeUnit] = []
+        self.mineral_field: list[FakeUnit] = []
         self.state = SimpleNamespace(
             dead_units=set(),
             visibility=SimpleNamespace(

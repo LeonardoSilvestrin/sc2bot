@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 from sc2.ids.unit_typeid import UnitTypeId
+from sc2.ids.upgrade_id import UpgradeId
 from sc2.position import Point2
 
 from .map import MapView, as_point
@@ -87,6 +88,8 @@ class AttentionState:
     # python-sc2 visibility indexed [y, x]; 2 means in vision now. Left out of
     # equality: two frames that perceived the same units are the same frame.
     visibility: np.ndarray | None = field(default=None, compare=False, repr=False)
+    # Upgrades researched to completion.
+    upgrades: frozenset[UpgradeId] = frozenset()
 
     def is_visible(self, point: Point2) -> bool:
         grid = self.visibility
@@ -132,6 +135,7 @@ def observe(bot, iteration: int, map_view: MapView) -> AttentionState:
         dead_tags=frozenset(int(tag) for tag in getattr(state, "dead_units", ())),
         map=map_view,
         visibility=getattr(getattr(state, "visibility", None), "data_numpy", None),
+        upgrades=frozenset(getattr(state, "upgrades", ())),
     )
 
 

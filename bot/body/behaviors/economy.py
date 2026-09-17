@@ -25,8 +25,11 @@ from ares.behaviors.macro import (
     Mining,
     ProductionController,
     SpawnController,
+    UpgradeCCs,
+    UpgradeController,
 )
 from ares.consts import UnitRole
+from sc2.ids.ability_id import AbilityId
 from sc2.ids.unit_typeid import UnitTypeId
 
 from bot.attention import AttentionState
@@ -35,6 +38,10 @@ from bot.ego.planners import EconomyPlan
 
 # SpawnController's guard against an empty army in its share test.
 _EMPTY_ARMY = 1e-16
+# Energy a MULE costs.
+MULE_ENERGY = 50.0
+# A mineral field this close to a townhall is mined from it.
+MINING_DISTANCE = 10.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,16 +74,48 @@ def execute(bot, plan: EconomyPlan) -> SpawnMode:
         unit_type: {"proportion": proportion, "priority": priority}
         for unit_type, proportion, priority in plan.composition
     }
+    # Ares' MacroPlan stops at the first behavior that acts, and the
+    # SpawnController acts whenever production is idle: whatever should not
+    # wait for the army to stop growing goes before it.
     macro = MacroPlan()
     macro.add(AutoSupply(base_location=bot.start_location))
+    if plan.orbitals:
+        # Before BuildWorkers, which keeps the Command Centers busy.
+        macro.add(UpgradeCCs(to=UnitTypeId.ORBITALCOMMAND))
     macro.add(BuildWorkers(to_count=plan.workers))
     macro.add(GasBuildingController(to_count=plan.gas))
     if plan.expand:
         macro.add(ExpansionController(to_count=plan.bases))
+    if plan.upgrades:
+        macro.add(UpgradeController(list(plan.upgrades), base_location=bot.start_location))
     macro.add(SpawnController(composition, freeflow_mode=spawn.freeflow))
     macro.add(ProductionController(composition, base_location=bot.start_location))
     bot.register_behavior(macro)
+    if plan.mules:
+        call_mules(bot)
     return spawn
+
+
+def call_mules(bot) -> None:
+    """Every ready Orbital with a MULE's energy drops one on the fullest mineral
+    field of a ready townhall; ties go to the lowest tag."""
+
+    townhalls = [townhall for townhall in bot.townhalls if townhall.is_ready]
+    fields = [
+        field
+        for field in bot.mineral_field
+        if any(field.distance_to(townhall) <= MINING_DISTANCE for townhall in townhalls)
+    ]
+    if not fields:
+        return
+    target = max(fields, key=lambda field: (field.mineral_contents, -field.tag))
+    for orbital in bot.structures:
+        if (
+            orbital.type_id is UnitTypeId.ORBITALCOMMAND
+            and orbital.is_ready
+            and orbital.energy >= MULE_ENERGY
+        ):
+            orbital(AbilityId.CALLDOWNMULE_CALLDOWNMULE, target)
 
 
 def spawn_mode(bot, plan: EconomyPlan) -> SpawnMode:

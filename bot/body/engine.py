@@ -68,6 +68,12 @@ class Engine:
     def __init__(self) -> None:
         self._owners: dict[int, str] = {}
 
+    def held_by(self, proposal_id: str) -> frozenset[int]:
+        """The units the last allocation granted a proposal: feedback for the
+        planner that made it, which still names no unit."""
+
+        return frozenset(tag for tag, owner in self._owners.items() if owner == proposal_id)
+
     def allocate(self, attention: AttentionState, proposals: Sequence[Proposal]) -> EngineResult:
         army = {unit.tag: unit for unit in attention.own_units if is_army(unit)}
         # A worker is only taken out of mining, and stays with whoever took it.
@@ -152,14 +158,15 @@ def _judge(
     if proposal.minimum_power is not None:
         if power >= proposal.minimum_power - _TOLERANCE:
             return GrantStatus.FULL, "minimum_power_met"
-        short = "insufficient_power"
+        if chosen:
+            return GrantStatus.PARTIAL, "insufficient_power"
     elif proposal.count is not None:
         if len(chosen) >= proposal.count:
             return GrantStatus.FULL, "count_met"
-        short = "insufficient_units"
-    else:
+        if chosen:
+            return GrantStatus.PARTIAL, "insufficient_units"
+    elif chosen:
+        # Every free unit is all it asked for, however few.
         return GrantStatus.FULL, "every_free_unit"
-    if chosen:
-        return GrantStatus.PARTIAL, short
     # Nothing at all could serve it, or everything that could was ranked above.
     return GrantStatus.REJECTED, "eligible_units_taken" if any_eligible else "no_eligible_units"

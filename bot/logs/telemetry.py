@@ -16,10 +16,11 @@ from sc2.position import Point2
 
 from bot.attention import AttentionState, MapView, is_army
 from bot.awareness import AwarenessState
+from bot.body.behaviors.attack import MicroReport
 from bot.body.behaviors.economy import SpawnMode
 from bot.body.engine import EngineResult, rank
 from bot.ego.planners import EconomyPlan, Proposal, StructurePlan
-from bot.ego.planners.offense import OffensePlan
+from bot.ego.planners.offense import LocalFight, OffensePlan
 from bot.ego.strategy import StrategyState
 
 from .identity import describe_build, fingerprint
@@ -42,6 +43,7 @@ class Telemetry:
         self._offense = ChangeGate()
         self._economy = ChangeGate()
         self._spawn = ChangeGate()
+        self._escorts = ChangeGate()
         self._structures = ChangeGate()
         self._perf = ChangeGate(heartbeat=heartbeat)
         self._proposals = ChangeGate()
@@ -138,6 +140,7 @@ class Telemetry:
         structures: StructurePlan,
         result: EngineResult,
         spawn: SpawnMode,
+        micro: MicroReport,
         timings: Mapping[str, float],
     ) -> None:
         self._record_attention(attention)
@@ -147,6 +150,7 @@ class Telemetry:
         self._record_proposals(attention.time, proposals)
         self._record_economy(attention.time, economy)
         self._record_spawn(attention.time, spawn)
+        self._record_micro(attention.time, micro)
         self._record_structures(attention.time, structures)
         self._record_grants(attention, result)
         self._record_commands(attention, awareness, strategy, result)
@@ -174,6 +178,7 @@ class Telemetry:
             len(attention.bases),
             attention.opening_done,
             bool(attention.enemy_units),
+            len(attention.upgrades),
         )
         if not self._attention.admit(signature, now=attention.time):
             return
@@ -195,6 +200,7 @@ class Telemetry:
                 "bases": [base.base_id for base in attention.bases],
                 "opening": attention.opening,
                 "opening_done": attention.opening_done,
+                "upgrades": sorted(upgrade.name for upgrade in attention.upgrades),
             },
         )
 
@@ -327,6 +333,7 @@ class Telemetry:
                 "target_tag": offense.target_tag,
                 "target_kind": offense.target_kind,
                 "inputs": dict(offense.inputs),
+                "fight": None if offense.fight is None else _fight(offense.fight),
             },
         )
 
@@ -390,6 +397,9 @@ class Telemetry:
             economy.expand,
             economy.freeflow,
             economy.reason,
+            economy.upgrades,
+            economy.orbitals,
+            economy.mules,
         )
         if not self._economy.admit(signature, now=now):
             return
@@ -414,6 +424,9 @@ class Telemetry:
                     for unit_type, proportion, priority in economy.composition
                 ],
                 "inputs": dict(economy.inputs),
+                "upgrades": [upgrade.name for upgrade in economy.upgrades],
+                "orbitals": economy.orbitals,
+                "mules": economy.mules,
             },
         )
 
@@ -428,6 +441,21 @@ class Telemetry:
                 "freeflow": spawn.freeflow,
                 "reason": spawn.reason,
                 "counts": {unit_type.name: count for unit_type, count in spawn.counts},
+            },
+        )
+
+    def _record_micro(self, now: float, micro: MicroReport) -> None:
+        # Every stim is a decision; which Medivacs escort is a state.
+        escorts_changed = self._escorts.admit(micro.escorts, now=now)
+        if not micro.stimmed and not escorts_changed:
+            return
+        self._event(
+            "behavior.micro_executed",
+            "behaviors",
+            now,
+            {
+                "stimmed": list(micro.stimmed),
+                "escorts": list(micro.escorts),
             },
         )
 
@@ -597,3 +625,13 @@ def _cell(point: Point2) -> tuple[int, int]:
         int(float(point.x) // COMMAND_TARGET_CELL),
         int(float(point.y) // COMMAND_TARGET_CELL),
     )
+
+
+def _fight(fight: LocalFight) -> dict[str, Any]:
+    return {
+        "center": _xy(fight.center),
+        "own_power": fight.own_power,
+        "enemy_power": fight.enemy_power,
+        "share": fight.share,
+        "enemy_center": None if fight.enemy_center is None else _xy(fight.enemy_center),
+    }

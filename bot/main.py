@@ -14,6 +14,7 @@ from sc2.data import Result
 from bot.attention import AttentionState, MapView, observe, read_map
 from bot.awareness import AwarenessModel, AwarenessState
 from bot.body import behaviors
+from bot.body.behaviors.attack import MicroReport
 from bot.body.behaviors.economy import SpawnMode
 from bot.body.engine import Engine, EngineResult
 from bot.ego.planners import (
@@ -25,6 +26,7 @@ from bot.ego.planners import (
     economy,
 )
 from bot.ego.planners.intel import Intel
+from bot.ego.planners.offense import OWNER as OFFENSE
 from bot.ego.planners.offense import Offense, OffensePlan
 from bot.ego.planners.structure_control import StructureControl
 from bot.ego.strategy import StrategyModel, StrategyState
@@ -66,6 +68,7 @@ class Frame:
     structures: StructurePlan
     result: EngineResult
     spawn: SpawnMode
+    micro: MicroReport
 
 
 def play_frame(bot, iteration: int, layers: Layers) -> Frame:
@@ -78,7 +81,9 @@ def play_frame(bot, iteration: int, layers: Layers) -> Frame:
     laps.mark("strategy")
     proposals = defense.plan(attention, awareness, strategy)
     proposals += core_army.plan(attention, awareness, strategy)
-    offense = layers.offense.plan(attention, awareness, strategy)
+    offense = layers.offense.plan(
+        attention, awareness, strategy, layers.engine.held_by(OFFENSE)
+    )
     proposals += offense.proposals
     proposals += layers.intel.plan(attention)
     economy_plan = economy.plan(attention, strategy)
@@ -86,7 +91,7 @@ def play_frame(bot, iteration: int, layers: Layers) -> Frame:
     laps.mark("planners")
     result = layers.engine.allocate(attention, proposals)
     laps.mark("engine")
-    spawn = behaviors.execute(bot, attention, result, economy_plan, structures)
+    body = behaviors.execute(bot, attention, result, economy_plan, structures)
     laps.mark("behaviors")
     layers.logs.record(
         bot,
@@ -98,11 +103,21 @@ def play_frame(bot, iteration: int, layers: Layers) -> Frame:
         economy_plan,
         structures,
         result,
-        spawn,
+        body.spawn,
+        body.micro,
         laps.times,
     )
     return Frame(
-        attention, awareness, strategy, offense, proposals, economy_plan, structures, result, spawn
+        attention,
+        awareness,
+        strategy,
+        offense,
+        proposals,
+        economy_plan,
+        structures,
+        result,
+        body.spawn,
+        body.micro,
     )
 
 

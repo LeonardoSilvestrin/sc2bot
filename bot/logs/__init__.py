@@ -13,6 +13,7 @@ from time import perf_counter
 
 from bot.attention import AttentionState, MapView
 from bot.awareness import AwarenessState
+from bot.body.behaviors.attack import MicroReport
 from bot.body.behaviors.economy import SpawnMode
 from bot.body.engine import EngineResult
 from bot.ego.planners import EconomyPlan, Proposal, StructurePlan
@@ -79,6 +80,7 @@ class Logs:
         structures: StructurePlan,
         result: EngineResult,
         spawn: SpawnMode,
+        micro: MicroReport,
         timings: Mapping[str, float],
     ) -> None:
         started = perf_counter()
@@ -94,6 +96,7 @@ class Logs:
                 structures,
                 result,
                 spawn,
+                micro,
                 {**timings, "logs": self._last_ms},
             )
             self.snapshots.capture(attention, awareness, strategy, result)

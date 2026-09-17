@@ -6,7 +6,8 @@ atualiza este arquivo no mesmo commit.
 
 "Feito" significa: teste que reproduz o problema, suíte e lint verdes localmente,
 diff restrito à fatia. **Nenhuma linha aqui é evidência de ganho de gameplay**:
-ainda não existe baseline de partidas (fatia 2).
+a matriz da fatia 2 tem uma partida por raça, o que não sustenta taxa de
+vitória.
 
 ## Fatias
 
@@ -16,18 +17,24 @@ seleção (ver regra no prompt corrigido).
 | # | Fatia | Status | Commit |
 | --- | --- | --- | --- |
 | 1 | Gate de entrega (pytest/ruff antes do artefato) | Feito | `5ab151a` |
-| 2 | Harness/baseline de partidas | Pendente | — |
+| 2 | Harness/baseline de partidas | Feito (matriz mínima) | `harness: play a fixed matrix of games and record each outcome` |
 | 3 | Contrato defensivo mínimo + `ThreatIncident` | Feito | `defense: one incident, one demand, one budget` |
 | 3a | Ameaça lembrada por base (objetivo não abandona ataque em pausa) | Feito | `awareness: remember each base's threat` |
 | 4 | Wall bidirecional | Feito | `wall: raise depots when ground enemies come near` |
 | 5 | Desconhecido conservador mínimo | Feito | `awareness: believe the unseen enemy army` |
-| 6a | Ofensiva: assemble/advance | Pendente | — |
-| 6b | Ofensiva: engage/retreat/regroup | Pendente | — |
-| 6c | Ofensiva: search/finish | Pendente | — |
+| 6a | Ofensiva: assemble/advance | Feito | `d609fc7` + `offense: fight, retreat and search; macro upgrades; bio micro` |
+| 6b | Ofensiva: engage/retreat/regroup | Feito | `offense: fight, retreat and search; macro upgrades; bio micro` |
+| 6c | Ofensiva: search/finish | Feito | `offense: fight, retreat and search; macro upgrades; bio micro` |
 | 7a | Macro: plano econômico estável (contagem de workers) | Feito | `economy: count workers inside gas buildings` |
-| 7b | Macro: produção não congela na composição exata | Feito | não commitado |
-| 7 | Macro resiliente (opening, supply/pending, reposição, upgrades, spending) | Pendente | — |
-| 8 | RegionState e micro | Pendente | — |
+| 7b | Macro: produção não congela na composição exata | Feito | `61e3988` |
+| 7c | Macro: upgrades, Orbital e MULE depois do opening | Feito | `offense: fight, retreat and search; macro upgrades; bio micro` |
+| 7 | Macro resiliente (opening, supply/pending, reposição, detecção, spending) | Pendente | — |
+| 8a | Micro: Stim e Medivac acompanhando o grupo | Feito | `offense: fight, retreat and search; macro upgrades; bio micro` |
+| 8 | `RegionState` e o resto do micro | Pendente | — |
+
+As fatias 2, 6a–6c, 7c e 8a foram feitas numa mesma sessão, a pedido. O
+harness tem commit próprio; as outras dividem arquivos e estão num só commit,
+cada uma com sua seção e seus testes.
 
 ## 1. Gate de entrega — feito (`5ab151a`)
 
@@ -47,6 +54,84 @@ seleção (ver regra no prompt corrigido).
 - Os workflows não foram executados no GitHub; a suíte nunca rodou em Linux.
 - Sem gatilho de PR; smoke de import e do zip; isolamento de observers
   (`NullLogger`); fingerprint de toda configuração decisória; README.
+
+## Partidas desta sessão
+
+Persephone AIE, IA VeryHard Macro, uma partida por raça, seed 1, limite de
+1.200 s de jogo (`bench.py run --maps PersephoneAIE_v4 --races Zerg Terran
+Protoss --time-limit 1200`). Cada execução rodou de um `git worktree` do
+`d609fc7` com os arquivos alterados copiados (`dirty: true`). Uma partida
+por combinação: nenhuma diferença abaixo é estatisticamente significativa
+(Wilson 95 % de 1/3 é 0,06–0,79; de 2/3, 0,21–0,94).
+
+| Execução | Código | Fingerprint | Zerg | Terran | Protoss |
+| --- | --- | --- | --- | --- | --- |
+| `bench/6a` | 6a + correção do Engine | `a8ffba2698d1a952` | vitória, 840 s | timeout | timeout |
+| `bench/all` | + 6b (1ª versão), 6c, 7c, 8a | — | timeout (perseguição, corrigida) | interrompida | — |
+| `bench/all2` | + `won_share` | — | timeout (centro vazio, corrigido) | interrompida | — |
+| `bench/all3` | + núcleo do grupo (**código final**) | `aaba38f6fedc1e7f` | vitória, 848 s | timeout | vitória, 1.121 s |
+| `bench/all4` | + recuo por perda | — | timeout | interrompida | — |
+| `bench/all5` | + recuo por troca (revertido) | `85cf7625ef89c843` | timeout | timeout | vitória, 1.121 s |
+
+Observado no JSONL (script fora do repositório):
+
+- `6a`: nenhuma pesquisa depois do opening; gás depois de 600 s até 4,6–4,9
+  mil; nenhum Stim usado.
+- `all3`: 10–11 dos 12 upgrades concluídos; 284–338 frames com Stim;
+  8–12 Medivacs escoltando; contra Protoss, quatro SEARCH → ADVANCE
+  (`structure_found`) antes da vitória. Minerais depois de 600 s continuam
+  subindo (12–29 mil): a capacidade de produção não acompanha.
+- Mesmo seed, mesmas decisões → mesma partida (`all4/000` e `all5/000`
+  idênticas até o fim); o seed torna a comparação reproduzível nesta máquina.
+
+## 2. Harness/baseline de partidas — feito (matriz mínima)
+
+Seleção: pedido explícito do usuário (implementar as fatias pendentes). A
+ofensiva (6a–6c) só pode ter aceite "depois de cenário/partida registrado",
+então o harness vem antes dela.
+
+**Feito**
+
+- `harness/` (puro, testável sem SC2): `matrix` (todas as combinações de
+  mapas × raças × dificuldades × builds, `games` vezes, em ordem fixa; a
+  repetição k usa `seed + k`), `outcome`, `build_record`, `identity`,
+  `load_records`, `summarize` e `wilson`.
+- Resultado explícito: `victory`, `defeat`, `tie`, `timeout`, `crash`,
+  `no_result`. O python-sc2 encerra no limite de tempo como `Tie`, e o último
+  passo do bot fica alguns game loops antes do limite (119,91 s num limite de
+  120 s, na partida de fumaça); um `Tie` a até `LIMIT_TOLERANCE` (1 s) do limite
+  é `timeout`. Processo com código ≠ 0 ou estouro do timeout de relógio é
+  `crash`.
+- `result.json` por partida: spec, resultado, tempo de jogo e de relógio,
+  commit e branch do bot, SHA do Ares, `dirty` (a árvore difere do commit),
+  `config_fingerprint` e `configs` lidos do `game.started` da própria
+  partida, caminhos do replay e do JSONL, erro.
+- `bench.py run|summarize|compare`: cada partida num subprocesso
+  (`bench.py play`) com timeout de relógio; `summary.json` reescrito a cada
+  partida; `compare` recusa execuções que não jogaram a mesma matriz. Os
+  resultados ficam em `bench/` (ignorado pelo git).
+- CI: `ruff check` passa a cobrir `harness` e `bench.py`.
+- Testes: matriz fixa e determinística, ids únicos e ida e volta em JSON;
+  matriz vazia ou inválida rejeitada; cada combinação de resultado, código e
+  timeout vira o desfecho certo, inclusive o `Tie` 0,09 s antes do limite;
+  registro com identidade, fingerprint, replay e log, e sem eles quando não
+  existem; resumo com contagens, taxa de vitória, intervalo de Wilson e
+  duração média; valores do intervalo de Wilson.
+- Verificação: partida de fumaça real (Persephone, Zerg Easy, 120 s) gerou
+  `result.json`, replay e JSONL; foi ela que mostrou o `Tie` antes do limite.
+
+**Não feito**
+
+- Nenhuma matriz com repetições: as execuções abaixo têm uma partida por
+  combinação e não sustentam taxa de vitória (o intervalo de Wilson de 1 em 1
+  é 0,21–1,00).
+- Oponentes bots/`local-play-bootstrap`, mapas além dos três AIE instalados,
+  métricas agregadas no resumo (supply block, banco, primeiro ataque,
+  tempo de frame); hoje saem de script fora do repositório sobre o JSONL.
+- Reprodutibilidade verificada só num par (`all4/000` = `all5/000`, mesmo
+  seed e mesmas decisões) e só nesta máquina.
+- `dirty` diz que a árvore mudou, não o quê; partidas de código não commitado
+  foram rodadas de um `git worktree` com a cópia dos arquivos alterados.
 
 ## 3. Contrato defensivo mínimo + `ThreatIncident` — feito
 
@@ -309,6 +394,113 @@ Evidência do problema:
   scout é P0.2).
 - O viewer não mostra os campos novos; lê `enemy_power`, agora só exército.
 
+## 6a. Ofensiva: assemble/advance — feito
+
+Evidência do problema: trace `3769f04`, 675–896 s: supply 190–200, sem ameaça,
+75–82 Marines de exército em `HOLD` enquanto 4.210 minerais viravam 11.970.
+O código estava em `d609fc7` ("fatia 6a em andamento") com dois testes
+falhando.
+
+**Feito**
+
+- Ego: `Offense` (IDLE → ASSEMBLE → ADVANCE) com `OffenseConfig` validada e no
+  fingerprint; prioridade 0, entre Defense (> 0) e CoreArmy (agora −1).
+- Engine (correção desta sessão): um pedido de todas as livres que não
+  recebe nenhuma unidade passa a ser `REJECTED` (`eligible_units_taken` ou
+  `no_eligible_units`) em vez de `FULL`/`every_free_unit`. Era o que os dois
+  testes falhando pediam: o CoreArmy sem unidades aparecia como atendido.
+- Body: `behaviors/attack.py` executa o `ATTACK` de Defense e da ofensiva.
+- Logs: `behavior.offense_planned`.
+- Testes: `tests/test_offense.py` e o fluxo de frame do exército maxado.
+
+**Não feito**: path de grupo consciente de risco; coesão (toda unidade livre,
+inclusive a recém-treinada em casa, recebe o `ATTACK` e vai sozinha).
+
+## 6b. Ofensiva: engage/retreat/regroup — feito
+
+Evidência do problema: linha de base `bench/6a/001` (Terran VeryHard):
+ADVANCE aos 839 s e `army_depleted` aos 866 s — o exército perdeu metade do
+poder em 27 s sem nenhuma decisão de recuar; nada no planner comparava forças.
+
+**Feito**
+
+- Engine: `held_by(proposal_id)`, as unidades que a última alocação deu a uma
+  proposta. O planner lê a própria concessão sem nomear unidades.
+- Ego/offense: grupo = concessão anterior; `LocalFight` em volta do núcleo
+  do grupo (a unidade com mais poder do grupo a ≤ `engage_radius` 16; menor
+  tag no empate): esse poder contra `poder·confiança` dos inimigos sem workers
+  a ≤ 16 + incerteza, e `share`. Estágios ENGAGE, RETREAT e REGROUP com
+  histerese: entra em luta com `share ≥ 0,5` (abaixo, recua); engajado, só
+  recua com `share < 0,35` depois de `engage_dwell` (4 s); luta ganha depois de
+  `clear_after` (3 s) sem inimigo; recuo termina com o exército reunido ou em
+  30 s; REGROUP espera `regroup_dwell` (10 s) e avança de novo (recomprometendo
+  com o poder atual) ou volta a IDLE (`advantage_lost`, com cooldown).
+- Correção vinda da primeira partida do desafiante (`bench/all/000`,
+  871–966 s): engajado com parcela local 0,95, o exército perseguiu 1,9–2,8
+  Marines de inimigo pelo mapa em vez de atacar a base, até o `timeout`. Uma
+  luta com `share ≥ won_share` (0,9) não é disputa: conta como sem inimigo,
+  e o alvo continua a estrutura.
+- Segunda correção (`bench/all2/000`, 777 s e 1.131 s): com reforços em fila
+  entre a base e a frente, o centro ponderado do grupo caía onde não havia
+  unidade; um inimigo ali dava `share = 0` e um recuo. A primeira versão
+  usava esse centro; a luta passou a ser medida no núcleo.
+- Body: `Command.RETREAT` e `behaviors/retreat.py` (path ao rally sem lutar,
+  `force_unsiege` no Siege Tank).
+- Logs: `behavior.offense_planned` com `fight` e inputs `squad_units`,
+  `squad_power` (o grupo inteiro), `core_power`, `local_enemy_power`,
+  `local_share`, `contested`, `clear_for`.
+- Testes: luta favorável → ENGAGE no centro inimigo → `clearing` por 3 s →
+  ADVANCE; contato desfavorável → RETREAT (mesmo `proposal_id`) → REGROUP →
+  10 s → ADVANCE; parcela 0,40 e 0,37 mantém a luta, 0,33 espera o dwell e recua
+  em exatamente 4 s; REGROUP sem vantagem → IDLE e cooldown; luta local conta só
+  quem está no raio do núcleo (borda inclusa, worker fora, reforços em fila
+  e o inimigo entre eles fora); núcleo empatado vai à menor tag; luta ganha
+  (0,909) não tira o alvo; o behavior de recuo não
+  luta, tira o siege e usa o grid aéreo para voadores; configuração inválida.
+
+Experimento medido e revertido: em `bench/all3/001` (Terran, 624–641 s),
+engajado contra Siege Tanks em siege com parcela estimada entre 0,53 e 0,90, o
+grupo caiu de 81 para 33 de poder sem recuar (o poder `sqrt(dps·vida)` não vê
+alcance nem splash). Foram testadas duas regras de recuo pela perda
+observada: perder 35 % do poder com que engajou (`bench/all4`) e perder 35 %
+matando menos do que perdeu, com um `killed_enemy_power` novo na Awareness
+(`bench/all5`). Com o mesmo seed, `all4` e `all5` jogaram contra Zerg a mesma
+partida, que diverge da do `all3` no primeiro recuo (594 s) e terminou em
+`timeout` em vez de vitória; contra Terran continuou `timeout`; contra
+Protoss nenhuma luta acionou a regra (vitória idêntica). Sem ganho medido, a
+regra e o `killed_enemy_power` saíram; o código final tem o fingerprint de
+configuração do `all3` (`aaba38f6fedc1e7f`).
+
+**Não feito**: combat simulation do Ares e poder com alcance/splash (o caso
+Terran acima continua); reforços e coesão; recuo por caminho seguro; um recuo
+pode ser seguido de novo avanço contra a mesma linha; `won_share`, raios e
+tempos não calibrados; ENGAGE ↔ ADVANCE volta em menos de 10 s várias vezes
+numa partida (7 em `bench/all3/000`), respeitando `clear_after`.
+
+## 6c. Ofensiva: search/finish — feito
+
+Evidência do problema: `bench/6a/000`, 814–836 s: sem estrutura lembrada, o
+alvo alternava entre `enemy_start` e `known_base`; nada procurava bases fora
+do start inimigo.
+
+**Feito**
+
+- Ego/offense: SEARCH. ADVANCE → SEARCH (`enemy_start_empty`) sem estrutura
+  lembrada e com o start inimigo em visão nos últimos `search_memory` (60 s).
+  Percorre expansões e start inimigo (menos as nossas, ≤ 6): primeiro as fora
+  de visão há mais de 60 s, a mais próxima do grupo; depois a fora de visão há
+  mais tempo; alvo mantido até entrar em visão. SEARCH → ADVANCE
+  (`structure_found`). Lutas durante a busca seguem a 6b.
+- Finish: estrutura voando é alvo depois das de chão (`flying_structure`) e o
+  pedido leva `must_attack = AIR`.
+- Testes: start vazio → busca a natural (a main é nossa), mantém até ver,
+  depois a mais antiga; estrutura achada → ADVANCE nela; start visto há mais de
+  60 s → ADVANCE no start; voadora por último e só unidades antiaéreas
+  concedidas (o Siege Tank fica fora).
+
+**Não feito**: voadora sobre terreno impassável; busca com Reaper/scan;
+“encerra a partida” ainda sem medida além das partidas abaixo.
+
 ## 7a. Plano econômico estável — feito
 
 Seleção: bug decisório reproduzível por trace (classe 1), à frente da fatia 5.
@@ -424,13 +616,75 @@ controlador leva as contagens às proporções, e o empate cai em todo múltiplo
 - Banco depois de 200/200 (os dois traces passam de 10 mil minerais): o exército
   não ataca (6a) e não há upgrades nem tech depois do opening (fatia 7).
 
+## 7c. Upgrades, Orbital e MULE depois do opening — feito
+
+Evidência do problema: nos traces `483722e` e `3769f04` e na linha de base
+`bench/6a` o gás passa de 4,5 mil (5,4–5,6 mil nos traces antigos) e
+`economy.execute` não registrava nenhuma pesquisa depois do opening. O
+`MacroPlan` do Ares para no primeiro behavior que age, e o `SpawnController`
+age sempre que há produção ociosa, então nada depois dele rodaria.
+
+**Feito**
+
+- Attention: `upgrades` (concluídos, de `state.upgrades`).
+- Ego/economy: `EconomyPlan.upgrades` (`UPGRADES`, 12 itens, fora de
+  STABILIZE), `orbitals` e `mules` depois do opening; input `upgrades_done`.
+- Body: `UpgradeCCs(ORBITALCOMMAND)` antes de `BuildWorkers`,
+  `UpgradeController` antes do `SpawnController`; `call_mules`: Orbital pronto
+  com ≥ 50 de energia solta MULE no campo mais cheio a ≤ 10 de um townhall
+  pronto.
+- Logs: `attention.observed.upgrades`, `behavior.economy_planned.upgrades`,
+  `orbitals`, `mules`.
+- Testes: plano com/sem upgrades (opening, STABILIZE); ordem do `MacroPlan`;
+  o `UpgradeController` real do Ares pesquisa o primeiro não concluído e age
+  (o `SpawnController` não roda naquele frame); MULE no campo certo, não abaixo
+  de 50, não em Orbital inacabado, não no opening; upgrades no log pelo fluxo de
+  frame.
+- Partida: em `bench/all/000` os 12 upgrades estavam concluídos aos 1.197 s
+  (na linha de base, nenhum além dos do opening — o campo não existia lá, mas
+  nada os pesquisava).
+
+**Não feito**: o banco continua enorme (35 mil minerais e 11 mil de gás em
+`bench/all/000`): capacidade de produção (`max_production_structures` 12 do
+Ares) e reposição são outra fatia. Scan/detecção, interrupção do opening,
+supply/pending.
+
+## 8a. Micro: Stim e Medivac acompanhando o grupo — feito
+
+Seleção: dentro da fatia 8, o menor corte com um consumidor e teste.
+`RegionState` não foi criado: nenhuma decisão desta sessão o exigiu (a busca
+usa as expansões diretamente), e a regra dos documentos é não generalizar sem
+consumidor.
+
+Evidência do problema (código): o opening pesquisa Stim e nenhum behavior o
+usava; Medivac recebia `AMove` para o alvo e, mais rápido, chegava antes do bio.
+
+**Feito**
+
+- Body/attack: Marine/Marauder com inimigo não-worker a ≤ 10, ≥ 50 % de vida,
+  sem o buff e com a habilidade disponível usam Stim (`UseAbility`) antes do
+  `AMove`; Medivac faz `AMove` para o centro das outras unidades concedidas.
+- `behaviors.execute` devolve `BodyReport` (`spawn`, `micro`); `MicroReport`
+  (`stimmed`, `escorts`) vai a `Frame.micro` e ao log
+  `behavior.micro_executed` (todo frame com Stim; escoltas quando mudam).
+- Testes: limites do alcance e da vida, buff, habilidade ausente, worker;
+  Stim do Marauder; Medivac no centro do grupo e sozinho no alvo; relatório
+  somado entre concessões; fluxo de frame com defensores usando Stim.
+- Partida: `bench/all/000` registrou 852 frames com Stim (1.265 usos) e 11
+  Medivacs escoltando.
+
+**Não feito**: `RegionState`; stutter, focus, target scoring; Stim no HOLD;
+Medivac evacuando.
 ## Itens de `propostas.md` fora de qualquer fatia concluída
 
 - P0.2: distinguir scout, worker rush e ataque; histerese de admissão/liberação
   da defesa; antecipação e tráfego amigo do wall.
-- P0.3–P0.4: toda a ofensiva e a macro resiliente.
+- P0.3: combat simulation, poder com alcance/splash, coesão e reforços da
+  ofensiva; encerrar partidas contra Terran (timeout nas duas execuções).
+- P0.4: interrupção do opening, supply/pending, reposição, capacidade de
+  produção (banco de 12–29 mil minerais em `all3`), detecção e scan.
 - P1.1–P1.5 e P2: scouting recorrente e estimativa do inimigo por produção ou
-  economia vista, RegionState, micro, contrato completo de
+  economia vista, `RegionState`, micro além de Stim e escolta de Medivac, contrato completo de
   Proposal/Engine (desired_power, suitability, custos, preemption), builds por
   matchup, calibração.
 

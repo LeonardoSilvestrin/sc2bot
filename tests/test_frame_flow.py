@@ -7,6 +7,7 @@ from ares.behaviors.combat import CombatManeuver
 from ares.behaviors.macro import MacroPlan, Mining, SpawnController
 from sc2.ids.ability_id import AbilityId
 from sc2.ids.unit_typeid import UnitTypeId
+from sc2.ids.upgrade_id import UpgradeId
 
 from bot.attention import observe, read_map
 from bot.awareness import AwarenessConfig
@@ -162,8 +163,47 @@ def test_a_worker_inside_a_gas_building_does_not_flip_the_economy_plan() -> None
     assert set(workers) == {48}
     (planned,) = logger.named("behavior.economy_planned")
     assert planned["data"]["inputs"] == pytest.approx(
-        {"workers": 48.0, "bases": 3.0, "saturated_at": 48.0, "strategy_economy": economies[0]}
+        {
+            "workers": 48.0,
+            "bases": 3.0,
+            "saturated_at": 48.0,
+            "strategy_economy": economies[0],
+            "upgrades_done": 0.0,
+        }
     )
+
+
+def test_defenders_stim_against_the_attack_and_the_log_says_who() -> None:
+    logger = FakeLogger()
+    bot = build_bot()
+    for marine in bot.units:
+        if marine.type_id is UnitTypeId.MARINE:
+            marine.abilities = {AbilityId.EFFECT_STIM_MARINE}
+
+    frame = play_frame(bot, 0, Layers(map_view=MAP, logs=Logs(logger)))
+
+    (defended,) = [grant for grant in frame.result.grants if grant.proposal.owner == "defense"]
+    marines = {tag for tag in defended.tags if 200 <= tag < 206}
+    assert marines
+    assert set(frame.micro.stimmed) == marines
+    (micro,) = logger.named("behavior.micro_executed")
+    assert micro["data"] == {"stimmed": sorted(marines), "escorts": []}
+
+
+def test_finished_upgrades_reach_the_log_and_the_economy_plan() -> None:
+    logger = FakeLogger()
+    bot = build_bot(attackers=0)
+    bot.state.upgrades = {UpgradeId.STIMPACK, UpgradeId.SHIELDWALL}
+
+    frame = play_frame(bot, 0, Layers(map_view=MAP, logs=Logs(logger)))
+
+    assert frame.attention.upgrades == {UpgradeId.STIMPACK, UpgradeId.SHIELDWALL}
+    (observed,) = logger.named("attention.observed")
+    assert observed["data"]["upgrades"] == ["SHIELDWALL", "STIMPACK"]
+    (planned,) = logger.named("behavior.economy_planned")
+    assert planned["data"]["inputs"]["upgrades_done"] == 2.0
+    assert planned["data"]["upgrades"][0] == "STIMPACK"
+    assert (planned["data"]["orbitals"], planned["data"]["mules"]) == (True, True)
 
 
 def test_the_fog_does_not_let_a_threatened_bot_expand_as_if_the_enemy_had_no_army() -> None:
