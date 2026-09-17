@@ -1,235 +1,155 @@
-**Useful Links**
+# sc2bot
 
-[ares-sc2 framework repo](https://github.com/AresSC2/ares-sc2)  
-[ares-sc2 documentation](https://aressc2.github.io/ares-sc2/index.html)
+Bot Terran de StarCraft II em Python, construído sobre o
+[ares-sc2](https://github.com/AresSC2/ares-sc2) (que por sua vez usa o
+[python-sc2](https://github.com/BurnySc2/python-sc2)). O objetivo é um bot que
+jogue a partida inteira com decisões explicáveis: cada ação pode ser rastreada
+até o que foi observado, o que se inferiu e por que se decidiu.
 
----
-# Installation
+## O que o bot faz hoje
 
-If you're looking to build your own StarCraft II bot, starting with the `ares-sc2-bot-template` let's you get up and running quickly. This template uses the  Ares-sc2 framework which builds upon the python-sc2 framework, enhancing its capabilities for bot development in StarCraft II. You can find it [here](https://aressc2.github.io/ares-sc2/index.html). 
+Uma única abertura (`BioThreeOneOne`: Reaper expand, 3 Barracks, Factory e
+Starport) para todos os adversários; depois dela:
 
-### Prerequisites
+- **Economia:** workers, gás e expansões pelos macro behaviors do Ares, com
+  composição fixa Marine/Marauder/Siege Tank/Medivac, upgrades de infantaria e
+  veículos, Orbital Command e MULE. Numa emergência antes do fim da abertura,
+  o plano dinâmico assume e a abertura é interrompida.
+- **Defesa:** ataques a qualquer base viram um incidente com um único
+  orçamento de poder, dividido entre as partes aérea e terrestre; os supply
+  depots sobem quando inimigos terrestres se aproximam.
+- **Ofensiva:** reúne, avança, luta ou recua conforme a força local, reagrupa,
+  procura bases quando não sabe onde o inimigo está e destrói estruturas
+  (inclusive voando).
+- **Informação:** um SCV explora a main inimiga no início; o exército inimigo
+  não visto é estimado, não tratado como zero.
+- **Detecção:** depois de ver um inimigo camuflado ou enterrado, guarda
+  energia para scan, escaneia os escondidos perto do exército e põe uma
+  Missile Turret em cada base.
+- **Micro:** Stim no ataque e no rally, Medivacs acompanhando o grupo, Siege
+  Tanks decidindo o siege.
 
-Before proceeding, ensure the following prerequisites are installed:
+### Limitações conhecidas
 
-- [Python 3.11 / 3.12](https://www.python.org/downloads/release/python-3110/)
-- [Poetry](https://python-poetry.org/) 
-- [Git](https://git-scm.com/)
-- [Starcraft 2](https://starcraft2.com/en-gb/) 
-- [Maps](https://aiarena.net/wiki/maps/) Ensure maps are moved to the correct folder as suggested in this wiki.
+- Uma abertura e uma composição para todos os matchups; nenhuma reação
+  específica a rush (bunker, reparo, workers lutando).
+- Com o exército morto, o bot pode acumular milhares de minerais com supply
+  livre; a causa ainda está em investigação.
+- Sem combat simulation: o poder de uma unidade é `sqrt(dps · vida)` e não vê
+  alcance nem splash. Contra Terran as partidas de referência terminam em
+  timeout.
+- Sem Raven, scouting recorrente, stutter-step, foco de fogo ou harass.
 
+O andamento e as evidências de cada item estão em
+[docs/propostas_status.md](docs/propostas_status.md).
 
-**Additional:**
+## Arquitetura
 
-*Linux:*  can either download the SC2 Linux package [here](https://github.com/Blizzard/s2client-proto#linux-packages)  from Blizzard or, alternatively, set up Battle.net via WINE using this [lutris script](https://lutris.net/games/battlenet/). 
+Cada frame atravessa quatro camadas, sempre na mesma ordem
+([bot/main.py](bot/main.py)):
 
- [PyCharm IDE](https://www.jetbrains.com/pycharm/) - This tutorial will demonstrate how to set up a bot development environment using PyCharm but you can use any IDE.
-
-The maps must be copied into the **root** of the Starcraft 2 maps folder - default location: `C:\Program Files (x86)\StarCraft II\Maps`.
-## Environment Setup for Linux (Lutris)
-
-If you've installed StarCraft II using Lutris on Linux, you'll need to set some environment variables so that the `ares-sc2` library can correctly interact with the game.
-
-### Setting Environment Variables Temporarily
-
-Open a terminal and enter the following commands, replacing `(username)` with your actual Linux username and `(version of wine)` with the version of Wine that Lutris is using:
-
-```shell
-export SC2PF=WineLinux
-export SC2PATH="/home/`(username)`/Games/battlenet/drive_c/Program Files (x86)/StarCraft II/"
-export WINE="/home/`(username)`/.local/share/lutris/runners/wine/`(version of wine)`/bin/wine" 
+```text
+Attention  → o que foi visto neste frame (estado imutável)
+Awareness  → memória e inferências: contatos, ameaça por base, incidentes, estimativa do inimigo
+Ego        → estratégia (objetivo e preferências) e planners (o que fazer, sem nomear unidades)
+Body       → Engine (quem recebe cada tarefa) e behaviors (como executar, via Ares)
 ```
 
+O Planner decide **o quê**, o Engine decide **quem**, o Behavior decide
+**como**. Só `observe`, os behaviors e os logs tocam o bot; o resto é testável
+sem o jogo. Fórmulas, eventos de log e parâmetros estão em
+[docs/architecture.md](docs/architecture.md).
 
-# Creating Your Bot
+| Documento | Conteúdo |
+| --- | --- |
+| [docs/architecture.md](docs/architecture.md) | Camadas, matemática, catálogo de eventos e comandos |
+| [docs/propostas.md](docs/propostas.md) | Análise e roadmap (pesquisa, não checklist) |
+| [docs/propostas_corrigidas.txt](docs/propostas_corrigidas.txt) | Corrigenda que prevalece sobre o roadmap |
+| [docs/propostas_status.md](docs/propostas_status.md) | O que foi feito, com evidência, e o que falta |
+| [docs/migration-map.md](docs/migration-map.md) | Histórico: da branch `matematização` à base atual |
 
-- Visit the [starter-bot repo](https://github.com/AresSC2/ares-sc2-starter-bot) and click the `Use this template` button to create your own repository based on this template. The repository can be either public or private.
-    
-- Next, clone the repository locally to your system, ensuring you include the `--recursive` flag:
-    
+## Instalação
+
+Pré-requisitos: Python 3.11 ou 3.12, [Poetry](https://python-poetry.org/),
+Git, StarCraft II e os [mapas da AI Arena](https://aiarena.net/wiki/maps/)
+copiados para a raiz da pasta de mapas (no Windows,
+`C:\Program Files (x86)\StarCraft II\Maps`).
+
 ```bash
-git clone --recursive <your_git_repo_home_url_here>
-```
-
-- Open a terminal or console window.
-    
-- Navigate to the root of your bot's directory:
-
-```bash
-cd <bot_folder>
-```
-
-- Install dependencies, compile Cython, and create a new isolated virtual environment:
-
-```bash
+git clone --recursive <url-do-repositório>
+cd sc2bot
 poetry install
 ```
 
-### Testing Your Bot:
-
-If you have a non-standard StarCraft 2 installation or are using Linux, please adjust `MAPS_PATH` in `run.py`.
-
-Optionally set your bot name and race in `config.yml`
+Sem o submódulo do Ares (`Directory .../ares-sc2 ... does not seem to be a
+Python package`):
 
 ```bash
-poetry run python run.py
+git submodule update --init --recursive
 ```
 
-## Start Developing Your Bot
+Em Linux ou com instalação não padrão, ajuste `MAPS_PATH` em `run.py`. Com o
+StarCraft II via Lutris, defina `SC2PF=WineLinux`, `SC2PATH` (pasta do jogo) e
+`WINE` (binário do Wine do Lutris). Para atualizar o Ares:
+`python scripts/update_ares.py`.
 
-If everything has worked thus far, open up `bot/main.py` and delve into the excitement of bot development!
+## Uso
 
-An `ares-sc2` bot is a [python-sc2](https://github.com/BurnySc2/python-sc2) bot by default, meaning any examples or documentation from that repository equally relevant here.
+Partida local contra a IA VeryHard Macro, num mapa instalado e numa raça
+sorteados (`run.py`; nome e raça do bot em `config.yml`):
 
-## Ares development tutorials and guide videos
-A guide created by [VersusAI](https://www.youtube.com/@Vers-AI) featuring how to use the combat simulator. This tutorial 
-also covers how to use common functionality in the ares-sc2 framework, such as unit role assignment, squad management and combat maneuvers.
-
-<br>
-
-<a href="http://www.youtube.com/watch?feature=player_embedded&v=dAhpVo-rmJU" target="_blank">
- <img src="http://img.youtube.com/vi/dAhpVo-rmJU/mqdefault.jpg" alt="Watch the video" width="360" height="270" border="10" />
-</a>
-
-
-## Uploading to [AI Arena](https://www.aiarena.net/)
-
-### Generating a ladder zip
-Included in the repository is a convenient script named `scripts/create_ladder_zip.py`. 
-However, it is important to note that the AI Arena ladder infrastructure operates specifically 
-on Linux-based systems. Due to the dependency of ares-sc2 on cython, it is necessary to execute 
-this script on a Linux environment in order to generate Linux binaries.
-
-To streamline this process, a GitHub workflow has been integrated into this repository when
-pushing to `main` on your GitHub repository (if you previously created a template
-from the [starter-bot](https://github.com/AresSC2/ares-sc2-starter-bot)). 
-Upon each push to the main branch, the `create_ladder_zip.py` script is automatically
-executed on a Debian-based system. As a result, a compressed artifact 
-named `ladder-zip.zip` is generated, facilitating the subsequent upload to AI Arena. 
-To access the generated file, navigate to the Actions tab, click on an Action and refer to the 
-Artifacts section. Please note this may take a few minutes after pusing to the `main` branch.
-
-Ladder zips can also be built on a debian based OS, with docker or via WSL.
-
-### Upload to AI Arena
-The GitHub workflow includes an optional step to automatically upload the ladder-zip.zip artifact from 
-the previous step to the [AI Arena ladder](https://www.aiarena.net/). This feature is disabled by default. 
-To enable it, follow these steps:
-
-1. Set `AutoUploadToAiarena: True` in `config.yml`.
-2. Visit the AI Arena ladder and create an account if you don't have one.
-3. If necessary, set up a new bot via the AI Arena website.
-4. Navigate to your bot's profile and note your bot ID, which can be found in the URL.
-5. Go to `Profile -> View API Token` and save the token string.
-6. In your bot's GitHub repository, navigate to `Settings -> Secrets and variables -> Actions`.
-7. Create two new secrets with the following exact names, using the api token and bot id from earlier:
-
-UPLOAD_API_TOKEN: <aiarena_api_token> <br />
-UPLOAD_BOT_ID: <bot_id>
-
-After completing these steps, the next push to the main branch will build the ladder zip artifact 
-and automatically upload it to AI Arena. You can customize this workflow as needed.
-
-## Generating a realtime executable for human vs bot
-
-### Via a Windows machine
-It's possible for other humans to play your bot via the SC2AIApp, you can [find it here](https://versusai.net/how-to-play-against-the-probots/).
-However, we can't expect other humans to have a full python dev setup to run our bot. Therefore, we can 
-use PyInstaller to bundle a self-contained executable of our bot.
-
-On a Windows machine try running:
-
-```
-poetry run python scripts/create_pyinstaller_exe.py
+```text
+.venv\Scripts\python.exe run.py
+.venv\Scripts\python.exe run.py --bot-log events
+.venv\Scripts\python.exe run.py --bot-log events --spatial-view --spatial-snapshot
 ```
 
-This will generate a `yourbot.exe`, `ladderbots.json` and copy any build files such as `protoss_builds.yml`.
-You will require all these files when setting up your bot with SC2AIApp.
+- `--bot-log events` grava o log JSONL em `logs/game-<hora>/game.jsonl`.
+- `--spatial-view` desenha o campo de influência no jogo; `--spatial-snapshot`
+  grava SVGs do campo.
+- `.venv\Scripts\python.exe logs\open_viewer.py` abre o viewer do log
+  (linha do tempo das decisões e inspetor por camada).
 
-Inside `SC2AIApp/Bots` you should create a new folder for your bot, the name should precisely match the bot name
- inside `ladderbots.json`. After which you should be able to run the app and play vs your bot.
-Check how some of the existing bots are set up if you get stuck or feel free to ask on the SC2AI discord server.
+Testes e lint (o CI roda os dois antes de gerar qualquer artefato):
 
-### Via Github actions
-This is useful if you don't have access to a Windows machine.
-
-This repository contains a github workflow named `Build Windows Executable` that you can run manually on
-your Github Repo.
-
-On your bot repo go to `Actions`
-Choose `Build Windows Executable` from available workflows
-Click `Run workflow`
-
-Give the workflow a few minutes to complete.
-Click on the running action and on successful completion there will be a `windows-executable` artifact to download.
-This will contain all necessary files to setup your bot with [SC2AiApp](https://versusai.net/how-to-play-against-the-probots/).
-
----
-# Additional
-## PyCharm
-
-#### Adding `poetry` environment
-
-Find the path of the environment `poetry` created in the installation step previously, copy and paste or save this path somewhere.
-
-`poetry env list --full-path`
-
-Open this project in PyCharm and navigate to:
-
-File | Settings | Project: | Python Interpreter
-
-- Click `Add Interpreter`, then `Add Local Interpreter`
-- Select `Poetry Environment`, and choose `Existing Environment`
-- Navigate to the path of the poetry environment from the terminal earlier, and select `Scripts/python.exe`
-
-Now when opening terminal in PyCharm, the environment will already be active. New run configurations can be setup, and they will already be configured to use this environment.
-
-#### Marking sources root
-
-For PyCharm intellisense to work correctly: In the `Project` panel right-click `ares-sc2/src` folder  -> Mark Directory as -> Sources Root
-
-## VSCode
-
-## Installing Poetry on Linux
-
-To get Poetry to run on some Linux distros you may need to perform the following
-
-```bash
-python3 --version
-```
-to check your version of python, it should show 3.10.12 then 
-
-```bash
-curl -sSL https://install.python-poetry.org | python3 -
-```
-to install poetry
-
-```bash
-poetry --version
-```
-to verify you have poetry installed
-
-## Update `ares-sc2`
-
-This may take a minute or two
-
-`python scripts/update_ares.py`
-
-## Format code
-
-`black .`
-
-`isort .`
-
-# FAQ
-
-I got the Following Error `Directory .../ares-sc2-bot-template/ares-sc2 for ares-sc2 does not seem to be a Python package`
-
-a: This means you're missing the ares-sc2 sub module 
-```bash
-git submodule update --init
-git submodule update --init --recursive --remote
+```text
+.venv\Scripts\python.exe -m pytest
+.venv\Scripts\python.exe -m ruff check bot tests harness run.py bench.py
 ```
 
---- 
-***Interested in contributing*** to `ares-sc2`? Take a look at setting up a local dev environment [here instead.](https://aressc2.github.io/ares-sc2/contributing/index.html)
+## Avaliação
+
+O harness joga uma matriz fixa de partidas contra a IA do jogo, cada uma num
+processo com timeout, e grava por partida um `result.json` com resultado
+(`victory`, `defeat`, `tie`, `timeout`, `crash`, `no_result`), commit, SHA do
+Ares, fingerprint da configuração, replay e log. Os resultados ficam em
+`bench/` (fora do git).
+
+```text
+.venv\Scripts\python.exe bench.py run --out bench\<rótulo> --maps PersephoneAIE_v4 --races Zerg Terran Protoss --time-limit 1200
+.venv\Scripts\python.exe bench.py summarize bench\<rótulo>
+.venv\Scripts\python.exe bench.py compare bench\<base> bench\<desafiante>
+```
+
+`compare` só aceita execuções da mesma matriz. Mesmo seed e mesmas decisões
+reproduzem a mesma partida nesta máquina. Com uma partida por combinação, uma
+diferença isolada não é evidência de ganho (o resumo mostra o intervalo de
+Wilson).
+
+## Entrega
+
+- **Ladder (AI Arena):** a AI Arena roda em Linux e o Ares depende de Cython,
+  então o zip precisa ser gerado em Linux (`scripts/create_ladder_zip.py`,
+  Docker ou WSL). O workflow `ladder_zip.yml` faz isso a cada push na `main`,
+  depois de `pytest` e `ruff`, e publica o artefato `ladder-zip.zip` na aba
+  Actions. O upload automático fica desligado; para ligar, defina
+  `AutoUploadToAiarena: True` em `config.yml` e crie os secrets
+  `UPLOAD_API_TOKEN` e `UPLOAD_BOT_ID` no repositório.
+- **Executável para jogar contra humanos (SC2AIApp):** no Windows,
+  `poetry run python scripts/create_pyinstaller_exe.py` gera o `.exe`, o
+  `ladderbots.json` e os arquivos de build; sem Windows, rode manualmente o
+  workflow `Build Windows Executable`. A pasta do bot em `SC2AIApp/Bots` deve
+  ter exatamente o nome do `ladderbots.json`.
+
+`config.yml` ainda usa os valores do template (`MyBotName`); ajuste antes de
+publicar.

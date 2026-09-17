@@ -58,7 +58,10 @@ numa mesma sessão, a pedido ("implemente as fatias"), num só commit.
 
 - Os workflows não foram executados no GitHub; a suíte nunca rodou em Linux.
 - Sem gatilho de PR; smoke de import e do zip; isolamento de observers
-  (`NullLogger`); fingerprint de toda configuração decisória; README.
+  (`NullLogger`); fingerprint de toda configuração decisória.
+- O README do template foi substituído depois, fora de uma fatia (a
+  pedido): identidade, capacidades, limitações, arquitetura, avaliação e
+  entrega.
 
 ## Partidas desta sessão
 
