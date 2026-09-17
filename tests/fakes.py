@@ -221,7 +221,11 @@ class FakeUnit:
         cloaked: bool = False,
         burrowed: bool = False,
         revealed: bool = False,
+        memory: bool = False,
     ) -> None:
+        # An older frame's object: Ares lists the enemies it remembers out of
+        # sight among the enemy units, as the snapshot it took.
+        self.is_memory = memory
         # Cloak, burrow and detection as python-sc2 reports them.
         self.is_cloaked = cloaked
         self.is_burrowed = burrowed

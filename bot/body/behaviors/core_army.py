@@ -16,7 +16,7 @@ from bot.attention import WORKER_TYPES
 from bot.ego.planners import Proposal
 
 from .attack import MicroReport
-from .combat import attack_move, maneuver, stim_for
+from .combat import attack_move, maneuver, present, stim_for
 
 # A holding unit stops walking this close to its point and fights what comes.
 HOLD_RADIUS = 4.0
@@ -28,11 +28,12 @@ def execute(bot, units: Sequence, proposal: Proposal) -> MicroReport:
     ground = bot.mediator.get_ground_grid
     air = bot.mediator.get_air_grid
     enemies = list(bot.enemy_units)
-    fighters = [enemy for enemy in enemies if enemy.type_id not in WORKER_TYPES]
+    seen = present(enemies)
+    fighters = [enemy for enemy in seen if enemy.type_id not in WORKER_TYPES]
     stimmed: list[int] = []
     for unit in units:
         hold = maneuver(unit, proposal.target, enemies, stay_sieged=True)
-        if any(enemy.distance_to(unit) <= ENGAGE_RADIUS for enemy in enemies):
+        if any(enemy.distance_to(unit) <= ENGAGE_RADIUS for enemy in seen):
             stim = stim_for(unit, fighters)
             if stim is not None:
                 hold.add(UseAbility(stim, unit))

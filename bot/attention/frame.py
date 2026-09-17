@@ -197,7 +197,15 @@ def _roles(bot) -> dict[int, str]:
 
 
 def _visible(units: Iterable) -> Iterable:
-    return (unit for unit in units if getattr(unit, "is_visible", True))
+    """The units this frame shows. Ares lists the enemies it remembers out of
+    sight among `enemy_units`, as the snapshot of an older frame, which still
+    reads visible; remembering them is Awareness' job."""
+
+    return (
+        unit
+        for unit in units
+        if getattr(unit, "is_visible", True) and not getattr(unit, "is_memory", False)
+    )
 
 
 def _supply_lookup(bot) -> Callable[[UnitTypeId], float]:

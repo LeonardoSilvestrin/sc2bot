@@ -31,6 +31,7 @@ seleção (ver regra no prompt corrigido).
 | 7d | Macro: banco com supply livre | Investigado; mudança revertida, causa em aberto | `macro: detection and opening interrupt; hold stim` |
 | 7e | Macro: detecção (scan, Missile Turret, reserva de energia) | Feito | `macro: detection and opening interrupt; hold stim` |
 | 7f | Macro: interrupção do opening por emergência | Feito (sem evidência de partida) | `macro: detection and opening interrupt; hold stim` |
+| 1b | Percepção: snapshots de memória do Ares não contam como vistos | Feito | `attention: see only this frame's enemies` |
 | 3b | Identidade do incidente segue os membros | Feito | `awareness: keep an incident's id while its members stay` |
 | 6d | Ofensiva: combat sim do Ares na decisão de lutar | Medido e revertido | `awareness: keep an incident's id while its members stay` (só documentação) |
 | 7g | Macro: teto de produção cresce com as bases | Feito | `macro: let the production ceiling grow with the bases` |
@@ -1059,6 +1060,70 @@ esse contato está no grupo) produz a troca por construção.
 
 **Não feito**: troca de unidades entre as partes `air`/`ground` da mesma
 demanda; histerese pelo poder; eventos explícitos de linhagem.
+
+## 1b. Snapshots de memória do Ares não contam como vistos — feito
+
+Seleção: bug de percepção reproduzível por trace (classe 1), achado ao ler o
+`UnitMemoryManager` do Ares para a 6d; pedido explícito do usuário de
+continuar. (O número segue a camada: Attention é a primeira.)
+
+Evidência do problema:
+
+- Código: a cada passo, o `UnitMemoryManager` do Ares acrescenta a
+  `bot.enemy_units` o último snapshot (`Unit` de um frame anterior) de cada
+  inimigo fora de visão, por até 30 s (`expire_ground`/`expire_air`), ou até a
+  posição voltar à visão. O `is_visible` desse objeto lê o proto antigo e
+  continua verdadeiro; o `_visible` do Attention só olhava isso.
+- Trace: em `bench/3b`, contatos de unidade (sem estruturas e sem Siege Tank em
+  siege) que ficaram "visíveis" parados na mesma posição por ≥ 3 s e depois
+  sumiram: 24 / 36 / 22 por partida, com pico em 25–35 s (10 / 21 / 4). Os
+  exemplos mais longos são SCVs, Drones e Probes minerando, vistos pelo scout
+  aos 122–141 s e "parados" por 26,2–32,0 s. Workers minerando não ficam
+  parados. Enquanto isso a Awareness os mantinha com confiança 1 e incerteza 0
+  na última posição, e o decaimento (τ = 20 s) só começava depois.
+- Body: a regra do Stim e o gatilho de luta do HOLD liam `bot.enemy_units`
+  direto, então um inimigo lembrado a ≤ 10 também disparava Stim ou tirava a
+  unidade do path.
+
+**Feito**
+
+- Attention: `_visible` exclui unidades com `is_memory` (objeto de outro game
+  loop), em unidades e estruturas. Lembrar é papel da Awareness.
+- Body/combat: `present(enemies)`; o Stim (`attack` e `core_army`) e o gatilho
+  de luta do HOLD usam só inimigos presentes. A decisão de siege do Siege Tank
+  continua com a memória do Ares, de propósito (tanks inimigos em terreno alto
+  somem da visão).
+- Nenhum evento novo: `attention.observed.visible_enemy_units` e
+  `awareness.updated` (`visible`, `confidence`) já mostram a diferença.
+- Testes: fluxo de frame — um Zergling visto aos 100 s e, aos 105 s, só como
+  snapshot do Ares não está em `attention.enemy_units`, e o contato fica
+  `visible = False` com confiança `exp(-5/20)`; o log registra 1 e depois 0
+  inimigos visíveis. Body — um inimigo lembrado a 2 células não dispara Stim
+  no ATTACK e, no HOLD, a unidade segue o path. Com o código anterior os três
+  testes falham.
+- Verificação local: 247 testes, ruff limpo.
+
+**Partidas** (`bench/1b`, sobre `f1743c9` sujo, mesma matriz; linha de base
+`bench/3b`):
+
+| Execução | Zerg | Terran | Protoss |
+| --- | --- | --- | --- |
+| `bench/3b` | vitória, 707 s | timeout | vitória, 868 s |
+| `bench/1b` | vitória, 900 s | vitória, 869 s | vitória, 869 s |
+
+| Execução | Contatos "visíveis" congelados ≥ 3 s (25–35 s) | Usos de Stim |
+| --- | --- | --- |
+| `bench/3b` | 24 (7) / 36 (21) / 22 (4) | 408 / 368 / 417 |
+| `bench/1b` | 6 (0) / 2 (0) / 0 (0) | 446 / 140 / 224 |
+
+Os usos de Stim dependem da duração e das lutas de cada partida; não são uma
+comparação de taxa. Nenhum `Traceback`. Uma partida por raça: a vitória contra
+Terran não é atribuível à fatia (ver a nota da 3b sobre a variação contra
+Terran), e a Zerg durou 193 s a mais.
+
+**Não feito**: o overlay e o SVG não distinguem contato lembrado pelo Ares;
+outras leituras do Ares que misturam memória (grids de influência, que são do
+Ares) continuam como estão.
 
 ## Itens de `propostas.md` fora de qualquer fatia concluída
 

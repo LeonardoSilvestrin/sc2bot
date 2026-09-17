@@ -1,5 +1,9 @@
 """What the fighting behaviors share: a Siege Tank decides its own siege, a
-unit that fights attack-moves, and bio with an enemy near stims."""
+unit that fights attack-moves, and bio with an enemy near stims.
+
+Ares lists the enemies it remembers out of sight among `enemy_units`. A Siege
+Tank sieges against those too; a fight -- a stim, or a holding unit leaving
+its path -- starts only with an enemy in sight now."""
 
 from __future__ import annotations
 
@@ -27,6 +31,12 @@ STIMS: dict[UnitTypeId, tuple[AbilityId, BuffId]] = {
 STIM_RANGE = 10.0
 # ... and at least this share of its health: stimming costs health.
 STIM_MIN_HEALTH = 0.5
+
+
+def present(enemies: Sequence) -> list:
+    """The enemies this frame shows, without Ares' remembered snapshots."""
+
+    return [enemy for enemy in enemies if not getattr(enemy, "is_memory", False)]
 
 
 def maneuver(unit, target: Point2, enemies: Sequence, *, stay_sieged: bool) -> CombatManeuver:

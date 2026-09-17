@@ -134,6 +134,8 @@ def bio(tag, type_id=UnitTypeId.MARINE, x=30.0, y=30.0, **kw):
         (bio(1, health=22.0), FakeUnit(90, UnitTypeId.ZERGLING, 32, 30), False),
         # A worker is no fight.
         (bio(1), FakeUnit(90, UnitTypeId.DRONE, 32, 30), False),
+        # Nor is an enemy Ares only remembers there (bench/7g: up to 30 s).
+        (bio(1), FakeUnit(90, UnitTypeId.ZERGLING, 32, 30, memory=True), False),
     ],
 )
 def test_bio_stims_only_near_a_fight_with_the_health_to_spare(marine, enemy, stims) -> None:
@@ -387,6 +389,13 @@ def test_holding_bio_stims_when_the_fight_reaches_the_rally() -> None:
     bot.enemy_units = [FakeUnit(90, UnitTypeId.SCV, 32, 30)]
     report = behaviors.BY_COMMAND[Command.HOLD](bot, [marine], hold)
     assert [type(micro) for micro in maneuvers(bot)[1]] == [AMove]
+    assert report.stimmed == ()
+
+    # Only remembered in reach: walk to the point, no stim.
+    bot = FakeBot()
+    bot.enemy_units = [FakeUnit(90, UnitTypeId.ZERGLING, 32, 30, memory=True)]
+    report = behaviors.BY_COMMAND[Command.HOLD](bot, [marine], hold)
+    assert [type(micro) for micro in maneuvers(bot)[1]] == [PathUnitToTarget]
     assert report.stimmed == ()
 
     # Nothing in reach: walk to the point, no stim.

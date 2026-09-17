@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 import pytest
 from ares.behaviors.combat import CombatManeuver
 from ares.behaviors.macro import MacroPlan, Mining, SpawnController
@@ -364,6 +366,34 @@ def test_a_maxed_army_attacks_the_known_enemy_base_and_the_log_says_why() -> Non
         "advance_on_known_base",
     )
     assert command["tags"] == list(army)
+
+
+def test_an_enemy_ares_only_remembers_is_not_seen() -> None:
+    # bench/7g: mining SCVs, Drones and Probes a worker scout saw stayed
+    # "visible", frozen where they were, for 26-32 s before vanishing (Ares
+    # keeps out-of-sight enemies 30 s among `enemy_units`, as their last
+    # snapshot, which still reads visible). Awareness never started to doubt them.
+    logger = FakeLogger()
+    bot = build_bot(attackers=0)
+    layers = Layers(map_view=MAP, logs=Logs(logger))
+    bot.time = 100.0
+    bot.enemy_units = [FakeUnit(900, UnitTypeId.ZERGLING, 50, 50, hit_points=35.0)]
+    seen = play_frame(bot, 0, layers)
+
+    bot.time = 105.0
+    bot.registered = []
+    bot.enemy_units = [
+        FakeUnit(900, UnitTypeId.ZERGLING, 50, 50, hit_points=35.0, memory=True)
+    ]
+    later = play_frame(bot, 1, layers)
+
+    assert [unit.tag for unit in seen.attention.enemy_units] == [900]
+    assert later.attention.enemy_units == ()
+    (contact,) = later.awareness.contacts
+    assert contact.visible is False
+    assert contact.confidence == pytest.approx(math.exp(-5.0 / AwarenessConfig().unit_memory))
+    observed = logger.named("attention.observed")
+    assert [event["data"]["visible_enemy_units"] for event in observed] == [1, 0]
 
 
 def test_units_return_to_the_core_army_when_the_attack_dies() -> None:

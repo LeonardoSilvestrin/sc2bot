@@ -24,7 +24,15 @@ from sc2.position import Point2
 from bot.attention import WORKER_TYPES
 from bot.ego.planners import Proposal
 
-from .combat import STIM_MIN_HEALTH, STIM_RANGE, STIMS, attack_move, maneuver, stim_for
+from .combat import (
+    STIM_MIN_HEALTH,
+    STIM_RANGE,
+    STIMS,
+    attack_move,
+    maneuver,
+    present,
+    stim_for,
+)
 
 __all__ = ["STIMS", "STIM_MIN_HEALTH", "STIM_RANGE", "MicroReport", "execute", "stim_for"]
 
@@ -49,7 +57,7 @@ class MicroReport:
 
 def execute(bot, units: Sequence, proposal: Proposal) -> MicroReport:
     enemies = list(bot.enemy_units)
-    fighters = [enemy for enemy in enemies if enemy.type_id not in WORKER_TYPES]
+    fighters = [enemy for enemy in present(enemies) if enemy.type_id not in WORKER_TYPES]
     group = group_center(units)
     stimmed: list[int] = []
     escorts: list[int] = []
