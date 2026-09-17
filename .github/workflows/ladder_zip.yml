@@ -30,7 +30,7 @@ jobs:
       - name: Test
         run: poetry run pytest
       - name: Lint
-        run: poetry run ruff check bot tests run.py
+        run: poetry run ruff check bot tests harness run.py bench.py
       - name: Compile ladder zip
         run: poetry run python scripts/create_ladder_zip.py
       - uses: montudor/action-zip@v1

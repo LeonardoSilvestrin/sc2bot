@@ -39,7 +39,7 @@ jobs:
       run: poetry run pytest
 
     - name: Lint
-      run: poetry run ruff check bot tests run.py
+      run: poetry run ruff check bot tests harness run.py bench.py
 
     - name: Debug Info
       run: |

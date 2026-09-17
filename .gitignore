@@ -136,3 +136,6 @@ dmypy.json
 
 # AI-Arena upload build artifact
 bot.zip
+
+# Local benchmark runs (bench.py)
+/bench/
