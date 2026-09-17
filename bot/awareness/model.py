@@ -143,9 +143,15 @@ class ThreatIncident:
     """Attackers in reach of our bases chained within `incident_link` of one
     another, however many bases they reach.
 
-    The id is the lowest member tag, so it holds while that contact stays in
-    the incident. When an incident splits, the part without that contact takes
-    its own lowest tag; when incidents merge, the lowest tag of all wins.
+    The id follows the members from frame to frame: an incident keeps the id
+    of last frame's incident it shares the most members with, whichever
+    contacts come and go. Pairs are settled most shared members first, then
+    lowest member tag of the incident, then lowest member tag the old
+    incident had; each old id goes to one incident at most. So when an
+    incident splits, the part with most of it keeps the id; when incidents
+    merge, the one that brings the most members does. An incident that
+    inherits nothing is `incident:<lowest member tag>`, suffixed `-1`, `-2`,
+    ... while that id is taken.
     """
 
     incident_id: str
@@ -187,7 +193,7 @@ class AwarenessState:
     # contact still places. Workers and structures are no army.
     enemy_power: float
     influence: InfluenceField = field(compare=False)
-    # By lowest member tag.
+    # By lowest member tag; ids follow the members (see ThreatIncident).
     incidents: tuple[ThreatIncident, ...] = ()
     # sum(power * exp(-age / army_memory)) of the enemy army units seen alive
     # and not seen die.
@@ -257,6 +263,8 @@ class AwarenessModel:
         # (last seen, power) of every enemy army unit believed alive, by tag.
         self._army: dict[int, tuple[float, float]] = {}
         self._cloak_seen_at: float | None = None
+        # Last frame's incidents: (id, member tags, lowest member tag).
+        self._incident_members: tuple[tuple[str, frozenset[int], int], ...] = ()
         self._lattice: tuple[Point2, ...] | None = None
         self._xs = np.zeros(0)
         self._ys = np.zeros(0)
@@ -442,12 +450,13 @@ class AwarenessModel:
                 members.append(contact)
                 pressures.append(at_bases)
         if not members:
+            self._incident_members = ()
             return ()
         xy = np.array([(member.position.x, member.position.y) for member in members])
         squared = ((xy[:, None, :] - xy[None, :, :]) ** 2).sum(axis=2)
         linked = squared <= self.config.incident_link**2
         group = np.full(len(members), -1)
-        incidents: list[ThreatIncident] = []
+        groups: list[list[int]] = []
         # Contacts come by tag, so every group is seeded by its lowest tag.
         for seed in range(len(members)):
             if group[seed] >= 0:
@@ -458,18 +467,54 @@ class AwarenessModel:
                 joined = np.flatnonzero(linked[frontier.pop()] & (group < 0))
                 group[joined] = seed
                 frontier.extend(joined.tolist())
-            indices = np.flatnonzero(group == seed).tolist()
-            incidents.append(
-                self._incident(
-                    [members[index] for index in indices],
-                    [pressures[index] for index in indices],
-                    bases,
-                )
+            groups.append(np.flatnonzero(group == seed).tolist())
+        tags = [[members[index].tag for index in indices] for indices in groups]
+        ids = self._incident_ids(tags)
+        self._incident_members = tuple(
+            (incident_id, frozenset(group_tags), group_tags[0])
+            for incident_id, group_tags in zip(ids, tags, strict=True)
+        )
+        return tuple(
+            self._incident(
+                incident_id,
+                [members[index] for index in indices],
+                [pressures[index] for index in indices],
+                bases,
             )
-        return tuple(incidents)
+            for incident_id, indices in zip(ids, groups, strict=True)
+        )
+
+    def _incident_ids(self, groups: list[list[int]]) -> list[str]:
+        """Each group's id: inherited from last frame's incident it shares the
+        most members with, else its own lowest tag, made unique."""
+
+        pairs = sorted(
+            (-len(previous & set(tags)), tags[0], lowest, index, incident_id)
+            for index, tags in enumerate(groups)
+            for incident_id, previous, lowest in self._incident_members
+            if previous & set(tags)
+        )
+        ids: list[str | None] = [None] * len(groups)
+        taken: set[str] = set()
+        for _, _, _, index, incident_id in pairs:
+            if ids[index] is None and incident_id not in taken:
+                ids[index] = incident_id
+                taken.add(incident_id)
+        for index, tags in enumerate(groups):
+            if ids[index] is not None:
+                continue
+            base = candidate = f"incident:{tags[0]}"
+            suffix = 0
+            while candidate in taken:
+                suffix += 1
+                candidate = f"{base}-{suffix}"
+            ids[index] = candidate
+            taken.add(candidate)
+        return ids
 
     def _incident(
         self,
+        incident_id: str,
         members: list[Contact],
         pressures: list[tuple[float | None, ...]],
         bases: tuple[BaseView, ...],
@@ -486,7 +531,7 @@ class AwarenessModel:
         )
         strongest = max(pressure for _, pressure in pressure_by_base)
         return ThreatIncident(
-            incident_id=f"incident:{members[0].tag}",
+            incident_id=incident_id,
             contacts=tuple(member.tag for member in members),
             ground_power=sum(
                 weight

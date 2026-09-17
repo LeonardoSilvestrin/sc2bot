@@ -168,3 +168,46 @@ def test_defense_outranks_the_core_army_and_hands_units_back_when_the_attack_end
     assert set(dict(after.owners).values()) == {core_army.OWNER}
     assert set(dict(after.owners)) == {1, 2, 3, 4}
     assert after.released == ()
+
+
+def test_the_units_defending_stay_on_the_attack_when_its_lowest_tag_dies() -> None:
+    # bench/7g 001, 520.4 s: the lowest-tag attacker left the incident, the
+    # incident and its defense were renamed, and the Engine treated the renamed
+    # demand as new: units were chosen again by distance.
+    awareness_model, strategy_model, engine = AwarenessModel(), StrategyModel(), Engine()
+    before = (
+        unit(1, UnitTypeId.MARINE, 16, 12),
+        unit(2, UnitTypeId.MARINE, 17, 12),
+        unit(3, UnitTypeId.MARINE, 18, 12),
+        unit(4, UnitTypeId.MARINE, 40, 40),
+    )
+    attack = attention(
+        time=0.0, own_units=before, enemy_units=(zergling(90, 14, 10.5), zergling(91, 15, 10.5))
+    )
+    _, _, proposals = plan(attack, awareness_model=awareness_model, strategy_model=strategy_model)
+    first = engine.allocate(attack, proposals)
+    defenders = {tag for tag, owner in first.owners if owner.startswith("defense:")}
+    assert defenders == {1, 2, 3}
+
+    # The Zergling that named the incident dies; the fourth Marine is now the nearest.
+    after = (
+        unit(1, UnitTypeId.MARINE, 22, 16),
+        unit(2, UnitTypeId.MARINE, 23, 16),
+        unit(3, UnitTypeId.MARINE, 24, 16),
+        unit(4, UnitTypeId.MARINE, 15, 12),
+    )
+    still = attention(
+        time=0.5, own_units=after, enemy_units=(zergling(91, 15, 10.5),), dead_tags=(90,)
+    )
+    awareness, _, proposals = plan(
+        still, awareness_model=awareness_model, strategy_model=strategy_model
+    )
+    second = engine.allocate(still, proposals)
+
+    (incident,) = awareness.incidents
+    assert incident.incident_id == "incident:90"
+    (answer,) = defenses(proposals)
+    assert answer.proposal_id == "defense:incident:90:ground"
+    held = {tag for tag, owner in second.owners if owner == answer.proposal_id}
+    assert len(held) == 2 and held <= defenders
+    assert second.owner_of(4) == core_army.OWNER

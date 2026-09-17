@@ -31,6 +31,8 @@ seleção (ver regra no prompt corrigido).
 | 7d | Macro: banco com supply livre | Investigado; mudança revertida, causa em aberto | `macro: detection and opening interrupt; hold stim` |
 | 7e | Macro: detecção (scan, Missile Turret, reserva de energia) | Feito | `macro: detection and opening interrupt; hold stim` |
 | 7f | Macro: interrupção do opening por emergência | Feito (sem evidência de partida) | `macro: detection and opening interrupt; hold stim` |
+| 3b | Identidade do incidente segue os membros | Feito | `awareness: keep an incident's id while its members stay` |
+| 6d | Ofensiva: combat sim do Ares na decisão de lutar | Medido e revertido | `awareness: keep an incident's id while its members stay` (só documentação) |
 | 7g | Macro: teto de produção cresce com as bases | Feito | `macro: let the production ceiling grow with the bases` |
 | 7 | Resto da macro (bases `ready + pending`, supply antecipado, reação a rush, Reactors, pico de banco) | Pendente | — |
 | 8a | Micro: Stim e Medivac acompanhando o grupo | Feito | `offense: fight, retreat and search; macro upgrades; bio micro` |
@@ -950,11 +952,119 @@ Nenhum `Traceback` no stdout. O `config_fingerprint` não mudou
 - Bases `ready + pending`, supply antecipado e reação a rush continuam
   pendentes.
 
+## 6d. Combat sim do Ares na decisão de lutar — medido e revertido
+
+Seleção: pedido explícito do usuário (continuar com a próxima fatia); item
+pendente da 6b ("combat simulation do Ares e poder com alcance/splash").
+
+Evidência do problema: `bench/7b/001` (Terran), 739,6–745,3 s — com parcela
+local de 0,61–0,71 pelo poder, o grupo entrou em luta contra 4–5 Siege Tanks em
+siege, Liberators em modo terrestre e 2 Missile Turrets, caiu de 70 para 34 de
+poder em 3,5 s (`army_depleted` aos 746,9 s) e a ofensiva não comprometeu de
+novo até o fim da partida. `sqrt(dps·vida)` não vê alcance nem splash.
+
+**Experimento**
+
+- Ego/offense: a luta local passava a ser julgada também pelo
+  `mediator.can_win_fight` do Ares (unidades do grupo a ≤ `engage_radius` do
+  núcleo contra os inimigos da luta à vista, unidades e estruturas), com
+  `simulated_share = EngagementResult / 10`, e a parcela local era
+  `min(parcela por poder, simulated_share)`. O simulador era uma consulta só de
+  leitura sobre o bot, passada ao planner como `held_by`
+  (`bot/body/combat_sim.py`). Logs: `power_share` e `simulated_share` em
+  `inputs` e em `fight`.
+- 257 testes e ruff verdes; os testes cobriam recuo com o simulador perdendo,
+  recuo depois do dwell, simulador que não sobe a parcela, luta ganha, só
+  inimigos à vista e a ligação no fluxo de frame.
+
+**Partidas** (`bench/6d`, sobre `053aefd` sujo, mesma matriz):
+
+| Execução | Zerg | Terran | Protoss |
+| --- | --- | --- | --- |
+| `bench/7g` (linha de base) | vitória, 702 s | vitória, 891 s | vitória, 868 s |
+| `bench/6d` | vitória, 702 s | timeout | vitória, 868 s |
+
+- Zerg e Protoss: mesma duração da linha de base; em nenhuma avaliação o
+  simulador ficou abaixo da parcela por poder (45 e 32 avaliações
+  registradas).
+- Terran: 5 de 47 avaliações registradas abaixo do poder. A única decisão que o simulador
+  mudou foi um recuo aos 659,4 s (poder 0,72, simulado 0,2); a partida diverge
+  da linha de base a partir daí e termina em `timeout`. Nas duas lutas que
+  custaram metade do exército (623,9 s: 81 → 35; 761,4 s: 71 → 34) o simulador
+  respondeu 1,0 (vitória enfática): ele só vê inimigos à vista, e Siege Tanks
+  em siege atiram de fora da visão.
+- Uma partida por raça: nenhuma diferença é significativa, mas o simulador não
+  mostrou o efeito pretendido. Sem ganho medido, o código e os testes saíram
+  (como a regra de recuo por perda da 6b).
+
+**Não feito / próximo passo possível**: contar contatos lembrados fora de visão
+no simulador (o Ares só aceita `Unit` vivos), ou dar ao poder alcance e
+splash; nenhum dos dois foi tentado.
+
+## 3b. Identidade do incidente segue os membros — feito
+
+Seleção: bug decisório reproduzível por trace (classe 1), achado nos logs de
+`bench/7g`; pedido explícito do usuário de continuar.
+
+Evidência do problema: em `bench/7g/001`, aos 520,4 s, o contato de menor tag
+(…14017) saiu de um incidente de 7 membros e o mesmo ataque (os outros 6
+continuaram) passou de `incident:4361814017` a `incident:4363124737`. A
+proposta de defesa é `defense:<incident_id>:<parte>`, então foi renomeada, e o
+Engine, que prefere as unidades que já eram da proposta, a tratou como nova:
+todas as unidades aparecem como transferidas entre as duas propostas. Por
+partida em `bench/7g`, transferências `defense → defense`: 115 / 165 / 123
+(Zerg / Terran / Protoss), e unidades que voltam à proposta anterior em menos
+de 2 s: 49 / 100 / 56. A regra anterior (id = menor tag, que vale só enquanto
+esse contato está no grupo) produz a troca por construção.
+
+**Feito**
+
+- Awareness: o id segue os membros. Cada grupo herda o id do incidente do frame
+  anterior com quem mais compartilha membros; pares resolvidos por mais membros
+  em comum, depois menor tag do grupo, depois menor tag que o incidente
+  anterior tinha; cada id vai a um grupo só. Sem herança:
+  `incident:<menor tag>`, com sufixo `-1`, `-2`, … enquanto o id estiver em
+  uso. Os casos do teste anterior (divisão e fusão de dois contatos) dão os
+  mesmos ids de antes. A ordem dos incidentes continua pela menor tag.
+- Nenhuma mudança em Ego, Engine ou logs: `awareness.updated.incidents[]` já
+  traz id e contatos, o que basta para reconstruir a herança.
+- Testes: a menor tag morre e o id fica; um recém-chegado de tag menor não
+  renomeia; a menor tag sai sozinha → os dois que ficaram mantêm o id e ela
+  recebe `incident:3-1`; refundido, volta a `incident:3`; fusão de um incidente
+  de 1 com um de 3 fica com o id do de 3. Defesa ponta a ponta: o Zergling que
+  nomeava o incidente morre, a proposta continua
+  `defense:incident:90:ground` e as duas unidades concedidas saem das três que
+  já defendiam, embora a quarta esteja mais perto. Com o `model.py` anterior os
+  três testes falham.
+- Verificação local: 245 testes, ruff limpo.
+
+**Partidas** (`bench/3b`, sobre `053aefd` sujo, mesma matriz; linha de base
+`bench/7g`, mesmo código sem a 3b):
+
+| Execução | Zerg | Terran | Protoss |
+| --- | --- | --- | --- |
+| `bench/7g` | vitória, 702 s | vitória, 891 s | vitória, 868 s |
+| `bench/3b` | vitória, 707 s | timeout | vitória, 868 s |
+
+- Transferências `defense → defense` por partida: 115 / 165 / 123 → 0 / 120 / 0.
+  As 120 da Terran são todas dentro de um mesmo incidente, entre as partes
+  `ground` e `air` (109) ou entre incidentes que realmente se separam: o id não
+  muda mais, mas o Engine reparte as unidades antiaéreas de novo quando a razão
+  entre poder aéreo e terrestre muda.
+- Terran: sem bases perdidas, mas `timeout`. Contra Terran os resultados
+  oscilam entre execuções com o mesmo seed (7b timeout, 7g vitória, 6d timeout,
+  3b timeout): basta uma decisão diferente para a partida divergir. Uma partida
+  por raça não permite atribuir o timeout à 3b nem a vitória da 7g à 7g.
+- Nenhum `Traceback`; fingerprint inalterado (`ab57813d0bfcc3fe`).
+
+**Não feito**: troca de unidades entre as partes `air`/`ground` da mesma
+demanda; histerese pelo poder; eventos explícitos de linhagem.
+
 ## Itens de `propostas.md` fora de qualquer fatia concluída
 
-- P0.2: distinguir scout, worker rush e ataque; histerese de admissão/liberação
+- P0.2: distinguir scout, worker rush e ataque; histerese de admissão/liberação (a 3b tirou a troca de id, não a do poder)
   da defesa; antecipação e tráfego amigo do wall.
-- P0.3: combat simulation, poder com alcance/splash, coesão e reforços da
+- P0.3: combat simulation com contatos fora de visão (6d medida e revertida), poder com alcance/splash, coesão e reforços da
   ofensiva; encerrar partidas contra Terran (timeout nas duas execuções).
 - P0.4: banco que continua alto com supply cheio (7g), Reactors, bases por `ready + pending`,
   supply antecipado; reação a rush além da interrupção do opening

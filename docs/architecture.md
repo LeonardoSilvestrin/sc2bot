@@ -70,9 +70,12 @@ Todo o resto lê estados imutáveis e é testável sem `AresBot`.
   `army_share = own / (own + planejado)` (0,5 sem poder algum); `army = clamp(0,3 + 0,5·danger + 0,4·(0,5 − army_share))`,
   `economy = 1 − army`, `risk = army_share · (1 − danger)`. Com `danger = 0`, `economy ≥ 0,5` com qualquer `army_share`.
 - Incidente: atacantes (poder > 0) ao alcance de alguma base, ligados em cadeia a
-  ≤ `incident_link` (12) um do outro, quantas bases tocarem. `incident_id = incident:<menor tag>`:
-  vale enquanto esse contato estiver no grupo; numa divisão, a parte sem ele leva a própria menor
-  tag; numa fusão, vence a menor. Poder `Σ poder·confiança` (terrestre e aéreo), centro ponderado
+  ≤ `incident_link` (12) um do outro, quantas bases tocarem. O id segue os membros: cada grupo herda o
+  id do incidente do frame anterior com quem mais compartilha membros (pares resolvidos por mais membros
+  em comum, depois menor tag do grupo, depois menor tag que o incidente anterior tinha; cada id vai a um
+  grupo só), quaisquer que sejam os contatos que entram ou saem. Numa divisão, fica com a parte que leva
+  mais do incidente; numa fusão, com o incidente que traz mais membros. Um grupo sem herança é
+  `incident:<menor tag>`, com sufixo `-1`, `-2`, … enquanto esse id estiver em uso. Poder `Σ poder·confiança` (terrestre e aéreo), centro ponderado
   por esse poder, pressão em cada base afetada e `threat = S(maior pressão numa base / full_pressure)`.
   Os incidentes somam a pressão de cada base.
 - Defense: por incidente, `orçamento = 1.5 · poder`, repartido em `defense:<incidente>:air`
@@ -210,7 +213,7 @@ as fatias de tempo são `attention`, `awareness`, `strategy`, `planners`, `engin
 ## Fora desta fatia
 
 Belief probabilístico de exército, forças agregadas, avaliação dinâmica de território, `RegionState` (nenhuma decisão o consome ainda),
-scouting depois do early game, map control, harass, combat simulation do Ares na decisão de lutar, path de grupo
+scouting depois do early game, map control, harass, combat simulation do Ares na decisão de lutar (medida e revertida), path de grupo
 consciente de risco, coesão/reforços da ofensiva (hoje toda unidade livre vai sozinha até o grupo), alcance de
 estruturas voando sobre terreno impassável, stutter/focus/target scoring, Medivac evacuando, Raven e scan ofensivo/de informação, turret por rota aérea,
 preempção com compromisso e ciclo de siege próprio da

@@ -217,6 +217,59 @@ def test_an_incident_id_holds_splits_merges_and_is_remembered_by_rule() -> None:
     )
 
 
+def test_an_incident_keeps_its_id_when_its_lowest_tag_leaves() -> None:
+    # bench/7g 001, 520.4 s: the contact that named an incident of seven left
+    # it, and the same attack took another id; the defense proposal was renamed
+    # with it and the Engine moved its units as if to a new demand (100-165
+    # defense-to-defense transfers a game in bench/7g).
+    model = AwarenessModel()
+
+    def incidents(time: float, *enemies, dead=()):
+        state = model.infer(attention(time=time, enemy_units=enemies, dead_tags=dead))
+        return [(item.incident_id, item.contacts) for item in state.incidents]
+
+    assert incidents(0.0, zergling(3, 14, 10), zergling(5, 16, 10), zergling(8, 18, 10)) == [
+        ("incident:3", (3, 5, 8))
+    ]
+    assert incidents(0.5, zergling(5, 16, 10), zergling(8, 18, 10), dead=(3,)) == [
+        ("incident:3", (5, 8))
+    ]
+    # A newcomer with a lower tag joins it and does not rename it either.
+    assert incidents(1.0, zergling(1, 15, 10), zergling(5, 16, 10), zergling(8, 18, 10)) == [
+        ("incident:3", (1, 5, 8))
+    ]
+
+
+def test_a_split_leaves_the_id_with_most_of_the_incident_and_a_merge_with_the_largest() -> None:
+    model = AwarenessModel()
+
+    def incidents(time: float, *enemies):
+        state = model.infer(attention(time=time, enemy_units=enemies))
+        return [(item.incident_id, item.contacts) for item in state.incidents]
+
+    group = (zergling(5, 16, 10), zergling(8, 18, 10))
+    assert incidents(0.0, zergling(3, 14, 10), *group) == [("incident:3", (3, 5, 8))]
+    # The lowest tag walks off alone: the two it left keep the id, and it
+    # takes its own tag, suffixed because that id is taken.
+    assert incidents(0.5, zergling(3, 14, 32), *group) == [
+        ("incident:3-1", (3,)),
+        ("incident:3", (5, 8)),
+    ]
+    # Merged again, the larger part's id wins.
+    assert incidents(1.0, zergling(3, 14, 10), *group) == [("incident:3", (3, 5, 8))]
+
+    # Two incidents of different sizes merge: the larger one's id wins,
+    # although the other had the lower tag.
+    model = AwarenessModel()
+    far = (zergling(5, 14, 32), zergling(8, 16, 32), zergling(9, 18, 32))
+    assert incidents(0.0, zergling(3, 14, 10), *far) == [
+        ("incident:3", (3,)),
+        ("incident:5", (5, 8, 9)),
+    ]
+    near = (zergling(5, 15, 12), zergling(8, 16, 12), zergling(9, 17, 12))
+    assert incidents(0.5, zergling(3, 14, 10), *near) == [("incident:5", (3, 5, 8, 9))]
+
+
 def test_enemy_workers_and_structures_are_no_army() -> None:
     # Trace 6455342, 95-180 s: a worker scout's look at a Zerg mineral line put
     # ~20 Drones into enemy_power, 9.3 Marines against no army of ours.
