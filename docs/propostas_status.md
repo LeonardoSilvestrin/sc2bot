@@ -31,6 +31,7 @@ seleção (ver regra no prompt corrigido).
 | 7d | Macro: banco com supply livre | Investigado; mudança revertida, causa em aberto | `macro: detection and opening interrupt; hold stim` |
 | 7e | Macro: detecção (scan, Missile Turret, reserva de energia) | Feito | `macro: detection and opening interrupt; hold stim` |
 | 7f | Macro: interrupção do opening por emergência | Feito (sem evidência de partida) | `macro: detection and opening interrupt; hold stim` |
+| 6e | Ofensiva: scan de reconhecimento da luta | Medido e revertido | `docs: record the 9-game baseline and the reverted fight scans` |
 | 1b | Percepção: snapshots de memória do Ares não contam como vistos | Feito | `attention: see only this frame's enemies` |
 | 3b | Identidade do incidente segue os membros | Feito | `awareness: keep an incident's id while its members stay` |
 | 6d | Ofensiva: combat sim do Ares na decisão de lutar | Medido e revertido | `awareness: keep an incident's id while its members stay` (só documentação) |
@@ -1147,10 +1148,75 @@ Registro para a próxima fatia de combate; nada foi mudado por isto.
   `sqrt(dps·vida)`), scan de informação antes de engajar, e de novo o recuo por
   perda da 6b (medido com uma partida por raça). O combat sim do Ares (6d) não
   ajudou porque só vê o que está à vista.
-- Linha de base maior em andamento: `bench/base3` (3 partidas por raça, seeds
-  1–3), de um `git worktree` limpo em `fe3cea0`. Nesse worktree o submódulo
-  não existe, então `ares_commit` sai nulo no `result.json`; o Ares usado é o
-  do repositório principal (`8730865`).
+- Linha de base maior: ver "Linha de base de 9 partidas" abaixo.
+
+## Linha de base de 9 partidas (`bench/base3`)
+
+Trabalho operacional, feito porque uma partida por raça não separava nenhuma
+mudança contra Terran (7b, 7g, 6d e 3b deram timeout, vitória, timeout e
+timeout com o mesmo seed).
+
+- Código: `fe3cea0` limpo (`dirty: false`), de um `git worktree`. No worktree
+  o submódulo não existe, então `ares_commit` sai nulo no `result.json`; o Ares
+  importado é o do repositório principal (`8730865`). Fingerprint
+  `ab57813d0bfcc3fe`.
+- Matriz: Persephone AIE, IA VeryHard Macro, Zerg/Terran/Protoss, seeds 1–3,
+  1.200 s (`bench.py run --games 3`).
+- As partidas de seed 1 repetiram as de `bench/1b` (mesmo código) com os
+  mesmos resultados e durações (900 / 869 / 869 s): reprodutível nesta máquina.
+
+| Seed | Zerg | Terran | Protoss |
+| --- | --- | --- | --- |
+| 1 | vitória, 900 s | vitória, 869 s | vitória, 869 s |
+| 2 | vitória, 775 s | vitória, 788 s | vitória, 701 s |
+| 3 | vitória, 726 s | timeout | vitória, 708 s |
+
+8 vitórias em 9 (Wilson 95 %: 0,57–0,98); por raça, 3/3 (0,44–1,00) ou 2/3
+(0,21–0,94). Nenhum `Traceback`. Duas partidas rodaram ao mesmo tempo (esta e a
+da 6e); os jogos são por passo, então a concorrência muda só o tempo de relógio.
+
+## 6e. Scan de reconhecimento da luta — medido e revertido
+
+Seleção: pedido explícito do usuário de continuar; primeiro candidato da
+análise das trocas contra Terran (o grupo só vê os Siege Tanks depois de
+entrar).
+
+**Experimento**
+
+- Ego/offense: `OffensePlan.contested_at`, o centro inimigo de uma luta
+  disputada enquanto a ofensiva avança, busca ou está engajada.
+- Ego/detection: `DetectionConfig.fight_scans` (padrão ligado). Depois do
+  opening, cada Orbital guardava `scan_reserve` mesmo sem camuflado visto; sem
+  escondido para escanear, o ponto disputado era escaneado se nenhum scan dos
+  últimos `scan_duration` o cobria e havia energia (`scan_fight`,
+  `fight_scanned`, input `contested_fight`). O Body já escaneava.
+- 252 testes e ruff verdes, com um teste de ponta a ponta (ofensiva engajada →
+  plano → scan do Orbital → log).
+
+**Partidas** (`bench/6e3`, `a6f3787` + a mudança, `dirty: true`, mesma matriz de
+9; fingerprint `1c6e017343309485`, porque a `DetectionConfig` mudou):
+
+| Seed | Zerg | Terran | Protoss |
+| --- | --- | --- | --- |
+| 1 | timeout | vitória, 784 s | vitória, 862 s |
+| 2 | vitória, 739 s | vitória, 833 s | vitória, 700 s |
+| 3 | vitória, 797 s | vitória, 1.071 s | vitória, 694 s |
+
+- 8 em 9, como a linha de base: nenhuma diferença.
+- Scans de luta por partida: 1 / 5 / 4 / 10 / 3 / 6 / 19 / 18 / 7. Em nenhuma
+  das 9 partidas um recuo por `unfavorable_fight` veio nos 3 s depois de um
+  scan de luta: o efeito pretendido (ver os tanks e não entrar) não apareceu.
+  Os scans acontecem quando a luta já está disputada, e o grupo já está dentro
+  do alcance.
+- Terran seed 3: `army_depleted` 3 vezes e timeout na linha de base; 2 vezes e
+  vitória aos 1.071 s com a mudança. Zerg seed 1: a partida diverge da linha de
+  base antes da primeira luta (a reserva muda o ritmo dos MULEs); o único scan
+  de luta, aos 833,2 s, veio no mesmo frame do ENGAGE com parcela 0,89, e o
+  grupo recuou por `fight_lost` 7,6 s depois, com metade do poder.
+- Sem ganho medido e sem o mecanismo observado, o código e os testes saíram.
+
+**Próximo passo possível**: escanear antes, na rota do avanço (antes de a luta
+ficar disputada), ou dar ao poder alcance e splash; nenhum foi tentado.
 
 ## Itens de `propostas.md` fora de qualquer fatia concluída
 
