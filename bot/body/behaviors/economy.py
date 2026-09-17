@@ -13,6 +13,13 @@ spends freely instead: whatever it trains takes the counts off the multiple.
 
 A plan that interrupts the opening stops Ares' build runner before anything
 else, so the macro plan takes over that same frame.
+
+`AddReactors` is last in the plan. It must come after the SpawnController, for
+the same reason the ProductionController does -- ordering an add-on on a
+Barracks that was just told to train replaces the training order (`bench/7/002`)
+-- and last of all because an add-on the game refuses (no room beside the
+Barracks) would otherwise keep acting every frame and starve what comes after
+it.
 """
 
 from __future__ import annotations
@@ -31,6 +38,7 @@ from ares.behaviors.macro import (
     UpgradeCCs,
     UpgradeController,
 )
+from ares.behaviors.macro.macro_behavior import MacroBehavior
 from ares.consts import UnitRole
 from sc2.ids.ability_id import AbilityId
 from sc2.ids.unit_typeid import UnitTypeId
@@ -45,6 +53,29 @@ _EMPTY_ARMY = 1e-16
 MULE_ENERGY = 50.0
 # A mineral field this close to a townhall is mined from it.
 MINING_DISTANCE = 10.0
+
+
+@dataclass
+class AddReactors(MacroBehavior):
+    """A Reactor on the idle Barracks with no add-on, lowest tag first, one per
+    frame, while more than `techlab_reserve` of them are free for Ares' Tech
+    Labs."""
+
+    techlab_reserve: int = 1
+
+    def execute(self, ai, config, mediator) -> bool:
+        free = sorted(
+            (
+                barracks
+                for barracks in mediator.get_own_structures_dict[UnitTypeId.BARRACKS]
+                if barracks.is_ready and barracks.is_idle and not barracks.has_add_on
+            ),
+            key=lambda barracks: barracks.tag,
+        )
+        if len(free) <= self.techlab_reserve or not ai.can_afford(UnitTypeId.BARRACKSREACTOR):
+            return False
+        free[0].build(UnitTypeId.BARRACKSREACTOR)
+        return True
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,6 +146,8 @@ def execute(
             max_production_structures=plan.max_production,
         )
     )
+    if plan.reactors:
+        macro.add(AddReactors(techlab_reserve=plan.techlab_reserve))
     bot.register_behavior(macro)
     if plan.mules:
         call_mules(bot, reserve=energy_reserve, busy=busy)

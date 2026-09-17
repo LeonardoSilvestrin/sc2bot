@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections import defaultdict
 from types import SimpleNamespace
 from typing import Any
 
@@ -275,6 +276,8 @@ class FakeMediator:
         self.get_air_grid = np.ones((SIZE, SIZE))
         self.get_unit_role_dict: dict[str, set[int]] = {}
         self.removed_from_minerals: list[int] = []
+        # Own structures by type, the way Ares' macro behaviors read them.
+        self.get_own_structures_dict: dict[UnitTypeId, list] = defaultdict(list)
         # What Ares counts of each own unit type, aliases and production included.
         self.own_unit_counts: dict[UnitTypeId, int] = {}
 
@@ -310,6 +313,13 @@ class FakeDebugClient:
     def debug_text_screen(self, *args) -> None:
         self.screen_text.append(args)
 
+
+# (minerals, vespene) of what a test asks the fake bot to afford.
+_COST = {
+    UnitTypeId.BARRACKSREACTOR: (50, 50),
+    UnitTypeId.BARRACKS: (150, 0),
+    UnitTypeId.MARINE: (50, 0),
+}
 
 _SUPPLY = {
     UnitTypeId.SCV: 1.0,
@@ -373,6 +383,10 @@ class FakeBot:
 
     def calculate_supply_cost(self, type_id: UnitTypeId) -> float:
         return _SUPPLY.get(type_id, 0.0)
+
+    def can_afford(self, type_id: UnitTypeId) -> bool:
+        minerals, vespene = _COST[type_id]
+        return self.minerals >= minerals and self.vespene >= vespene
 
     def register_behavior(self, behavior) -> None:
         self.registered.append(behavior)

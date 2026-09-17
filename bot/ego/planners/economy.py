@@ -17,6 +17,13 @@ spending on the army first.
 Ares adds production as income allows, up to a ceiling per structure type. A
 fixed ceiling of 12 Barracks capped the army's growth once the bot had more
 than three bases (`bench/7b`), so the ceiling grows with the bases.
+
+A Barracks with a Reactor trains two Marines at a time, and 5 of the 12
+Barracks of `bench/7b/001` never got an add-on while the bank grew past 9,900
+minerals with supply free. Once the opening is over, and while nothing is being
+stabilized, every Barracks with no add-on should take a Reactor -- except
+`TECHLAB_RESERVE` of them, which stay free for the Tech Labs Ares adds when the
+composition asks for Marauders.
 """
 
 from __future__ import annotations
@@ -62,6 +69,9 @@ MINERAL_WORKERS_PER_BASE = 16
 WORKERS_PER_GAS_BUILDING = 12
 # Ares' default ceiling of 12 production structures of a type, per three bases.
 PRODUCTION_PER_BASE = 4
+# Barracks left without an add-on for Ares' Tech Labs. One is enough: Ares adds
+# a Tech Lab to the first idle Barracks with no add-on, one per frame.
+TECHLAB_RESERVE = 1
 
 
 def plan(attention: AttentionState, strategy: StrategyState) -> EconomyPlan:
@@ -102,10 +112,15 @@ def plan(attention: AttentionState, strategy: StrategyState) -> EconomyPlan:
             ("upgrades_done", float(sum(item in attention.upgrades for item in UPGRADES))),
             ("danger", strategy.defense),
             ("production_per_base", float(PRODUCTION_PER_BASE)),
+            ("techlab_reserve", float(TECHLAB_RESERVE)),
         ),
         upgrades=UPGRADES if active and not stabilizing else (),
         orbitals=active,
         mules=active,
         interrupt_opening=interrupt,
         max_production=PRODUCTION_PER_BASE * bases,
+        # A Reactor is an investment in throughput: while stabilizing, every
+        # resource goes to the army instead, as with the upgrades.
+        reactors=active and not stabilizing,
+        techlab_reserve=TECHLAB_RESERVE,
     )

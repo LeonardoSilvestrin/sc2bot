@@ -86,6 +86,11 @@ class EconomyPlan:
     # The most structures of one production type (Barracks, Factory, Starport)
     # Ares may build; how many it builds within that is its income rule.
     max_production: int = 12
+    # Add a Reactor to a Barracks with no add-on: two Marines at a time.
+    reactors: bool = False
+    # Barracks that stay without an add-on, so Ares can still put a Tech Lab
+    # on one when the composition asks for Marauders.
+    techlab_reserve: int = 1
 
 
 @dataclass(frozen=True, slots=True)

@@ -36,6 +36,7 @@ seleção (ver regra no prompt corrigido).
 | 3b | Identidade do incidente segue os membros | Feito | `awareness: keep an incident's id while its members stay` |
 | 6d | Ofensiva: combat sim do Ares na decisão de lutar | Medido e revertido | `awareness: keep an incident's id while its members stay` (só documentação) |
 | 7g | Macro: teto de produção cresce com as bases | Feito | `macro: let the production ceiling grow with the bases` |
+| 7h | Macro: Reactors nas Barracks sem add-on | Feito (sem evidência de partida) | `macro: a reactor on every barracks with no add-on` |
 | 7 | Resto da macro (bases `ready + pending`, supply antecipado, reação a rush, Reactors, pico de banco) | Pendente | — |
 | 8a | Micro: Stim e Medivac acompanhando o grupo | Feito | `offense: fight, retreat and search; macro upgrades; bio micro` |
 | 8b | Micro: Stim no HOLD | Feito | `macro: detection and opening interrupt; hold stim` |
@@ -1218,13 +1219,78 @@ entrar).
 **Próximo passo possível**: escanear antes, na rota do avanço (antes de a luta
 ficar disputada), ou dar ao poder alcance e splash; nenhum foi tentado.
 
+## 7h. Reactors nas Barracks sem add-on — feito (sem evidência de partida)
+
+Seleção: a regra do prompt corrigido (bug decisório reproduzível → fatia de
+gameplay → operacional) sobre as partes pendentes da fatia 7. É o item que a
+própria 7g deixou escrito no "Não feito" com evidência de partida, e a menor
+fatia cujos pré-requisitos já existem (composição, `MacroPlan`, teto de
+produção).
+
+Evidência do problema: em `bench/7b/001` (Terran VeryHard Macro), 5 das 12
+Barracks estavam sem add-on aos 773 s, enquanto o banco ia de 4.155 minerais
+(608,9 s) a 9.930 (773,1 s) com 37 de supply livre e o exército caía para 31
+unidades. Depois da 7g, com o teto em 24, o banco ainda chegou a 14–18 mil
+minerais e 12 de 65 amostras de `bench/7g` (Terran, depois de 600 s) tinham
+≥ 4 mil minerais, ≥ 19 de supply livre e supply usado < 190. Uma Barracks com
+Reactor treina dois Marines de uma vez: é capacidade de gasto que já está
+construída e paga 50/50.
+
+**Feito**
+
+- Ego/economy: `EconomyPlan.reactors` (verdadeiro depois da abertura e fora de
+  `STABILIZE`, como os upgrades: enquanto estabiliza, todo recurso vai para o
+  exército) e `EconomyPlan.techlab_reserve = TECHLAB_RESERVE = 1`, as Barracks
+  que continuam sem add-on para o Ares poder pôr um Tech Lab quando a
+  composição pedir Marauders. Input `techlab_reserve`.
+- Body/economy: `AddReactors`, uma `MacroBehavior` do Ares dentro do
+  `MacroPlan`, **última** do plano. Manda `build(BARRACKSREACTOR)` na Barracks
+  pronta, ociosa e sem add-on de menor tag, uma por frame, enquanto sobrarem
+  mais de `techlab_reserve` livres e o bot puder pagar
+  (`can_afford(BARRACKSREACTOR)`, 50/50, sem custo de supply: é justamente com
+  o supply cheio que ela precisa agir).
+- Por que última: depois do `SpawnController` pelo mesmo motivo do
+  `ProductionController` — um add-on mandado numa Barracks que acabou de
+  receber ordem de treino substitui a ordem (`bench/7/002`) — e depois dele
+  porque uma ordem que o jogo recusa (sem espaço ao lado da Barracks) agiria
+  todo frame e deixaria o resto do plano sem vez.
+- Logs: `behavior.economy_planned.reactors` e `.techlab_reserve` (ambos na
+  assinatura do gate) e `inputs.techlab_reserve`; os Reactors construídos
+  aparecem em `attention.observed.structures` como `BARRACKSREACTOR`.
+- Testes (`tests/test_economy.py`): o plano liga os Reactors depois da abertura
+  e os desliga na abertura e ao estabilizar; o caso da `bench/7b/001` (7 com
+  add-on, 5 sem) manda um Reactor na de menor tag livre; Barracks treinando,
+  não pronta ou já com add-on não recebem nada; a última sem add-on fica
+  reservada e o `_add_techlab_to_existing` de verdade do Ares consegue pôr o
+  Tech Lab nela; 50/49 e 49/50 não pagam um Reactor e 50/50 paga; e o frame em
+  que o `SpawnController` age não chega ao `AddReactors`. `tests/test_frame_flow.py`:
+  a decisão e a reserva aparecem no `behavior.economy_planned` do fluxo real.
+- Verificação local: 253 testes e `ruff check bot tests harness run.py bench.py`
+  limpos (`.venv`, sem poetry nesta máquina).
+
+**Não feito**
+
+- Nenhuma partida foi jogada com a mudança: não há evidência de que o banco
+  caia, de que a vazão suba nem de efeito em vitória. `TECHLAB_RESERVE` não foi
+  calibrado e a economia continua fora do `config_fingerprint`.
+- Reactors de Factory e Starport (Medivacs saem de Starport com Reactor ao
+  dobro) e `AddOnSwap` do Ares ficaram fora.
+- Espaço ao lado da Barracks não é verificado antes da ordem; uma Barracks sem
+  lugar para o add-on é tentada de novo a cada frame ocioso (por isso a
+  behavior é a última do plano). Se aparecer num log, o próximo passo é lembrar
+  a tag recusada ou usar o `AddOnSwap`.
+- Continuam pendentes da fatia 7: bases por `ready + pending`, supply
+  antecipado, reação a rush além da interrupção do opening e o pico de banco com
+  o supply cheio.
+
 ## Itens de `propostas.md` fora de qualquer fatia concluída
 
 - P0.2: distinguir scout, worker rush e ataque; histerese de admissão/liberação (a 3b tirou a troca de id, não a do poder)
   da defesa; antecipação e tráfego amigo do wall.
 - P0.3: combat simulation com contatos fora de visão (6d medida e revertida), poder com alcance/splash, coesão e reforços da
   ofensiva; encerrar partidas contra Terran (timeout nas duas execuções).
-- P0.4: banco que continua alto com supply cheio (7g), Reactors, bases por `ready + pending`,
+- P0.4: banco que continua alto com supply cheio (7g; a 7h deu aos Reactors um
+  destino para ele, sem partida que o meça), Reactors de Factory/Starport, bases por `ready + pending`,
   supply antecipado; reação a rush além da interrupção do opening
   (bunker, reparo, worker pull, proxy); Raven e scan de informação.
 - P1.1–P1.5 e P2: scouting recorrente e estimativa do inimigo por produção ou

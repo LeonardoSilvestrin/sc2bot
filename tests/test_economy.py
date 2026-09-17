@@ -95,6 +95,7 @@ def test_what_must_not_wait_for_the_army_runs_before_the_spawn_controller() -> N
         UpgradeController,
         SpawnController,
         ProductionController,
+        economy_behavior.AddReactors,
     ]
     upgrades = macro.macros[4]
     assert upgrades.upgrade_list == list(economy.UPGRADES)
@@ -105,6 +106,8 @@ def test_what_must_not_wait_for_the_army_runs_before_the_spawn_controller() -> N
     economy_behavior.execute(bot, planned(objective=Objective.STABILIZE))
     (macro,) = [item for item in bot.registered if isinstance(item, MacroPlan)]
     assert not any(isinstance(item, UpgradeController) for item in macro.macros)
+    # Stabilizing spends on the army, not on add-ons.
+    assert not any(isinstance(item, economy_behavior.AddReactors) for item in macro.macros)
 
 
 class Lab:
@@ -213,6 +216,9 @@ def test_production_is_not_added_in_a_frame_the_spawn_controller_acts(monkeypatc
     monkeypatch.setattr(UpgradeController, "execute", recorder("UpgradeController", False))
     monkeypatch.setattr(SpawnController, "execute", recorder("SpawnController", True))
     monkeypatch.setattr(ProductionController, "execute", recorder("ProductionController", True))
+    monkeypatch.setattr(
+        economy_behavior.AddReactors, "execute", recorder("AddReactors", True)
+    )
     bot = FakeBot()
 
     economy_behavior.execute(bot, planned())
@@ -221,6 +227,9 @@ def test_production_is_not_added_in_a_frame_the_spawn_controller_acts(monkeypatc
 
     assert calls[-1] == "SpawnController"
     assert "ProductionController" not in calls
+    # An add-on order would replace the training order the SpawnController
+    # just gave that Barracks.
+    assert "AddReactors" not in calls
 
 
 def opening_plan(defense: float, objective: Objective = Objective.STABILIZE):
@@ -416,3 +425,100 @@ def test_three_bases_keep_ares_default_ceiling(monkeypatch) -> None:
 
 def test_the_six_base_ceiling_holds_at_its_count(monkeypatch) -> None:
     assert production_after(monkeypatch, count=6, barracks=24) == []
+
+
+class Barracks:
+    """A Barracks the way Ares' macro behaviors read one: ready or not, idle or
+    training, with an add-on or without."""
+
+    def __init__(self, tag: int, *, idle: bool = True, add_on: bool = False, ready: bool = True):
+        self.tag = tag
+        self.type_id = UnitTypeId.BARRACKS
+        self.is_ready = ready
+        self.is_idle = idle
+        self.has_add_on = add_on
+        self.build_progress = 1.0 if ready else 0.5
+        self.orders: list = []
+        self.built: list[UnitTypeId] = []
+
+    def build(self, unit_type: UnitTypeId) -> None:
+        self.built.append(unit_type)
+
+
+def reactor_bot(barracks: list[Barracks], *, minerals: int = 9930, vespene: int = 3041) -> FakeBot:
+    bot = FakeBot()
+    bot.minerals = minerals
+    bot.vespene = vespene
+    bot.mediator.get_own_structures_dict[UnitTypeId.BARRACKS] = list(barracks)
+    return bot
+
+
+def reactors_ordered(barracks: list[Barracks], **kw) -> list[int]:
+    bot = reactor_bot(barracks, **kw)
+    plan = planned()
+    behavior = economy_behavior.AddReactors(techlab_reserve=plan.techlab_reserve)
+
+    acted = behavior.execute(bot, {}, bot.mediator)
+
+    ordered = [item.tag for item in barracks if item.built == [UnitTypeId.BARRACKSREACTOR]]
+    assert acted == bool(ordered)
+    return ordered
+
+
+def test_the_plan_adds_reactors_after_the_opening_and_keeps_one_barracks_free() -> None:
+    plan = planned()
+
+    assert plan.reactors
+    assert plan.techlab_reserve == economy.TECHLAB_RESERVE == 1
+    assert dict(plan.inputs)["techlab_reserve"] == 1.0
+    assert not planned(opening_done=False).reactors
+    assert not planned(objective=Objective.STABILIZE).reactors
+
+
+def test_a_barracks_with_no_add_on_gets_a_reactor_lowest_tag_first() -> None:
+    # bench/7b/001: 5 of the 12 Barracks had no add-on at 773 s, while the bank
+    # grew to 9,930 minerals with 37 supply free and the army fell to 31 units.
+    # A Reactor trains two Marines at a time.
+    with_add_on = [Barracks(tag, add_on=True) for tag in range(7)]
+    without = [Barracks(tag, add_on=False) for tag in range(7, 12)]
+
+    assert reactors_ordered(with_add_on + without) == [7]
+
+
+def test_only_a_ready_and_idle_barracks_takes_a_reactor() -> None:
+    # An add-on order replaces the order a training Barracks already has.
+    assert reactors_ordered(
+        [
+            Barracks(1, idle=False),
+            Barracks(2, ready=False),
+            Barracks(3, add_on=True),
+            Barracks(4),
+            Barracks(5),
+        ]
+    ) == [4]
+
+
+def test_the_last_barracks_without_an_add_on_is_left_for_ares_tech_labs() -> None:
+    assert reactors_ordered([Barracks(1, add_on=True), Barracks(2)]) == []
+    assert reactors_ordered([Barracks(1)]) == []
+    assert reactors_ordered([]) == []
+
+
+def test_ares_can_still_add_a_tech_lab_to_the_reserved_barracks() -> None:
+    # What the reserve is for: Ares puts a Tech Lab on the first ready, idle
+    # Barracks with no add-on when the composition asks for Marauders.
+    reserved = Barracks(2)
+    bot = reactor_bot([Barracks(1, add_on=True), reserved])
+    bot.time_formatted = "12:53"
+    controller = ProductionController({}, base_location=bot.start_location)
+
+    assert controller._add_techlab_to_existing(bot, UnitTypeId.MARAUDER, UnitTypeId.BARRACKSTECHLAB)
+    assert reserved.built == [UnitTypeId.BARRACKSTECHLAB]
+
+
+def test_no_reactor_the_bot_cannot_pay_for() -> None:
+    barracks = [Barracks(tag) for tag in range(3)]
+
+    assert reactors_ordered(barracks, minerals=50, vespene=49) == []
+    assert reactors_ordered(barracks, minerals=49, vespene=50) == []
+    assert reactors_ordered(barracks, minerals=50, vespene=50) == [0]
