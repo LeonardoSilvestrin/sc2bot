@@ -522,3 +522,86 @@ def test_no_reactor_the_bot_cannot_pay_for() -> None:
     assert reactors_ordered(barracks, minerals=50, vespene=49) == []
     assert reactors_ordered(barracks, minerals=49, vespene=50) == []
     assert reactors_ordered(barracks, minerals=50, vespene=50) == [0]
+
+
+class Geyser:
+    """A vespene geyser, or the Refinery standing on one."""
+
+    def __init__(self, tag: int, position: Point2) -> None:
+        self.tag = tag
+        self.type_id = UnitTypeId.VESPENEGEYSER
+        self.position = position
+        self.build_progress = 1.0
+
+
+class GasBot:
+    """The AresBot surface Ares' GasBuildingController reads: six bases, two
+    geysers each, and a Refinery already on the first `refineries` of them."""
+
+    def __init__(self, refineries: int) -> None:
+        self.race = Race.Terran
+        self.gas_type = UnitTypeId.REFINERY
+        self.minerals = 4000
+        self.vespene = 88
+        self.config = {}
+        self.start_location = Point2((10.5, 10.5))
+        self.townhalls = [
+            Geyser(tag, Point2((10.5 + 20.0 * tag, 10.5))) for tag in range(6)
+        ]
+        self.vespene_geyser = [
+            Geyser(100 + index, Point2((8.5 + 20.0 * (index // 2), 14.5 + 6.0 * (index % 2))))
+            for index in range(12)
+        ]
+        self.gas_buildings = self.vespene_geyser[:refineries]
+        self.all_gas_buildings = self.gas_buildings
+        self.mediator = SimpleNamespace(
+            get_building_counter=defaultdict(int),
+            select_worker=lambda **kwargs: SimpleNamespace(tag=7),
+            build_with_specific_worker=self._build,
+        )
+        self.built: list[Point2] = []
+
+    def _build(self, *, worker, structure_type, pos) -> None:
+        self.built.append(pos.tag)
+
+    def not_started_but_in_building_tracker(self, structure_type: UnitTypeId) -> int:
+        return 0
+
+
+def test_the_gas_target_takes_every_geyser_the_workers_can_man() -> None:
+    # bench/base3: the target stopped at seven Refineries from ~470 s on,
+    # with six bases (twelve geysers) and 83 workers, while gas fell below
+    # 100 with more than 800 minerals banked in 5-30 samples per game.
+    plan = planned(bases=bases(6), workers=83)
+
+    assert plan.gas == 11
+    assert dict(plan.inputs)["gas_worker_share"] == economy.GAS_WORKER_SHARE
+
+
+@pytest.mark.parametrize(
+    "count, workers, target",
+    [
+        # Never more geysers than the bases have.
+        (3, 83, 6),
+        # Never more Refineries than the share of workers can mine.
+        (6, 12, 1),
+        (6, 41, 5),
+    ],
+)
+def test_the_gas_target_stays_within_the_geysers_and_the_workers(
+    count: int, workers: int, target: int
+) -> None:
+    assert planned(bases=bases(count), workers=workers).gas == target
+
+
+def test_six_bases_take_an_eighth_geyser_that_the_old_target_refused() -> None:
+    bot = GasBot(refineries=7)
+
+    assert not GasBuildingController(to_count=7).execute(bot, {}, bot.mediator)
+    assert bot.built == []
+
+    plan = planned(bases=bases(6), workers=83)
+    GasBuildingController(to_count=plan.gas).execute(bot, {}, bot.mediator)
+
+    # The nearest geyser with no Refinery on it, of the five still free.
+    assert bot.built == [bot.vespene_geyser[7].tag]

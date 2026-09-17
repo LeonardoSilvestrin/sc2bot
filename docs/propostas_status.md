@@ -37,7 +37,8 @@ seleção (ver regra no prompt corrigido).
 | 6d | Ofensiva: combat sim do Ares na decisão de lutar | Medido e revertido | `awareness: keep an incident's id while its members stay` (só documentação) |
 | 7g | Macro: teto de produção cresce com as bases | Feito | `macro: let the production ceiling grow with the bases` |
 | 7h | Macro: Reactors nas Barracks sem add-on | Feito (sem evidência de partida) | `macro: a reactor on every barracks with no add-on` |
-| 7 | Resto da macro (bases `ready + pending`, supply antecipado, reação a rush, Reactors, pico de banco) | Pendente | — |
+| 7i | Macro: gás pelos geysers das bases | Feito (sem evidência de partida) | `macro: a refinery on every geyser the workers can mine` |
+| 7 | Resto da macro (bases `ready + pending`, supply antecipado, reação a rush, reposição de produção, pico de banco) | Pendente | — |
 | 8a | Micro: Stim e Medivac acompanhando o grupo | Feito | `offense: fight, retreat and search; macro upgrades; bio micro` |
 | 8b | Micro: Stim no HOLD | Feito | `macro: detection and opening interrupt; hold stim` |
 | 8 | `RegionState` e o resto do micro | Pendente | — |
@@ -1283,6 +1284,77 @@ construída e paga 50/50.
   antecipado, reação a rush além da interrupção do opening e o pico de banco com
   o supply cheio.
 
+## 7i. Gás pelos geysers das bases — feito (sem evidência de partida)
+
+Seleção: bug decisório reproduzível por trace (classe 1), achado na linha de
+base de 9 partidas (`bench/base3`), sobre as partes pendentes da fatia 7. É a
+menor fatia cujos pré-requisitos já existem: o alvo de gás já existe no
+`EconomyPlan` e o `GasBuildingController` do Ares já o consome.
+
+Evidência do problema: o alvo era `min(2 · bases, 1 + workers // 12)`. Com 83
+workers ele trava em 7 a partir de ~467 s, e as 9 partidas de `bench/base3`
+terminam com `REFINERY: 7` enquanto seguram 6 bases — 12 geysers, 5 deles
+parados até o fim. Entre 300 e 700 s, cada partida passou de 5 a 30 amostras de
+`attention.observed` com menos de 100 de gás e mais de 800 minerais no banco
+(de 89 a 150 amostras por partida; 4 % a 29 %), e **nenhuma** amostra no caso
+espelhado (menos de 100 de minerais com mais de 800 de gás) em nenhuma das 9
+partidas. O gás é o recurso que limita exatamente na janela em que o exército e
+os upgrades são pagos; a composição é 45 % de unidades de gás (Marauder 25,
+Siege Tank 125, Medivac 100) e cada Tech Lab custa mais 25.
+
+**Feito**
+
+- Ego/economy: `GAS_BUILDINGS_PER_BASE = 2` (os geysers de uma base nos mapas
+  de ladder), `WORKERS_PER_GAS_BUILDING = 3` (o que um Refinery comporta, o
+  `Mining.workers_per_gas` do Ares) e `GAS_WORKER_SHARE = 0.4` (o máximo da
+  força de trabalho que pode estar no gás). O alvo passa a ser
+  `min(2 · bases, int(workers · 0,4) // 3)`: com 6 bases e 83 workers, 11
+  Refinerys (33 workers no gás, 50 nas linhas de minério) no lugar de 7.
+- Nada mudou no Body: o `GasBuildingController(to_count=plan.gas)` já recebia o
+  alvo, e quem constrói, escolhe o geyser e distribui os 3 workers continua
+  sendo o Ares.
+- Logs: `inputs.gas_worker_share` no `behavior.economy_planned`, ao lado de
+  `workers` e `bases`, que já bastavam para recompor a conta.
+- Testes (`tests/test_economy.py`): o caso da linha de base (6 bases, 83
+  workers) pede 11; o alvo nunca passa dos geysers das bases (3 bases, 83
+  workers = 6) nem do que a parcela de workers consegue minerar (6 bases, 12
+  workers = 1; 41 workers = 5); e o `GasBuildingController` de verdade do Ares,
+  sobre um fake de 6 bases com 7 Refinerys, recusa o oitavo geyser com o alvo
+  antigo (7) e o inicia com o alvo do plano — o geyser livre mais perto do
+  start. `tests/test_frame_flow.py`: com 3 bases e 48 workers o plano pede os
+  6 geysers e não oscila quando um SCV está dentro de um Refinery.
+- Verificação local: 258 testes e `ruff check bot tests harness run.py
+  bench.py` limpos (`.venv`, sem poetry nesta máquina).
+
+**Não feito**
+
+- Nenhuma partida foi jogada com a mudança: não há evidência de que o gás pare
+  de limitar, de que os upgrades saiam antes, nem de efeito em vitória. Trocar
+  minério por gás pode atrasar Marines na janela de 300-500 s, quando o banco
+  de minério ainda é baixo; é o risco principal e só uma partida mede.
+- `GAS_WORKER_SHARE` não foi calibrado e a economia continua fora do
+  `config_fingerprint`.
+- A distribuição de workers entre minério e gás continua sendo a do Ares (3 por
+  Refinery, sem rebalanceamento por preço); o plano só escolhe quantos Refinerys
+  existem.
+- Não entra aqui: geysers de bases que o bot não segura, `vespene_boost`, nem
+  reduzir o gás quando o banco de gás é que sobra (o final de partida, com
+  supply cheio, banca 4-5 mil de gás — é consequência do teto de supply, não do
+  alvo).
+
+**Medido de passagem em `bench/base3`, sem fatia** (para a próxima seleção)
+
+- Supply block: 22 s por partida em média, quase todo no intervalo 20-35 s (a
+  abertura, que é do build runner do Ares) mais 5-10 s perto de 420-455 s.
+  "Supply antecipado" não tem evidência que sustente uma fatia.
+- As 9 partidas param em exatamente 6 bases (~560-600 s) e nunca expandem
+  de novo: `saturated` pede `workers >= 16 · bases` = 96 enquanto `MAX_WORKERS`
+  é 80. A regra é inalcançável acima de 5 bases. Com o banco em 14-18 mil
+  minerais não é o gargalo, mas é uma condição que nunca pode ser satisfeita.
+- Reactors de Factory/Starport (pendência da 7h) não têm evidência: as 9
+  partidas terminam com Tech Lab em todas as Factories e um Reactor no
+  Starport, postos pelo `TechUp` do Ares.
+
 ## Itens de `propostas.md` fora de qualquer fatia concluída
 
 - P0.2: distinguir scout, worker rush e ataque; histerese de admissão/liberação (a 3b tirou a troca de id, não a do poder)
@@ -1290,8 +1362,9 @@ construída e paga 50/50.
 - P0.3: combat simulation com contatos fora de visão (6d medida e revertida), poder com alcance/splash, coesão e reforços da
   ofensiva; encerrar partidas contra Terran (timeout nas duas execuções).
 - P0.4: banco que continua alto com supply cheio (7g; a 7h deu aos Reactors um
-  destino para ele, sem partida que o meça), Reactors de Factory/Starport, bases por `ready + pending`,
-  supply antecipado; reação a rush além da interrupção do opening
+  destino para ele e a 7i deu ao gás, nenhuma das duas com partida que o meça),
+  bases por `ready + pending` e expansão presa em 6 bases, reposição de produção
+  destruída; reação a rush além da interrupção do opening
   (bunker, reparo, worker pull, proxy); Raven e scan de informação.
 - P1.1–P1.5 e P2: scouting recorrente e estimativa do inimigo por produção ou
   economia vista, `RegionState`, micro além de Stim e escolta de Medivac, contrato completo de

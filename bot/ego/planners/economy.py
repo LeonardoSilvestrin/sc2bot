@@ -18,6 +18,15 @@ Ares adds production as income allows, up to a ceiling per structure type. A
 fixed ceiling of 12 Barracks capped the army's growth once the bot had more
 than three bases (`bench/7b`), so the ceiling grows with the bases.
 
+The gas target was one Refinery per twelve workers, so it stopped at seven
+while the bot held six bases with twelve geysers (`bench/base3`, all nine
+games). In the 300-700 s window those games spent 5-30 samples with less than
+100 gas and more than 800 minerals banked, and not one sample the other way
+around: gas was the binding resource exactly while the army and the upgrades
+were being paid for. A Refinery is mined by three workers, so the target is
+every geyser of the bases held, as long as at most `GAS_WORKER_SHARE` of the
+workers is mining gas.
+
 A Barracks with a Reactor trains two Marines at a time, and 5 of the 12
 Barracks of `bench/7b/001` never got an add-on while the bank grew past 9,900
 minerals with supply free. Once the opening is over, and while nothing is being
@@ -66,7 +75,13 @@ MAX_WORKERS = 80
 # 16 on minerals and 6 on gas.
 WORKERS_PER_BASE = 22
 MINERAL_WORKERS_PER_BASE = 16
-WORKERS_PER_GAS_BUILDING = 12
+# The geysers of a base on the ladder maps.
+GAS_BUILDINGS_PER_BASE = 2
+# A Refinery is mined by three workers (Ares' `Mining.workers_per_gas`).
+WORKERS_PER_GAS_BUILDING = 3
+# The most of the workforce that may be mining gas: with 83 workers, 33 of
+# them in eleven Refineries and 50 left on the mineral lines.
+GAS_WORKER_SHARE = 0.4
 # Ares' default ceiling of 12 production structures of a type, per three bases.
 PRODUCTION_PER_BASE = 4
 # Barracks left without an add-on for Ares' Tech Labs. One is enough: Ares adds
@@ -80,6 +95,10 @@ def plan(attention: AttentionState, strategy: StrategyState) -> EconomyPlan:
     saturated = attention.workers >= saturated_at
     expand = strategy.economy >= 0.5 and saturated
     wanted_bases = bases + (1 if expand else 0)
+    gas_workers = int(attention.workers * GAS_WORKER_SHARE)
+    gas_buildings = min(
+        GAS_BUILDINGS_PER_BASE * bases, gas_workers // WORKERS_PER_GAS_BUILDING
+    )
     stabilizing = strategy.objective is Objective.STABILIZE
     interrupt = (
         not attention.opening_done and stabilizing and strategy.defense >= OPENING_ABORT_DANGER
@@ -98,7 +117,7 @@ def plan(attention: AttentionState, strategy: StrategyState) -> EconomyPlan:
     return EconomyPlan(
         active=active,
         workers=min(MAX_WORKERS, WORKERS_PER_BASE * wanted_bases),
-        gas=min(2 * bases, 1 + attention.workers // WORKERS_PER_GAS_BUILDING),
+        gas=gas_buildings,
         bases=wanted_bases,
         expand=expand,
         freeflow=stabilizing,
@@ -113,6 +132,7 @@ def plan(attention: AttentionState, strategy: StrategyState) -> EconomyPlan:
             ("danger", strategy.defense),
             ("production_per_base", float(PRODUCTION_PER_BASE)),
             ("techlab_reserve", float(TECHLAB_RESERVE)),
+            ("gas_worker_share", GAS_WORKER_SHARE),
         ),
         upgrades=UPGRADES if active and not stabilizing else (),
         orbitals=active,

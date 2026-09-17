@@ -163,7 +163,8 @@ def test_a_worker_inside_a_gas_building_does_not_flip_the_economy_plan() -> None
         economies.append(frame.strategy.economy)
         dangers.append(frame.strategy.defense)
 
-    assert set(plans) == {(4, True, 5)}
+    # Three bases: six geysers, and 48 workers can mine them all.
+    assert set(plans) == {(4, True, 6)}
     assert set(workers) == {48}
     (planned,) = logger.named("behavior.economy_planned")
     assert planned["data"]["inputs"] == pytest.approx(
@@ -176,6 +177,7 @@ def test_a_worker_inside_a_gas_building_does_not_flip_the_economy_plan() -> None
             "danger": dangers[0],
             "production_per_base": 4.0,
             "techlab_reserve": 1.0,
+            "gas_worker_share": economy.GAS_WORKER_SHARE,
         }
     )
 
