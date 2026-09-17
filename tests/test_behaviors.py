@@ -369,3 +369,29 @@ def test_the_spawn_mode_follows_the_plan_unless_the_composition_is_met(
 
     assert (mode.freeflow, mode.reason) == (freeflow, reason)
     assert spawner(bot).freeflow_mode is freeflow
+
+
+def test_holding_bio_stims_when_the_fight_reaches_the_rally() -> None:
+    bot = FakeBot()
+    marine = bio(1)
+    bot.enemy_units = [FakeUnit(90, UnitTypeId.ZERGLING, 30 + attack.STIM_RANGE, 30)]
+    hold = proposal("core_army", -1.0, command=Command.HOLD, target=Point2((30, 30)))
+
+    report = behaviors.BY_COMMAND[Command.HOLD](bot, [marine], hold)
+
+    assert [type(micro) for micro in maneuvers(bot)[1]] == [UseAbility, AMove]
+    assert report.stimmed == (1,)
+
+    # A worker in reach is fought, but no reason to stim.
+    bot = FakeBot()
+    bot.enemy_units = [FakeUnit(90, UnitTypeId.SCV, 32, 30)]
+    report = behaviors.BY_COMMAND[Command.HOLD](bot, [marine], hold)
+    assert [type(micro) for micro in maneuvers(bot)[1]] == [AMove]
+    assert report.stimmed == ()
+
+    # Nothing in reach: walk to the point, no stim.
+    bot = FakeBot()
+    bot.enemy_units = [FakeUnit(90, UnitTypeId.ZERGLING, 30.5 + attack.STIM_RANGE, 30)]
+    report = behaviors.BY_COMMAND[Command.HOLD](bot, [marine], hold)
+    assert [type(micro) for micro in maneuvers(bot)[1]] == [PathUnitToTarget]
+    assert report.stimmed == ()

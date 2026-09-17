@@ -11,12 +11,13 @@ from sc2.ids.upgrade_id import UpgradeId
 
 from bot.attention import observe, read_map
 from bot.awareness import AwarenessConfig
-from bot.ego.planners import core_army, defense, offense
+from bot.ego.planners import core_army, defense, economy, offense
 from bot.ego.strategy import StrategyConfig
 from bot.logs import Logs, OverlayConfig, SnapshotConfig
 from bot.main import Layers, play_frame
 
 from .fakes import MAIN, MAP, FakeBot, FakeLogger, FakeUnit
+from .test_economy import Runner
 
 ARMY_TAGS = {200, 201, 202, 203, 204, 205, 300}
 
@@ -147,7 +148,7 @@ def test_a_worker_inside_a_gas_building_does_not_flip_the_economy_plan() -> None
     ]
     layers = Layers(map_view=MAP, logs=Logs(logger))
 
-    plans, workers, economies = [], [], []
+    plans, workers, economies, dangers = [], [], [], []
     for iteration in range(8):
         # Every other step one SCV is inside a gas building.
         inside = iteration % 2
@@ -158,6 +159,7 @@ def test_a_worker_inside_a_gas_building_does_not_flip_the_economy_plan() -> None
         plans.append((frame.economy.bases, frame.economy.expand, frame.economy.gas))
         workers.append(frame.attention.workers)
         economies.append(frame.strategy.economy)
+        dangers.append(frame.strategy.defense)
 
     assert set(plans) == {(4, True, 5)}
     assert set(workers) == {48}
@@ -169,6 +171,7 @@ def test_a_worker_inside_a_gas_building_does_not_flip_the_economy_plan() -> None
             "saturated_at": 48.0,
             "strategy_economy": economies[0],
             "upgrades_done": 0.0,
+            "danger": dangers[0],
         }
     )
 
@@ -185,9 +188,18 @@ def test_defenders_stim_against_the_attack_and_the_log_says_who() -> None:
     (defended,) = [grant for grant in frame.result.grants if grant.proposal.owner == "defense"]
     marines = {tag for tag in defended.tags if 200 <= tag < 206}
     assert marines
-    assert set(frame.micro.stimmed) == marines
+    # The Marines left holding the rally stim too: the attack is within their reach.
+    held = {
+        tag
+        for grant in frame.result.grants
+        if grant.proposal.owner == core_army.OWNER
+        for tag in grant.tags
+        if 200 <= tag < 206
+    }
+    assert held
+    assert set(frame.micro.stimmed) == marines | held
     (micro,) = logger.named("behavior.micro_executed")
-    assert micro["data"] == {"stimmed": sorted(marines), "escorts": []}
+    assert micro["data"] == {"stimmed": sorted(marines | held), "escorts": []}
 
 
 def test_finished_upgrades_reach_the_log_and_the_economy_plan() -> None:
@@ -420,3 +432,31 @@ def test_debug_observers_draw_and_write_without_changing_decisions(tmp_path) -> 
     assert (tmp_path / "field-0001.svg").is_file()
     assert (tmp_path / "latest.svg").is_file()
     assert logger.named("logs.snapshot_written")
+
+
+def test_an_attack_during_the_opening_interrupts_it_and_the_log_says_so() -> None:
+    logger = FakeLogger()
+    bot = build_bot(attackers=6)
+    bot.build_order_runner = Runner(completed=False)
+    layers = Layers(map_view=MAP, logs=Logs(logger))
+
+    frame = play_frame(bot, 0, layers)
+
+    assert frame.attention.opening_done is False
+    assert frame.strategy.defense >= economy.OPENING_ABORT_DANGER
+    assert (frame.economy.active, frame.economy.interrupt_opening) == (True, True)
+    assert bot.build_order_runner.stopped == 1
+    assert any(isinstance(item, MacroPlan) for item in bot.registered)
+    (planned,) = logger.named("behavior.economy_planned")
+    assert (planned["data"]["reason"], planned["data"]["interrupt_opening"]) == (
+        "opening_interrupted",
+        True,
+    )
+    assert planned["data"]["inputs"]["danger"] == frame.strategy.defense
+
+    # From the next frame on, the opening is over and the plan simply runs.
+    bot.time = 0.5
+    second = play_frame(bot, 1, layers)
+    assert second.attention.opening_done
+    assert (second.economy.active, second.economy.interrupt_opening) == (True, False)
+    assert bot.build_order_runner.stopped == 1

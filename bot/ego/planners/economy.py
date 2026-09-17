@@ -8,6 +8,11 @@ After the opening, Command Centers become Orbital Commands and every Orbital's
 energy goes to MULEs. The upgrades of the composition are researched in
 `UPGRADES` order -- except while stabilizing, when every resource goes to the
 army.
+
+The opening is a fixed script and cannot answer an attack. If the bot is
+stabilizing against a threat of at least `OPENING_ABORT_DANGER` before the
+opening is over, the plan interrupts it: from that frame on this plan runs,
+spending on the army first.
 """
 
 from __future__ import annotations
@@ -43,6 +48,9 @@ UPGRADES: tuple[UpgradeId, ...] = (
     UpgradeId.TERRANVEHICLEWEAPONSLEVEL3,
 )
 
+# The remembered threat, in [0, 1], that ends the opening while stabilizing:
+# the strategy's emergency level.
+OPENING_ABORT_DANGER = 0.6
 MAX_WORKERS = 80
 # 16 on minerals and 6 on gas.
 WORKERS_PER_BASE = 22
@@ -57,7 +65,13 @@ def plan(attention: AttentionState, strategy: StrategyState) -> EconomyPlan:
     expand = strategy.economy >= 0.5 and saturated
     wanted_bases = bases + (1 if expand else 0)
     stabilizing = strategy.objective is Objective.STABILIZE
-    if not attention.opening_done:
+    interrupt = (
+        not attention.opening_done and stabilizing and strategy.defense >= OPENING_ABORT_DANGER
+    )
+    active = attention.opening_done or interrupt
+    if interrupt:
+        reason = "opening_interrupted"
+    elif not active:
         reason = "opening_runs"
     elif stabilizing:
         reason = "stabilize_spend_on_army"
@@ -66,7 +80,7 @@ def plan(attention: AttentionState, strategy: StrategyState) -> EconomyPlan:
     else:
         reason = "build_economy"
     return EconomyPlan(
-        active=attention.opening_done,
+        active=active,
         workers=min(MAX_WORKERS, WORKERS_PER_BASE * wanted_bases),
         gas=min(2 * bases, 1 + attention.workers // WORKERS_PER_GAS_BUILDING),
         bases=wanted_bases,
@@ -80,8 +94,10 @@ def plan(attention: AttentionState, strategy: StrategyState) -> EconomyPlan:
             ("saturated_at", float(saturated_at)),
             ("strategy_economy", strategy.economy),
             ("upgrades_done", float(sum(item in attention.upgrades for item in UPGRADES))),
+            ("danger", strategy.defense),
         ),
-        upgrades=UPGRADES if attention.opening_done and not stabilizing else (),
-        orbitals=attention.opening_done,
-        mules=attention.opening_done,
+        upgrades=UPGRADES if active and not stabilizing else (),
+        orbitals=active,
+        mules=active,
+        interrupt_opening=interrupt,
     )

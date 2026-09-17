@@ -17,9 +17,10 @@ from sc2.position import Point2
 from bot.attention import AttentionState, MapView, is_army
 from bot.awareness import AwarenessState
 from bot.body.behaviors.attack import MicroReport
+from bot.body.behaviors.detection import DetectionReport
 from bot.body.behaviors.economy import SpawnMode
 from bot.body.engine import EngineResult, rank
-from bot.ego.planners import EconomyPlan, Proposal, StructurePlan
+from bot.ego.planners import DetectionPlan, EconomyPlan, Proposal, StructurePlan
 from bot.ego.planners.offense import LocalFight, OffensePlan
 from bot.ego.strategy import StrategyState
 
@@ -45,6 +46,7 @@ class Telemetry:
         self._spawn = ChangeGate()
         self._escorts = ChangeGate()
         self._structures = ChangeGate()
+        self._detection = ChangeGate()
         self._perf = ChangeGate(heartbeat=heartbeat)
         self._proposals = ChangeGate()
         self._grants = ChangeGate()
@@ -142,6 +144,9 @@ class Telemetry:
         spawn: SpawnMode,
         micro: MicroReport,
         timings: Mapping[str, float],
+        *,
+        detection: DetectionPlan | None = None,
+        detected: DetectionReport | None = None,
     ) -> None:
         self._record_attention(attention)
         self._record_awareness(attention.time, awareness)
@@ -152,9 +157,44 @@ class Telemetry:
         self._record_spawn(attention.time, spawn)
         self._record_micro(attention.time, micro)
         self._record_structures(attention.time, structures)
+        if detection is not None:
+            self._record_detection(attention.time, detection, detected or DetectionReport())
         self._record_grants(attention, result)
         self._record_commands(attention, awareness, strategy, result)
         self._record_perf(attention.time, timings)
+
+    def _record_detection(
+        self, now: float, detection: DetectionPlan, detected: DetectionReport
+    ) -> None:
+        # Every scan is a decision; the rest is state.
+        # A build Ares has not started is asked again every frame: it is
+        # written when what is asked changes.
+        signature = (
+            detection.turrets,
+            detection.engineering_bay,
+            detection.energy_reserve,
+            detection.reason,
+            detected.building,
+        )
+        changed = self._detection.admit(signature, now=now)
+        acted = detection.scan is not None
+        if not changed and not acted:
+            return
+        self._event(
+            "behavior.detection_planned",
+            "behaviors",
+            now,
+            {
+                "scan": None if detection.scan is None else _xy(detection.scan),
+                "turrets": [_xy(point) for point in detection.turrets],
+                "engineering_bay": detection.engineering_bay,
+                "energy_reserve": detection.energy_reserve,
+                "reason": detection.reason,
+                "inputs": dict(detection.inputs),
+                "scanned_by": detected.scanned_by,
+                "building": list(detected.building),
+            },
+        )
 
     def _record_structures(self, now: float, structures: StructurePlan) -> None:
         signature = (structures.lower, structures.raise_, structures.reason)
@@ -201,6 +241,12 @@ class Telemetry:
                 "opening": attention.opening,
                 "opening_done": attention.opening_done,
                 "upgrades": sorted(upgrade.name for upgrade in attention.upgrades),
+                # Own structures by type, finished or not.
+                "structures": dict(
+                    sorted(
+                        Counter(s.type_id.name for s in attention.own_structures).items()
+                    )
+                ),
             },
         )
 
@@ -212,6 +258,8 @@ class Telemetry:
             tuple((base.base_id, round(base.threat, 1)) for base in awareness.bases),
             # Membership, so every split and merge is written.
             tuple((incident.incident_id, incident.contacts) for incident in awareness.incidents),
+            tuple(contact.tag for contact in awareness.hidden_contacts),
+            awareness.cloak_seen_at,
         )
         if not self._awareness.admit(signature, now=now):
             return
@@ -237,6 +285,8 @@ class Telemetry:
                 "own_power": awareness.own_power,
                 "danger": awareness.danger,
                 "danger_now": awareness.danger_now,
+                "cloak_seen_at": awareness.cloak_seen_at,
+                "hidden_contacts": [contact.tag for contact in awareness.hidden_contacts],
                 "bases": [
                     {
                         "base_id": base.base_id,
@@ -275,6 +325,7 @@ class Telemetry:
                         "confidence": contact.confidence,
                         "uncertainty": contact.uncertainty,
                         "visible": contact.visible,
+                        "hidden": contact.is_hidden,
                     }
                     for contact in strongest
                 ],
@@ -400,6 +451,7 @@ class Telemetry:
             economy.upgrades,
             economy.orbitals,
             economy.mules,
+            economy.interrupt_opening,
         )
         if not self._economy.admit(signature, now=now):
             return
@@ -427,6 +479,7 @@ class Telemetry:
                 "upgrades": [upgrade.name for upgrade in economy.upgrades],
                 "orbitals": economy.orbitals,
                 "mules": economy.mules,
+                "interrupt_opening": economy.interrupt_opening,
             },
         )
 

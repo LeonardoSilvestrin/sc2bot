@@ -14,9 +14,10 @@ from time import perf_counter
 from bot.attention import AttentionState, MapView
 from bot.awareness import AwarenessState
 from bot.body.behaviors.attack import MicroReport
+from bot.body.behaviors.detection import DetectionReport
 from bot.body.behaviors.economy import SpawnMode
 from bot.body.engine import EngineResult
-from bot.ego.planners import EconomyPlan, Proposal, StructurePlan
+from bot.ego.planners import DetectionPlan, EconomyPlan, Proposal, StructurePlan
 from bot.ego.planners.offense import OffensePlan
 from bot.ego.strategy import StrategyState
 
@@ -82,6 +83,9 @@ class Logs:
         spawn: SpawnMode,
         micro: MicroReport,
         timings: Mapping[str, float],
+        *,
+        detection: DetectionPlan | None = None,
+        detected: DetectionReport | None = None,
     ) -> None:
         started = perf_counter()
         self.logger.begin_frame(attention.iteration)
@@ -98,6 +102,8 @@ class Logs:
                 spawn,
                 micro,
                 {**timings, "logs": self._last_ms},
+                detection=detection,
+                detected=detected,
             )
             self.snapshots.capture(attention, awareness, strategy, result)
             self.overlay.render(bot, attention, awareness, strategy, result)

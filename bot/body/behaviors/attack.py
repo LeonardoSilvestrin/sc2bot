@@ -18,25 +18,16 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from ares.behaviors.combat.individual import UseAbility
-from sc2.ids.ability_id import AbilityId
-from sc2.ids.buff_id import BuffId
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
 from bot.attention import WORKER_TYPES
 from bot.ego.planners import Proposal
 
-from .combat import attack_move, maneuver
+from .combat import STIM_MIN_HEALTH, STIM_RANGE, STIMS, attack_move, maneuver, stim_for
 
-# Unit type: (the stim it uses, the buff that says it is stimmed).
-STIMS: dict[UnitTypeId, tuple[AbilityId, BuffId]] = {
-    UnitTypeId.MARINE: (AbilityId.EFFECT_STIM_MARINE, BuffId.STIMPACK),
-    UnitTypeId.MARAUDER: (AbilityId.EFFECT_STIM_MARAUDER, BuffId.STIMPACKMARAUDER),
-}
-# A bio unit stims with an enemy unit this close ...
-STIM_RANGE = 10.0
-# ... and at least this share of its health: stimming costs health.
-STIM_MIN_HEALTH = 0.5
+__all__ = ["STIMS", "STIM_MIN_HEALTH", "STIM_RANGE", "MicroReport", "execute", "stim_for"]
+
 ESCORTS = frozenset({UnitTypeId.MEDIVAC})
 
 
@@ -75,22 +66,6 @@ def execute(bot, units: Sequence, proposal: Proposal) -> MicroReport:
         fight.add(attack_move(unit, target))
         bot.register_behavior(fight)
     return MicroReport(stimmed=tuple(sorted(stimmed)), escorts=tuple(sorted(escorts)))
-
-
-def stim_for(unit, enemies: Sequence) -> AbilityId | None:
-    """The stim the unit should use now, or None."""
-
-    stim = STIMS.get(unit.type_id)
-    if stim is None:
-        return None
-    ability, buff = stim
-    if ability not in unit.abilities or unit.has_buff(buff):
-        return None
-    if unit.health_percentage < STIM_MIN_HEALTH:
-        return None
-    if not any(enemy.distance_to(unit) <= STIM_RANGE for enemy in enemies):
-        return None
-    return ability
 
 
 def group_center(units: Sequence) -> Point2 | None:

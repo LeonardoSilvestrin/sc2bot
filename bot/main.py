@@ -15,9 +15,11 @@ from bot.attention import AttentionState, MapView, observe, read_map
 from bot.awareness import AwarenessModel, AwarenessState
 from bot.body import behaviors
 from bot.body.behaviors.attack import MicroReport
+from bot.body.behaviors.detection import DetectionReport
 from bot.body.behaviors.economy import SpawnMode
 from bot.body.engine import Engine, EngineResult
 from bot.ego.planners import (
+    DetectionPlan,
     EconomyPlan,
     Proposal,
     StructurePlan,
@@ -25,6 +27,7 @@ from bot.ego.planners import (
     defense,
     economy,
 )
+from bot.ego.planners.detection import Detection
 from bot.ego.planners.intel import Intel
 from bot.ego.planners.offense import OWNER as OFFENSE
 from bot.ego.planners.offense import Offense, OffensePlan
@@ -46,6 +49,7 @@ class Layers:
     offense: Offense = field(default_factory=Offense)
     intel: Intel = field(default_factory=Intel)
     structure_control: StructureControl = field(default_factory=StructureControl)
+    detection: Detection = field(default_factory=Detection)
     engine: Engine = field(default_factory=Engine)
 
     def configs(self) -> dict[str, object]:
@@ -54,6 +58,7 @@ class Layers:
             "strategy": self.strategy.config,
             "offense": self.offense.config,
             "structure_control": self.structure_control.config,
+            "detection": self.detection.config,
         }
 
 
@@ -69,6 +74,8 @@ class Frame:
     result: EngineResult
     spawn: SpawnMode
     micro: MicroReport
+    detection: DetectionPlan
+    detected: DetectionReport
 
 
 def play_frame(bot, iteration: int, layers: Layers) -> Frame:
@@ -88,10 +95,11 @@ def play_frame(bot, iteration: int, layers: Layers) -> Frame:
     proposals += layers.intel.plan(attention)
     economy_plan = economy.plan(attention, strategy)
     structures = layers.structure_control.plan(attention)
+    detection = layers.detection.plan(attention, awareness)
     laps.mark("planners")
     result = layers.engine.allocate(attention, proposals)
     laps.mark("engine")
-    body = behaviors.execute(bot, attention, result, economy_plan, structures)
+    body = behaviors.execute(bot, attention, result, economy_plan, structures, detection)
     laps.mark("behaviors")
     layers.logs.record(
         bot,
@@ -106,6 +114,8 @@ def play_frame(bot, iteration: int, layers: Layers) -> Frame:
         body.spawn,
         body.micro,
         laps.times,
+        detection=detection,
+        detected=body.detection,
     )
     return Frame(
         attention,
@@ -118,6 +128,8 @@ def play_frame(bot, iteration: int, layers: Layers) -> Frame:
         result,
         body.spawn,
         body.micro,
+        detection,
+        body.detection,
     )
 
 

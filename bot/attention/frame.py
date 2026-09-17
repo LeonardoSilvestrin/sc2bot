@@ -58,6 +58,11 @@ class UnitView:
     is_ready: bool = True
     # The Ares role the unit holds, by name; None without one.
     role: str | None = None
+    energy: float = 0.0
+    # Cloaked or burrowed, detected or not.
+    is_cloaked: bool = False
+    # Cloaked or burrowed and not detected: nothing can shoot it.
+    is_hidden: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,6 +150,7 @@ def unit_view(
     roles: Mapping[int, str] | None = None,
 ) -> UnitView:
     hit_points = float(unit.health) + float(unit.shield)
+    cloaked = bool(getattr(unit, "is_cloaked", False) or getattr(unit, "is_burrowed", False))
     max_hit_points = float(unit.health_max) + float(unit.shield_max)
     return UnitView(
         tag=int(unit.tag),
@@ -160,6 +166,9 @@ def unit_view(
         is_structure=bool(unit.is_structure),
         is_ready=bool(unit.is_ready),
         role=None if roles is None else roles.get(int(unit.tag)),
+        energy=float(getattr(unit, "energy", 0.0) or 0.0),
+        is_cloaked=cloaked,
+        is_hidden=cloaked and not bool(getattr(unit, "is_revealed", False)),
     )
 
 

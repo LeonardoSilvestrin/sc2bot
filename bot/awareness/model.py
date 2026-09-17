@@ -13,6 +13,10 @@ it was seen: a unit seen alive and not seen die fades with ``army_memory``, and
 an enemy never seen is still expected to have an army that grows with game
 time. The estimate is the larger of the two; the part of it no contact places
 is its uncertainty.
+
+A contact remembers whether it was cloaked or burrowed, and whether nothing
+could shoot it when last seen; Awareness also remembers when an enemy army unit
+was first seen cloaked.
 """
 
 from __future__ import annotations
@@ -101,6 +105,10 @@ class Contact:
     visible: bool
     confidence: float
     uncertainty: float
+    # Cloaked or burrowed when last seen, detected or not.
+    is_cloaked: bool = False
+    # ... and undetected: nothing could shoot it.
+    is_hidden: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -186,6 +194,8 @@ class AwarenessState:
     seen_enemy_power: float = 0.0
     # The army an enemy is expected to have by now without any sighting.
     expected_enemy_power: float = 0.0
+    # When an enemy army unit was first seen cloaked or burrowed; None before.
+    cloak_seen_at: float | None = None
 
     @property
     def estimated_enemy_power(self) -> float:
@@ -206,6 +216,16 @@ class AwarenessState:
 
         estimated = self.estimated_enemy_power
         return self.enemy_power / estimated if estimated > 0.0 else 1.0
+
+    @property
+    def hidden_contacts(self) -> tuple[Contact, ...]:
+        """Enemy units in sight now that nothing can shoot, by tag."""
+
+        return tuple(
+            contact
+            for contact in self.contacts
+            if contact.visible and contact.is_hidden and not contact.is_structure
+        )
 
     @property
     def danger(self) -> float:
@@ -236,6 +256,7 @@ class AwarenessModel:
         self._threats: dict[str, tuple[float, float]] = {}
         # (last seen, power) of every enemy army unit believed alive, by tag.
         self._army: dict[int, tuple[float, float]] = {}
+        self._cloak_seen_at: float | None = None
         self._lattice: tuple[Point2, ...] | None = None
         self._xs = np.zeros(0)
         self._ys = np.zeros(0)
@@ -244,6 +265,10 @@ class AwarenessModel:
         config = self.config
         contacts = self._remember(attention)
         seen_enemy = self._remember_army(attention)
+        if self._cloak_seen_at is None and any(
+            unit.is_cloaked and is_army(unit) for unit in attention.enemy_units
+        ):
+            self._cloak_seen_at = attention.time
         army = tuple(
             unit for unit in attention.own_units if not unit.is_worker and unit.power > 0.0
         )
@@ -266,6 +291,7 @@ class AwarenessModel:
                 config.army_cap,
                 config.army_growth * max(0.0, attention.time - config.army_onset),
             ),
+            cloak_seen_at=self._cloak_seen_at,
         )
 
     def _remember(self, attention: AttentionState) -> tuple[Contact, ...]:
@@ -285,6 +311,8 @@ class AwarenessModel:
                 visible=True,
                 confidence=1.0,
                 uncertainty=0.0,
+                is_cloaked=unit.is_cloaked,
+                is_hidden=unit.is_hidden,
             )
         for tag, previous in self._contacts.items():
             if tag in remembered or tag in attention.dead_tags:

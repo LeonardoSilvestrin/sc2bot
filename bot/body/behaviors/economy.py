@@ -10,6 +10,9 @@ once -- counts an exact multiple of the proportions, like 11 Marines, 4
 Marauders, 3 Siege Tanks and 2 Medivacs for 0.55/0.2/0.15/0.1 -- it trains
 nothing at all, and the army stops growing until a unit dies. That frame it
 spends freely instead: whatever it trains takes the counts off the multiple.
+
+A plan that interrupts the opening stops Ares' build runner before anything
+else, so the macro plan takes over that same frame.
 """
 
 from __future__ import annotations
@@ -65,7 +68,20 @@ def release_workers(bot, attention: AttentionState, result: EngineResult) -> Non
             bot.mediator.assign_role(tag=tag, role=UnitRole.GATHERING)
 
 
-def execute(bot, plan: EconomyPlan) -> SpawnMode:
+def execute(
+    bot,
+    plan: EconomyPlan,
+    *,
+    energy_reserve: float = 0.0,
+    busy: frozenset[int] = frozenset(),
+) -> SpawnMode:
+    """`energy_reserve` is what each Orbital keeps; `busy` Orbitals already
+    used their energy this frame."""
+
+    if plan.interrupt_opening:
+        runner = getattr(bot, "build_order_runner", None)
+        if runner is not None and not runner.build_completed:
+            runner.set_build_completed()
     bot.register_behavior(Mining())
     if not plan.active:
         return SpawnMode(freeflow=False, reason="plan_inactive")
@@ -89,16 +105,20 @@ def execute(bot, plan: EconomyPlan) -> SpawnMode:
     if plan.upgrades:
         macro.add(UpgradeController(list(plan.upgrades), base_location=bot.start_location))
     macro.add(SpawnController(composition, freeflow_mode=spawn.freeflow))
+    # Only in a frame the SpawnController did not act: on its own it would add
+    # a Tech Lab to a Barracks the SpawnController just ordered to train, and
+    # the last order wins (`bench/7/002`).
     macro.add(ProductionController(composition, base_location=bot.start_location))
     bot.register_behavior(macro)
     if plan.mules:
-        call_mules(bot)
+        call_mules(bot, reserve=energy_reserve, busy=busy)
     return spawn
 
 
-def call_mules(bot) -> None:
-    """Every ready Orbital with a MULE's energy drops one on the fullest mineral
-    field of a ready townhall; ties go to the lowest tag."""
+def call_mules(bot, *, reserve: float = 0.0, busy: frozenset[int] = frozenset()) -> None:
+    """Every ready Orbital with a MULE's energy beyond `reserve`, and not
+    `busy`, drops one on the fullest mineral field of a ready townhall; ties go
+    to the lowest tag."""
 
     townhalls = [townhall for townhall in bot.townhalls if townhall.is_ready]
     fields = [
@@ -113,7 +133,8 @@ def call_mules(bot) -> None:
         if (
             orbital.type_id is UnitTypeId.ORBITALCOMMAND
             and orbital.is_ready
-            and orbital.energy >= MULE_ENERGY
+            and orbital.energy >= MULE_ENERGY + reserve
+            and orbital.tag not in busy
         ):
             orbital(AbilityId.CALLDOWNMULE_CALLDOWNMULE, target)
 

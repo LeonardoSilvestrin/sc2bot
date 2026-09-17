@@ -28,13 +28,18 @@ seleção (ver regra no prompt corrigido).
 | 7a | Macro: plano econômico estável (contagem de workers) | Feito | `economy: count workers inside gas buildings` |
 | 7b | Macro: produção não congela na composição exata | Feito | `61e3988` |
 | 7c | Macro: upgrades, Orbital e MULE depois do opening | Feito | `offense: fight, retreat and search; macro upgrades; bio micro` |
-| 7 | Macro resiliente (opening, supply/pending, reposição, detecção, spending) | Pendente | — |
+| 7d | Macro: banco com supply livre | Investigado; mudança revertida, causa em aberto | `macro: detection and opening interrupt; hold stim` |
+| 7e | Macro: detecção (scan, Missile Turret, reserva de energia) | Feito | `macro: detection and opening interrupt; hold stim` |
+| 7f | Macro: interrupção do opening por emergência | Feito (sem evidência de partida) | `macro: detection and opening interrupt; hold stim` |
+| 7 | Resto da macro (banco com supply livre, bases `ready + pending`, supply antecipado, reação a rush) | Pendente | — |
 | 8a | Micro: Stim e Medivac acompanhando o grupo | Feito | `offense: fight, retreat and search; macro upgrades; bio micro` |
+| 8b | Micro: Stim no HOLD | Feito | `macro: detection and opening interrupt; hold stim` |
 | 8 | `RegionState` e o resto do micro | Pendente | — |
 
 As fatias 2, 6a–6c, 7c e 8a foram feitas numa mesma sessão, a pedido. O
 harness tem commit próprio; as outras dividem arquivos e estão num só commit,
-cada uma com sua seção e seus testes.
+cada uma com sua seção e seus testes. As fatias 7d–7f e 8b também foram feitas
+numa mesma sessão, a pedido ("implemente as fatias"), num só commit.
 
 ## 1. Gate de entrega — feito (`5ab151a`)
 
@@ -675,14 +680,212 @@ usava; Medivac recebia `AMove` para o alvo e, mais rápido, chegava antes do bio
 
 **Não feito**: `RegionState`; stutter, focus, target scoring; Stim no HOLD;
 Medivac evacuando.
+## 7d. Banco com supply livre — investigado, mudança revertida
+
+Seleção: pedido explícito do usuário. Entre as partes pendentes da fatia 7,
+esta é a que tem evidência de partida.
+
+Evidência do problema: `bench/all3/001` (Terran VeryHard Macro), por
+`attention.observed` a cada minuto: de 743 s a 1.182 s o banco fica entre 4 e
+12 mil minerais com 19 a 117 de supply livre (806,8 s: 11.950 minerais,
+164/200; 1.182,3 s: 4.015 minerais, 83/183) — o exército morre e não é
+reposto. O mesmo aparece em `bench/7/002` (751–811 s: 8,4 mil minerais,
+1,7 mil de gás, `freeflow`, 50 de supply livre, exército de 24 para 17
+unidades).
+
+Hipótese testada e rejeitada: o `ProductionController` do Ares, depois do
+`SpawnController` no `MacroPlan` (que para no primeiro que age), quase nunca
+rodaria. A mudança o registrou à parte, depois do plano. Em `bench/7`
+(código com a mudança) o `ProductionController` passou a mandar Tech Labs em
+Barracks que o `SpawnController` tinha acabado de mandar treinar no mesmo
+frame (dezenas de `Adding BARRACKSTECHLAB` entre 587 s e 654 s e de
+`FACTORYTECHLAB` aos 916–922 s no stdout de `bench/7/002`, contra nenhuma
+rajada em `bench/all3/002`); a última ordem vale, e a Barracks para de treinar.
+A hipótese também não se sustenta pelo código: com toda a produção ocupada o
+`SpawnController` devolve `False` e o `ProductionController` já roda dentro do
+plano (salvo quando supply, workers, gás, expansão ou upgrade agem antes).
+
+**Feito**
+
+- A mudança foi revertida; o `ProductionController` continua o último do
+  `MacroPlan`, agora com o porquê no código.
+- Teste: com o `SpawnController` agindo, o `ProductionController` não roda no
+  mesmo frame (protege contra a reintrodução).
+- Logs: `attention.observed.structures` (estruturas próprias por tipo, prontas
+  ou não), que faltou para saber quantas Barracks havia quando o banco cresceu.
+
+**Não feito**
+
+- A causa do banco com supply livre continua desconhecida. Candidatos para a
+  próxima partida com `structures` no log: produção destruída e não reposta,
+  o teto de 12 Barracks do Ares, o supply dos 83 workers, Barracks com
+  Reactor/Tech Lab ocupadas, o `break` do `SpawnController` em
+  tipo prioritário que não pode pagar, ou comportamentos anteriores do
+  `MacroPlan` agindo todo frame.
+- Workers que caem de 83 para 28 com 7 mil minerais (`bench/all3/001`,
+  1.119 s) não foram investigados.
+
+## 7e. Detecção — feito
+
+Seleção: pedido explícito do usuário; bug reproduzível por trace.
+
+Evidência do problema: `bench/all4/000` (Zerg VeryHard Macro): um
+`LURKERMPBURROWED` (tag 4391960578) aparece em `strongest_contacts` com
+`visible: true` de 755 s em diante; de 771 s a pelo menos 799 s fica em
+(64,65; 86,56), com `danger` 0,22–0,28. O mesmo tipo aparece em `bench/all/000`,
+`bench/all5/000` e em dois traces de `logs/`. O bot não tinha scan, turret nem
+Raven, e o python-sc2 não deixa atacar uma unidade camuflada sem detecção
+(`can_be_attacked`). O trace não mostra quanto exército isso custou.
+
+**Feito**
+
+- Attention: `UnitView.energy`, `is_cloaked` (camuflada ou enterrada,
+  detectada ou não) e `is_hidden` (e sem detecção), lidos de `is_cloaked`,
+  `is_burrowed` e `is_revealed`.
+- Awareness (descrição): `Contact.is_cloaked`/`is_hidden` do último
+  avistamento; `AwarenessState.hidden_contacts` (escondidos à vista agora, sem
+  estruturas) e `cloak_seen_at` (primeiro inimigo de exército visto camuflado
+  ou enterrado; worker enterrado não conta).
+- Ego (`planners/detection.py`, política): `DetectionConfig` validada e no
+  fingerprint (`configs.detection`). Depois de `cloak_seen_at`: reserva de 50 de
+  energia por Orbital, uma Missile Turret por base sem turret (pronta ou não)
+  a ≤ 15, e uma Engineering Bay se não houver. Scan num escondido à vista com
+  ≥ 2 Marines de exército a ≤ 10, se nenhum scan dos últimos 12,3 s o cobre
+  (raio 13) e algum Orbital pronto tem 50 de energia; desempate: mais exército
+  perto, mais poder escondido revelado, menor tag. Razões `no_cloak_seen`,
+  `no_hidden_enemy`, `hidden_enemy_scanned`, `no_army_near_hidden`,
+  `no_scan_energy`, `scan_hidden_enemy`.
+- Body (`behaviors/detection.py`): scan pelo Orbital pronto de mais energia
+  (menor tag no empate); Engineering Bay (`to_count=1`, ≥ 125 minerais) antes
+  das turrets; uma turret por frame (≥ 100 minerais) pelo `BuildStructure` do
+  Ares na expansão mais próxima da base, `missile_turret=True`, sem procurar em
+  outras bases. Detecção roda antes da economia: MULE só com energia ≥ 50 +
+  reserva, e o Orbital que escaneou não solta MULE no mesmo frame.
+- Logs: `behavior.detection_planned` (todo scan; senão quando turrets,
+  Engineering Bay, reserva, razão ou construção pedida ao Ares mudam — um
+  pedido ainda não iniciado se repete a cada frame), com
+  `inputs`, `scanned_by` e `building`; `awareness.updated` com
+  `cloak_seen_at`, `hidden_contacts` e `strongest_contacts[].hidden`.
+- Testes (`tests/test_detection.py`): sem camuflado, nada; escondido perto do
+  exército → scan, reserva, turret só na base descoberta (turret exatamente a
+  15 cobre), sem Engineering Bay pedida quando existe; turret inacabada cobre;
+  scan não se repete por 12,5 s (config do teste) e volta exatamente ao fim;
+  limites do alcance (10 conta, 10,1 não) e do poder (2 conta, 1 não); sem
+  energia, Orbital inacabado ou sem Orbital → `no_scan_energy`; desempates;
+  unidade detectada não é escaneada mas liga a reserva; Attention lê
+  camuflagem, burrow, detecção e energia; contato lembrado fora de vista não é
+  escondido à vista; Drone enterrado não liga `cloak_seen_at`; configuração
+  inválida; o Body escolhe o Orbital de mais energia, respeita reserva e
+  `busy`, põe a Engineering Bay antes, a turret na expansão certa e nada sem
+  minerais; fluxo de frame com um Lurker enterrado a 8 de 4 Marines aos 771 s →
+  scan, sem MULE do mesmo Orbital, e a trilha no log.
+
+**Não feito**
+
+- Raven; scan para informação ou para atacar em terreno alto; turret pela rota
+  aérea ou na linha de minerais; política para camuflados perto de uma base sem
+  exército (a turret é a resposta, e demora).
+- A posição da turret é a do `BuildStructure` do Ares: sem posições de turret
+  pré-calculadas para a base, ela cai numa posição 2×2 livre perto da base; se
+  cair a mais de 15, a base continua pedindo turret.
+- `cloak_seen_at` não expira; Observer, Overseer e alucinações não contam.
+- O poder de um Lurker enterrado (2,1 Marines no trace) continua o de
+  `sqrt(dps·vida)`.
+
+## 7f. Interrupção do opening — feito (sem evidência de partida)
+
+Seleção: pedido explícito do usuário; item 3 do "Próximo marco" de
+`propostas.md`. Nenhum trace mostra o problema: em todas as partidas e traces
+locais (`bench/*`, `logs/*`) não houve STABILIZE antes do fim do opening
+(283–289 s). A IA Macro não faz rush; a fatia fica protegida só por cenário.
+
+**Feito**
+
+- Ego/economy: `OPENING_ABORT_DANGER = 0,6` (o `emergency_danger` da
+  estratégia). Antes do fim do opening, com STABILIZE e
+  `strategy.defense ≥ 0,6`, o plano fica ativo com `interrupt_opening`,
+  razão `opening_interrupted`, `freeflow` (STABILIZE), sem upgrades, com
+  Orbital e MULE. Input novo `danger`.
+- Body/economy: com `interrupt_opening`, chama
+  `build_order_runner.set_build_completed()` (só se ainda não terminou) antes
+  de registrar qualquer behavior; o `MacroPlan` roda no mesmo frame. No frame
+  seguinte `opening_done` é verdadeiro e o plano segue normal.
+- Logs: `behavior.economy_planned.interrupt_opening` e `inputs.danger`.
+- Testes: 0,6 interrompe e 0,59 não; BUILD_ADVANTAGE com 0,9 não; o Body para o
+  runner uma vez em duas chamadas e não para com 0,1; fluxo de frame com seis
+  Zerglings na main durante o opening → plano ativo, runner parado, evento com
+  a razão, e no frame seguinte opening terminado sem nova interrupção. Com o
+  `economy.py` anterior do Body o teste do runner falha.
+
+**Não feito**
+
+- Nenhuma partida contra rush: não se sabe se a interrupção ajuda.
+- A interrupção é irreversível: um ataque que passa volta à macro dinâmica, não
+  ao opening. Bunker, reparo, worker pull e reação a proxy não existem.
+
+## 8b. Stim no HOLD — feito
+
+Seleção: pedido explícito do usuário; menor corte de micro com consumidor. O
+`RegionState` continua sem consumidor e não foi criado.
+
+Evidência do problema (código): o CoreArmy luta com `AMove` quando um inimigo
+chega a 10 de uma unidade no rally, e só o `attack` usava Stim.
+
+**Feito**
+
+- Body: `STIMS`, `STIM_RANGE`, `STIM_MIN_HEALTH` e `stim_for` passam para
+  `combat.py` (o `attack` os reexporta); `core_army.execute` usa a mesma regra
+  quando luta e devolve `MicroReport`, somado em `behavior.micro_executed`.
+- Testes: Zergling exatamente a 10 → `UseAbility` e `AMove`; SCV a 2 → só
+  `AMove`; Zergling a 10,5 → `PathUnitToTarget`; no fluxo de frame, os Marines
+  que ficaram no rally também usam Stim (o teste passa a esperar a união).
+
+**Não feito**: stutter, focus, target scoring, Medivac evacuando.
+
+## Verificação da sessão 7d–7f/8b
+
+- Local: 236 testes, `ruff check bot tests harness run.py bench.py` limpo.
+
+- Partidas: mesma matriz das execuções anteriores (Persephone AIE, IA
+  VeryHard Macro, uma por raça, seed 1, 1.200 s), cada uma de um `git worktree`
+  sujo (`dirty: true`). Uma partida por combinação: nenhuma diferença é
+  estatisticamente significativa.
+
+| Execução | Código | Fingerprint | Zerg | Terran | Protoss |
+| --- | --- | --- | --- | --- | --- |
+| `bench/all3` | linha de base (antes da sessão) | `aaba38f6fedc1e7f` | vitória, 848 s | timeout | vitória, 1.121 s |
+| `bench/7` | + 7d (revertida), 7e, 7f, 8b | `ab57813d0bfcc3fe` | vitória, 747 s | vitória, 710 s | derrota, 1.157 s |
+| `bench/7b` | **código final** (sem 7d) | `ab57813d0bfcc3fe` | vitória, 707 s | timeout | vitória, 861 s |
+
+- O fingerprint muda da linha de base por `configs.detection`. Nenhum crash nem
+  `Traceback` no stdout das seis partidas.
+- `bench/7/002`: a derrota levou à reversão da 7d (ver a seção). Com o mesmo
+  seed, as partidas divergem da linha de base antes de 562 s.
+- Detecção em jogo (Terran): em `bench/7/001` um inimigo camuflado aos 547 s
+  levou a Missile Turrets em todas as bases até 597 s (o log pedia a turret a
+  cada frame, 537 eventos; o gate foi corrigido). Em `bench/7b/001`, 2 scans
+  (`scan_hidden_enemy`), 17 frames com escondido sem exército perto e 7
+  turrets aos 880 s. Contra Zerg e Protoss nenhum camuflado apareceu nestas
+  partidas; o Lurker da evidência não se repetiu.
+- Banco (amostras de `attention.observed` depois de 600 s com ≥ 4 mil minerais,
+  ≥ 19 de supply livre e < 190 usados): `all3` 14 / 74 / 25, `7b` 0 / 63 / 2
+  (Zerg / Terran / Protoss); as partidas têm durações diferentes, então não é
+  comparação de taxa. Em `bench/7b/001`, `structures` mostra 12 Barracks — o
+  teto `max_production_structures` do Ares — desde 694 s, e 83 workers: aos
+  787 s, 9,5 mil minerais com 184/200 de supply e só 39 unidades de exército.
+  Teto de produção e supply de workers são as próximas hipóteses da 7d.
+- Interrupção do opening: não aconteceu em nenhuma partida (esperado contra a
+  IA Macro).
+
 ## Itens de `propostas.md` fora de qualquer fatia concluída
 
 - P0.2: distinguir scout, worker rush e ataque; histerese de admissão/liberação
   da defesa; antecipação e tráfego amigo do wall.
 - P0.3: combat simulation, poder com alcance/splash, coesão e reforços da
   ofensiva; encerrar partidas contra Terran (timeout nas duas execuções).
-- P0.4: interrupção do opening, supply/pending, reposição, capacidade de
-  produção (banco de 12–29 mil minerais em `all3`), detecção e scan.
+- P0.4: causa do banco com supply livre (7d), bases por `ready + pending`,
+  supply antecipado; reação a rush além da interrupção do opening
+  (bunker, reparo, worker pull, proxy); Raven e scan de informação.
 - P1.1–P1.5 e P2: scouting recorrente e estimativa do inimigo por produção ou
   economia vista, `RegionState`, micro além de Stim e escolta de Medivac, contrato completo de
   Proposal/Engine (desired_power, suitability, custos, preemption), builds por

@@ -81,6 +81,8 @@ class EconomyPlan:
     orbitals: bool = False
     # Orbital Commands spend their energy on MULEs.
     mules: bool = False
+    # Stop Ares' build runner: the opening is over from this frame on.
+    interrupt_opening: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,3 +93,17 @@ class StructurePlan:
     inputs: tuple[tuple[str, float], ...] = ()
     # Supply depots to raise, by tag.
     raise_: tuple[int, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class DetectionPlan:
+    # Where an Orbital Command should scan this frame; None for nowhere.
+    scan: Point2 | None
+    # Positions of our bases that need a Missile Turret, by base id.
+    turrets: tuple[Point2, ...]
+    # Build an Engineering Bay: the turrets need one.
+    engineering_bay: bool
+    # Energy every Orbital Command keeps for a scan instead of a MULE.
+    energy_reserve: float
+    reason: str
+    inputs: tuple[tuple[str, float], ...] = ()

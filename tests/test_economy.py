@@ -6,6 +6,7 @@ from collections import defaultdict
 from dataclasses import replace
 from types import SimpleNamespace
 
+import pytest
 from ares.behaviors.macro import (
     AutoSupply,
     BuildWorkers,
@@ -188,3 +189,92 @@ def test_no_mule_below_its_energy_or_when_the_plan_says_no() -> None:
     bot, orbital, _ = mining_bot(energy=200.0)
     economy_behavior.execute(bot, planned(opening_done=False))
     assert orbital.commands == []
+
+
+def test_production_is_not_added_in_a_frame_the_spawn_controller_acts(monkeypatch) -> None:
+    # Run on its own after the SpawnController (`bench/7/002`), Ares'
+    # ProductionController ordered Tech Labs on Barracks the SpawnController
+    # had just ordered to train, and the last order wins.
+    calls: list[str] = []
+
+    def recorder(name: str, acts: bool):
+        def execute(self, ai, config, mediator) -> bool:
+            calls.append(name)
+            return acts
+
+        return execute
+
+    for behavior in (AutoSupply, UpgradeCCs, BuildWorkers, GasBuildingController):
+        monkeypatch.setattr(behavior, "execute", recorder(behavior.__name__, False))
+    monkeypatch.setattr(UpgradeController, "execute", recorder("UpgradeController", False))
+    monkeypatch.setattr(SpawnController, "execute", recorder("SpawnController", True))
+    monkeypatch.setattr(ProductionController, "execute", recorder("ProductionController", True))
+    bot = FakeBot()
+
+    economy_behavior.execute(bot, planned())
+    for behavior in bot.registered[1:]:
+        behavior.execute(bot, {}, bot.mediator)
+
+    assert calls[-1] == "SpawnController"
+    assert "ProductionController" not in calls
+
+
+def opening_plan(defense: float, objective: Objective = Objective.STABILIZE):
+    frame = attention(time=150.0, opening_done=False)
+    strategy = StrategyModel().decide(frame, AwarenessModel().infer(frame))
+    return economy.plan(frame, replace(strategy, objective=objective, defense=defense))
+
+
+def test_an_emergency_interrupts_the_opening_and_the_plan_takes_over() -> None:
+    plan = opening_plan(economy.OPENING_ABORT_DANGER)
+
+    assert (plan.active, plan.interrupt_opening, plan.reason) == (
+        True,
+        True,
+        "opening_interrupted",
+    )
+    # Stabilizing: everything to the army.
+    assert plan.freeflow and plan.upgrades == ()
+    assert (plan.orbitals, plan.mules) == (True, True)
+    assert dict(plan.inputs)["danger"] == economy.OPENING_ABORT_DANGER
+
+
+@pytest.mark.parametrize(
+    "defense, objective",
+    [
+        (economy.OPENING_ABORT_DANGER - 0.01, Objective.STABILIZE),
+        # A threat the strategy does not stabilize against yet.
+        (0.9, Objective.BUILD_ADVANTAGE),
+    ],
+)
+def test_the_opening_runs_on_below_the_emergency(defense, objective) -> None:
+    plan = opening_plan(defense, objective)
+
+    assert (plan.active, plan.interrupt_opening, plan.reason) == (False, False, "opening_runs")
+
+
+class Runner:
+    def __init__(self, completed: bool) -> None:
+        self.build_completed = completed
+        self.stopped = 0
+
+    def set_build_completed(self) -> None:
+        self.stopped += 1
+        self.build_completed = True
+
+
+def test_the_body_stops_the_build_runner_once_and_runs_the_plan_that_frame() -> None:
+    bot = FakeBot()
+    bot.build_order_runner = Runner(completed=False)
+    plan = opening_plan(0.8)
+
+    economy_behavior.execute(bot, plan)
+    economy_behavior.execute(bot, plan)
+
+    assert bot.build_order_runner.stopped == 1
+    assert any(isinstance(behavior, MacroPlan) for behavior in bot.registered)
+
+    bot = FakeBot()
+    bot.build_order_runner = Runner(completed=False)
+    economy_behavior.execute(bot, opening_plan(0.1))
+    assert bot.build_order_runner.stopped == 0

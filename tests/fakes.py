@@ -74,6 +74,8 @@ def unit(
     structure: bool = False,
     ready: bool = True,
     role: str | None = None,
+    energy: float = 0.0,
+    hidden: bool = False,
 ) -> UnitView:
     return UnitView(
         tag=tag,
@@ -89,6 +91,9 @@ def unit(
         is_structure=structure,
         is_ready=ready,
         role=role,
+        energy=energy,
+        is_cloaked=hidden,
+        is_hidden=hidden,
     )
 
 
@@ -213,7 +218,14 @@ class FakeUnit:
         abilities=(),
         buffs=(),
         health: float | None = None,
+        cloaked: bool = False,
+        burrowed: bool = False,
+        revealed: bool = False,
     ) -> None:
+        # Cloak, burrow and detection as python-sc2 reports them.
+        self.is_cloaked = cloaked
+        self.is_burrowed = burrowed
+        self.is_revealed = revealed
         # What the unit can use now, and the buffs it carries.
         self.abilities = set(abilities)
         self.buffs = set(buffs)
