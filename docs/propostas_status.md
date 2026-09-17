@@ -1125,6 +1125,33 @@ Terran), e a Zerg durou 193 s a mais.
 outras leituras do Ares que misturam memória (grids de influência, que são do
 Ares) continuam como estão.
 
+## Análise: trocas perdidas contra Terran (sem fatia)
+
+Registro para a próxima fatia de combate; nada foi mudado por isto.
+
+- Em `bench/3b/001` a ofensiva comprometeu 7 vezes e terminou 5 vezes em
+  `army_depleted` 10–20 s depois de `favorable_fight`. Nas quatro lutas
+  medidas (620–645 s, 738–752 s, 958–978 s, 1.070–1.098 s) o grupo entra com
+  parcela local de 0,85–0,90 contra 7–10 de poder inimigo à vista; ao avançar,
+  aparecem Siege Tanks em siege (o tipo mais frequente em `strongest_contacts`
+  em três das quatro janelas), Liberators em modo terrestre, Cyclones e
+  Hellbats, o inimigo local sobe para 21–54 e a parcela cai para 0,49–0,69,
+  ainda acima de `retreat_share`, enquanto o núcleo perde 40–70 % do poder.
+- O banco chega a 21 mil minerais com o supply cheio: perder o exército não
+  falta dinheiro, mas cada onda chega com `assemble_timed_out` (parcela reunida
+  0,62–0,79) e troca mal.
+- Estabilidade de decisão nas partidas da 1b e da 3b: 2–5 trocas de objetivo
+  por partida, nenhuma em menos de 10 s; nenhum rally A-B-A em 5 s.
+- Candidatos, todos a medir contra uma linha de base com mais de uma partida
+  por raça: splash/alcance no poder (Siege Tank em siege vale 2,7 Marines por
+  `sqrt(dps·vida)`), scan de informação antes de engajar, e de novo o recuo por
+  perda da 6b (medido com uma partida por raça). O combat sim do Ares (6d) não
+  ajudou porque só vê o que está à vista.
+- Linha de base maior em andamento: `bench/base3` (3 partidas por raça, seeds
+  1–3), de um `git worktree` limpo em `fe3cea0`. Nesse worktree o submódulo
+  não existe, então `ares_commit` sai nulo no `result.json`; o Ares usado é o
+  do repositório principal (`8730865`).
+
 ## Itens de `propostas.md` fora de qualquer fatia concluída
 
 - P0.2: distinguir scout, worker rush e ataque; histerese de admissão/liberação (a 3b tirou a troca de id, não a do poder)
