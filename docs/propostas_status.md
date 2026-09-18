@@ -39,8 +39,8 @@ seleção (ver regra no prompt corrigido).
 | 7h | Macro: Reactors nas Barracks sem add-on | Feito (sem evidência de partida) | `macro: a reactor on every barracks with no add-on` |
 | 7i | Macro: gás pelos geysers das bases | Feito; medido junto com a 6f | `macro: a refinery on every geyser the workers can mine` |
 | 6f | Ofensiva: a luta é do grupo, não do núcleo | Feito e medido (9 partidas) | `offense: the fight belongs to the group, not to its core` |
-| 7j | Macro: a expansão não para na sexta base | Feito e medido (7 partidas) | `macro: the sixth base is not the last` |
-| 7k | Macro: o pedido de base não é redecidido a cada frame | Feito; medido junto da 7j, efeito próprio pequeno | `macro: an ask for a base is held until it is a base` |
+| 7j | Macro: a expansão não para na sexta base | Feito; mecanismo medido, sem efeito medido | `macro: the sixth base is not the last` |
+| 7k | Macro: o pedido de base não é redecidido a cada frame | Feito; mecanismo mal aparece, sem efeito medido | `macro: an ask for a base is held until it is a base` |
 | 7 | Resto da macro (supply antecipado, reação a rush, reposição de produção, pico de banco) | Pendente | — |
 | 8a | Micro: Stim e Medivac acompanhando o grupo | Feito | `offense: fight, retreat and search; macro upgrades; bio micro` |
 | 8b | Micro: Stim no HOLD | Feito | `macro: detection and opening interrupt; hold stim` |
@@ -1477,7 +1477,7 @@ execução.
 - O custo por frame dos planners subiu (máximo de 1,21 ms para 2,20 ms num
   frame); continua duas ordens de grandeza abaixo do passo do jogo.
 
-## 7j. A expansão não para na sexta base — feito e medido
+## 7j. A expansão não para na sexta base — feito; mecanismo medido, sem efeito medido
 
 Seleção: a regra do prompt corrigido (bug decisório reproduzível → fatia de
 gameplay → operacional) sobre as partes pendentes da fatia 7. É um bug
@@ -1533,8 +1533,11 @@ nunca constrói, e a condição não podia mais ser satisfeita.
 
 **Não feito**
 
-- Medida junto da 7k, em `bench/7jk` (ver "Partidas de `bench/7jk`" abaixo): as
-  duas mudanças estão no mesmo commit medido e nenhuma foi isolada da outra.
+- Medida junto da 7k, em `bench/7jk` contra `bench/6f` (ver "Partidas de
+  `bench/7jk`" abaixo): as duas estão no mesmo commit medido e nenhuma foi
+  isolada da outra. O teto das 6 bases some (5 dos 7 specs chegam a 7-9 bases),
+  mas banco, army supply, duração e resultado não se movem. A hipótese de que a
+  base extra viraria gasto pelo teto de produção **não se confirmou**.
 - O alvo ainda oscila com `strategy.economy`: em `bench/base3/001` o plano pediu
   a sexta base aos 495,0 s, voltou a 5 aos 517,9 s quando `strategy.economy` caiu
   de 0,69 para 0,46 sem que nada tivesse sido construído, e só pediu de novo aos
@@ -1545,7 +1548,7 @@ nunca constrói, e a condição não podia mais ser satisfeita.
   esgotada continua contando); supply antecipado, reposição de produção destruída
   e reação a rush seguem pendentes.
 
-## 7k. O pedido de base é mantido até virar base — feito e medido
+## 7k. O pedido de base é mantido até virar base — feito; sem efeito medido
 
 Seleção: a mesma regra (bug decisório reproduzível → fatia de gameplay →
 operacional) sobre o que a 7j deixou escrito no "Não feito". É o "cooldown e
@@ -1590,12 +1593,14 @@ cada frame contra uma preferência contínua com corte em 0,5.
 
 **Não feito**
 
-- Medida junto da 7j (`bench/7jk`), nunca sozinha. O mecanismo aparece nos logs,
-  mas seguros por 0,2-4,1 s apenas: em 7 partidas a razão `expansion_asked_for`
-  apareceu 4 vezes numa e 1 vez em três delas, nenhuma nas outras. Ela evita
-  quedas curtas; não evita os 43 s do trace que a motivou, porque aquela queda
-  incluía um `STABILIZE`, ao qual a 7k cede de propósito. O ganho medido em
-  `bench/7jk` é atribuível à 7j, não a ela.
+- Medida junto da 7j (`bench/7jk` contra `bench/6f`), nunca sozinha, e **sem
+  efeito medido**. O mecanismo mal aparece: em 7 partidas a razão
+  `expansion_asked_for` apareceu 4 vezes numa e 1 vez em três delas, nenhuma nas
+  outras, e os pedidos ficaram seguros por 0,2-4,1 s. Ela evita quedas curtas;
+  não evita os 43 s do trace que a motivou, porque aquela queda incluía um
+  `STABILIZE`, ao qual a 7k cede de propósito. Pelo custo (um planner com estado
+  e uma config no fingerprint) contra o que se observou, é candidata a reverter,
+  como a 6d e a 6e.
 - `expand_commit = 60 s` não foi calibrado: é o tempo de construção de um Command
   Center (71 s) arredondado para baixo, com o único dado de conversão que existe
   (26,7 s em `bench/base3/001`).
@@ -1612,49 +1617,57 @@ cada frame contra uma preferência contínua com corte em 0,5.
   base por construção, porque a `EconomyConfig` da 7k entrou nos `configs`.
 - Matriz: a mesma de `bench/base3` (Persephone AIE, IA VeryHard Macro,
   Zerg/Terran/Protoss, seeds 1-3, 1.200 s).
+- **A linha de base desta comparação é `bench/6f` (`455209e`), não
+  `bench/base3` (`fe3cea0`).** `bench/base3` é anterior à 6f, à 7h e à 7i;
+  compará-lo com `bcd324a` mediria as quatro juntas. A primeira redação desta
+  seção cometeu esse erro e atribuía às 7j/7k uma queda do banco e a virada do
+  spec 7 (timeout → vitória aos 708 s) que são da 6f: `bench/6f` já ganha esse
+  spec aos 708,3 s.
 - **Duas partidas da matriz não jogaram, e não é do bot.** Os specs 4 (Terran
   seed 2) e 6 (Zerg seed 3) morrem no `on_start` do Ares:
-  `PlacementManager.initialise` → `_solve_natural_bunker` →
-  `get_own_nat` → `TerrainManager.own_expansions[0]` com a lista vazia
-  (`IndexError`), o bot resigna no primeiro passo, 19 s de relógio e
-  `game_time` 0. O commit da **linha de base** (`fe3cea0`, limpo, em
-  `bench/basecheck`) falha hoje exatamente igual nesses dois specs — os mesmos
-  que ele venceu em `bench/base3`. A causa está no ambiente (o cliente não
-  devolveu as expansões do mapa), não no código. Três outras partidas falharam
-  assim ou por `TimeoutError: Websocket` na primeira tentativa e passaram ao
-  serem rejogadas. A comparação abaixo usa só os 7 specs que as duas execuções
-  jogaram de verdade: 0, 1, 2, 3, 5, 7, 8.
+  `PlacementManager.initialise` → `_solve_natural_bunker` → `get_own_nat` →
+  `TerrainManager.own_expansions[0]` com a lista vazia (`IndexError`); o bot
+  resigna no primeiro passo, com 19 s de relógio e `game_time` 0. O commit da
+  linha de base de 9 partidas (`fe3cea0`, limpo, em `bench/basecheck`) falha
+  hoje exatamente igual nesses dois specs — os mesmos que ele venceu em
+  `bench/base3`. A causa está no ambiente (o cliente não devolveu as expansões
+  do mapa), não no código. Outras três falharam assim ou por
+  `TimeoutError: Websocket` na primeira tentativa e passaram ao serem
+  rejogadas. A comparação usa os 7 specs que as duas execuções jogaram: 0, 1,
+  2, 3, 5, 7, 8.
 
-| Spec | `bench/base3` | `bench/7jk` |
-| --- | --- | --- |
-| 0 Zerg s1 | vitória, 897 s | vitória, 956 s |
-| 1 Terran s1 | vitória, 864 s | vitória, 799 s |
-| 2 Protoss s1 | vitória, 867 s | vitória, 916 s |
-| 3 Zerg s2 | vitória, 772 s | vitória, 728 s |
-| 5 Protoss s2 | vitória, 699 s | vitória, 660 s |
-| 7 Terran s3 | **timeout, 1.196 s** | **vitória, 708 s** |
-| 8 Protoss s3 | vitória, 707 s | vitória, 717 s |
+| Spec | `bench/6f` | `bench/7jk` | Máx. de bases (6f → 7jk) | 7ª base |
+| --- | --- | --- | --- | --- |
+| 0 Zerg s1 | vitória, 951 s | vitória, 956 s | 6 → 8 | 818 s |
+| 1 Terran s1 | vitória, 833 s | vitória, 799 s | 6 → 8 | 700 s |
+| 2 Protoss s1 | vitória, 893 s | vitória, 916 s | 6 → 9 | 658 s |
+| 3 Zerg s2 | vitória, 718 s | vitória, 728 s | 6 → 7 | 688 s |
+| 5 Protoss s2 | vitória, 636 s | vitória, 660 s | 6 → 6 | — |
+| 7 Terran s3 | vitória, 706 s | vitória, 708 s | 6 → 6 | — |
+| 8 Protoss s3 | vitória, 714 s | vitória, 717 s | 6 → 7 | 656 s |
 
-6/7 (Wilson 95 %: 0,49-0,97) contra 7/7 (0,65-1,00): os intervalos se
-sobrepõem, **a diferença de resultado não é significativa**. O que a fatia
-pretendia mover, mediana sobre os mesmos 7 specs:
+7/7 nas duas execuções (`bench/6f` fez 9/9 na matriz inteira): **nenhuma
+diferença de resultado**. Mediana sobre os mesmos 7 specs:
 
-| | `bench/base3` | `bench/7jk` |
+| | `bench/6f` | `bench/7jk` |
 | --- | --- | --- |
 | Máximo de bases | 6 | 7 |
-| Pico de minerais | 16.040 | 6.585 |
-| Banco mediano depois de 600 s | 7.242 | 4.602 |
-| Army supply mediano depois de 600 s | 102 | 112 |
-| Fim da partida | 864 s | 728 s |
+| Pico de minerais | 7.070 | 6.585 |
+| Banco mediano depois de 600 s | 4.850 | 4.602 |
+| Army supply mediano depois de 600 s | 111 | 112 |
+| Fim da partida | 718 s | 728 s |
 
-Por partida, o teto das 6 bases sumiu onde havia lugar e tempo (0: 8 bases,
-7ª aos 818 s; 1: 8, aos 700 s; 2: 9, aos 658 s; 3: 7, aos 688 s; 8: 7, aos
-656 s) e ficou em 6 nas duas que acabaram antes (5 e 7). O pico de minerais
-caiu nas sete. Nenhum `Traceback` do bot nas partidas que jogaram.
+**O mecanismo aparece; o efeito não.** O teto das 6 bases sumiu onde havia
+tempo e lugar (5 dos 7 specs chegaram a 7-9 bases, a 7ª entre 656 e 818 s), e
+nas duas partidas que acabaram antes de 700 s ele nem chegou a importar. Mas
+banco, army supply, duração e resultado ficaram onde estavam — o pico de
+minerais até subiu nos specs 3, 5 e 7. A hipótese de que uma base a mais
+viraria gasto (pelo teto de produção `4 · bases`) não se confirmou em 7
+partidas.
 
-O que isto **não** autoriza a dizer: que a mudança melhora o win rate (7
-partidas, intervalos sobrepostos), nem qual das duas fatias causou o quê (as
-duas estão no mesmo código medido; a 7k mal aparece nos logs).
+O que isto **não** autoriza a dizer: que a mudança melhora o win rate, nem que
+o piora (7 partidas, 7/7 dos dois lados). Também não separa a 7j da 7k: as duas
+estão no mesmo código medido, e a 7k mal aparece nos logs.
 
 ## Itens de `propostas.md` fora de qualquer fatia concluída
 
