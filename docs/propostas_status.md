@@ -37,8 +37,8 @@ seleção (ver regra no prompt corrigido).
 | 6d | Ofensiva: combat sim do Ares na decisão de lutar | Medido e revertido | `awareness: keep an incident's id while its members stay` (só documentação) |
 | 7g | Macro: teto de produção cresce com as bases | Feito | `macro: let the production ceiling grow with the bases` |
 | 7h | Macro: Reactors nas Barracks sem add-on | Feito (sem evidência de partida) | `macro: a reactor on every barracks with no add-on` |
-| 7i | Macro: gás pelos geysers das bases | Feito (sem evidência de partida) | `macro: a refinery on every geyser the workers can mine` |
-| 6f | Ofensiva: a luta é do grupo, não do núcleo | Feito (a medir) | `offense: the fight belongs to the group, not to its core` |
+| 7i | Macro: gás pelos geysers das bases | Feito; medido junto com a 6f | `macro: a refinery on every geyser the workers can mine` |
+| 6f | Ofensiva: a luta é do grupo, não do núcleo | Feito e medido (9 partidas) | `offense: the fight belongs to the group, not to its core` |
 | 7j | Macro: a expansão não para na sexta base | Feito (sem evidência de partida) | `macro: the sixth base is not the last` |
 | 7k | Macro: o pedido de base não é redecidido a cada frame | Feito (sem evidência de partida) | `macro: an ask for a base is held until it is a base` |
 | 7 | Resto da macro (supply antecipado, reação a rush, reposição de produção, pico de banco) | Pendente | — |
@@ -1287,7 +1287,7 @@ construída e paga 50/50.
   antecipado, reação a rush além da interrupção do opening e o pico de banco com
   o supply cheio.
 
-## 7i. Gás pelos geysers das bases — feito (sem evidência de partida)
+## 7i. Gás pelos geysers das bases — feito, medido junto com a 6f
 
 Seleção: bug decisório reproduzível por trace (classe 1), achado na linha de
 base de 9 partidas (`bench/base3`), sobre as partes pendentes da fatia 7. É a
@@ -1329,12 +1329,19 @@ Siege Tank 125, Medivac 100) e cada Tech Lab custa mais 25.
 - Verificação local: 258 testes e `ruff check bot tests harness run.py
   bench.py` limpos (`.venv`, sem poetry nesta máquina).
 
+**Partidas**: nenhuma matriz só desta fatia. As 9 partidas de `bench/6f`
+rodaram de `455209e`, que é a linha de base mais a 7i e a 6f: 9 vitórias em 9
+contra 8 em 9, tempo médio 837 s → 758 s, nenhuma partida interrompida por
+erro do bot. Isso **não separa** o efeito do gás do efeito da luta local; o que
+se pode afirmar é que a mudança de gás não quebrou nada e não piorou o placar
+da matriz. O efeito pretendido (menos frames com gás < 100 e minério > 800) não
+foi medido nos logs desta execução.
+
 **Não feito**
 
-- Nenhuma partida foi jogada com a mudança: não há evidência de que o gás pare
-  de limitar, de que os upgrades saiam antes, nem de efeito em vitória. Trocar
-  minério por gás pode atrasar Marines na janela de 300-500 s, quando o banco
-  de minério ainda é baixo; é o risco principal e só uma partida mede.
+- O efeito do gás não foi isolado: trocar minério por gás pode atrasar Marines
+  na janela de 300-500 s, quando o banco de minério ainda é baixo, e nada nesta
+  matriz separa isso do resto.
 - `GAS_WORKER_SHARE` não foi calibrado e a economia continua fora do
   `config_fingerprint`.
 - A distribuição de workers entre minério e gás continua sendo a do Ares (3 por
@@ -1358,7 +1365,7 @@ Siege Tank 125, Medivac 100) e cada Tech Lab custa mais 25.
   partidas terminam com Tech Lab em todas as Factories e um Reactor no
   Starport, postos pelo `TechUp` do Ares.
 
-## 6f. A luta local é do grupo, não do núcleo — feito (a medir)
+## 6f. A luta local é do grupo, não do núcleo — feito e medido
 
 Seleção: bug decisório reproduzível por trace (classe 1), achado na linha de
 base de 9 partidas. Pré-requisitos todos no lugar: a luta local, o núcleo e o
@@ -1407,17 +1414,68 @@ para dentro da linha de tanques; o esquadrão caiu de 62 para 27 de poder em
 - Verificação local: 261 testes e `ruff check bot tests harness run.py
   bench.py` limpos.
 
+**Partidas** (`bench/6f`, `455209e` limpo de um `git worktree`, mesma matriz da
+linha de base: Persephone AIE, IA VeryHard Macro, Z/T/P, seeds 1-3, 1.200 s;
+fingerprint `ab57813d0bfcc3fe`, igual — a ofensiva entra no fingerprint e o
+`engage_radius` não mudou)
+
+**O que esta execução compara**: `455209e` é a linha de base (`fe3cea0`) mais
+**duas** fatias, a 7i (gás) e a 6f. O placar e as durações abaixo são das duas
+juntas; só as medidas de luta (poder inimigo na luta, `fight_won`,
+`army_depleted`) isolam a 6f. As fatias 7j e 7k entraram no branch depois que
+esta matriz começou e **não** estão nela.
+
+| Seed | Zerg | Terran | Protoss |
+| --- | --- | --- | --- |
+| 1 | vitória, 955 s (linha de base 900 s) | vitória, 836 s (869 s) | vitória, 895 s (869 s) |
+| 2 | vitória, 722 s (775 s) | vitória, 667 s (788 s) | vitória, 637 s (701 s) |
+| 3 | vitória, 687 s (726 s) | **vitória, 708 s (timeout)** | vitória, 717 s (708 s) |
+
+9 vitórias em 9 (Wilson 95 %: 0,70-1,00) contra 8 em 9 da linha de base
+(0,57-0,98): os intervalos se cobrem, **a diferença de vitórias não é
+significativa**. Tempo médio de partida 837 s → 758 s, com uma partida por
+célula.
+
+O que a mudança fez, somando as 9 partidas de cada execução:
+
+| Medida | `bench/base3` | `bench/6f` |
+| --- | --- | --- |
+| Poder inimigo médio na luta em ENGAGE | 6,6 | 10,0 |
+| Frames em ENGAGE | 675 | 839 |
+| `fight_won` | 158 | 110 |
+| `fight_won` com ≥ 10 de poder inimigo à vista | **16** | **1** |
+| `army_depleted` | 3 (todas na 007) | 0 |
+| IDLE por `no_advantage` | 1.127 s | 1.027 s |
+| IDLE por `cooling_down` | 104 s | 18 s |
+| `logs.frame_perf` máximo dos planners | 1,21 ms | 2,20 ms |
+
+A luta passou a contar metade a mais de poder inimigo, e o caso do defeito —
+declarar a luta ganha com o exército inimigo à vista — praticamente sumiu
+(16 → 1). O exército **não** ficou mais tímido: o tempo parado por
+`no_advantage` caiu e o `army_depleted` zerou, inclusive na 007, a partida de
+onde veio o trace (timeout com três exércitos perdidos → vitória em 708 s).
+
+**Ressalva da execução**: a primeira execução da 001 (Terran, seed 1) terminou
+anormalmente aos 1.112,9 s — o cliente do SC2 fechou a conexão e o python-sc2
+falhou ao salvar o replay; o jogo reportou `Result.Defeat` com o bot em 6 bases,
+200/200 de supply e 19 mil minerais, o que não é uma derrota jogada. A célula
+foi refeita e deu vitória em 836 s. **As duas execuções do mesmo spec com o
+mesmo código divergiram**: o determinismo por seed registrado em sessões
+anteriores não vale quando o cliente falha, e a tabela acima usa a segunda
+execução.
+
 **Não feito**
 
-- Nenhuma partida foi jogada ainda: a fatia muda quando a ofensiva luta e
-  recua, e isso só se mede contra `bench/base3` com a mesma matriz de 9
-  partidas. O risco é o oposto do defeito: com o inimigo inteiro na conta, o
-  exército pode recuar cedo demais e as partidas irem ao limite de tempo.
+- Uma partida por célula: nenhuma diferença de duração é significativa, e a
+  vitória a mais pode ser ruído. O que sustenta a fatia é a medida do
+  mecanismo (16 → 1), não o placar.
 - O `own_power` continua sendo o do grupo do núcleo: um esquadrão partido em
   dois grupos distantes continua sendo julgado onde está a maior parte dele.
 - O modelo de poder continua `sqrt(dps · vida)`: um Siege Tank em siege vale
   2,3 Marines, sem alcance nem splash. É o outro candidato da análise contra
   Terran e continua pendente.
+- O custo por frame dos planners subiu (máximo de 1,21 ms para 2,20 ms num
+  frame); continua duas ordens de grandeza abaixo do passo do jogo.
 
 ## 7j. A expansão não para na sexta base — feito (sem evidência de partida)
 
