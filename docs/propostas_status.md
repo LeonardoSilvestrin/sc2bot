@@ -40,7 +40,7 @@ seleção (ver regra no prompt corrigido).
 | 7i | Macro: gás pelos geysers das bases | Feito; medido junto com a 6f | `macro: a refinery on every geyser the workers can mine` |
 | 6f | Ofensiva: a luta é do grupo, não do núcleo | Feito e medido (9 partidas) | `offense: the fight belongs to the group, not to its core` |
 | 7j | Macro: a expansão não para na sexta base | Feito; mecanismo medido, sem efeito medido | `macro: the sixth base is not the last` |
-| 7k | Macro: o pedido de base não é redecidido a cada frame | Feito; mecanismo mal aparece, sem efeito medido | `macro: an ask for a base is held until it is a base` |
+| 7k | Macro: o pedido de base não é redecidido a cada frame | Medida e revertida | `macro: an ask for a base is held until it is a base`, revertida em `macro: the held ask for a base goes back out` |
 | 7 | Resto da macro (supply antecipado, reação a rush, reposição de produção, pico de banco) | Pendente | — |
 | 8a | Micro: Stim e Medivac acompanhando o grupo | Feito | `offense: fight, retreat and search; macro upgrades; bio micro` |
 | 8b | Micro: Stim no HOLD | Feito | `macro: detection and opening interrupt; hold stim` |
@@ -1535,7 +1535,9 @@ nunca constrói, e a condição não podia mais ser satisfeita.
 
 - Medida junto da 7k, em `bench/7jk` contra `bench/6f` (ver "Partidas de
   `bench/7jk`" abaixo): as duas estão no mesmo commit medido e nenhuma foi
-  isolada da outra. O teto das 6 bases some (5 dos 7 specs chegam a 7-9 bases),
+  isolada da outra. A 7k foi revertida depois; a 7j ficou por corrigir uma
+  condição insatisfazível, não por ganho medido, e **o código que roda hoje
+  nunca foi medido sozinho**. O teto das 6 bases some (5 dos 7 specs chegam a 7-9 bases),
   mas banco, army supply, duração e resultado não se movem. A hipótese de que a
   base extra viraria gasto pelo teto de produção **não se confirmou**.
 - O alvo ainda oscila com `strategy.economy`: em `bench/base3/001` o plano pediu
@@ -1548,7 +1550,7 @@ nunca constrói, e a condição não podia mais ser satisfeita.
   esgotada continua contando); supply antecipado, reposição de produção destruída
   e reação a rush seguem pendentes.
 
-## 7k. O pedido de base é mantido até virar base — feito; sem efeito medido
+## 7k. O pedido de base é mantido até virar base — medida e revertida
 
 Seleção: a mesma regra (bug decisório reproduzível → fatia de gameplay →
 operacional) sobre o que a 7j deixou escrito no "Não feito". É o "cooldown e
@@ -1565,7 +1567,7 @@ precisa ganhar a vez no `MacroPlan`, pagar 400 minerais e mandar um worker
 andar até lá, o que levou 26,7 s na vez que deu certo. O pedido era redecidido a
 cada frame contra uma preferência contínua com corte em 0,5.
 
-**Feito**
+**Experimento** (o código e os testes saíram; a seção fica como registro)
 
 - Ego/economy: `EconomyConfig` (`expand_commit = 60 s`, `expand_economy = 0,5`)
   e `Economy`, um planner com estado, como `Offense`, `Detection` e
@@ -1591,16 +1593,20 @@ cada frame contra uma preferência contínua com corte em 0,5.
 - Verificação local: `pytest` 276 testes verdes e
   `ruff check bot tests run.py harness bench.py` limpo.
 
-**Não feito**
+**Por que saiu**
 
 - Medida junto da 7j (`bench/7jk` contra `bench/6f`), nunca sozinha, e **sem
   efeito medido**. O mecanismo mal aparece: em 7 partidas a razão
   `expansion_asked_for` apareceu 4 vezes numa e 1 vez em três delas, nenhuma nas
   outras, e os pedidos ficaram seguros por 0,2-4,1 s. Ela evita quedas curtas;
   não evita os 43 s do trace que a motivou, porque aquela queda incluía um
-  `STABILIZE`, ao qual a 7k cede de propósito. Pelo custo (um planner com estado
-  e uma config no fingerprint) contra o que se observou, é candidata a reverter,
-  como a 6d e a 6e.
+  `STABILIZE`, ao qual a 7k cede de propósito. Pelo custo — um planner com
+  estado, uma config no fingerprint e 103 linhas de teste — contra o que se
+  observou, saiu como a 6b, a 6d e a 6e.
+- Com ela saiu a `EconomyConfig` dos `configs`: o fingerprint volta a
+  `ab57813d0bfcc3fe`, o mesmo de `bench/6f` e `bench/base3`.
+
+**Não feito**
 - `expand_commit = 60 s` não foi calibrado: é o tempo de construção de um Command
   Center (71 s) arredondado para baixo, com o único dado de conversão que existe
   (26,7 s em `bench/base3/001`).
@@ -1667,7 +1673,8 @@ partidas.
 
 O que isto **não** autoriza a dizer: que a mudança melhora o win rate, nem que
 o piora (7 partidas, 7/7 dos dois lados). Também não separa a 7j da 7k: as duas
-estão no mesmo código medido, e a 7k mal aparece nos logs.
+estão no mesmo código medido, e a 7k mal aparece nos logs. A 7k saiu depois
+desta execução, então o código atual (7j sozinha) não tem partida própria.
 
 ## Itens de `propostas.md` fora de qualquer fatia concluída
 

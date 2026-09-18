@@ -180,7 +180,6 @@ def test_a_worker_inside_a_gas_building_does_not_flip_the_economy_plan() -> None
             "bases": 3.0,
             "saturated_at": 48.0,
             "expansion_sites": 4.0,
-            "expansion_held": 0.0,
             "strategy_economy": economies[0],
             "upgrades_done": 0.0,
             "danger": dangers[0],
