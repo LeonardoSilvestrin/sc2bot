@@ -13,8 +13,11 @@ Starport) para todos os adversários; depois dela:
 
 - **Economia:** workers, gás e expansões pelos macro behaviors do Ares, com
   composição fixa Marine/Marauder/Siege Tank/Medivac, upgrades de infantaria e
-  veículos, Orbital Command e MULE. Numa emergência antes do fim da abertura,
-  o plano dinâmico assume e a abertura é interrompida.
+  veículos, Orbital Command e MULE. O gás cobre os geysers das bases que o bot
+  segura, a expansão continua enquanto houver lugar no mapa, o teto de
+  produção cresce com as bases e as Barracks sem add-on recebem Reactor. Numa
+  emergência antes do fim da abertura, o plano dinâmico assume e a abertura é
+  interrompida.
 - **Defesa:** ataques a qualquer base viram um incidente com um único
   orçamento de poder, dividido entre as partes aérea e terrestre; os supply
   depots sobem quando inimigos terrestres se aproximam.
@@ -34,10 +37,11 @@ Starport) para todos os adversários; depois dela:
 - Uma abertura e uma composição para todos os matchups; nenhuma reação
   específica a rush (bunker, reparo, workers lutando).
 - Com o exército morto, o bot pode acumular milhares de minerais com supply
-  livre; a causa ainda está em investigação.
+  livre. Teto de produção, Reactors, gás e bases a mais deram destino ao banco
+  sem que ele caísse nas partidas medidas; a causa continua em aberto.
 - Sem combat simulation: o poder de uma unidade é `sqrt(dps · vida)` e não vê
-  alcance nem splash. Contra Terran as partidas de referência terminam em
-  timeout.
+  alcance nem splash — um Siege Tank em siege vale 2,3 Marines. É a maior
+  lacuna conhecida do combate.
 - Sem Raven, scouting recorrente, stutter-step, foco de fogo ou harass.
 
 O andamento e as evidências de cada item estão em
@@ -132,9 +136,16 @@ Ares, fingerprint da configuração, replay e log. Os resultados ficam em
 ```
 
 `compare` só aceita execuções da mesma matriz. Mesmo seed e mesmas decisões
-reproduzem a mesma partida nesta máquina. Com uma partida por combinação, uma
-diferença isolada não é evidência de ganho (o resumo mostra o intervalo de
-Wilson).
+reproduzem a mesma partida nesta máquina — não quando o cliente do SC2 falha.
+Com uma partida por combinação, uma diferença isolada não é evidência de ganho
+(o resumo mostra o intervalo de Wilson).
+
+Referência atual: Persephone AIE, IA VeryHard Macro, Zerg/Terran/Protoss,
+seeds 1-3, 1.200 s. A linha de base de nove partidas (`fe3cea0`) fez 8/9; com a
+luta local corrigida e mais gás (`455209e`), 9/9 e duração média de 837 s para
+758 s. Uma partida por célula: os intervalos de Wilson se cobrem e o placar não
+separa as mudanças — o que as sustenta são as medidas de mecanismo em
+[docs/propostas_status.md](docs/propostas_status.md).
 
 ## Entrega
 

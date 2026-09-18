@@ -9,6 +9,23 @@ diff restrito à fatia. **Nenhuma linha aqui é evidência de ganho de gameplay*
 a matriz da fatia 2 tem uma partida por raça, o que não sustenta taxa de
 vitória.
 
+## Estado atual do branch
+
+- `botbandido` em `e492524`, árvore limpa; 268 testes verdes e
+  `ruff check bot tests harness run.py bench.py` limpo.
+- O código de hoje é a linha de base de nove partidas (`fe3cea0`) mais as
+  fatias 7h (Reactors), 7i (gás), 6f (luta do grupo) e 7j (expansão além da
+  sexta base). Fingerprint `ab57813d0bfcc3fe`, o mesmo de `bench/base3` e
+  `bench/6f`.
+- **O que já foi medido**: a 6f e a 7i juntas, em `bench/6f` (9/9 contra 8/9 da
+  linha de base, e o defeito da luta de 16 → 1); a 7j junto da 7k, em
+  `bench/7jk` (7/7 dos dois lados, mecanismo sem efeito). A 7h nunca foi
+  medida, e o código atual — 7j sem a 7k — não tem matriz própria.
+- **Ordem seguida a partir daqui**: primeiro separar falha de ambiente de
+  derrota no harness (é operacional, mas bloqueia a verificação de tudo o
+  mais), depois dar alcance e splash ao modelo de poder, que é o bug decisório
+  reproduzível mais antigo ainda aberto.
+
 ## Fatias
 
 A numeração segue a §4 da corrigenda; ela agrupa marcos, não define a ordem de
