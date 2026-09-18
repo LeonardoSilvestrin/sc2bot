@@ -9,6 +9,7 @@ from harness import (
     CRASH,
     DEFEAT,
     NO_RESULT,
+    NOT_PLAYED,
     TIE,
     TIMEOUT,
     VICTORY,
@@ -16,6 +17,7 @@ from harness import (
     build_record,
     load_records,
     matrix,
+    needs_replay,
     outcome,
     summarize,
     wilson,
@@ -78,6 +80,12 @@ def test_an_empty_or_invalid_matrix_is_rejected(changes) -> None:
         (None, None, 1, False, CRASH),
         ("Result.Victory", 612.0, 1, False, CRASH),
         (None, None, None, True, CRASH),
+        # Ares' on_start raised, python-sc2 resigned on the first step and the
+        # game reported a defeat the bot never played (`bench/7jk`, specs 4/6).
+        ("Result.Defeat", 0.0, 0, False, NOT_PLAYED),
+        ("Result.Victory", 0.0, 0, False, NOT_PLAYED),
+        # No result was reported: the process failed, it did not resign.
+        (None, 0.0, 1, False, CRASH),
     ],
 )
 def test_every_game_gets_an_explicit_outcome(result, game_time, exit_code, wall, expected) -> None:
@@ -188,13 +196,83 @@ def test_the_summary_counts_every_game_and_bounds_the_win_rate(tmp_path: Path) -
         TIMEOUT: 1,
         CRASH: 1,
         NO_RESULT: 0,
+        NOT_PLAYED: 0,
     }
+    assert overall["played"] == 4
     assert overall["win_rate"] == 0.25
     low, high = overall["win_rate_95"]
     assert 0.0 < low < 0.25 < high < 1.0
     assert overall["mean_game_time"] == pytest.approx((600.0 + 400.0 + 900.0) / 3)
     assert list(summary["groups"]) == ["A/Zerg/VeryHard/Macro"]
     assert summary["builds"] == [json.dumps(IDENTITY, sort_keys=True)]
+
+
+def test_a_game_the_bot_never_played_counts_in_no_rate_and_is_played_again(
+    tmp_path: Path,
+) -> None:
+    """`bench/7jk`: Ares' on_start raised on two of the nine specs, the game
+    reported `Result.Defeat` at game_time 0 with exit code 0, and the win rate
+    counted two losses the bot never played."""
+
+    specs = small_matrix(maps=("A",), races=("Zerg",), games=3)
+    games = [
+        ("Result.Victory", 600.0, 18.0),
+        ("Result.Defeat", 400.0, 500.0),
+        # The resignation of `bench/7jk/004`: 18.7 s of wall clock, no game.
+        ("Result.Defeat", 0.0, 18.7),
+    ]
+    for spec, (result, game_time, wall_seconds) in zip(specs, games, strict=True):
+        record = build_record(
+            spec,
+            label="run",
+            identity=IDENTITY,
+            result=result,
+            game_time=game_time,
+            exit_code=0,
+            wall_timed_out=False,
+            wall_seconds=wall_seconds,
+            replay=None,
+            log=None,
+        )
+        directory = tmp_path / spec.game_id
+        directory.mkdir()
+        (directory / "result.json").write_text(json.dumps(record), encoding="utf-8")
+
+    records = load_records(tmp_path)
+    assert [record["outcome"] for record in records] == [VICTORY, DEFEAT, NOT_PLAYED]
+
+    overall = summarize(records)["overall"]
+    assert (overall["games"], overall["played"]) == (3, 2)
+    assert overall["outcomes"][NOT_PLAYED] == 1
+    # One win in the two games that happened, not in the three that were asked
+    # for, and the 0 s of the game that did not happen is not an average.
+    assert overall["win_rate"] == 0.5
+    assert overall["mean_game_time"] == pytest.approx(500.0)
+
+    assert [needs_replay(record) for record in records] == [False, False, True]
+
+
+def test_the_summary_applies_the_current_rule_to_what_a_record_stored() -> None:
+    """A record keeps what the game reported, so a run recorded before the rule
+    is summarized under it; one without those fields keeps its own verdict."""
+
+    spec = small_matrix(maps=("A",), races=("Zerg",), games=1)[0]
+    stored = {
+        "spec": spec.to_json(),
+        "outcome": DEFEAT,
+        "result": "Result.Defeat",
+        "game_time": 0.0,
+        "exit_code": 0,
+        "wall_timed_out": False,
+        "build": IDENTITY,
+    }
+    older = {"spec": {"map_name": "A", "enemy_race": "Zerg", "difficulty": "VeryHard",
+                      "ai_build": "Macro", "index": 0}, "outcome": DEFEAT, "build": IDENTITY}
+
+    assert summarize([stored])["overall"]["outcomes"][NOT_PLAYED] == 1
+    assert summarize([stored])["overall"]["played"] == 0
+    assert summarize([older])["overall"]["outcomes"][DEFEAT] == 1
+    assert needs_replay(older) is False
 
 
 def test_the_wilson_interval_is_wide_with_few_games() -> None:

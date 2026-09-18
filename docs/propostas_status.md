@@ -11,7 +11,7 @@ vitória.
 
 ## Estado atual do branch
 
-- `botbandido` em `e492524`, árvore limpa; 268 testes verdes e
+- `botbandido` em `e492524`, árvore limpa; 273 testes verdes e
   `ruff check bot tests harness run.py bench.py` limpo.
 - O código de hoje é a linha de base de nove partidas (`fe3cea0`) mais as
   fatias 7h (Reactors), 7i (gás), 6f (luta do grupo) e 7j (expansão além da
@@ -58,6 +58,7 @@ seleção (ver regra no prompt corrigido).
 | 6f | Ofensiva: a luta é do grupo, não do núcleo | Feito e medido (9 partidas) | `offense: the fight belongs to the group, not to its core` |
 | 7j | Macro: a expansão não para na sexta base | Feito; mecanismo medido, sem efeito medido | `macro: the sixth base is not the last` |
 | 7k | Macro: o pedido de base não é redecidido a cada frame | Medida e revertida | `macro: an ask for a base is held until it is a base`, revertida em `macro: the held ask for a base goes back out` |
+| 2b | Harness: partida que o bot não jogou não é derrota | Feito | `harness: a game the bot never played is not a defeat` |
 | 7 | Resto da macro (supply antecipado, reação a rush, reposição de produção, pico de banco) | Pendente | — |
 | 8a | Micro: Stim e Medivac acompanhando o grupo | Feito | `offense: fight, retreat and search; macro upgrades; bio micro` |
 | 8b | Micro: Stim no HOLD | Feito | `macro: detection and opening interrupt; hold stim` |
@@ -1693,6 +1694,64 @@ o piora (7 partidas, 7/7 dos dois lados). Também não separa a 7j da 7k: as dua
 estão no mesmo código medido, e a 7k mal aparece nos logs. A 7k saiu depois
 desta execução, então o código atual (7j sozinha) não tem partida própria.
 
+## 2b. Partida que o bot não jogou não é derrota — feito
+
+Seleção: trabalho operacional antes de fatia de gameplay, a exceção que a regra
+prevê — isto bloqueia a verificação de todas as outras. Enquanto uma falha do
+ambiente entra na matriz como derrota limpa, qualquer taxa de vitória pode
+estar medindo o cliente do SC2.
+
+Evidência do problema (`bench/7jk`, specs 4 e 6): o `on_start` do Ares levanta
+`IndexError` (`PlacementManager.initialise` → `get_own_nat` →
+`TerrainManager.own_expansions[0]` com a lista vazia), o python-sc2 resigna no
+primeiro passo (`sc2.main:initialize_first_step` — "Resigning due to previous
+error") e `run_game` devolve `Result.Defeat` com código de saída 0. O
+`result.json` ficou `outcome: defeat`, `game_time: 0.0`, `error: null`; o
+`game.jsonl` da partida tem uma linha só, `game.ended` — o `game.started` nunca
+foi escrito porque o `on_start` do bot não chegou ao fim. Só os 18,7 s de
+relógio e o stdout denunciavam. O resumo daquela execução dizia 7 vitórias em
+9 (`win_rate` 0,78) e duração média de 610 s.
+
+**Feito**
+
+- `harness`: desfecho novo `not_played` — um resultado reportado com o relógio
+  do bot em zero não é uma partida jogada, qualquer que seja o resultado. A
+  regra vem antes das outras: sem resultado reportado, quem falhou foi o
+  processo, e continua `crash`.
+- `summarize`: `played` ao lado de `games`; a taxa de vitória e a duração média
+  passam a ser sobre as partidas jogadas, e o desfecho não jogado aparece nas
+  contagens. Uma matriz que perdeu células para o ambiente não pode mais
+  parecer uma matriz vencida.
+- `outcome_of`: o desfecho é recalculado do que o registro guardou (resultado,
+  tempo, código de saída, timeout de relógio), então execuções gravadas antes
+  da regra são resumidas por ela; um registro sem esses campos mantém o próprio
+  desfecho.
+- `needs_replay` e `bench.py run`: uma célula `not_played` não conta como
+  jogada e é rejogada na execução seguinte, em vez de pulada por já ter
+  `result.json`.
+- Testes (`tests/test_harness.py`): derrota e vitória com `game_time` 0 viram
+  `not_played` e sem resultado continua `crash`; a matriz com a célula do
+  `bench/7jk/004` (18,7 s de relógio, 0 s de jogo) dá `games` 3, `played` 2,
+  `win_rate` 0,5 e média 500 s, e só aquela célula pede rejogo; e um registro
+  gravado como `defeat` com `game_time` 0 é resumido como `not_played`,
+  enquanto um registro sem os campos mantém o seu.
+- Verificação local: 273 testes verdes e `ruff check bot tests harness run.py
+  bench.py` limpo. Sobre os registros reais de `bench/7jk`, o resumo passa de
+  7/9 (0,78) com média 610 s para 7 jogadas, 7 vitórias (Wilson 0,65-1,00) e
+  média 784 s, com 2 `not_played`.
+
+**Não feito**
+
+- A causa da falha continua no ambiente e não foi tratada: o bot não tenta de
+  novo dentro da mesma partida, e nada distingue "o cliente não devolveu as
+  expansões" de um `on_start` nosso que levante — as duas viram `not_played`,
+  e é o `stdout.txt` da célula que diz qual foi. Um erro nosso no `on_start`
+  pode, por isso, ser lido como falha de ambiente.
+- `bench.py run` rejoga a célula na execução seguinte, mas não repete na mesma:
+  quem roda a matriz precisa rodá-la outra vez.
+- As execuções antigas não foram regravadas; o `summarize` aplica a regra na
+  leitura, e o `result.json` de `bench/7jk` continua dizendo `defeat`.
+
 ## Itens de `propostas.md` fora de qualquer fatia concluída
 
 - P0.2: distinguir scout, worker rush e ataque; histerese de admissão/liberação (a 3b tirou a troca de id, não a do poder)
@@ -1704,11 +1763,10 @@ desta execução, então o código atual (7j sozinha) não tem partida própria.
   com partida que o meça, e a 7k parou de redecidir o pedido a cada frame),
   reposição de produção destruída; reação a rush além da interrupção do opening
   (bunker, reparo, worker pull, proxy); Raven e scan de informação.
-- Harness: uma partida em que o bot resigna no primeiro passo por exceção do
-  Ares vira `defeat` com `game_time` 0, não `crash`. Duas delas entraram na
-  execução `bench/7jk` como derrotas limpas; só o tempo de relógio de 19 s e o
-  stdout denunciam. Enquanto isso não for separado, qualquer taxa de vitória
-  pode estar contaminada por falha de ambiente.
+- Harness: partidas em que o bot resigna no primeiro passo viraram `not_played`
+  na fatia 2b e saem da taxa de vitória. Continua fora: repetir a célula na
+  mesma execução e distinguir a falha do cliente de uma exceção nossa no
+  `on_start`.
 - P1.1–P1.5 e P2: scouting recorrente e estimativa do inimigo por produção ou
   economia vista, `RegionState`, micro além de Stim e escolta de Medivac, contrato completo de
   Proposal/Engine (desired_power, suitability, custos, preemption), builds por

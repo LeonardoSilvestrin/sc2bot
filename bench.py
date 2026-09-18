@@ -29,6 +29,8 @@ from harness import (  # noqa: E402
     identity,
     load_records,
     matrix,
+    needs_replay,
+    outcome_of,
     summarize,
 )
 
@@ -99,9 +101,13 @@ def _run(args) -> int:
         if args.only is not None and spec.index not in args.only:
             continue
         directory = out / spec.game_id
-        if (directory / "result.json").is_file():
-            print(f"{spec.game_id}: already played")
-            continue
+        previous = _read_json(directory / "result.json")
+        if previous is not None:
+            # A game the bot never played is not a played cell of the matrix.
+            if not needs_replay(previous):
+                print(f"{spec.game_id}: already played")
+                continue
+            print(f"{spec.game_id}: {outcome_of(previous)} before; playing again")
         directory.mkdir(parents=True, exist_ok=True)
         spec_path = directory / "spec.json"
         spec_path.write_text(json.dumps(spec.to_json(), indent=2), encoding="utf-8")
