@@ -390,3 +390,26 @@ def test_the_same_frames_give_the_same_beliefs() -> None:
         a, b = first.infer(frame), second.infer(frame)
         assert a == b
         assert np.array_equal(a.influence.threat, b.influence.threat)
+
+
+def test_the_seen_army_is_told_by_type_heaviest_first_and_forgets_the_dead() -> None:
+    model = AwarenessModel()
+    tau = model.config.army_memory
+    seen = model.infer(
+        attention(
+            time=200.0,
+            enemy_units=(zergling(1, 40, 40), zergling(2, 41, 40), roach(3, 42, 40)),
+        )
+    )
+    later = model.infer(attention(time=260.0, dead_tags=(3,)))
+
+    assert seen.seen_enemy_types == (
+        (UnitTypeId.ZERGLING, pytest.approx(1.8)),
+        (UnitTypeId.ROACH, pytest.approx(1.5)),
+    )
+    assert sum(power for _, power in seen.seen_enemy_types) == pytest.approx(
+        seen.seen_enemy_power
+    )
+    assert later.seen_enemy_types == (
+        (UnitTypeId.ZERGLING, pytest.approx(1.8 * math.exp(-60.0 / tau))),
+    )

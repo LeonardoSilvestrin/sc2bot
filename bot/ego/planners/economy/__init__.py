@@ -1,12 +1,14 @@
 """Economy: what the bot spends its resources on after the opening.
 
 A resource planner: it asks for no unit, only for what Ares' macro behaviors
-should buy. Two questions, one module each:
+should buy. Three questions, one module each:
 
 - `investment`: how much -- workers, bases, gas, production ceiling, and when
   the macro plan takes over from the opening.
 - `styles`: what -- the army style chosen for the game, with its composition,
   upgrades and add-ons.
+- `composition`: what now -- the style's composition reweighted by what each
+  unit is worth against the enemy army Awareness believes in.
 
 `plan` joins them into the `EconomyPlan` the Body's economy behavior runs.
 After the opening, Command Centers become Orbital Commands and every Orbital's
@@ -16,18 +18,28 @@ upgrade and no add-on for throughput.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
+from sc2.ids.unit_typeid import UnitTypeId
+
 from bot.attention import AttentionState
 from bot.ego.planners import EconomyPlan
 from bot.ego.strategy import StrategyState
 
-from . import investment, styles
+from . import composition, investment, styles
 from .styles import BIO, ArmyStyle
 
 
 def plan(
-    attention: AttentionState, strategy: StrategyState, army: ArmyStyle = BIO
+    attention: AttentionState,
+    strategy: StrategyState,
+    army: ArmyStyle = BIO,
+    enemy: Iterable[tuple[UnitTypeId, float]] = (),
 ) -> EconomyPlan:
+    """`enemy` is the enemy army believed in, as power by unit type."""
+
     spend = investment.plan(attention, strategy)
+    enemy = tuple(enemy)
     upgrades_done = sum(item in attention.upgrades for item in army.upgrades)
     invests = spend.active and not spend.stabilizing
     return EconomyPlan(
@@ -37,12 +49,13 @@ def plan(
         bases=spend.bases,
         expand=spend.expand,
         freeflow=spend.stabilizing,
-        composition=army.composition,
+        composition=composition.mix(army, enemy),
         reason=spend.reason,
         inputs=(
             *spend.inputs,
             ("upgrades_done", float(upgrades_done)),
             ("techlab_reserve", float(army.techlab_reserve)),
+            ("enemy_seen_power", sum(power for _, power in enemy)),
         ),
         upgrades=army.upgrades if invests else (),
         orbitals=spend.active,
@@ -58,4 +71,4 @@ def plan(
     )
 
 
-__all__ = ["ArmyStyle", "investment", "plan", "styles"]
+__all__ = ["ArmyStyle", "composition", "investment", "plan", "styles"]

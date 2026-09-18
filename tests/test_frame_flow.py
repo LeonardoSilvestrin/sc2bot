@@ -186,6 +186,7 @@ def test_a_worker_inside_a_gas_building_does_not_flip_the_economy_plan() -> None
             "production_per_base": 4.0,
             "techlab_reserve": 1.0,
             "gas_worker_share": economy.investment.GAS_WORKER_SHARE,
+            "enemy_seen_power": 0.0,
         }
     )
 

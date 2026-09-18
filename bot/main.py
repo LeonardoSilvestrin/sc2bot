@@ -99,7 +99,9 @@ def play_frame(bot, iteration: int, layers: Layers) -> Frame:
     )
     proposals += offense.proposals
     proposals += layers.intel.plan(attention)
-    economy_plan = economy.plan(attention, strategy, layers.army)
+    economy_plan = economy.plan(
+        attention, strategy, layers.army, awareness.seen_enemy_types
+    )
     structures = layers.structure_control.plan(attention)
     detection = layers.detection.plan(attention, awareness)
     laps.mark("planners")

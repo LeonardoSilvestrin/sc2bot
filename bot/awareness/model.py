@@ -202,6 +202,9 @@ class AwarenessState:
     expected_enemy_power: float = 0.0
     # When an enemy army unit was first seen cloaked or burrowed; None before.
     cloak_seen_at: float | None = None
+    # The seen enemy power by unit type, (type, power), heaviest first: what
+    # the believed army is made of.
+    seen_enemy_types: tuple[tuple[UnitTypeId, float], ...] = ()
 
     @property
     def estimated_enemy_power(self) -> float:
@@ -260,8 +263,8 @@ class AwarenessModel:
         self._contacts: dict[int, Contact] = {}
         # (time, recent_threat) by base id.
         self._threats: dict[str, tuple[float, float]] = {}
-        # (last seen, power) of every enemy army unit believed alive, by tag.
-        self._army: dict[int, tuple[float, float]] = {}
+        # (last seen, power, type) of every enemy army unit believed alive, by tag.
+        self._army: dict[int, tuple[float, float, UnitTypeId]] = {}
         self._cloak_seen_at: float | None = None
         # Last frame's incidents: (id, member tags, lowest member tag).
         self._incident_members: tuple[tuple[str, frozenset[int], int], ...] = ()
@@ -272,7 +275,7 @@ class AwarenessModel:
     def infer(self, attention: AttentionState) -> AwarenessState:
         config = self.config
         contacts = self._remember(attention)
-        seen_enemy = self._remember_army(attention)
+        seen_enemy, seen_types = self._remember_army(attention)
         if self._cloak_seen_at is None and any(
             unit.is_cloaked and is_army(unit) for unit in attention.enemy_units
         ):
@@ -300,6 +303,7 @@ class AwarenessModel:
                 config.army_growth * max(0.0, attention.time - config.army_onset),
             ),
             cloak_seen_at=self._cloak_seen_at,
+            seen_enemy_types=seen_types,
         )
 
     def _remember(self, attention: AttentionState) -> tuple[Contact, ...]:
@@ -345,26 +349,31 @@ class AwarenessModel:
         self._contacts = remembered
         return tuple(remembered[tag] for tag in sorted(remembered))
 
-    def _remember_army(self, attention: AttentionState) -> float:
+    def _remember_army(
+        self, attention: AttentionState
+    ) -> tuple[float, tuple[tuple[UnitTypeId, float], ...]]:
         """sum(power * exp(-age / army_memory)) of the enemy army units seen
-        alive and not seen die, wherever they went since."""
+        alive and not seen die, wherever they went since, in all and by type."""
 
         config = self.config
         now = attention.time
         army = {tag: seen for tag, seen in self._army.items() if tag not in attention.dead_tags}
         for unit in attention.enemy_units:
             if is_army(unit) and unit.power > 0.0:
-                army[unit.tag] = (now, unit.power)
+                army[unit.tag] = (now, unit.power, unit.type_id)
         self._army = {}
         power = 0.0
+        by_type: dict[UnitTypeId, float] = {}
         for tag in sorted(army):
-            seen_at, unit_power = army[tag]
+            seen_at, unit_power, type_id = army[tag]
             existence = math.exp(-max(0.0, now - seen_at) / config.army_memory)
             if existence < config.forget_below:
                 continue
             self._army[tag] = army[tag]
             power += unit_power * existence
-        return power
+            by_type[type_id] = by_type.get(type_id, 0.0) + unit_power * existence
+        types = tuple(sorted(by_type.items(), key=lambda item: (-item[1], item[0].name)))
+        return power, types
 
     def _pressure(self, contact: Contact, position: Point2) -> float | None:
         """power * confidence * K of a contact at a base; None beyond its reach."""

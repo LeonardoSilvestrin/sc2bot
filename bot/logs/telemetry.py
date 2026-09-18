@@ -457,6 +457,9 @@ class Telemetry:
             economy.reactor_on,
             economy.techlab_reserve,
             economy.army,
+            # The mix slides every frame the belief decays: a change of a
+            # whole percent is news.
+            tuple((unit_type, round(share, 2)) for unit_type, share, _ in economy.composition),
         )
         if not self._economy.admit(signature, now=now):
             return
