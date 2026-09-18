@@ -99,6 +99,9 @@ class EconomyPlan:
     reactors: bool = False
     # The production structure that takes those Reactors.
     reactor_on: UnitTypeId = UnitTypeId.BARRACKS
+    # The most of those structures that may carry a Reactor; the rest train
+    # what needs a Tech Lab.
+    reactor_share: float = 1.0
     # Structures of that type that stay without an add-on, so Ares can still
     # put a Tech Lab on one when the composition asks for it.
     techlab_reserve: int = 1

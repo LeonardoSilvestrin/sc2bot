@@ -759,10 +759,29 @@ PLATING = (UpgradeId.TERRANVEHICLEWEAPONSLEVEL1, UpgradeId.TERRANVEHICLEANDSHIPA
 def test_the_plating_is_ordered_by_the_ability_the_armory_offers() -> None:
     armory = Armory(1)
     bot = research_bot([armory], game_ability=AbilityId.RESEARCH_TERRANVEHICLEANDSHIPPLATING)
+    bot.state.upgrades = {UpgradeId.TERRANVEHICLEWEAPONSLEVEL1}
 
     assert economy_behavior.ExactResearch(PLATING).execute(bot, {}, bot.mediator)
-    # The weapons resolve the same way both ways: Ares' UpgradeController has them.
     assert armory.ordered == [AbilityId.ARMORYRESEARCH_TERRANVEHICLEANDSHIPPLATINGLEVEL1]
+
+
+def test_exact_research_keeps_the_order_and_yields_to_ares_first() -> None:
+    # The weapons come first and resolve the same way both ways: they are the
+    # UpgradeController's, and the only Armory is theirs (`bench/smoke-mech2`).
+    armory = Armory(1)
+    bot = research_bot([armory], game_ability=AbilityId.RESEARCH_TERRANVEHICLEANDSHIPPLATING)
+
+    assert not economy_behavior.ExactResearch(PLATING).execute(bot, {}, bot.mediator)
+    assert armory.ordered == []
+
+    # With the weapons underway on one Armory, the plating takes the other.
+    busy = Armory(1, researching=AbilityId.ARMORYRESEARCH_TERRANVEHICLEWEAPONSLEVEL1)
+    free = Armory(2)
+    bot = research_bot(
+        [busy, free], game_ability=AbilityId.RESEARCH_TERRANVEHICLEANDSHIPPLATING
+    )
+    assert economy_behavior.ExactResearch(PLATING).execute(bot, {}, bot.mediator)
+    assert free.ordered == [AbilityId.ARMORYRESEARCH_TERRANVEHICLEANDSHIPPLATINGLEVEL1]
 
 
 def test_exact_research_leaves_alone_what_resolves_and_what_is_underway() -> None:

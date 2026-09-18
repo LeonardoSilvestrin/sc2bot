@@ -40,6 +40,7 @@ def plan(
 
     spend = investment.plan(attention, strategy)
     enemy = tuple(enemy)
+    mix = composition.mix(army, enemy)
     upgrades_done = sum(item in attention.upgrades for item in army.upgrades)
     invests = spend.active and not spend.stabilizing
     return EconomyPlan(
@@ -49,7 +50,7 @@ def plan(
         bases=spend.bases,
         expand=spend.expand,
         freeflow=spend.stabilizing,
-        composition=composition.mix(army, enemy),
+        composition=mix,
         reason=spend.reason,
         inputs=(
             *spend.inputs,
@@ -66,6 +67,7 @@ def plan(
         # resource goes to the army instead, as with the upgrades.
         reactors=invests,
         reactor_on=army.reactor_on,
+        reactor_share=composition.reactor_share(mix, army.reactor_on),
         techlab_reserve=army.techlab_reserve,
         army=army.name,
     )

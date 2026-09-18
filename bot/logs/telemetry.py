@@ -455,6 +455,7 @@ class Telemetry:
             economy.max_production,
             economy.reactors,
             economy.reactor_on,
+            round(economy.reactor_share, 2),
             economy.techlab_reserve,
             economy.army,
             # The mix slides every frame the belief decays: a change of a
@@ -491,6 +492,7 @@ class Telemetry:
                 "max_production": economy.max_production,
                 "reactors": economy.reactors,
                 "reactor_on": economy.reactor_on.name,
+                "reactor_share": economy.reactor_share,
                 "techlab_reserve": economy.techlab_reserve,
                 "army": economy.army,
             },

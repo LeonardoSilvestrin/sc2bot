@@ -58,6 +58,28 @@ def test_support_keeps_its_prior_value_and_the_priorities_stay() -> None:
     ]
 
 
+def test_reactors_follow_what_the_structure_trains_without_a_tech_lab() -> None:
+    # Mech: Hellions (0.4) on Reactors, Cyclones and tanks (0.6) on Tech Labs.
+    assert composition.reactor_share(
+        styles.MECH.composition, UnitTypeId.FACTORY
+    ) == pytest.approx(0.4 / (0.4 + 2 * 0.6))
+    # Bio: Marines (0.55) on Reactors, Marauders (0.2) on Tech Labs; tanks and
+    # Medivacs come from other structures.
+    assert composition.reactor_share(
+        styles.BIO.composition, UnitTypeId.BARRACKS
+    ) == pytest.approx(0.55 / (0.55 + 2 * 0.2))
+    assert composition.reactor_share(styles.MECH.composition, UnitTypeId.STARPORT) == 0.0
+
+
+def test_roaches_seen_move_factories_from_reactors_to_tech_labs() -> None:
+    before = composition.reactor_share(styles.MECH.composition, UnitTypeId.FACTORY)
+    after = composition.reactor_share(
+        composition.mix(styles.MECH, ((UnitTypeId.ROACH, 60.0),)), UnitTypeId.FACTORY
+    )
+
+    assert after < before
+
+
 @pytest.mark.parametrize("style", list(styles.STYLES.values()), ids=list(styles.STYLES))
 def test_every_unit_of_every_style_knows_what_it_can_shoot(style) -> None:
     for unit_type, _, _ in style.composition:

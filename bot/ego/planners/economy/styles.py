@@ -13,13 +13,13 @@ style is measured on its own.
 Bio: a Barracks with a Reactor trains two Marines at a time, and 5 of the 12
 Barracks of `bench/7b/001` never got an add-on while the bank grew past 9,900
 minerals with supply free. Once the opening is over, and while nothing is being
-stabilized, every idle Barracks with no add-on takes a Reactor -- except
-`techlab_reserve` of them, which stay free for the Tech Labs Ares adds when the
-composition asks for Marauders.
+stabilized, idle Barracks with no add-on take Reactors, up to the share the
+mix asks for (`composition.reactor_share`), and always leaving
+`techlab_reserve` of them free for the Tech Labs Ares adds for Marauders.
 
 Mech: Hellions on reactor Factories, Siege Tanks and Cyclones on Tech Lab
-Factories. The same reserve leaves one Factory free for the Tech Labs Ares adds
-for the tanks. Ares builds the Armory the vehicle upgrades need on its own.
+Factories, by the same rule. Ares builds the Armory the vehicle upgrades need
+on its own.
 """
 
 from __future__ import annotations

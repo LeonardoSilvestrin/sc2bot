@@ -20,6 +20,18 @@ its share is the prior times that value:
 
 Stability comes from the belief, which forgets an unseen unit over minutes
 (`AwarenessConfig.army_memory`), not from holding the mix.
+
+The mix also says how many of a production structure should carry a Reactor.
+A Reactor trains two units at a time; a unit that needs a Tech Lab (Ares' own
+tech requirements) trains one at a time and only beside a Tech Lab. With `s_r`
+the share of the mix a structure trains without a Tech Lab and `s_t` the share
+it trains with one, both kept in step:
+
+    reactor_share = s_r / (s_r + 2 * s_t)
+
+`bench/smoke-mech2` put Reactors on all Factories but one: five reactor
+Factories idled with the Hellion share met while the tanks, 35 % of the mix,
+waited on two Tech Labs, and the bank passed 2,800 minerals and 1,600 gas.
 """
 
 from __future__ import annotations
@@ -27,12 +39,21 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from ares.dicts.unit_data import UNIT_DATA
+from ares.dicts.unit_tech_requirement import UNIT_TECH_REQUIREMENT
+from sc2.dicts.unit_trained_from import UNIT_TRAINED_FROM
 from sc2.ids.unit_typeid import UnitTypeId
 
 from .styles import ArmyStyle
 
 # Enemy army power, in Marines, that weighs as much as the style's prior.
 PRIOR_POWER = 20.0
+
+# The Tech Lab of each production structure.
+TECHLAB_OF = {
+    UnitTypeId.BARRACKS: UnitTypeId.BARRACKSTECHLAB,
+    UnitTypeId.FACTORY: UnitTypeId.FACTORYTECHLAB,
+    UnitTypeId.STARPORT: UnitTypeId.STARPORTTECHLAB,
+}
 
 # What each unit we build can shoot: (ground, air).
 REACH: dict[UnitTypeId, tuple[bool, bool]] = {
@@ -151,6 +172,25 @@ def mix(
         (unit_type, weight / scale, priority)
         for (unit_type, _, priority), weight in zip(style.composition, weights, strict=True)
     )
+
+
+def reactor_share(
+    mix: Iterable[tuple[UnitTypeId, float, int]], structure: UnitTypeId
+) -> float:
+    """The share of `structure` that should carry a Reactor to train `mix` in
+    step; 0 when it trains nothing of it."""
+
+    reactor = techlab = 0.0
+    for unit_type, share, _ in mix:
+        if structure not in UNIT_TRAINED_FROM.get(unit_type, ()):
+            continue
+        if TECHLAB_OF[structure] in UNIT_TECH_REQUIREMENT.get(unit_type, ()):
+            techlab += share
+        else:
+            reactor += share
+    if reactor + techlab <= 0.0:
+        return 0.0
+    return reactor / (reactor + 2.0 * techlab)
 
 
 def value(

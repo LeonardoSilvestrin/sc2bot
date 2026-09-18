@@ -94,17 +94,41 @@ def test_stabilizing_with_mech_still_spends_on_the_army_only() -> None:
     assert plan.composition == styles.MECH.composition
 
 
-def test_reactors_go_on_the_factories_the_plan_names() -> None:
-    factories = [Barracks(tag) for tag in (7, 3)]
+def factories_bot(bare: int, reactors: int) -> tuple[FakeBot, list[Barracks]]:
+    factories = [Barracks(tag) for tag in range(1, bare + 1)]
     for factory in factories:
         factory.type_id = UnitTypeId.FACTORY
+    with_reactor = [Barracks(100 + tag, add_on=True) for tag in range(reactors)]
     bot = FakeBot()
     bot.minerals, bot.vespene = 500, 500
-    bot.mediator.get_own_structures_dict[UnitTypeId.FACTORY] = factories
-    plan = mech_plan()
-    behavior = economy_behavior.AddReactors(
-        techlab_reserve=plan.techlab_reserve, structure=plan.reactor_on
-    )
+    bot.mediator.get_own_structures_dict[UnitTypeId.FACTORY] = factories + with_reactor
+    bot.mediator.get_own_structures_dict[UnitTypeId.FACTORYREACTOR] = [
+        object() for _ in range(reactors)
+    ]
+    return bot, factories
 
-    assert behavior.execute(bot, {}, bot.mediator)
-    assert [factory.built for factory in factories] == [[], [UnitTypeId.FACTORYREACTOR]]
+
+def add_reactor(bot: FakeBot) -> bool:
+    plan = mech_plan()
+    return economy_behavior.AddReactors(
+        techlab_reserve=plan.techlab_reserve,
+        structure=plan.reactor_on,
+        reactor_share=plan.reactor_share,
+    ).execute(bot, {}, bot.mediator)
+
+
+def test_reactors_go_on_the_factories_the_plan_names_within_the_share() -> None:
+    # 0.25 of the Factories: the first Reactor of four fits.
+    bot, factories = factories_bot(bare=4, reactors=0)
+
+    assert mech_plan().reactor_share == pytest.approx(0.25)
+    assert add_reactor(bot)
+    assert [factory.built for factory in factories] == [[UnitTypeId.FACTORYREACTOR], [], [], []]
+
+
+def test_a_reactor_beyond_the_share_is_not_added() -> None:
+    # Four Factories with one Reactor already: a second is past 0.25.
+    bot, factories = factories_bot(bare=3, reactors=1)
+
+    assert not add_reactor(bot)
+    assert all(factory.built == [] for factory in factories)

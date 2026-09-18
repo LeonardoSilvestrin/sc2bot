@@ -81,13 +81,18 @@ REACTOR_OF = {
 class AddReactors(MacroBehavior):
     """A Reactor on the idle `structure` with no add-on, lowest tag first, one
     per frame, while more than `techlab_reserve` of them are free for Ares'
-    Tech Labs."""
+    Tech Labs and one more Reactor keeps them within `reactor_share`."""
 
     techlab_reserve: int = 1
     structure: UnitTypeId = UnitTypeId.BARRACKS
+    reactor_share: float = 1.0
 
     def execute(self, ai, config, mediator) -> bool:
         reactor = REACTOR_OF[self.structure]
+        structures = mediator.get_own_structures_dict
+        reactors = len(structures[reactor])
+        if reactors + 1 > self.reactor_share * len(structures[self.structure]):
+            return False
         free = sorted(
             (
                 building
@@ -104,9 +109,13 @@ class AddReactors(MacroBehavior):
 
 @dataclass
 class ExactResearch(MacroBehavior):
-    """The first upgrade of `upgrades` whose research ability in the game's
-    data is not the one its structure offers, ordered by the ability it
-    offers; every other upgrade is left to Ares' UpgradeController."""
+    """Walks `upgrades` in order, as Ares' UpgradeController does. An upgrade
+    whose research ability in the game's data is the one its structure offers
+    is Ares': if a structure could start it now, this yields to Ares. Any
+    other is ordered here by the ability its structure offers. The order of
+    the list holds: in `bench/smoke-mech2` walking past Ares' upgrades let the
+    plating take the only Armory ahead of the weapons, and the weapons were
+    never researched."""
 
     upgrades: tuple[UpgradeId, ...] = ()
 
@@ -116,12 +125,14 @@ class ExactResearch(MacroBehavior):
                 continue
             source = UPGRADE_RESEARCHED_FROM[upgrade]
             ability = RESEARCH_INFO[source][upgrade]["ability"]
-            if ai.game_data.upgrades[upgrade.value].research_ability.exact_id == ability:
-                continue
             structures = mediator.get_own_structures_dict[source]
             if any(order.ability.exact_id == ability for s in structures for order in s.orders):
                 continue
             idle = [s for s in structures if s.is_ready and s.is_idle and ability in s.abilities]
+            if ai.game_data.upgrades[upgrade.value].research_ability.exact_id == ability:
+                if idle:
+                    return False
+                continue
             if idle and ai.can_afford(upgrade):
                 min(idle, key=lambda structure: structure.tag)(ability)
                 return True
@@ -198,7 +209,13 @@ def execute(
         )
     )
     if plan.reactors:
-        macro.add(AddReactors(techlab_reserve=plan.techlab_reserve, structure=plan.reactor_on))
+        macro.add(
+            AddReactors(
+                techlab_reserve=plan.techlab_reserve,
+                structure=plan.reactor_on,
+                reactor_share=plan.reactor_share,
+            )
+        )
     bot.register_behavior(macro)
     if plan.mules:
         call_mules(bot, reserve=energy_reserve, busy=busy)
