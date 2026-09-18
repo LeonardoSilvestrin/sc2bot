@@ -11,7 +11,7 @@ from sc2.position import Point2
 from bot.body import behaviors
 from bot.body.engine import Engine
 from bot.ego.planners import Command, EconomyPlan, Proposal, StructurePlan, intel
-from bot.ego.planners.intel import Intel, scouting_route
+from bot.ego.planners.intel import IntelPlanner, scouting_route
 
 from .fakes import LATTICE, MAP, SIZE, TOPOLOGY, FakeBot, FakeUnit, attention, seen_everywhere, unit
 
@@ -53,11 +53,11 @@ def frame(time: float, *, own_units=(), visible=(), workers=16, visibility=None)
 
 
 def test_no_scout_before_the_mineral_line_grows() -> None:
-    assert Intel().plan(frame(30.0, workers=intel.SCOUT_AT_WORKERS - 1)) == ()
+    assert IntelPlanner().plan(frame(30.0, workers=intel.SCOUT_AT_WORKERS - 1)) == ()
 
 
 def test_the_scout_asks_for_one_scv_and_goes_to_the_enemy_start_first() -> None:
-    (proposal,) = Intel().plan(frame(50.0))
+    (proposal,) = IntelPlanner().plan(frame(50.0))
 
     assert proposal.owner == intel.OWNER
     assert proposal.command is Command.SCOUT
@@ -81,7 +81,7 @@ def test_the_route_laps_the_edge_of_the_enemy_main() -> None:
 
 
 def test_the_scout_follows_the_route_as_it_comes_into_vision_then_goes_home() -> None:
-    model = Intel()
+    model = IntelPlanner()
     route = scouting_route(MAIN_MAP)
     scout = scv(100, 50, 50, role=SCOUTING)
 
@@ -96,7 +96,7 @@ def test_the_scout_follows_the_route_as_it_comes_into_vision_then_goes_home() ->
 
 
 def test_a_lost_scout_is_not_replaced() -> None:
-    model = Intel()
+    model = IntelPlanner()
     model.plan(frame(50.0))
     model.plan(frame(51.0, own_units=(scv(100, role=SCOUTING),)))
 
@@ -106,7 +106,7 @@ def test_a_lost_scout_is_not_replaced() -> None:
 
 
 def test_a_scout_that_cannot_finish_the_lap_goes_home() -> None:
-    model = Intel()
+    model = IntelPlanner()
     scout = scv(100, role=SCOUTING)
     model.plan(frame(50.0, own_units=(scout,)))
 
@@ -115,7 +115,7 @@ def test_a_scout_that_cannot_finish_the_lap_goes_home() -> None:
 
 
 def test_no_scout_once_the_early_game_is_over() -> None:
-    model = Intel()
+    model = IntelPlanner()
 
     assert model.plan(frame(intel.START_BY)) == ()
     assert model.finished == "too_late"

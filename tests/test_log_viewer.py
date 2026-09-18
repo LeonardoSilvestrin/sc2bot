@@ -33,6 +33,7 @@ CATALOG = (
     "strategy.decided",
     "behavior.proposed",
     "behavior.offense_planned",
+    "behavior.missions_updated",
     "behavior.economy_planned",
     "engine.granted",
     "engine.commanded",

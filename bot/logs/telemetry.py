@@ -21,6 +21,7 @@ from bot.body.behaviors.detection import DetectionReport
 from bot.body.behaviors.economy import SpawnMode
 from bot.body.engine import EngineResult, rank
 from bot.ego.planners import DetectionPlan, EconomyPlan, Proposal, StructurePlan
+from bot.ego.planners.missions import MissionView
 from bot.ego.planners.offense import LocalFight, OffensePlan
 from bot.ego.strategy import StrategyState
 
@@ -42,6 +43,7 @@ class Telemetry:
         self._awareness = ChangeGate(heartbeat=heartbeat)
         self._strategy = ChangeGate(heartbeat=heartbeat)
         self._offense = ChangeGate()
+        self._missions = ChangeGate()
         self._economy = ChangeGate()
         self._spawn = ChangeGate()
         self._escorts = ChangeGate()
@@ -147,11 +149,13 @@ class Telemetry:
         *,
         detection: DetectionPlan | None = None,
         detected: DetectionReport | None = None,
+        missions: Sequence[MissionView] = (),
     ) -> None:
         self._record_attention(attention)
         self._record_awareness(attention.time, awareness)
         self._record_strategy(strategy)
         self._record_offense(attention.time, offense)
+        self._record_missions(attention.time, missions)
         self._record_proposals(attention.time, proposals)
         self._record_economy(attention.time, economy)
         self._record_spawn(attention.time, spawn)
@@ -356,6 +360,12 @@ class Telemetry:
                 "rally": _xy(strategy.rally),
                 "inputs": dict(strategy.inputs),
                 "scores": dict(strategy.scores),
+                "policy": {
+                    "offense": {
+                        "posture": strategy.offense.posture.value,
+                        "reason": strategy.offense.reason,
+                    },
+                },
             },
         )
 
@@ -366,6 +376,8 @@ class Telemetry:
             offense.blocked_by,
             offense.target_tag,
             None if offense.target is None else _cell(offense.target),
+            offense.mission_id,
+            offense.mission_status,
         )
         if not self._offense.admit(signature, now=now):
             return
@@ -385,6 +397,54 @@ class Telemetry:
                 "target_kind": offense.target_kind,
                 "inputs": dict(offense.inputs),
                 "fight": None if offense.fight is None else _fight(offense.fight),
+                "mission_id": offense.mission_id,
+                "mission_status": (
+                    None if offense.mission_status is None else offense.mission_status.value
+                ),
+            },
+        )
+
+    def _record_missions(self, now: float, missions: Sequence[MissionView]) -> None:
+        # Opening, every phase, a cancel request and the terminal status.
+        signature = tuple(
+            (
+                mission.mission_id,
+                mission.status,
+                mission.phase,
+                mission.since,
+                None if mission.cancel is None else mission.cancel.mode,
+            )
+            for mission in missions
+        )
+        if not self._missions.admit(signature, now=now):
+            return
+        self._event(
+            "behavior.missions_updated",
+            "behaviors",
+            now,
+            {
+                "missions": [
+                    {
+                        "mission_id": mission.mission_id,
+                        "owner": mission.owner,
+                        "kind": mission.kind,
+                        "status": mission.status.value,
+                        "phase": mission.phase,
+                        "since": mission.since,
+                        "reason": mission.reason,
+                        "cancel": None
+                        if mission.cancel is None
+                        else {
+                            "mode": mission.cancel.mode.value,
+                            "reason": mission.cancel.reason,
+                            "time": mission.cancel.time,
+                        },
+                        "proposals": list(mission.proposals),
+                        "granted_units": mission.granted_units,
+                        "granted_power": mission.granted_power,
+                    }
+                    for mission in missions
+                ]
             },
         )
 
@@ -401,6 +461,7 @@ class Telemetry:
                 proposal.command,
                 _cell(proposal.target),
                 proposal.reason,
+                proposal.mission_id,
             )
             for proposal in ranked
         )
@@ -424,6 +485,7 @@ class Telemetry:
                             None if proposal.must_attack is None else proposal.must_attack.value
                         ),
                         "demand_id": proposal.demand_id,
+                        "mission_id": proposal.mission_id,
                         "unit_types": (
                             None
                             if proposal.unit_types is None
@@ -528,7 +590,8 @@ class Telemetry:
     def _record_grants(self, attention: AttentionState, result: EngineResult) -> None:
         owners = dict(result.owners)
         signature = tuple(
-            (grant.proposal.proposal_id, grant.tags, grant.status) for grant in result.grants
+            (grant.proposal.proposal_id, grant.proposal.mission_id, grant.tags, grant.status)
+            for grant in result.grants
         )
         admitted = self._grants.admit(signature, now=attention.time)
         previous, self._owners = self._owners, owners
@@ -554,6 +617,7 @@ class Telemetry:
                     {
                         "proposal_id": grant.proposal.proposal_id,
                         "owner": grant.proposal.owner,
+                        "mission_id": grant.proposal.mission_id,
                         "priority": grant.proposal.priority,
                         "requested": grant.proposal.count,
                         "minimum_power": grant.proposal.minimum_power,
@@ -594,7 +658,12 @@ class Telemetry:
             proposal = grant.proposal
             if not grant.tags:
                 continue
-            signature = (proposal.command, _cell(proposal.target), grant.tags)
+            signature = (
+                proposal.command,
+                _cell(proposal.target),
+                grant.tags,
+                proposal.mission_id,
+            )
             live[proposal.proposal_id] = (signature, proposal.owner)
             if self._commands.get(proposal.proposal_id, (None,))[0] == signature:
                 continue
@@ -616,6 +685,7 @@ class Telemetry:
                     "priority": proposal.priority,
                     "reason": proposal.reason,
                     "demand_id": proposal.demand_id,
+                    "mission_id": proposal.mission_id,
                     "inputs": dict(proposal.inputs),
                     "strategy": {
                         "objective": strategy.objective.value,

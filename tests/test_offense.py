@@ -12,6 +12,7 @@ from bot.attention import unit_power, unit_view
 from bot.awareness import AwarenessModel
 from bot.body.engine import Engine, GrantStatus
 from bot.ego.planners import Command, Domain, core_army, defense
+from bot.ego.planners.defense import DefensePlanner
 from bot.ego.planners.offense import (
     ENEMY_START,
     FLYING_STRUCTURE,
@@ -19,8 +20,8 @@ from bot.ego.planners.offense import (
     KNOWN_STRUCTURE,
     OWNER,
     SEARCH_TARGET,
-    Offense,
     OffenseConfig,
+    OffensePlanner,
     Stage,
 )
 from bot.ego.strategy import Objective, StrategyModel
@@ -55,9 +56,11 @@ class Game:
     def __init__(self, config: OffenseConfig | None = None, *, engine: bool = False) -> None:
         self.awareness = AwarenessModel()
         self.strategy = StrategyModel()
-        self.offense = Offense(config)
+        self.defense = DefensePlanner()
+        self.offense = OffensePlanner(config)
         # With an Engine, the offense is told what it was granted last frame.
         self.engine = Engine() if engine else None
+        self.feedback = None
 
     def step(
         self,
@@ -85,10 +88,10 @@ class Game:
         strategy = self.strategy.decide(frame, awareness)
         if self.engine is None:
             return frame, awareness, strategy, self.offense.plan(frame, awareness, strategy)
-        plan = self.offense.plan(frame, awareness, strategy, self.engine.held_by(OWNER))
-        self.engine.allocate(
+        plan = self.offense.plan(frame, awareness, strategy, self.feedback)
+        self.feedback = self.engine.allocate(
             frame,
-            defense.plan(frame, awareness, strategy)
+            self.defense.plan(frame, awareness, strategy, self.feedback)
             + core_army.plan(frame, awareness, strategy)
             + plan.proposals,
         )
@@ -277,7 +280,7 @@ def test_defense_takes_what_an_incident_needs_and_the_offense_the_rest() -> None
         701.0, army=army, enemies=zerglings(1), supply=MAXED
     )
     proposals = (
-        defense.plan(frame, awareness, strategy)
+        DefensePlanner().plan(frame, awareness, strategy)
         + core_army.plan(frame, awareness, strategy)
         + plan.proposals
     )

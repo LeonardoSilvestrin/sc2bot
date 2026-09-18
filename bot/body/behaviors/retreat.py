@@ -14,7 +14,7 @@ from ares.behaviors.combat.individual import PathUnitToTarget, SiegeTankDecision
 from bot.ego.planners import Proposal
 
 from .combat import TANKS
-from .core_army import HOLD_RADIUS
+from .hold import HOLD_RADIUS
 
 
 def execute(bot, units: Sequence, proposal: Proposal) -> None:

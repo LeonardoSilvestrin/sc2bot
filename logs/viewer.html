@@ -426,6 +426,7 @@ const NARRATIVE_EVENTS = new Set([
   "game.started", "game.ended",
   "strategy.decided",
   "behavior.offense_planned",
+  "behavior.missions_updated",
   "behavior.economy_planned",
   "engine.commanded",
   "logs.snapshot_failed",
@@ -500,7 +501,9 @@ function fieldsFor(record) {
     case "behavior.proposed":
       return (d.proposals || []).map((p) => `${p.proposal_id} p=${fmt(p.priority)} n=${p.minimum_power != null ? `≥${fmt(p.minimum_power, 1)}pw` : p.count ?? "all"}`).join("  ");
     case "behavior.offense_planned":
-      return `stage=${d.stage} previous=${d.previous} blocked_by=${d.blocked_by ?? "—"} target=${d.target_kind ?? "—"} ${xy(d.target)} committed=${fmt(d.committed_power, 1)}`;
+      return `stage=${d.stage} previous=${d.previous} blocked_by=${d.blocked_by ?? "—"} target=${d.target_kind ?? "—"} ${xy(d.target)} committed=${fmt(d.committed_power, 1)}${d.mission_id ? ` mission=${d.mission_id} ${d.mission_status}` : ""}`;
+    case "behavior.missions_updated":
+      return (d.missions || []).map((m) => `${m.mission_id} ${m.status} ${m.phase} (${m.reason})${m.cancel ? ` cancel=${m.cancel.mode}:${m.cancel.reason}` : ""} units=${m.granted_units}`).join("  ") || "no missions";
     case "behavior.economy_planned":
       return `active=${d.active} workers=${d.workers} gas=${d.gas} bases=${d.bases} expand=${d.expand} freeflow=${d.freeflow}`;
     case "engine.granted":

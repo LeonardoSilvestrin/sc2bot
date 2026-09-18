@@ -1,6 +1,11 @@
 """The bot. The static map is read once, in ``on_start``; then every frame, in order:
 
-ATTENTION -> AWARENESS -> EGO (strategy -> planners) -> BODY (engine -> behaviors) -> LOGS
+ATTENTION -> AWARENESS -> EGO (strategy -> planners and their missions) -> BODY (engine ->
+behaviors) -> LOGS
+
+The Engine's result is kept for the next frame: it is the feedback the
+missions read about what they were granted. Nothing is planned or allocated
+twice in a frame.
 """
 
 from __future__ import annotations
@@ -25,15 +30,15 @@ from bot.ego.planners import (
     Proposal,
     StructurePlan,
     core_army,
-    defense,
     economy,
 )
+from bot.ego.planners.defense import DefensePlanner
 from bot.ego.planners.detection import Detection
 from bot.ego.planners.economy import styles
 from bot.ego.planners.economy.styles import BIO, ArmyStyle
-from bot.ego.planners.intel import Intel
-from bot.ego.planners.offense import OWNER as OFFENSE
-from bot.ego.planners.offense import Offense, OffensePlan
+from bot.ego.planners.intel import IntelPlanner
+from bot.ego.planners.missions import MissionView
+from bot.ego.planners.offense import OffensePlan, OffensePlanner
 from bot.ego.planners.structure_control import StructureControl
 from bot.ego.strategy import StrategyModel, StrategyState
 from bot.logs import Logs
@@ -51,11 +56,14 @@ class Layers:
     army: ArmyStyle = BIO
     awareness: AwarenessModel = field(default_factory=AwarenessModel)
     strategy: StrategyModel = field(default_factory=StrategyModel)
-    offense: Offense = field(default_factory=Offense)
-    intel: Intel = field(default_factory=Intel)
+    defense: DefensePlanner = field(default_factory=DefensePlanner)
+    offense: OffensePlanner = field(default_factory=OffensePlanner)
+    intel: IntelPlanner = field(default_factory=IntelPlanner)
     structure_control: StructureControl = field(default_factory=StructureControl)
     detection: Detection = field(default_factory=Detection)
     engine: Engine = field(default_factory=Engine)
+    # The last allocation, read by the missions on the next frame.
+    feedback: EngineResult | None = None
 
     def configs(self) -> dict[str, object]:
         return {
@@ -82,6 +90,8 @@ class Frame:
     micro: MicroReport
     detection: DetectionPlan
     detected: DetectionReport
+    # Every mission a planner governed this frame, as it left the frame.
+    missions: tuple[MissionView, ...] = ()
 
 
 def play_frame(bot, iteration: int, layers: Layers) -> Frame:
@@ -92,13 +102,12 @@ def play_frame(bot, iteration: int, layers: Layers) -> Frame:
     laps.mark("awareness")
     strategy = layers.strategy.decide(attention, awareness)
     laps.mark("strategy")
-    proposals = defense.plan(attention, awareness, strategy)
+    proposals = layers.defense.plan(attention, awareness, strategy, layers.feedback)
     proposals += core_army.plan(attention, awareness, strategy)
-    offense = layers.offense.plan(
-        attention, awareness, strategy, layers.engine.held_by(OFFENSE)
-    )
+    offense = layers.offense.plan(attention, awareness, strategy, layers.feedback)
     proposals += offense.proposals
-    proposals += layers.intel.plan(attention)
+    proposals += layers.intel.plan(attention, layers.feedback)
+    missions = layers.defense.views() + layers.offense.views() + layers.intel.views()
     economy_plan = economy.plan(
         attention, strategy, layers.army, awareness.seen_enemy_types
     )
@@ -106,6 +115,7 @@ def play_frame(bot, iteration: int, layers: Layers) -> Frame:
     detection = layers.detection.plan(attention, awareness)
     laps.mark("planners")
     result = layers.engine.allocate(attention, proposals)
+    layers.feedback = result
     laps.mark("engine")
     body = behaviors.execute(bot, attention, result, economy_plan, structures, detection)
     laps.mark("behaviors")
@@ -124,6 +134,7 @@ def play_frame(bot, iteration: int, layers: Layers) -> Frame:
         laps.times,
         detection=detection,
         detected=body.detection,
+        missions=missions,
     )
     return Frame(
         attention,
@@ -138,6 +149,7 @@ def play_frame(bot, iteration: int, layers: Layers) -> Frame:
         body.micro,
         detection,
         body.detection,
+        missions,
     )
 
 

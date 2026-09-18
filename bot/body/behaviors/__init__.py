@@ -20,14 +20,14 @@ from bot.attention import AttentionState
 from bot.body.engine import EngineResult
 from bot.ego.planners import Command, DetectionPlan, EconomyPlan, StructurePlan
 
-from . import attack, core_army, detection, economy, retreat, scout, structure_control
+from . import attack, detection, economy, hold, retreat, scout, structure_control
 
 # The behavior that carries out each command with the units granted to it,
 # whichever planner proposed it.
 # A behavior may return the local reactions it took.
 BY_COMMAND: dict[Command, Callable[..., attack.MicroReport | None]] = {
     Command.ATTACK: attack.execute,
-    Command.HOLD: core_army.execute,
+    Command.HOLD: hold.execute,
     Command.SCOUT: scout.execute,
     Command.RETREAT: retreat.execute,
 }

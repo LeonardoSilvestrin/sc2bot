@@ -8,6 +8,7 @@ from bot.attention import BaseView
 from bot.awareness import AwarenessModel
 from bot.body.engine import Engine, GrantStatus
 from bot.ego.planners import Command, Domain, core_army, defense
+from bot.ego.planners.defense import DefensePlanner
 from bot.ego.strategy import StrategyModel
 
 from .fakes import MAIN, NATURAL, attention, unit
@@ -34,13 +35,14 @@ ARMY = (
 THIRD = BaseView(base_id="base:20:36", position=Point2((20.5, 36.5)), is_main=False)
 
 
-def plan(frame, *, strategy_model=None, awareness_model=None):
+def plan(frame, *, strategy_model=None, awareness_model=None, defense_planner=None):
     awareness = (awareness_model or AwarenessModel()).infer(frame)
     strategy = (strategy_model or StrategyModel()).decide(frame, awareness)
     return (
         awareness,
         strategy,
-        defense.plan(frame, awareness, strategy) + core_army.plan(frame, awareness, strategy),
+        (defense_planner or DefensePlanner()).plan(frame, awareness, strategy)
+        + core_army.plan(frame, awareness, strategy),
     )
 
 

@@ -56,12 +56,14 @@ Cada frame atravessa quatro camadas, sempre na mesma ordem
 ```text
 Attention  → o que foi visto neste frame (estado imutável)
 Awareness  → memória e inferências: contatos, ameaça por base, incidentes, estimativa do inimigo
-Ego        → estratégia (objetivo e preferências) e planners (o que fazer, sem nomear unidades)
+Ego        → estratégia (objetivo, preferências e política por domínio), planners (o que fazer,
+             sem nomear unidades) e missões (operações persistentes que os planners governam)
 Body       → Engine (quem recebe cada tarefa) e behaviors (como executar, via Ares)
 ```
 
-O Planner decide **o quê**, o Engine decide **quem**, o Behavior decide
-**como**. Só `observe`, os behaviors e os logs tocam o bot; o resto é testável
+A Strategy decide **o que é permitido**, o Planner **quais operações** existem,
+a Mission **como a operação avança**, o Engine **quem** recebe as unidades e o
+Behavior **como** executar. Só `observe`, os behaviors e os logs tocam o bot; o resto é testável
 sem o jogo. Fórmulas, eventos de log e parâmetros estão em
 [docs/architecture.md](docs/architecture.md).
 

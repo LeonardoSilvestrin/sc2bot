@@ -12,8 +12,16 @@ hands complete plans to the Body. There are two kinds:
   unit: a plan of what to buy or which structure acts, which the Body runs
   directly.
 
-A planner that grows past one question becomes a package with one module per
-question, as `economy` did.
+A unit planner whose work persists over frames governs missions (`missions`):
+the planner decides which operations to open and when to ask one to end, as
+Strategy's policy allows; each mission carries one operation through its
+phases and makes its proposals. `offense` (the main attack), `defense` (one
+area defense per threat incident) and `intel` (the scout) do; `core_army`, the
+fallback, proposes directly.
+
+Every unit planner is a package: the planner in `planner.py`, the kinds of
+mission it governs in `missions/`, one module each, and an `__init__` that
+only re-exports. The contract every mission shares is `missions.py`, here.
 """
 
 from __future__ import annotations
@@ -67,6 +75,10 @@ class Proposal:
     # The coordinated demand this proposal is one part of; its parts share one
     # budget. None for a proposal that stands alone.
     demand_id: str | None = None
+    # The mission (`missions`) that made it; None for a planner without
+    # missions. A mission may make several proposals, and keeps a proposal's
+    # id across its phases so the Engine keeps the same units.
+    mission_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

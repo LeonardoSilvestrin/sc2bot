@@ -1,8 +1,12 @@
 """STRATEGY: what the bot is trying to achieve now, and how hard.
 
 `StrategyModel.decide` turns Awareness into one `StrategyState`: an objective
-held with hysteresis, plus continuous preferences that the planners read
-directly. Strategy commands no unit.
+held with hysteresis, continuous preferences that the planners read directly,
+and the policy each domain with operations of its own must follow -- whether
+it may pursue them, or must withdraw so defending comes first. Strategy
+publishes that policy and nothing more: it knows no mission, and the planner
+of the domain decides which of its operations end and how. Strategy commands
+no unit.
 """
 
 from __future__ import annotations
@@ -27,6 +31,29 @@ class Objective(str, Enum):
 _REASONS = {
     Objective.STABILIZE: "base_under_threat",
     Objective.BUILD_ADVANTAGE: "no_immediate_threat",
+}
+
+
+class Posture(str, Enum):
+    # Open new operations and carry on with those running.
+    PURSUE = "PURSUE"
+    # Open none, and wind down those running.
+    WITHDRAW = "WITHDRAW"
+
+
+@dataclass(frozen=True, slots=True)
+class DomainPolicy:
+    """What Strategy allows one domain's operations."""
+
+    posture: Posture
+    reason: str
+
+
+# While stabilizing, the army defends: no attack starts, and a running one
+# gives its units back.
+_OFFENSE = {
+    Objective.STABILIZE: DomainPolicy(Posture.WITHDRAW, "home_threatened"),
+    Objective.BUILD_ADVANTAGE: DomainPolicy(Posture.PURSUE, "home_secure"),
 }
 
 
@@ -68,6 +95,8 @@ class StrategyState:
     rally: Point2
     inputs: tuple[tuple[str, float], ...]
     scores: tuple[tuple[str, float], ...]
+    # The policy of the offense's operations.
+    offense: DomainPolicy
 
 
 class StrategyModel:
@@ -116,6 +145,7 @@ class StrategyModel:
                 ("planned_enemy_power", planned_enemy),
             ),
             scores=tuple((item.value, scores[item]) for item in Objective),
+            offense=_OFFENSE[objective],
         )
 
     def _select(self, scores: dict[Objective, float], danger: float, now: float) -> None:

@@ -18,6 +18,7 @@ from bot.body.behaviors.detection import DetectionReport
 from bot.body.behaviors.economy import SpawnMode
 from bot.body.engine import EngineResult
 from bot.ego.planners import DetectionPlan, EconomyPlan, Proposal, StructurePlan
+from bot.ego.planners.missions import MissionView
 from bot.ego.planners.offense import OffensePlan
 from bot.ego.strategy import StrategyState
 
@@ -86,6 +87,7 @@ class Logs:
         *,
         detection: DetectionPlan | None = None,
         detected: DetectionReport | None = None,
+        missions: Sequence[MissionView] = (),
     ) -> None:
         started = perf_counter()
         self.logger.begin_frame(attention.iteration)
@@ -104,6 +106,7 @@ class Logs:
                 {**timings, "logs": self._last_ms},
                 detection=detection,
                 detected=detected,
+                missions=missions,
             )
             self.snapshots.capture(attention, awareness, strategy, result)
             self.overlay.render(bot, attention, awareness, strategy, result)

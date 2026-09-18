@@ -10,7 +10,9 @@ less (PARTIAL) or nothing (REJECTED), and why. Workers are eligible only for
 proposals that name a worker type, only out of mining, and stay with the
 proposal that took them. A unit no proposal holds any more is released. The
 Engine commands nothing: what to do is the planners' decision, how to do it
-the behaviors'.
+the behaviors'. It is the only record of who owns a unit, and it never reads
+or changes a mission's lifecycle: the `EngineResult` it returns is the
+feedback the planners and their missions read on the next frame.
 """
 
 from __future__ import annotations
@@ -67,12 +69,6 @@ def rank(proposals: Iterable[Proposal]) -> tuple[Proposal, ...]:
 class Engine:
     def __init__(self) -> None:
         self._owners: dict[int, str] = {}
-
-    def held_by(self, proposal_id: str) -> frozenset[int]:
-        """The units the last allocation granted a proposal: feedback for the
-        planner that made it, which still names no unit."""
-
-        return frozenset(tag for tag, owner in self._owners.items() if owner == proposal_id)
 
     def allocate(self, attention: AttentionState, proposals: Sequence[Proposal]) -> EngineResult:
         army = {unit.tag: unit for unit in attention.own_units if is_army(unit)}

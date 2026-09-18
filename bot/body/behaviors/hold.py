@@ -1,4 +1,4 @@
-"""CoreArmy: carries out HOLD -- hold the target and fight whatever comes.
+"""Hold: carries out HOLD -- hold the target and fight whatever comes.
 
 A granted unit walks to the target, not avoiding danger, and stops within
 `HOLD_RADIUS`; with an enemy within `ENGAGE_RADIUS` it attack-moves instead,
