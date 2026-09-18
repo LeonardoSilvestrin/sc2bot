@@ -1,8 +1,7 @@
 # Arquitetura: camadas
 
-Implementação da primeira fatia do [mapa de migração](migration-map.md). No `on_start`,
-Attention lê o mapa físico uma vez (`read_map`). Depois, um frame atravessa as camadas
-sempre na mesma ordem, em `play_frame` ([bot/main.py](../bot/main.py)):
+No `on_start`, Attention lê o mapa físico uma vez (`read_map`). Depois, um frame atravessa
+as camadas sempre na mesma ordem, em `play_frame` ([bot/main.py](../bot/main.py)):
 
 ```text
 attention = observe(bot, iteration, map_view)                  ATTENTION
@@ -37,7 +36,7 @@ Todo o resto lê estados imutáveis e é testável sem `AresBot`.
 | BODY / engine | [bot/body/engine.py](../bot/body/engine.py) | `EngineResult` | Só alocação. Ordena por `(-priority, owner, proposal_id)` e concede cada unidade de exército a no máximo uma proposta. Restrições duras vêm antes de qualquer ordem: `unit_types`, `must_attack` (`GROUND`/`AIR`) e, num pedido de poder, `power > 0`. Entre as elegíveis livres, as que já eram da proposta primeiro, depois as mais próximas. Pede-se `minimum_power` (unidades até atingir o poder), `count` ou todas as livres; cada `Grant` traz `power`, `status` (`FULL`/`PARTIAL`/`REJECTED`) e `reason`. Um pedido de todas as livres que não recebe nenhuma fica `REJECTED` (`eligible_units_taken`/`no_eligible_units`). Workers só são elegíveis para propostas que pedem um tipo de worker, só saindo da mineração (role `GATHERING`) ou já sendo da proposta. `released` lista quem perdeu o dono; `held_by(proposal_id)` devolve ao planner o que a última alocação lhe deu, sem que ele nomeie unidades. Não comanda nada. |
 | BODY / behaviors | [bot/body/behaviors/](../bot/body/behaviors/) | — | Executam os grants, despachados por `Command`. `attack` (`ATTACK`, de Defense ou da ofensiva): `AMove`, Siege Tank decide o siege sem ficar preso ao ponto; Marine/Marauder usam Stim com inimigo a ≤ 10 e ≥ 50 % de vida; Medivac vai ao centro do próprio grupo. `retreat` (`RETREAT`): path ao ponto sem lutar, Siege Tank sai do siege. `core_army` (`HOLD`): `PathUnitToTarget` até o ponto, `AMove` com inimigo a ≤ 10 (bio usa Stim pela mesma regra do `attack`), Siege Tank fica sieged perto do ponto. `scout` (`SCOUT`): tira o worker da mineral, role `SCOUTING`, path sem evitar perigo. `economy`: para o build runner do Ares quando o plano interrompe o opening; workers liberados voltam a `GATHERING`, `Mining`, `MacroPlan` (Orbital antes de `BuildWorkers`, upgrades antes do `SpawnController`, depois `ProductionController` e `AddReactors`, nesta ordem, com o teto de produção e a reserva de Tech Lab do plano) e MULEs, sem gastar a reserva de scan nem usar o Orbital que escaneou; devolve o `SpawnMode` (com a composição inteira exatamente na proporção, o `SpawnController` roda em `freeflow` naquele frame). `detection`: scan com o Orbital pronto de mais energia; Engineering Bay e depois uma Missile Turret por vez, pelo `BuildStructure` do Ares na expansão mais próxima da base. `execute` devolve `BodyReport` (`spawn`, `micro`, `detection`). `structure_control`: abaixa e levanta os depots do plano. `combat` guarda o que `attack` e `core_army` compartilham: decisão de siege, `AMove` e a regra do Stim. O Siege Tank decide o siege também contra os inimigos que o Ares lembra fora de visão; o Stim e a saída do path no HOLD só contam inimigos à vista neste frame. |
 | LOGS | [bot/logs/](../bot/logs/) | — | Log JSONL, snapshots SVG do campo e overlay in-game. Nenhum deles muda decisão nem derruba partida. |
-| HARNESS | [harness/](../harness/), [bench.py](../bench.py) | `GameSpec`, `result.json` | Fora do bot. Matriz fixa de partidas contra a IA, cada uma num processo com timeout de relógio; `result.json` liga resultado (`victory`, `defeat`, `tie`, `timeout`, `crash`, `no_result`, `not_played`) a commit, SHA do Ares, árvore suja, fingerprint da configuração, mapa, oponente, seed, replay e JSONL. Uma partida que reportou resultado com o relógio do bot em 0 é `not_played` (o python-sc2 resigna no primeiro passo quando o `on_start` levanta): conta em `games`, não em `played`, fica fora da taxa de vitória e da duração média, e `run` a joga de novo em vez de pular. `summarize` recalcula o desfecho do que cada registro guardou, então execuções antigas são resumidas pela regra atual; `compare` agrega com intervalo de Wilson. |
+| HARNESS | [harness/](../harness/), [bench.py](../bench.py) | `GameSpec`, `result.json` | Fora do bot. Matriz fixa de partidas contra a IA, cada uma num processo com timeout de relógio; `result.json` liga resultado (`victory`, `defeat`, `tie`, `timeout`, `crash`, `no_result`, `not_played`) a commit, SHA do Ares, árvore suja, fingerprint da configuração, mapa, oponente, seed, replay e JSONL. Uma partida que reportou resultado com o relógio do bot em 0 é `not_played` (o python-sc2 resigna no primeiro passo quando o `on_start` levanta): conta em `games`, não em `played`, fica fora da taxa de vitória e da duração média, e `run` a joga de novo em vez de pular. `summarize` recalcula o desfecho do que cada registro guardou, então execuções antigas são resumidas pela regra atual; `compare` agrega com intervalo de Wilson. O fingerprint cobre só as configs de `Layers.configs()` (awareness, strategy, offense, structure_control, detection); as constantes de módulo da economia (`COMPOSITION`, `UPGRADES`, `PRODUCTION_PER_BASE`, `GAS_WORKER_SHARE`, `MAX_WORKERS`, `TECHLAB_RESERVE`) e do poder (`SPLASH_TARGETS`) ficam de fora, então dois benches com o mesmo fingerprint podem ter economias diferentes: compare pelo commit. |
 
 ## Matemática
 
@@ -227,21 +226,76 @@ as fatias de tempo são `attention`, `awareness`, `strategy`, `planners`, `engin
 .venv\Scripts\python.exe bench.py compare bench\<base> bench\<desafiante>
 ```
 
-## Fora desta fatia
+## Ainda não implementado
 
-Belief probabilístico de exército, forças agregadas, avaliação dinâmica de território, `RegionState` (nenhuma decisão o consome ainda),
-scouting depois do early game, map control, harass, combat simulation do Ares na decisão de lutar e scan de reconhecimento da
-luta (ambos medidos e revertidos), pedido de expansão mantido por um planner com estado (idem), path de grupo
-consciente de risco, coesão/reforços da ofensiva (hoje toda unidade livre vai sozinha até o grupo), alcance no modelo
-de poder (o splash já conta, o alcance não) e splash contado contra a aglomeração real em vez da suposta, alcance de
-estruturas voando sobre terreno impassável, stutter/focus/target scoring, Medivac evacuando, Raven e scan ofensivo/de informação, turret por rota aérea,
-preempção com compromisso e ciclo de siege próprio da
-defesa. No wall: antecipar o fechamento por contato lembrado ou pela rota, alcance pela velocidade do inimigo, distinguir
-os depots do wall e política para unidades nossas empurradas ou presas do lado de fora. Na defesa: distinguir scout, worker rush e ataque; histerese de admissão/liberação; alcance por pathing em vez de
-distância; eventos explícitos de linhagem de incidentes; `desired_power`, suitability e custos de assignment. Na economia:
-bases por `ready + pending` explícito, CC voando, cooldown do alvo, supply antecipado além do que o `AutoSupply`
-do Ares já faz (pending e produção), a causa do banco com supply livre, reação específica a
-rush (bunker, worker pull, reparo) e o resto do `MacroPlan` do Ares que para no primeiro behavior que age (supply,
-workers, gás e expansão ainda passam na frente do `SpawnController`). Na estratégia: rally alternando
-entre bases de ameaça quase igual e reforços que ainda não foram vistos (o objetivo lê só `danger`, não a estimativa). No desconhecido: estimativa por produção ou economia vista, informação ampla que mostre
-um exército menor que o esperado, scouting recorrente, calibração de `army_growth`/`army_cap` e renomear `risk`. Cada um entra quando um problema de gameplay medido pedir.
+Cada item entra quando um problema de gameplay medido pedir. Os modelos já escritos no branch
+`matematização` que servem a vários deles estão em [migration-map.md](migration-map.md).
+
+- **Informação:** scouting depois do early game (o SCV sai uma vez, antes de 240 s), belief
+  probabilístico do exército inimigo, forças inimigas agregadas além dos incidentes, estimativa do
+  inimigo por produção ou economia vista, informação ampla que mostre um exército menor que o esperado,
+  calibração de `army_growth`/`army_cap`, Raven e scan de informação.
+- **Espaço:** `RegionState` e território (a topologia e o campo são calculados e nenhuma decisão os
+  consome), map control, path de grupo consciente de risco, alcance de estruturas voando sobre terreno
+  impassável.
+- **Combate:** alcance no modelo de poder (o splash já conta, o alcance não) e splash contado contra a
+  aglomeração real em vez da suposta; coesão e reforços da ofensiva (hoje toda unidade livre vai sozinha
+  até o grupo); stutter, focus fire, target scoring; Medivac evacuando; harass.
+- **Defesa:** distinguir scout, worker rush e ataque; histerese de admissão/liberação; alcance por
+  pathing em vez de distância; eventos explícitos de linhagem de incidentes; `desired_power`,
+  suitability e custos de assignment; preempção com compromisso; ciclo de siege próprio da defesa;
+  turret por rota aérea.
+- **Wall:** antecipar o fechamento por contato lembrado ou pela rota, alcance pela velocidade do
+  inimigo, distinguir os depots do wall e política para unidades nossas empurradas ou presas do lado
+  de fora.
+- **Economia:** a causa do banco com supply livre; reação específica a rush (bunker, worker pull,
+  reparo); reposição de produção destruída; bases por `ready + pending` explícito, CC voando, cooldown
+  do alvo e bases esgotadas (uma base sem minerais continua contando); supply antecipado além do
+  `AutoSupply` do Ares; o resto do `MacroPlan` do Ares que para no primeiro behavior que age (supply,
+  workers, gás e expansão ainda passam na frente do `SpawnController`); uma abertura e uma composição
+  por matchup.
+- **Estratégia:** rally alternando entre bases de ameaça quase igual; objetivo que leia a estimativa do
+  inimigo, não só `danger`; renomear `risk`.
+- **Harness:** repetir a célula na mesma execução; distinguir a falha do cliente de uma exceção nossa
+  no `on_start`; células fora de VeryHard Macro.
+
+## Medições
+
+Toda medição até aqui: Persephone AIE, IA VeryHard Macro, Zerg/Terran/Protoss, 1.200 s, de um
+`git worktree` limpo. `bench/` fica fora do git; os números abaixo são o registro.
+
+| Execução | Commit | Resultado | O que mediu |
+| --- | --- | --- | --- |
+| `bench/base3` | `fe3cea0` | 8/9 (1 timeout, Terran seed 3) | Linha de base de 9 partidas, seeds 1–3 |
+| `bench/6f` | `455209e` | 9/9 | Luta medida contra o grupo inteiro + gás pelos geysers. Defeito da luta de 16 → 1; o timeout virou vitória em 708 s |
+| `bench/7jk` | `bcd324a` | 7/7 jogadas (2 não jogadas) | Expansão além da sexta base + pedido de base mantido. Bases 6 → 7–9; banco, army supply e duração não mudaram |
+| `bench/6g` | `3fd7723` | 2 `crash`, 1 sem resultado | Tentativa de medir o HEAD; o cliente do SC2 caiu (`WSMessageTypeError`). Não refeita |
+| `bench/rush-probe` | `3fd7723` | 1 timeout (Zerg Rush) | Única partida fora de Macro |
+
+Wilson 95 % de 9/9 é 0,70–1,00 e de 8/9 é 0,57–0,98: o placar não separa nenhuma mudança. O que
+sustenta cada uma é a medida do mecanismo no JSONL.
+
+**Nunca medido sozinho:** Reactors nas Barracks sem add-on (`BARRACKSREACTOR`), a expansão além da
+sexta base sem o pedido mantido (o código que roda hoje), o splash no poder e a interrupção do opening.
+O HEAD não tem matriz própria.
+
+**Medido e revertido** (o código saiu; a hipótese continua descartável ou por refazer):
+
+- **Combat sim do Ares na decisão de lutar** (`bench/6d`): `min(parcela por poder, can_win_fight / 10)`.
+  Nas duas lutas que custaram metade do exército contra Terran, o simulador respondeu vitória enfática:
+  ele só aceita `Unit` vivos, e Siege Tanks em siege atiram de fora da visão.
+- **Scan de reconhecimento da luta** (`bench/6e3`, 8/9 como a linha de base): o scan vinha com a luta já
+  disputada e o grupo dentro do alcance; nenhum recuo veio nos 3 s depois de um scan. Refazer escaneando
+  na rota do avanço.
+- **Pedido de base mantido até virar base** (`bench/7jk`): o pedido ficou seguro 0,2–4,1 s em 4 de 7
+  partidas e não evitou a queda de 43 s que o motivou, porque ela incluía um `STABILIZE`.
+- **Recuo por perda / por troca** na ofensiva (`bench/all4`, `bench/all5`): timeouts sem ganho.
+- **`ProductionController` fora do `MacroPlan`** (`bench/7`): mandava Tech Labs em Barracks que o
+  `SpawnController` acabara de mandar treinar, e a última ordem vale. Há teste contra a reintrodução.
+
+**Falhas de ambiente conhecidas:** o Ares às vezes morre no `on_start`
+(`PlacementManager._solve_natural_bunker` → `TerrainManager.own_expansions[0]` com a lista vazia) e o bot
+resigna com `game_time` 0 — o harness registra `not_played` e rejoga. O cliente do SC2 também fecha a
+conexão no meio da partida (`WSMessageTypeError`, `TimeoutError: Websocket`); aí o jogo reporta derrota e
+**duas execuções do mesmo spec e do mesmo código divergem**, então o determinismo por seed só vale sem
+falha do cliente.

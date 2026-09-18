@@ -1,131 +1,164 @@
-# Mapa de migração: `matematização` → bot enxuto
+# Modelos do branch `matematização`
 
-Este documento compara a base limpa no commit
-`ffe400e5430c422b3420b9975fd30ee118b4f60e` com a branch `matematização`.
-A branch antiga é material de pesquisa: dela vêm invariantes, fórmulas e lições de
-gameplay, não a arquitetura de destino.
+O branch `matematização` é material de pesquisa: tem modelos matemáticos já
+escritos e testados lá, dentro de uma arquitetura que não é a daqui (assessor →
+model → planner → executor por behavior, `MissionPolicy`, `MissionBoard`,
+`MacroPosture`). Este documento lista o que dele já veio para cá, o que ainda
+pode vir e onde está cada coisa, para trazer **a fórmula, não a camada**.
 
-## Mapa priorizado
+Caminhos abaixo são do branch: `git show matematização:<caminho>`.
 
-| Componente antigo | O que realmente faz | Parte valiosa | Complexidade / problema | Decisão | Destino novo |
-| --- | --- | --- | --- | --- | --- |
-| `AresWorldObserver` + `WorldFacts` + `AttentionService` + `AttentionSnapshot` | Converte o estado mutável do Ares em uma visão imutável do frame | Snapshot de unidade, contagens econômicas, custo protegido do opening e utilização de produtores suavizada por tempo | O observer tem cerca de 1.400 linhas e `AttentionService` apenas embrulha `WorldFacts` em outro objeto | **REIMPLEMENTAR** | Um `AttentionState` público, produzido diretamente por `observe(bot, iteration)`; helpers privados por assunto somente quando o arquivo exigir |
-| `EnemyKnowledge`, `EnemyRoster` e `EnemyBaseMemory` | Mantêm o que foi visto, quando foi visto e quais bases foram confirmadas ou esvaziadas | Memória por tag, remoção por morte confirmada, idade/confiança de observações e estados `CONFIRMED/EMPTY/UNKNOWN` | Três memórias parcialmente sobrepostas e vários snapshots intermediários | **MANTER IDEIA** | Estado privado de `Awareness`; uma única coleção pública de contatos e bases lembradas |
-| `belief/estimate.py`, `belief/relative.py`, economia e exército | Estimam quantidades inimigas incompletamente observadas e estabilizam comparações | Decaimento por tempo de jogo, piso do que foi observado, distribuição truncada, probabilidade de vantagem e histerese | Modelo forte cercado por muitos tipos de transporte e dois pipelines paralelos | **MANTER MATEMÁTICA** | Funções puras internas de `Awareness`; migrar depois da fatia mínima, com testes das invariantes matemáticas |
-| `EnemyForceTracker` e clustering | Agrupam contatos inimigos e preservam a identidade dos grupos entre frames | Pareamento determinístico por tags compartilhadas, proximidade e desempate por id | Clustering, tracking, heurísticas e modelos estão fragmentados antes de haver necessidade na base nova | **MANTER IDEIA** | Um módulo interno de forças em `Awareness`, apenas quando defesa/map control precisarem de forças agregadas |
-| `SpatialFieldModel`, kernel e território | Espalham influência, estimam ameaça/controle e extraem regiões, passagens e frontline | Kernel gaussiano, saturação `1-exp(-x)`, distinção entre ameaça possível e controle confirmado, cache/cadência | É o maior subsistema cognitivo e introduz lattice, projeções e muitos snapshots | **MANTER MATEMÁTICA** | Adiar; começar com distância a bases. Depois adicionar um `SpatialAwareness` interno com um resultado público compacto |
-| `StrategicDirector`, scoring e histerese | Pontuam objetivos a partir de sinais normalizados e evita oscilações | Contribuições explicáveis, limites `[-1,1]`/`[0,1]`, margens, tempo mínimo e desempate conservador | `StrategyInputs → StrategySnapshot → StrategicIntent → StrategicContext` repete a mesma decisão em vocabulários diferentes | **REIMPLEMENTAR** | Um `StrategyState` público com objetivo, preferências e razão; o decisor guarda somente o estado necessário à histerese |
-| `StrategicIntent`, `ControlObjectives`, `MissionSignals`, `MissionEvaluation` e `MissionRanker` | Traduz estratégia em preferências e aplica uma utilidade comum às missões | Normalização de utilidade, piso de emergência, penalidade de risco e contribuição detalhada para diagnóstico | Política central cria uma burocracia entre Strategy e Behaviors e duplica representação estratégica | **MANTER MATEMÁTICA / DESCARTAR CAMADAS** | Cada behavior calcula sua prioridade com seus sinais locais modulados diretamente por `StrategyState`; a proposta já chega pronta ao Engine |
-| `UnitAllocator` | Garante posse exclusiva, escolhe unidades e permite preempção controlada | Lease exclusivo, filtros explícitos, `minimum/desired`, ordenação total, compromisso e margem de preempção | Requisitos, squads, custos dinâmicos e lifecycle completo são maiores que a necessidade inicial | **REIMPLEMENTAR MENOR** | `Engine` com mapa `unit_tag → owner`, seleção determinística e prioridade; adicionar commitment/preempção apenas quando dois behaviors reais competirem |
-| `MissionController`, `MissionBoard`, executors e registry | Admite, atualiza, bloqueia, executa e encerra missões | Ordem determinística, deduplicação, limpeza de posse ao terminar e motivo de cada decisão | Controller de mais de 600 linhas, registry, factories e vários estados antes de existir um conjunto pequeno de missões | **REIMPLEMENTAR MENOR** | Um `Engine.step(proposals)` que ordena, aloca e chama um executor/função da proposta; lifecycle finito somente quando scouting/harass exigirem |
-| `StandingPlanner`, `StandingExecutor` e squads | Dá dono e posição de repouso a toda unidade de combate sem tarefa melhor | Invariante “toda unidade controlável tem exatamente um dono” e fallback de menor prioridade | Standing vira missão persistente, squad e lifecycle próprio | **REIMPLEMENTAR** | `CoreArmy` simples, sempre presente e último na arbitragem; segura/reagrupa no ponto escolhido por Strategy |
-| Defense assessor/planner/model/executor | Detecta ameaça por base, dimensiona resposta e posiciona unidades por função | Urgência local, razão ameaça/proteção, preferência anti-ar/ground, geometria de screen/siege e liberação segura de Tanks | Um comportamento ocupa quatro módulos e replica assessment/model/plan/executor mesmo onde há pouco estado | **REIMPLEMENTAR MENOR** | `behaviors/defense.py`; separar executor apenas quando o ciclo de siege justificar |
-| Macro planner, `ArmyDemand` e capacidade | Converte metas de composição em dívida de exército e detecta gargalo de produção | Target por supply, contagem de pending, tech readiness, demanda por produtor e utilização sustentada | `MacroPosture` é uma segunda autoridade estratégica; proposals/controller/contexts alongam a causa de uma compra | **MANTER MATEMÁTICA / REIMPLEMENTAR** | `macro.py` recebe `StrategyState`; funções de worker, supply, army e capacity retornam ações simples. O build runner do Ares sustenta o opening inicial |
-| Scouting, Map Control, Reaper e Banshee | Criam capacidades especializadas com cadência, oportunidade, risco e alvo | Ganho de informação por idade, retenção de alvo, avaliação espacial e micro específico já testado | Template obrigatório assessor/model/planner/executor gera dezenas de tipos e arquivos | **MANTER IDEIA** | Um arquivo por behavior no início; extrair planner/executor somente se houver estado tático real |
-| JSONL, `ChangeGate` e telemetry reporters | Registra uma cadeia causal reproduzível por frame | Envelope `run/seq/iteration/time`, JSON estrito, log por mudança + heartbeat e ids que unem decisão à ação | Muitos reporters e snapshots repetem o estado inteiro; o viewer é um segundo produto | **MANTER IDEIA** | Um logger JSONL pequeno e eventos nos pontos de decisão. Registrar valores de entrada, resultado e razão; viewer fica para depois |
-| Testes da branch antiga | Protegem fórmulas, decisões, arquitetura e integrações | Determinismo, posse exclusiva, ausência de conflito, transições, replay e bugs reais | Grande parte fixa DTOs, imports e camadas que não existirão | **SELECIONAR E REESCREVER** | Testes pequenos de estado e invariantes; reutilizar cenários/replays, não a estrutura dos testes |
+## Já trazido
 
-## Primeira fatia vertical executável
+| Modelo | Lá | Aqui |
+| --- | --- | --- |
+| Kernel gaussiano e saturação `S(x) = 1 − exp(−x)` | `bot/world/awareness/spatial/kernel.py` | [bot/awareness/field.py](../bot/awareness/field.py) |
+| Memória de contato com confiança `exp(−idade/τ)`, esquecimento por morte confirmada e posição vista vazia | `bot/world/awareness/enemy/memory.py`, `knowledge.py` | [bot/awareness/model.py](../bot/awareness/model.py) |
+| Identidade de grupo pelo pareamento de tags compartilhadas, desempate por id | `bot/world/awareness/enemy/forces/tracking.py` | `ThreatIncident` em [bot/awareness/model.py](../bot/awareness/model.py) |
+| Objetivo por scores com margem, permanência mínima e desempate conservador | `bot/strategy/scoring.py`, `hysteresis.py` | [bot/ego/strategy.py](../bot/ego/strategy.py) (dois objetivos em vez de cinco) |
+| Posse exclusiva, ordem total, preferência pelo dono anterior | `bot/engine/missions/allocator.py` | [bot/body/engine.py](../bot/body/engine.py) (sem preempção) |
+| JSONL estrito, `ChangeGate`, identidade da execução | `bot/app/telemetry/`, `bot/app/run_identity.py` | [bot/logs/](../bot/logs/) |
 
-Objetivo: produzir um bot Terran que observa o frame, reconhece ataque à base,
-escolhe entre defender e manter o exército reunido, arbitra cada unidade uma única
-vez e registra por que cada comando ocorreu. O opening e a economia continuam sob
-o build runner e os behaviors básicos do Ares nesta fatia.
+O que foi deliberadamente simplificado ao trazer: a estimativa do inimigo
+aqui é `max(conhecido, visto vivo, esperado)` com incerteza aditiva, não a
+distribuição abaixo; o Engine não tem preempção; a Strategy tem
+`STABILIZE`/`BUILD_ADVANTAGE`, não `RECOVER`, `TAKE_MAP_CONTROL` e `PRESSURE`.
 
-Arquivos iniciais previstos:
+## Candidatos
 
-```text
-bot/
-  main.py
-  attention.py
-  awareness.py
-  strategy.py
-  engine.py
-  telemetry.py
-  behaviors/
-    __init__.py
-    core_army.py
-    defense.py
-tests/
-  test_awareness.py
-  test_strategy.py
-  test_engine.py
-  test_defense.py
-  test_frame_flow.py
-```
+Ordenados pelo problema medido que cada um ataca. Nenhum deve entrar sem uma
+partida que mostre o problema e outra que meça a mudança.
 
-Fluxo de um frame:
+### Demanda de exército e capacidade de produção
 
-```text
-attention = observe(bot, iteration)
-awareness = awareness_model.infer(attention)
-strategy = strategy_model.decide(awareness)
-proposals = defense.plan(attention, awareness, strategy)
-proposals += core_army.plan(attention, awareness, strategy)
-engine.execute(bot, attention, proposals)
-telemetry.record(attention, awareness, strategy, proposals, engine.result)
-```
+**Ataca:** o banco de 4–21 mil minerais com supply livre, a causa em aberto
+mais antiga do bot (ver "Medições" em [architecture.md](architecture.md)).
 
-Contratos mínimos:
+- `bot/macro/production/army_demand.py`: a meta de army supply é a âncora; a
+  composição só diz *em que* pagar a dívida, nunca *se* ela existe.
+  `ciclos = supply_desejado / Σ(peso · supply)`,
+  `desejado_tipo = max(mínimo, ceil(peso · ciclos))`. Separa `missing` de
+  `buildable_shortfall` (a dívida que a tech atual permite pagar).
+- `bot/macro/construction/capacity.py`: produção nova só com unidade devida
+  àquele produtor **e** utilização sustentada do que já existe
+  (`utilization_20s ≥ minimum_utilization`). Cada decisão sai com razão
+  (`existing_capacity_underutilized`, `sustained_income_exceeds_saturated_capacity`,
+  `owed_units_need_an_add_on_not_a_building`, …).
+- `bot/adapters/ares/world_observer.py` (`_producer_utilization`): utilização
+  por tipo como média ponderada pelo tempo de jogo, não por frame:
+  `u ← u + (ocupadas/prontas − u) · min(1, Δt / janela)`.
+- `bot/macro/strategy/config.py` (`production_bonus`): produção extra pelo
+  tamanho do banco. Lá é em degraus (`1 + (banco − limiar) // passo`); ao trazer,
+  tornar contínuo.
 
-- `AttentionState`: tempo, recursos/supply, unidades próprias, inimigos visíveis,
-  estruturas e posições das bases. Não interpreta ameaça.
-- `AwarenessState`: contatos inimigos lembrados e ameaças por base. Na primeira
-  versão, ameaça é uma função explícita de capacidade de ataque e distância.
-- `StrategyState`: `objective` (`STABILIZE` ou `BUILD_ADVANTAGE`), `defense`,
-  `army`, `economy`, `risk` e `reason`. Ameaça imediata escolhe `STABILIZE`;
-  ausência dela escolhe `BUILD_ADVANTAGE`.
-- `MissionProposal`: id, owner, priority, requested unit types/count, target,
-  reason e comando local. Nada de signals/context/evaluation intermediários.
-- `Engine`: ordena por `(-priority, owner, proposal_id)`, entrega cada tag a no
-  máximo uma proposta e executa somente comandos autorizados pelo mapa de posse.
-- `CoreArmy`: pede toda unidade de combate ainda livre com prioridade de fallback.
-- `Defense`: cria uma proposta por base ameaçada, com prioridade derivada de
-  urgência local e da preferência defensiva de Strategy.
+Aqui o `ProductionController` do Ares decide pela renda, com o teto
+`4 · bases`. O que falta é exatamente o diagnóstico: o bot não sabe se o banco
+vem de produção ociosa, produção insuficiente ou dívida que a tech não paga.
+A utilização por produtor sozinha já responderia isso no log.
 
-Critérios de conclusão da fatia:
+### Estimativa do inimigo como distribuição
 
-1. O `on_step` mostra, em ordem, Attention → Awareness → Strategy → Behaviors → Engine.
-2. A mesma entrada sempre produz a mesma estratégia, ordem de propostas e alocação.
-3. Nenhuma unidade recebe comandos de dois owners no mesmo frame.
-4. Toda unidade de combate elegível pertence a Defense ou CoreArmy.
-5. Defense supera CoreArmy quando existe ameaça, e a posse volta ao CoreArmy quando ela some.
-6. Cada ação pode ser explicada por um registro curto com observação, inferência,
-   estratégia, proposta, vencedor, tags e comando.
-7. Testes unitários não precisam instanciar `AresBot`; somente o teste do fluxo usa um fake do bot.
-8. O bot continua importável e o runner existente continua iniciando `MyBot`.
+**Ataca:** a decisão de atacar lê `estimado + 0,5 · incerteza` — um número sem
+probabilidade, e o crescimento esperado (`0,1 Marine/s` a partir de 120 s)
+nunca foi calibrado.
 
-## Matemática candidata, fora da primeira fatia
+- `bot/world/awareness/belief/estimate.py`: o inimigo é
+  `max(leitura, prior + escala · informação · gap)`, com o gap relativo ao
+  prior (o prior é "do nosso tamanho"), então a crença acompanha o crescimento
+  dos dois lados. `informação` decai com τ e só é substituída por leitura pelo
+  menos tão informativa: olhar várias vezes o mesmo canto não soma. O que está
+  acima do conhecido é uma normal truncada em zero cuja média é a acreditada.
+  `advantage(own, estimate) = P(nosso > deles)`, integrada por quantis do resto
+  não visto.
+- `bot/world/awareness/belief/relative.py`: `P(vantagem)` vira
+  `AHEAD`/`EVEN`/`BEHIND` com limiares de entrada/saída (0,75/0,60 e
+  0,25/0,40), persistência de 12 s, e `BEHIND ≤ 0,10` age na hora. Sem visão
+  nenhuma, a leitura fica perto de 0,5.
+- `bot/world/awareness/belief/losses.py`: trocas recentes (supply e workers
+  perdidos por lado) com decaimento `τ = 120 s` corrigem o prior: um jogo par
+  em que perdemos 20 de supply a mais já não é par.
+- `bot/world/awareness/belief/economy.py`: workers inimigos pelo piso visto e
+  pelas bases confirmadas (`bases · workers_por_base`, frescor pela última
+  checagem).
 
-### Estimativa relativa de exército
+Trazer `losses.py` primeiro: é pequeno e corrige o prior da estimativa atual
+sem trocar o modelo.
 
-- **Entradas:** supply próprio, supply inimigo conhecido, idade dos contatos e cobertura.
-- **Modelo:** piso conhecido com decaimento `exp(-idade/τ)`, informação que também
-  decai por tempo e probabilidade de vantagem sobre o restante não observado.
-- **Saída:** supply inimigo estimado, confiança e `P(próprio > inimigo)`.
-- **Por quê:** modular agressão/defesa sem confundir falta de visão com vantagem.
+### Cobertura de scouting
 
-### Campo espacial
+**Ataca:** o scouting acaba aos 240 s; depois disso a incerteza só cresce.
 
-- **Entradas:** posição, raio, força e confiança de cada força lembrada.
-- **Modelo:** `K(d, σ) = exp(-0.5 d²/σ²)` e saturação `S(x) = 1 - exp(-x)`;
-  incerteza alarga ameaça possível, mas não cria controle territorial confirmado.
-- **Saída:** ameaça, apoio, controle e confiança em `[0, 1]` por ponto relevante.
-- **Por quê:** escolher rotas, posições defensivas e objetivos de map control.
+- `bot/world/awareness/enemy/bases/memory.py`: cada expansão candidata é
+  `CONFIRMED`/`EMPTY`/`UNKNOWN` com a última checagem.
+  `enemy_territory_coverage = Σ confiança das confirmadas / (confirmadas + 2)` —
+  os dois lugares nunca vistos são "uma base ainda não achada" e "o exército
+  fora de casa", então sem base confirmada a cobertura é zero, nunca "o inimigo
+  tem pouco".
+- `bot/behavior/scouting/model.py` (`IntelConfig`): scout recorrente
+  (`repeat_scouts_after = 240 s`, informação velha depois de 90 s), Reaper antes
+  de SCV, com oportunidade, risco e urgência separados.
 
-### Demanda e capacidade de produção
+### Território e frente
 
-- **Entradas:** target de supply militar, pesos/custos da composição, unidades
-  ready/pending, tech, produtores e utilização suavizada.
-- **Modelo:** `ciclos = target_supply / Σ(peso × supply)` e
-  `desejado_tipo = max(mínimo, ceil(peso × ciclos))`; nova capacidade só é
-  proposta com dívida buildable e produtores sustentadamente ocupados.
-- **Saída:** dívida por unidade e quantidade desejada de produtores.
-- **Por quê:** impedir tanto produção que para cedo quanto construção de fábricas ociosas.
+**Ataca:** a topologia (1.008 linhas em
+[topology.py](../bot/attention/topology.py)) e o campo não decidem nada hoje.
 
-## Explicitamente fora da primeira fatia
+- `bot/world/awareness/territory/influence.py`: por ponto, influência
+  militar e de estruturas de cada lado somadas cruas e saturadas uma vez;
+  `dominância = (F − E) / (F + E + ε)`; confiança da leitura
+  `max(observação, conhecido / (evidência + presença_não_detectada))` — espaço
+  vazio não observado lê 0, não "nosso".
+- `bot/world/awareness/territory/frontline.py`: a frente é onde a dominância
+  troca de sinal entre vizinhos do lattice, interpolada linearmente na aresta.
+  Pontos sem dono não entram: a borda do nosso território contra mapa vazio é
+  fronteira, não frente.
+- `bot/strategy/spatial/policy.py`: objetivos de controle derivados do
+  território — cada base segurada, as passagens para ela (importância herdada
+  da base), e as regiões a uma passagem de distância (por controle ou por
+  informação).
 
-Belief probabilístico completo, territory/lattice, ControlObjectives, MissionPolicy,
-squads, scans, economy controller próprio, scouting, map control, harassment,
-mission lifecycle genérico, viewer e snapshots SVG. Cada item só entra depois de
-um problema de gameplay mensurável e preservando o fluxo público curto.
+É o caminho para o `RegionState` da P1.2 em [propostas.md](propostas.md).
+
+### Utilidade de missões
+
+**Ataca:** quando houver mais de uma missão militar disputando unidades
+(harass, map control, scout recorrente). Hoje só Defense e Offense disputam.
+
+- `bot/strategy/mission_policy.py` (`evaluate_mission`):
+
+  ```text
+  desejabilidade = piso + (1 − piso) · intent[atividade]
+  valor    = parcela · desejabilidade · (w_o · oportunidade
+             + w_i · ganho_de_informação · intent.informação
+             + w_c · alinhamento · importância · lacuna)
+  urgência = w_u · urgência
+  risco    = w_r · risco · (inevitável + (1 − inevitável) · (1 − tolerância_a_risco))
+  piso_emergência = u_e · clamp((urgência − u_min) / (1 − u_min))
+  utilidade = clamp(max(valor + urgência − risco, piso_emergência), 0, 1)
+  ```
+
+  O piso de emergência vale antes da viabilidade, então uma emergência real
+  continua viável mesmo com utilidade crua negativa.
+- `bot/engine/missions/allocator.py`: preempção com margem (10 pontos de
+  prioridade) mais um custo de preempção de quem está no meio de uma ação.
+
+### Harass e defesa posicional
+
+- `bot/behavior/harass/reaper/model.py`, `harass/banshee/model.py`: alvo por
+  `oportunidade_econômica − defesa − exército − incerteza`, com defesa tolerada
+  (um Reaper que espera mineral line vazia nunca ataca) e tetos de risco para
+  lançar.
+- `bot/behavior/defense/model.py`: `DefenseAnchors`, `choose_approach` e
+  `SiegePhase` — posição de defesa pela passagem de entrada em vez do centro
+  do inimigo, e o ciclo de siege da defesa.
+- `bot/behavior/map_control/model.py`: patrulha por amostras do campo, com os
+  tipos de unidade que servem para isso.
+
+## O que não trazer
+
+A arquitetura do branch: `WorldFacts` → `AttentionSnapshot` → `StrategyInputs`
+→ `StrategicIntent` → `StrategicContext` repetem a mesma decisão em
+vocabulários diferentes, e o template assessor/model/planner/executor gera
+quatro arquivos por behavior antes de haver estado que os justifique.
+`MacroPosture` é uma segunda autoridade estratégica ao lado da Strategy. Aqui
+cada modelo entra como função pura na camada que já é dona do dado.

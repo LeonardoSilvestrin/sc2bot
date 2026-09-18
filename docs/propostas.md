@@ -10,6 +10,16 @@
 > portanto eles servem para diagnosticar decisões, não para afirmar vitória,
 > derrota ou força competitiva.
 
+> **Estado em 18 de setembro de 2026 (`3fd7723`).** O P0 inteiro foi
+> implementado: harness e baseline, defesa por incidente, wall nos dois
+> sentidos, desconhecido estimado, ciclo ofensivo completo, macro mínima com
+> interrupção do opening e CI. P1 e P2 continuam abertos. A análise abaixo é a
+> de 14/09 e descreve o bot de `483722e`; cada lacuna e cada item do roadmap
+> tem uma nota **Hoje** com o que mudou. Como o bot funciona agora está em
+> [architecture.md](architecture.md), com as medições e os experimentos
+> revertidos; os modelos do branch `matematização` que servem ao P1 estão em
+> [migration-map.md](migration-map.md).
+
 ## Conclusão
 
 Sim: o bot está na mesma família arquitetural dos projetos open source maduros
@@ -201,6 +211,8 @@ não foi executada nesta análise, então a afirmação é sobre cobertura decla
 não sobre estado verde. Ainda assim, a forma dos testes protege invariantes
 úteis em vez de apenas detalhes de implementação.
 
+**Hoje:** 279 testes verdes em cerca de 2,5 s, sem instanciar `AresBot`.
+
 ### 7. A fronteira com Ares está saudável
 
 O núcleo puro não virou uma coleção de chamadas ao mediator, enquanto o Body
@@ -221,6 +233,10 @@ caça às últimas estruturas.
 O trace antigo confirma o efeito, sem provar resultado: aos 523 s, 52 unidades
 (incluindo cinco Medivacs e sete Tanks) continuavam sob comando `HOLD`.
 
+**Hoje:** resolvido. `Offense` tem IDLE → ASSEMBLE → ADVANCE ⇄ SEARCH,
+ENGAGE/RETREAT → REGROUP, alvo por estrutura lembrada e busca de estruturas
+voando. Os objetivos da Strategy continuam dois.
+
 ### Defense confunde presença, perigo e déficit de resposta
 
 [`defense.plan`](../bot/ego/planners/defense.py#L26) cria uma proposta para toda
@@ -233,6 +249,10 @@ semanticamente igual no HEAD. Um único SCV inimigo, poder `0,58`, contribuiu
 pressão para três bases. Mesmo com cobertura `6,60`, `3,12` e `12,49`, surgiram
 três propostas e foram retirados do CoreArmy um Marine, um Marauder e um Tank
 para atacar o mesmo SCV. É um excelente caso de regressão já pronto.
+
+**Hoje:** resolvido. Um incidente por grupo de atacantes, id que segue os
+membros, um orçamento `1,5 · poder` repartido entre ar e terra, e o caso do SCV
+virou teste. Continua sem distinguir scout, worker rush e ataque.
 
 ### Ausência de visão parece vantagem
 
@@ -248,6 +268,11 @@ quando estamos aparentemente fortes e seguros. Antes de virar uma entrada real
 de decisões, deve ser renomeado para algo como `initiative`/`commit_confidence`
 ou ter sua semântica corrigida.
 
+**Hoje:** resolvido no mínimo. `estimated = max(conhecido, visto vivo,
+esperado)`, com incerteza e cobertura explícitas, e a ofensiva planeja contra
+`estimado + 0,5 · incerteza`. `risk` não foi renomeado; o crescimento esperado
+não foi calibrado.
+
 ### Campo e topologia ainda fecham pouco o loop
 
 O campo é calculado a cada frame, mas seus consumidores no bot são quase todos
@@ -259,6 +284,8 @@ com `sense_danger=False`, e Defense usa `AMove`.
 Isso cria dois mapas: um cognitivo, próprio e explicável; outro operacional, do
 Ares. A duplicação pode ser boa se as responsabilidades forem explícitas, mas
 hoje a ponte entre ambos está incompleta.
+
+**Hoje:** igual. Nenhuma decisão consome o campo nem a topologia além do scout.
 
 ### A política macro é pequena para o meio de jogo
 
@@ -276,6 +303,12 @@ No trace antigo, o último frame observado tinha 1.270 minerais, 1.173 gás e 15
 de supply livre. Isso não prova um problema geral, mas é um sinal mensurável de
 capacidade/spending insuficiente, especialmente no gás.
 
+**Hoje:** parcialmente. Upgrades, Orbital, MULE, detecção, interrupção do
+opening, teto de produção por base, Reactors, gás por geyser e expansão sem
+teto de seis bases entraram. Continuam uma abertura e uma composição para
+todos, nenhuma reação a rush além da interrupção, e o banco: 4–21 mil minerais
+com supply livre nas partidas medidas, com a causa em aberto.
+
 ### O combate ainda é uma vertical slice
 
 O controle atual é `AMove`, path individual e decisão de siege para Tank. Não há
@@ -283,6 +316,9 @@ decisão squad-level de engajar/retirar, formação, focus fire, overkill contro
 stutter para bio, Stim, comportamento próprio de Medivac, proteção contra
 splash ou target scoring. O Ares já fornece várias primitivas para isso; não é
 necessário começar do zero.
+
+**Hoje:** Stim no ataque e no rally, Medivac acompanhando o grupo, decisão de
+lutar/recuar por grupo. Sem stutter, focus fire, target scoring nem formação.
 
 ### O modelo de capacidade militar é excessivamente agregado
 
@@ -296,12 +332,18 @@ A incerteza também alarga o sigma sem conservar massa. Isso faz sentido como
 **possibilidade de risco**, mas não necessariamente como **ameaça esperada**.
 Os dois conceitos precisam de nomes e consumidores distintos.
 
+**Hoje:** o poder é `sqrt(dps · alvos · vida)`, com splash, e cada unidade
+carrega `can_attack` ground/air; a defesa exige a capacidade (`must_attack`). O alcance
+continua fora — é o que perde as lutas contra Siege Tanks.
+
 ### Há duas representações potenciais de ownership
 
 O Engine guarda o owner real, mas o exército ainda não espelha esse owner nos
 `UnitRole`/squads do Ares; roles são usados principalmente para worker scout e
 mineração. Se squads do Ares entrarem depois, Engine e Ares não podem se tornar
 duas autoridades independentes.
+
+**Hoje:** igual; nenhum squad do Ares entrou.
 
 ### Operação e avaliação ainda são pouco reproduzíveis
 
@@ -311,12 +353,19 @@ sistemático de replay. Os workflows atuais empacotam o bot, mas não executam o
 testes próprios nem o Ruff antes do artefato/upload. O README e o nome do bot
 ainda são os placeholders do template.
 
+**Hoje:** resolvido, exceto o nome do bot. `bench.py` joga uma matriz fixa e
+grava `result.json` com resultado, commit, fingerprint, replay e log; o CI roda
+pytest e ruff antes de empacotar; o README descreve o bot.
+
 ### O wall só abre
 
 StructureControl considera apenas `SUPPLYDEPOT` levantado e só emite `lower`.
 Depois de virar `SUPPLYDEPOTLOWERED`, não há plano que o levante quando um
 inimigo terrestre se aproxima. A própria arquitetura atual lista essa limitação
 como fora da fatia.
+
+**Hoje:** resolvido. O depot sobe com inimigo terrestre a ≤ 8 e desce 3 s
+depois, empurrando nossas unidades para a borda.
 
 ## Fronteiras recomendadas
 
@@ -353,21 +402,38 @@ Cada termo precisa de intervalo, unidade, peso, saturação e log. Hard constrai
 como “precisa atacar air” ou “precisa de detector” não devem virar uma penalidade
 que outro peso consiga comprar.
 
+Quem é dono de cada parte da decisão (revisão de 15/09, que prevalece sobre o
+texto acima onde divergir):
+
+- **Awareness** fornece fatos lembrados ou inferidos: poder e capacidades
+  observadas ou estimadas, confiança, incerteza, continuidade, pathability e
+  ativos afetados. Descreve; não escolhe margem nem prioridade.
+- **Ego** define a política: poder requerido, margem, valor estratégico,
+  requisitos, preferências de suitability, prioridade, alvo e demanda/lifecycle.
+- **Engine** é o dono exclusivo das tags e aplica elegibilidade e custo de
+  assignment ao contrato do Ego.
+- **Behavior** executa e pode reagir localmente para esquiva e sobrevivência,
+  mas não redefine missão, orçamento ou prioridade global.
+
+“Dois consumidores” é uma boa heurística de generalização, não condição
+necessária: um único consumidor mais uma invariante testável pode justificar um
+módulo. O problema é criar outra autoridade, não usar certo sufixo ou pasta.
+
 ## Roadmap priorizado
 
-| Ordem | Proposta | Impacto esperado | Por que agora |
-| --- | --- | --- | --- |
-| P0.1 | Harness reproduzível e baseline | Torna todo o resto mensurável | Hoje não há evidência de win rate/regressão |
-| P0.2 | Corrigir incidentes defensivos e o wall | Remove decisões comprovadamente erradas | Há caso real de um SCV gerando três respostas |
-| P0.3 | Missão ofensiva com engage/retreat/regroup | Dá ao bot uma condição de vitória | O exército hoje só segura posição |
-| P0.4 | Macro resiliente mínima | Evita morrer durante opening e reduz bancos/produção parada | Abertura e composição são estáticas |
-| P0.5 | CI e artefato verificável | Protege a base já bem testada | Workflows empacotam sem rodar testes/lint |
-| P1.1 | Scouting recorrente e estimativa do desconhecido | Evita confundir falta de visão com vantagem | `enemy_power` decai para zero |
-| P1.2 | `RegionState` e campo acionável | Faz a topologia pagar seu custo | Hoje quase só scout/debug a consomem |
-| P1.3 | Squads e micro Terran incremental | Melhora trade e sobrevivência | Ares já oferece os blocos operacionais |
-| P1.4 | Contrato de Proposal/Engine por capacidade e poder | Permite missões concorrentes sem alocações ruins | `count` e proximidade são insuficientes |
-| P1.5 | Builds e reações por matchup | Torna macro/intel adaptativos | Uma única abertura cobre todos os adversários |
-| P2 | Calibração, portfolio por oponente e crença mais rica | Otimiza uma política já funcional | Exige dados que ainda não existem |
+| Ordem | Proposta | Impacto esperado | Por que agora | Hoje |
+| --- | --- | --- | --- | --- |
+| P0.1 | Harness reproduzível e baseline | Torna todo o resto mensurável | Hoje não há evidência de win rate/regressão | Feito; a matriz de 9 partidas é pequena |
+| P0.2 | Corrigir incidentes defensivos e o wall | Remove decisões comprovadamente erradas | Há caso real de um SCV gerando três respostas | Feito |
+| P0.3 | Missão ofensiva com engage/retreat/regroup | Dá ao bot uma condição de vitória | O exército hoje só segura posição | Feito; alcance no poder pendente |
+| P0.4 | Macro resiliente mínima | Evita morrer durante opening e reduz bancos/produção parada | Abertura e composição são estáticas | Parcial: banco e rush abertos |
+| P0.5 | CI e artefato verificável | Protege a base já bem testada | Workflows empacotam sem rodar testes/lint | Feito; nunca rodou no GitHub |
+| P1.1 | Scouting recorrente e estimativa do desconhecido | Evita confundir falta de visão com vantagem | `enemy_power` decai para zero | Estimativa feita; scouting recorrente não |
+| P1.2 | `RegionState` e campo acionável | Faz a topologia pagar seu custo | Hoje quase só scout/debug a consomem | Não começado |
+| P1.3 | Squads e micro Terran incremental | Melhora trade e sobrevivência | Ares já oferece os blocos operacionais | Stim e Medivac; o resto não |
+| P1.4 | Contrato de Proposal/Engine por capacidade e poder | Permite missões concorrentes sem alocações ruins | `count` e proximidade são insuficientes | `minimum_power`, `must_attack` e FULL/PARTIAL/REJECTED feitos; `desired_power`, suitability e preempção não |
+| P1.5 | Builds e reações por matchup | Torna macro/intel adaptativos | Uma única abertura cobre todos os adversários | Não começado |
+| P2 | Calibração, portfolio por oponente e crença mais rica | Otimiza uma política já funcional | Exige dados que ainda não existem | Não começado |
 
 ### P0.1 — Criar um loop de avaliação reproduzível
 
@@ -396,6 +462,12 @@ que outro peso consiga comprar.
 
 O logger atual já resolve boa parte da identidade causal. Falta agregar resultado
 e replay em torno dele.
+
+**Hoje:** feito com a IA do jogo, não com o local-play-bootstrap. Uma partida que
+o bot não jogou (`on_start` falhou) é `not_played`, fora da taxa de vitória.
+Falta: bots fixos como oponente, células fora de VeryHard Macro, repetir a célula
+na mesma execução, distinguir falha do cliente de exceção nossa, e as métricas
+intermediárias acima como relatório (hoje são extraídas do JSONL à mão).
 
 ### P0.2 — Modelar defesa como incidente, não como “base × contato”
 
@@ -434,6 +506,13 @@ cobertura compatível, déficit, unidades concedidas e razão de release. O caso
 um SCV gera no máximo uma resposta pequena; um ataque real ainda mobiliza força
 suficiente.
 
+**Hoje:** feito, lido como **uma demanda coordenada com orçamento único**, não
+como uma única proposta: o orçamento de um incidente é repartido entre as partes
+aérea e terrestre, que somam o total e compartilham `demand_id`; a cobertura já
+no local conta porque o Engine concede primeiro as unidades compatíveis mais
+próximas. Falta: distinguir scout, worker rush e ataque; histerese de
+admissão/liberação; antecipação e tráfego amigo no wall.
+
 ### P0.3 — Fechar o ciclo ofensivo
 
 Não é necessário começar por um sistema genérico de missões. Um planner
@@ -463,6 +542,12 @@ não substituir Strategy inteira.
 - Engage/retreat não alternam rapidamente.
 - Todo início, cancelamento, target switch e retreat possui razão no JSONL.
 
+**Hoje:** feito sem o combat sim do Ares, que foi medido e revertido: ele só
+aceita unidades à vista, e os Siege Tanks em siege atiram de fora da visão. A
+luta local é medida contra o grupo inteiro, não em volta do núcleo. Falta:
+alcance no poder, path de grupo consciente de risco, coesão e reforços (toda
+unidade livre vai sozinha até o grupo).
+
 ### P0.4 — Completar a macro mínima e permitir emergência durante a abertura
 
 **Antes de diversificar builds**, a baseline precisa sobreviver e gastar bem:
@@ -489,6 +574,13 @@ Reduzir supply blocks, idle production e banco por minuto sem piorar
 sobrevivência; reagir aos cenários de rush definidos; manter os targets de base
 e produção estáveis na presença de pending/morph.
 
+**Hoje:** feitos a interrupção do opening por emergência, upgrades, Orbital,
+MULE, scan, Missile Turret, teto de produção por base, Reactors, gás por geyser e
+expansão sem teto fixo. Falta: a causa do banco, reposição de produção
+destruída, reação a rush (bunker, reparo, worker pull, proxy), supply com
+previsão, alvo de bases estável (um pedido mantido foi medido e revertido) e
+dívida/capacidade por utilização, que já está escrita no `matematização`.
+
 ### P0.5 — Colocar os testes existentes na fronteira de entrega
 
 - Workflow de PR/push com `pytest` e `ruff` antes de construir/uploadar.
@@ -502,6 +594,11 @@ e produção estáveis na presença de pending/morph.
   entrar no fingerprint reproduzível.
 - Substituir o README do template por identidade, objetivo, capacidades reais,
   limitações, arquitetura, protocolo de benchmark e instruções de reprodução.
+
+**Hoje:** feitos o gate de pytest/ruff nos dois workflows e o README. Falta:
+gatilho de PR, smoke de import e do zip, isolamento de observers
+(`NullLogger`), fingerprint da economia e do poder, e rodar os workflows no
+GitHub (a suíte nunca rodou em Linux).
 
 ### P1.1 — Tornar informação uma necessidade recorrente
 
@@ -520,6 +617,11 @@ Awareness deve expor ao menos `known_enemy_power`, `estimated_enemy_power`, faix
 de incerteza e `coverage/confidence`. Um modelo simples com piso por tempo,
 bases/produção vistas e o máximo já observado é melhor que assumir zero. Não há
 necessidade de Bayes completo nesta fase.
+
+**Hoje:** a parte da Awareness está feita (`enemy_power`, `seen_enemy_power`,
+`expected_enemy_power`, `estimated_enemy_power`, `enemy_uncertainty`,
+`enemy_coverage`). O scheduler de Intel não existe: um SCV, uma vez, antes de
+240 s.
 
 ### P1.2 — Produzir `RegionState` e obrigar o campo a ter consumidores
 
@@ -621,21 +723,41 @@ ou aprendizado.
 - Não usar Elo ou uma vitória isolada como diagnóstico. Guardar replay, causa da
   decisão e métricas intermediárias.
 
-## Próximo marco recomendado
+## Marcos
 
-Considerar a próxima fatia concluída somente quando:
+### Marco do P0 — atingido
 
-1. uma matriz fixa de partidas produz resultado, replay e logs ligados à revisão;
-2. o caso do SCV não gera três respostas defensivas e o depot volta a levantar;
-3. uma emergência pode interromper/adaptar a abertura;
-4. o exército forma, ataca um objetivo, recua quando desfavorecido e retoma sem
-   oscilar;
-5. o bot procura e destrói os últimos alvos quando está em vantagem;
-6. falta de visão aparece como incerteza, não como `enemy_power=0` confiável;
-7. testes/lint protegem o artefato de ladder;
-8. a comparação com o baseline mostra se houve ganho e em qual métrica.
+1. ~~uma matriz fixa de partidas produz resultado, replay e logs ligados à revisão~~;
+2. ~~o caso do SCV não gera três respostas defensivas e o depot volta a levantar~~;
+3. ~~uma emergência pode interromper/adaptar a abertura~~ (sem partida que o
+   exercite);
+4. ~~o exército forma, ataca um objetivo, recua quando desfavorecido e retoma sem
+   oscilar~~;
+5. ~~o bot procura e destrói os últimos alvos quando está em vantagem~~;
+6. ~~falta de visão aparece como incerteza, não como `enemy_power=0` confiável~~;
+7. ~~testes/lint protegem o artefato de ladder~~;
+8. a comparação com o baseline mostra se houve ganho e em qual métrica —
+   **parcial**: `bench.py compare` existe, mas nove partidas contra a IA não
+   separam nenhuma mudança pelo placar, e o HEAD não tem matriz própria.
 
-Esse marco usa quase toda a infraestrutura que já está pronta e transforma o
-projeto de uma excelente vertical slice observável em um bot capaz de completar
-o ciclo de jogo. Só depois dele vale investir pesado em map control, micro
-avançada, portfolio por oponente ou modelos probabilísticos mais sofisticados.
+### Próximo marco
+
+O bot fecha o ciclo contra a IA VeryHard Macro; o que o separa de um oponente
+mais forte está no P1. A ordem sugerida parte do que já foi medido:
+
+1. **Medição que separe mudanças.** Matriz do HEAD; mais seeds por célula;
+   células de Rush (a única partida fora de Macro foi um timeout); um ou dois
+   bots fixos pelo local-play-bootstrap; métricas intermediárias (banco por
+   minuto, utilização de produtores, army supply em marcos) no `summary.json`
+   em vez de extraídas à mão.
+2. **Macro que gasta.** A causa do banco, com utilização por produtor no log
+   (o modelo está no `matematização`), reposição de produção e reação a rush.
+3. **Poder com alcance.** As lutas perdidas contra Terran são contra Siege Tanks
+   em siege fora da visão; splash já entrou, alcance não.
+4. **Portfolio por matchup (P1.5)** e **scouting recorrente (P1.1)**, juntos:
+   uma troca de build só vale com a informação que a dispara.
+5. **`RegionState` (P1.2)** quando um desses consumidores precisar dele.
+
+Esse marco está atingido quando uma mudança de macro ou de combate aparece como
+diferença medida numa matriz que inclui rush e mais de uma dificuldade, e não
+só como mecanismo no JSONL.

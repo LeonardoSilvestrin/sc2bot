@@ -45,8 +45,8 @@ Starport) para todos os adversários; depois dela:
   que precisa chegar a 5.
 - Sem Raven, scouting recorrente, stutter-step, foco de fogo ou harass.
 
-O andamento e as evidências de cada item estão em
-[docs/propostas_status.md](docs/propostas_status.md).
+O que falta, por área, e as medições estão em
+[docs/architecture.md](docs/architecture.md).
 
 ## Arquitetura
 
@@ -67,11 +67,9 @@ sem o jogo. Fórmulas, eventos de log e parâmetros estão em
 
 | Documento | Conteúdo |
 | --- | --- |
-| [docs/architecture.md](docs/architecture.md) | Camadas, matemática, catálogo de eventos e comandos |
-| [docs/propostas.md](docs/propostas.md) | Análise e roadmap (pesquisa, não checklist) |
-| [docs/propostas_corrigidas.txt](docs/propostas_corrigidas.txt) | Corrigenda que prevalece sobre o roadmap |
-| [docs/propostas_status.md](docs/propostas_status.md) | O que foi feito, com evidência, e o que falta |
-| [docs/migration-map.md](docs/migration-map.md) | Histórico: da branch `matematização` à base atual |
+| [docs/architecture.md](docs/architecture.md) | Camadas, matemática, eventos, comandos, o que falta e as medições |
+| [docs/propostas.md](docs/propostas.md) | O que aprender de outros bots (Ares, PiG, Sajuuk, Sharky, MicroMachine, Sharpy) e o roadmap |
+| [docs/migration-map.md](docs/migration-map.md) | Modelos matemáticos do branch `matematização`: o que já veio e o que ainda pode vir |
 
 ## Instalação
 
@@ -148,8 +146,10 @@ Referência atual: Persephone AIE, IA VeryHard Macro, Zerg/Terran/Protoss,
 seeds 1-3, 1.200 s. A linha de base de nove partidas (`fe3cea0`) fez 8/9; com a
 luta local corrigida e mais gás (`455209e`), 9/9 e duração média de 837 s para
 758 s. Uma partida por célula: os intervalos de Wilson se cobrem e o placar não
-separa as mudanças — o que as sustenta são as medidas de mecanismo em
-[docs/propostas_status.md](docs/propostas_status.md).
+separa as mudanças — o que as sustenta são as medidas de mecanismo, registradas
+com os experimentos revertidos em "Medições" de
+[docs/architecture.md](docs/architecture.md). O código atual (`3fd7723`) ainda
+não tem matriz própria.
 
 ## Entrega
 
