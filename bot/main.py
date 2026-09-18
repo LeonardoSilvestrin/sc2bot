@@ -6,6 +6,7 @@ ATTENTION -> AWARENESS -> EGO (strategy -> planners) -> BODY (engine -> behavior
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from random import Random
 from time import perf_counter
 
 from ares import AresBot
@@ -28,6 +29,8 @@ from bot.ego.planners import (
     economy,
 )
 from bot.ego.planners.detection import Detection
+from bot.ego.planners.economy import styles
+from bot.ego.planners.economy.styles import BIO, ArmyStyle
 from bot.ego.planners.intel import Intel
 from bot.ego.planners.offense import OWNER as OFFENSE
 from bot.ego.planners.offense import Offense, OffensePlan
@@ -44,6 +47,8 @@ class Layers:
 
     map_view: MapView
     logs: Logs
+    # Chosen once, in `on_start`.
+    army: ArmyStyle = BIO
     awareness: AwarenessModel = field(default_factory=AwarenessModel)
     strategy: StrategyModel = field(default_factory=StrategyModel)
     offense: Offense = field(default_factory=Offense)
@@ -59,6 +64,7 @@ class Layers:
             "offense": self.offense.config,
             "structure_control": self.structure_control.config,
             "detection": self.detection.config,
+            "army": self.army,
         }
 
 
@@ -93,7 +99,7 @@ def play_frame(bot, iteration: int, layers: Layers) -> Frame:
     )
     proposals += offense.proposals
     proposals += layers.intel.plan(attention)
-    economy_plan = economy.plan(attention, strategy)
+    economy_plan = economy.plan(attention, strategy, layers.army)
     structures = layers.structure_control.plan(attention)
     detection = layers.detection.plan(attention, awareness)
     laps.mark("planners")
@@ -140,6 +146,7 @@ class MyBot(AresBot):
         *,
         logs: Logs | None = None,
         lattice_spacing: int = DEFAULT_LATTICE_SPACING,
+        army: str | None = None,
     ):
         """
         Parameters
@@ -151,17 +158,24 @@ class MyBot(AresBot):
             Where the bot explains itself; silent by default (ladder).
         lattice_spacing :
             Map cells between the points Awareness reasons over.
+        army :
+            The army style to play, by name; None draws one for the enemy's race.
         """
         super().__init__(game_step_override)
         self.bot_logs = logs or Logs()
         self.lattice_spacing = lattice_spacing
+        self.army = army
         self.layers: Layers | None = None
 
     async def on_start(self) -> None:
         await super().on_start()
         map_view = read_map(self, lattice_spacing=self.lattice_spacing)
-        self.layers = Layers(map_view=map_view, logs=self.bot_logs)
+        army = styles.choose(self.enemy_race, Random(), forced=self.army)
+        # Nothing of the opening has been played yet.
+        self.build_order_runner.switch_opening(army.opening, remove_completed=False)
+        self.layers = Layers(map_view=map_view, logs=self.bot_logs, army=army)
         self.bot_logs.game_started(self, map_view, self.layers.configs())
+        await self.chat_send(styles.announcement(army))
 
     async def on_step(self, iteration: int) -> None:
         await super().on_step(iteration)

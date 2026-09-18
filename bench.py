@@ -1,6 +1,7 @@
 """Local benchmark: a fixed matrix of games against the built-in AI.
 
-    bench.py run --out bench/<label> [--maps ...] [--races ...] [--games N] [--seed S]
+    bench.py run --out bench/<label> [--maps ...] [--races ...] [--armies ...]
+                 [--games N] [--seed S]
     bench.py summarize bench/<label>
     bench.py compare bench/<baseline> bench/<challenger>
 
@@ -51,6 +52,9 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--races", nargs="+", default=list(DEFAULT_RACES))
     run.add_argument("--difficulties", nargs="+", default=["VeryHard"])
     run.add_argument("--ai-builds", nargs="+", default=["Macro"])
+    run.add_argument(
+        "--armies", nargs="+", default=None, help="army styles (default: the bot draws)"
+    )
     run.add_argument("--games", type=int, default=1)
     run.add_argument("--seed", type=int, default=1)
     run.add_argument("--time-limit", type=float, default=1800.0, help="game seconds")
@@ -88,6 +92,7 @@ def _run(args) -> int:
         games=args.games,
         seed=args.seed,
         game_time_limit=args.time_limit,
+        armies=args.armies or (None,),
     )
     out: Path = args.out.resolve()
     out.mkdir(parents=True, exist_ok=True)
@@ -167,7 +172,9 @@ def _play(spec_path: Path, directory: Path) -> int:
 
     spec = GameSpec.from_json(_read_json(spec_path))
     child: dict = {"result": None, "game_time": None, "error": None}
-    bot = MyBot(logs=Logs(JsonlLogger(directory, session_name=LOG_DIRECTORY)))
+    bot = MyBot(
+        logs=Logs(JsonlLogger(directory, session_name=LOG_DIRECTORY)), army=spec.army
+    )
     exit_code = 0
     try:
         result = run_game(

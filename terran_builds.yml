@@ -5,6 +5,9 @@
 # Never persist opponent/build history to disk: ladder-safe.
 UseData: false
 BuildSelection: Cycle
+# The bot, not Ares, picks the opening: in `on_start` it draws an army style
+# (bot/ego/planners/economy/styles.py) and switches to that style's build. The
+# cycles below only list which builds exist for each race.
 
 BuildChoices:
     # Active when `Debug: True` in config.yml.
@@ -24,6 +27,7 @@ BuildChoices:
         BotName: Zerg
         Cycle:
             - BioThreeOneOne
+            - MechHellionTank
     Random:
         BotName: Random
         Cycle:
@@ -60,3 +64,31 @@ Builds:
             - 30 orbital
             - 32 marine *4
             - 36 medivac *2
+
+    # Reaper expand into mech: a reactor Factory for Hellions against the
+    # first lings, then a Tech Lab Factory for Siege Tanks and Cyclones.
+    MechHellionTank:
+        AutoSupplyAtSupply: 30
+        ConstantWorkerProductionTill: 55
+        PersistentWorker: false
+        ShouldHandleGasSteal: true
+        OpeningBuildOrder:
+            - 14 supply @ ramp
+            - 16 barracks @ ramp
+            - 16 gas
+            - 0 orbital
+            - 0 reaper
+            - 19 expand
+            - 20 supply @ ramp
+            - 20 factory @ ramp
+            - 21 gas
+            - 22 marine
+            - 23 factoryreactor
+            - 24 factory
+            - 25 gas
+            - 26 hellion *2
+            - 28 factorytechlab
+            - 30 orbital
+            - 30 hellion *2
+            - 34 siegetank
+            - 37 cyclone

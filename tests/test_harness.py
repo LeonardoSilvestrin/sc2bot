@@ -56,9 +56,24 @@ def test_the_same_arguments_give_the_same_games_in_a_fixed_order() -> None:
     assert GameSpec.from_json(json.loads(json.dumps(specs[5].to_json()))) == specs[5]
 
 
+def test_each_army_style_is_its_own_cell_and_old_records_still_load() -> None:
+    specs = small_matrix(maps=("A",), races=("Zerg",), games=1, armies=("bio", "mech"))
+
+    assert [spec.army for spec in specs] == ["bio", "mech"]
+    assert [spec.game_id for spec in specs] == [
+        "000-A-Zerg-VeryHard-Macro-10-bio",
+        "001-A-Zerg-VeryHard-Macro-10-mech",
+    ]
+    # A record written before the army axis existed: the bot drew its style.
+    old = specs[0].to_json()
+    del old["army"]
+    assert GameSpec.from_json(old).army is None
+    assert GameSpec.from_json(old).game_id == "000-A-Zerg-VeryHard-Macro-10"
+
+
 @pytest.mark.parametrize(
     "changes",
-    [{"games": 0}, {"game_time_limit": 0.0}, {"maps": ()}, {"races": ()}],
+    [{"games": 0}, {"game_time_limit": 0.0}, {"maps": ()}, {"races": ()}, {"armies": ()}],
 )
 def test_an_empty_or_invalid_matrix_is_rejected(changes) -> None:
     with pytest.raises(ValueError):

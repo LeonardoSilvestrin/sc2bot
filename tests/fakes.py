@@ -317,6 +317,7 @@ class FakeDebugClient:
 # (minerals, vespene) of what a test asks the fake bot to afford.
 _COST = {
     UnitTypeId.BARRACKSREACTOR: (50, 50),
+    UnitTypeId.FACTORYREACTOR: (50, 50),
     UnitTypeId.BARRACKS: (150, 0),
     UnitTypeId.MARINE: (50, 0),
 }

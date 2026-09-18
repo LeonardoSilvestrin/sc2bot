@@ -454,7 +454,9 @@ class Telemetry:
             economy.interrupt_opening,
             economy.max_production,
             economy.reactors,
+            economy.reactor_on,
             economy.techlab_reserve,
+            economy.army,
         )
         if not self._economy.admit(signature, now=now):
             return
@@ -485,7 +487,9 @@ class Telemetry:
                 "interrupt_opening": economy.interrupt_opening,
                 "max_production": economy.max_production,
                 "reactors": economy.reactors,
+                "reactor_on": economy.reactor_on.name,
                 "techlab_reserve": economy.techlab_reserve,
+                "army": economy.army,
             },
         )
 

@@ -1,13 +1,8 @@
-"""Economy: how much to invest in workers, bases and army after the opening.
+"""Investment: how much goes to workers, bases, gas and production.
 
-The opening belongs to Ares' build runner. Afterwards this turns Strategy's
-preferences into an `EconomyPlan`, which the Body's economy behavior runs as
-Ares macro behaviors.
-
-After the opening, Command Centers become Orbital Commands and every Orbital's
-energy goes to MULEs. The upgrades of the composition are researched in
-`UPGRADES` order -- except while stabilizing, when every resource goes to the
-army.
+Nothing here depends on which army is built; that is the army style's
+(`styles`). The opening belongs to Ares' build runner, and this decides when
+the macro plan takes over from it.
 
 The opening is a fixed script and cannot answer an attack. If the bot is
 stabilizing against a threat of at least `OPENING_ABORT_DANGER` before the
@@ -27,13 +22,6 @@ were being paid for. A Refinery is mined by three workers, so the target is
 every geyser of the bases held, as long as at most `GAS_WORKER_SHARE` of the
 workers is mining gas.
 
-A Barracks with a Reactor trains two Marines at a time, and 5 of the 12
-Barracks of `bench/7b/001` never got an add-on while the bank grew past 9,900
-minerals with supply free. Once the opening is over, and while nothing is being
-stabilized, every Barracks with no add-on should take a Reactor -- except
-`TECHLAB_RESERVE` of them, which stay free for the Tech Labs Ares adds when the
-composition asks for Marauders.
-
 The bot expanded while its mineral lines were saturated, and saturation was
 `MINERAL_WORKERS_PER_BASE` workers per base held. That count passes
 `MAX_WORKERS` at five bases, so from the sixth on the test compared the
@@ -46,36 +34,10 @@ bound the target.
 
 from __future__ import annotations
 
-from sc2.ids.unit_typeid import UnitTypeId
-from sc2.ids.upgrade_id import UpgradeId
+from dataclasses import dataclass
 
 from bot.attention import AttentionState
-from bot.ego.planners import EconomyPlan
 from bot.ego.strategy import Objective, StrategyState
-
-COMPOSITION: tuple[tuple[UnitTypeId, float, int], ...] = (
-    (UnitTypeId.MARINE, 0.55, 2),
-    (UnitTypeId.MARAUDER, 0.2, 1),
-    (UnitTypeId.SIEGETANK, 0.15, 0),
-    (UnitTypeId.MEDIVAC, 0.1, 1),
-)
-
-# Bio research first, then infantry weapons and armor level by level; the tanks'
-# weapons come after the second infantry level.
-UPGRADES: tuple[UpgradeId, ...] = (
-    UpgradeId.STIMPACK,
-    UpgradeId.SHIELDWALL,
-    UpgradeId.TERRANINFANTRYWEAPONSLEVEL1,
-    UpgradeId.PUNISHERGRENADES,
-    UpgradeId.TERRANINFANTRYARMORSLEVEL1,
-    UpgradeId.TERRANINFANTRYWEAPONSLEVEL2,
-    UpgradeId.TERRANINFANTRYARMORSLEVEL2,
-    UpgradeId.TERRANVEHICLEWEAPONSLEVEL1,
-    UpgradeId.TERRANINFANTRYWEAPONSLEVEL3,
-    UpgradeId.TERRANINFANTRYARMORSLEVEL3,
-    UpgradeId.TERRANVEHICLEWEAPONSLEVEL2,
-    UpgradeId.TERRANVEHICLEWEAPONSLEVEL3,
-)
 
 # The remembered threat, in [0, 1], that ends the opening while stabilizing:
 # the strategy's emergency level.
@@ -93,12 +55,26 @@ WORKERS_PER_GAS_BUILDING = 3
 GAS_WORKER_SHARE = 0.4
 # Ares' default ceiling of 12 production structures of a type, per three bases.
 PRODUCTION_PER_BASE = 4
-# Barracks left without an add-on for Ares' Tech Labs. One is enough: Ares adds
-# a Tech Lab to the first idle Barracks with no add-on, one per frame.
-TECHLAB_RESERVE = 1
 
 
-def plan(attention: AttentionState, strategy: StrategyState) -> EconomyPlan:
+@dataclass(frozen=True, slots=True)
+class Investment:
+    # False while Ares' build runner still plays the opening.
+    active: bool
+    workers: int
+    gas: int
+    bases: int
+    expand: bool
+    # Every resource goes to the army: no upgrade, no add-on for throughput.
+    stabilizing: bool
+    # Stop Ares' build runner: the opening is over from this frame on.
+    interrupt_opening: bool
+    max_production: int
+    reason: str
+    inputs: tuple[tuple[str, float], ...] = ()
+
+
+def plan(attention: AttentionState, strategy: StrategyState) -> Investment:
     bases = max(1, len(attention.bases))
     # The workforce the plan will actually build; past `MAX_WORKERS` the
     # mineral lines stay open but no worker is ever added to fill them, and a
@@ -134,14 +110,15 @@ def plan(attention: AttentionState, strategy: StrategyState) -> EconomyPlan:
         reason = "no_expansion_left"
     else:
         reason = "build_economy"
-    return EconomyPlan(
+    return Investment(
         active=active,
         workers=min(MAX_WORKERS, WORKERS_PER_BASE * wanted_bases),
         gas=gas_buildings,
         bases=wanted_bases,
         expand=expand,
-        freeflow=stabilizing,
-        composition=COMPOSITION,
+        stabilizing=stabilizing,
+        interrupt_opening=interrupt,
+        max_production=PRODUCTION_PER_BASE * bases,
         reason=reason,
         inputs=(
             ("workers", float(attention.workers)),
@@ -149,19 +126,8 @@ def plan(attention: AttentionState, strategy: StrategyState) -> EconomyPlan:
             ("saturated_at", float(saturated_at)),
             ("expansion_sites", float(sites)),
             ("strategy_economy", strategy.economy),
-            ("upgrades_done", float(sum(item in attention.upgrades for item in UPGRADES))),
             ("danger", strategy.defense),
             ("production_per_base", float(PRODUCTION_PER_BASE)),
-            ("techlab_reserve", float(TECHLAB_RESERVE)),
             ("gas_worker_share", GAS_WORKER_SHARE),
         ),
-        upgrades=UPGRADES if active and not stabilizing else (),
-        orbitals=active,
-        mules=active,
-        interrupt_opening=interrupt,
-        max_production=PRODUCTION_PER_BASE * bases,
-        # A Reactor is an investment in throughput: while stabilizing, every
-        # resource goes to the army instead, as with the upgrades.
-        reactors=active and not stabilizing,
-        techlab_reserve=TECHLAB_RESERVE,
     )

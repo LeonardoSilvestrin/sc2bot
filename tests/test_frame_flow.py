@@ -185,7 +185,7 @@ def test_a_worker_inside_a_gas_building_does_not_flip_the_economy_plan() -> None
             "danger": dangers[0],
             "production_per_base": 4.0,
             "techlab_reserve": 1.0,
-            "gas_worker_share": economy.GAS_WORKER_SHARE,
+            "gas_worker_share": economy.investment.GAS_WORKER_SHARE,
         }
     )
 
@@ -493,7 +493,7 @@ def test_an_attack_during_the_opening_interrupts_it_and_the_log_says_so() -> Non
     frame = play_frame(bot, 0, layers)
 
     assert frame.attention.opening_done is False
-    assert frame.strategy.defense >= economy.OPENING_ABORT_DANGER
+    assert frame.strategy.defense >= economy.investment.OPENING_ABORT_DANGER
     assert (frame.economy.active, frame.economy.interrupt_opening) == (True, True)
     assert bot.build_order_runner.stopped == 1
     assert any(isinstance(item, MacroPlan) for item in bot.registered)

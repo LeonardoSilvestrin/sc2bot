@@ -64,12 +64,15 @@ class GameSpec:
     ai_build: str
     seed: int
     game_time_limit: float
+    # The bot's army style, by name; None lets the bot draw one.
+    army: str | None = None
 
     @property
     def game_id(self) -> str:
+        suffix = "" if self.army is None else f"-{self.army}"
         return (
             f"{self.index:03d}-{self.map_name}-{self.enemy_race}-"
-            f"{self.difficulty}-{self.ai_build}-{self.seed}"
+            f"{self.difficulty}-{self.ai_build}-{self.seed}{suffix}"
         )
 
     def to_json(self) -> dict[str, Any]:
@@ -77,7 +80,8 @@ class GameSpec:
 
     @classmethod
     def from_json(cls, data: Mapping[str, Any]) -> GameSpec:
-        return cls(**{name: data[name] for name in cls.__dataclass_fields__})
+        # A record written before a field existed holds its default.
+        return cls(**{name: data[name] for name in cls.__dataclass_fields__ if name in data})
 
 
 def matrix(
@@ -89,6 +93,7 @@ def matrix(
     games: int,
     seed: int,
     game_time_limit: float,
+    armies: Sequence[str | None] = (None,),
 ) -> tuple[GameSpec, ...]:
     """Every combination, `games` times, in a fixed order; game k plays seed + k.
 
@@ -105,6 +110,7 @@ def matrix(
         ("races", races),
         ("difficulties", difficulties),
         ("ai_builds", ai_builds),
+        ("armies", armies),
     ):
         if not values:
             raise ValueError(f"{name} must not be empty")
@@ -114,18 +120,19 @@ def matrix(
             for race in races:
                 for difficulty in difficulties:
                     for ai_build in ai_builds:
-                        index = len(specs)
-                        specs.append(
-                            GameSpec(
-                                index=index,
-                                map_name=map_name,
-                                enemy_race=race,
-                                difficulty=difficulty,
-                                ai_build=ai_build,
-                                seed=seed + repeat,
-                                game_time_limit=float(game_time_limit),
+                        for army in armies:
+                            specs.append(
+                                GameSpec(
+                                    index=len(specs),
+                                    map_name=map_name,
+                                    enemy_race=race,
+                                    difficulty=difficulty,
+                                    ai_build=ai_build,
+                                    seed=seed + repeat,
+                                    game_time_limit=float(game_time_limit),
+                                    army=army,
+                                )
                             )
-                        )
     return tuple(specs)
 
 

@@ -17,6 +17,7 @@ sys.path.append("ares-sc2")
 
 import yaml
 
+from bot.ego.planners.economy.styles import STYLES
 from bot.logs import JsonlLogger, Logs, OverlayConfig, SnapshotConfig
 from bot.main import MyBot
 from ladder import run_ladder_game
@@ -83,6 +84,30 @@ def parse_local_args(args=None):
         metavar="SECONDS",
         help="Game seconds between SVG snapshots (default: %(default)s).",
     )
+    parser.add_argument(
+        "--army",
+        choices=sorted(STYLES),
+        default=None,
+        help="Army style to play (default: drawn for the enemy's race).",
+    )
+    parser.add_argument(
+        "--enemy-race",
+        choices=("Zerg", "Terran", "Protoss", "Random"),
+        default=None,
+        help="Race of the built-in AI (default: random).",
+    )
+    parser.add_argument(
+        "--difficulty",
+        choices=[difficulty.name for difficulty in Difficulty],
+        default="VeryHard",
+        help="Difficulty of the built-in AI (default: %(default)s).",
+    )
+    parser.add_argument(
+        "--ai-build",
+        choices=[build.name for build in AIBuild],
+        default="Macro",
+        help="Build of the built-in AI (default: %(default)s).",
+    )
     local_args, _ = parser.parse_known_args(args)
     return local_args
 
@@ -125,7 +150,10 @@ def main():
                 race = Race[config[MY_BOT_RACE].title()]
 
     is_ladder = "--LadderServer" in sys.argv
-    bot1 = Bot(race, MyBot(logs=build_logs(local_args, is_ladder=is_ladder)), bot_name)
+    army = None if is_ladder else local_args.army
+    bot1 = Bot(
+        race, MyBot(logs=build_logs(local_args, is_ladder=is_ladder), army=army), bot_name
+    )
 
     if is_ladder:
         # Ladder game started by LadderManager
@@ -159,13 +187,20 @@ def main():
                 "UltraloveAIE_v2",
             ]
 
-        random_race = random.choice([Race.Zerg, Race.Terran, Race.Protoss])
+        if local_args.enemy_race is None:
+            enemy_race = random.choice([Race.Zerg, Race.Terran, Race.Protoss])
+        else:
+            enemy_race = Race[local_args.enemy_race]
         print("Starting local game...")
         run_game(
             maps.get(random.choice(map_list)),
             [
                 bot1,
-                Computer(random_race, Difficulty.VeryHard, ai_build=AIBuild.Macro),
+                Computer(
+                    enemy_race,
+                    Difficulty[local_args.difficulty],
+                    ai_build=AIBuild[local_args.ai_build],
+                ),
             ],
             realtime=False,
         )

@@ -217,7 +217,7 @@ def test_the_economy_runs_mining_always_and_macro_only_after_the_opening() -> No
         bases=1,
         expand=False,
         freeflow=False,
-        composition=economy.COMPOSITION,
+        composition=economy.styles.BIO.composition,
         reason="opening_runs",
     )
     bot = FakeBot()
@@ -321,7 +321,7 @@ def active_plan(**changes) -> EconomyPlan:
         bases=5,
         expand=False,
         freeflow=False,
-        composition=economy.COMPOSITION,
+        composition=economy.styles.BIO.composition,
         reason="build_economy",
     )
     return replace(plan, **changes)
@@ -339,7 +339,7 @@ def test_an_army_exactly_at_its_composition_keeps_growing() -> None:
     # skipped them all while 5,000 minerals piled up.
     composition = {
         unit_type: {"proportion": proportion, "priority": priority}
-        for unit_type, proportion, priority in economy.COMPOSITION
+        for unit_type, proportion, priority in economy.styles.BIO.composition
     }
     stuck = ProductionBot(EXACT)
     assert not SpawnController(composition).execute(stuck, {}, stuck.mediator)

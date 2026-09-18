@@ -16,9 +16,9 @@ else, so the macro plan takes over that same frame.
 
 `AddReactors` is last in the plan. It must come after the SpawnController, for
 the same reason the ProductionController does -- ordering an add-on on a
-Barracks that was just told to train replaces the training order (`bench/7/002`)
+structure that was just told to train replaces the training order (`bench/7/002`)
 -- and last of all because an add-on the game refuses (no room beside the
-Barracks) would otherwise keep acting every frame and starve what comes after
+structure) would otherwise keep acting every frame and starve what comes after
 it.
 """
 
@@ -55,26 +55,36 @@ MULE_ENERGY = 50.0
 MINING_DISTANCE = 10.0
 
 
+# The Reactor each production structure builds.
+REACTOR_OF = {
+    UnitTypeId.BARRACKS: UnitTypeId.BARRACKSREACTOR,
+    UnitTypeId.FACTORY: UnitTypeId.FACTORYREACTOR,
+    UnitTypeId.STARPORT: UnitTypeId.STARPORTREACTOR,
+}
+
+
 @dataclass
 class AddReactors(MacroBehavior):
-    """A Reactor on the idle Barracks with no add-on, lowest tag first, one per
-    frame, while more than `techlab_reserve` of them are free for Ares' Tech
-    Labs."""
+    """A Reactor on the idle `structure` with no add-on, lowest tag first, one
+    per frame, while more than `techlab_reserve` of them are free for Ares'
+    Tech Labs."""
 
     techlab_reserve: int = 1
+    structure: UnitTypeId = UnitTypeId.BARRACKS
 
     def execute(self, ai, config, mediator) -> bool:
+        reactor = REACTOR_OF[self.structure]
         free = sorted(
             (
-                barracks
-                for barracks in mediator.get_own_structures_dict[UnitTypeId.BARRACKS]
-                if barracks.is_ready and barracks.is_idle and not barracks.has_add_on
+                building
+                for building in mediator.get_own_structures_dict[self.structure]
+                if building.is_ready and building.is_idle and not building.has_add_on
             ),
-            key=lambda barracks: barracks.tag,
+            key=lambda building: building.tag,
         )
-        if len(free) <= self.techlab_reserve or not ai.can_afford(UnitTypeId.BARRACKSREACTOR):
+        if len(free) <= self.techlab_reserve or not ai.can_afford(reactor):
             return False
-        free[0].build(UnitTypeId.BARRACKSREACTOR)
+        free[0].build(reactor)
         return True
 
 
@@ -147,7 +157,7 @@ def execute(
         )
     )
     if plan.reactors:
-        macro.add(AddReactors(techlab_reserve=plan.techlab_reserve))
+        macro.add(AddReactors(techlab_reserve=plan.techlab_reserve, structure=plan.reactor_on))
     bot.register_behavior(macro)
     if plan.mules:
         call_mules(bot, reserve=energy_reserve, busy=busy)

@@ -2,9 +2,18 @@
 
 Each planner reads Attention, Awareness and Strategy, computes its own
 priority from its local signals, modulated directly by `StrategyState`, and
-hands complete plans to the Body: a task, a target, a priority and the units
-it requires. A planner never names a unit -- the Engine decides who gets each
-proposal, and the Body's behaviors how it is carried out.
+hands complete plans to the Body. There are two kinds:
+
+- Unit planners (`defense`, `offense`, `core_army`, `intel`) ask for units: a
+  `Proposal` with a task, a target, a priority and the units it requires. They
+  never name a unit -- the Engine decides who gets each proposal, and the
+  Body's behaviors how it is carried out.
+- Resource planners (`economy`, `detection`, `structure_control`) ask for no
+  unit: a plan of what to buy or which structure acts, which the Body runs
+  directly.
+
+A planner that grows past one question becomes a package with one module per
+question, as `economy` did.
 """
 
 from __future__ import annotations
@@ -86,11 +95,15 @@ class EconomyPlan:
     # The most structures of one production type (Barracks, Factory, Starport)
     # Ares may build; how many it builds within that is its income rule.
     max_production: int = 12
-    # Add a Reactor to a Barracks with no add-on: two Marines at a time.
+    # Add a Reactor to an idle `reactor_on` with no add-on: two units at a time.
     reactors: bool = False
-    # Barracks that stay without an add-on, so Ares can still put a Tech Lab
-    # on one when the composition asks for Marauders.
+    # The production structure that takes those Reactors.
+    reactor_on: UnitTypeId = UnitTypeId.BARRACKS
+    # Structures of that type that stay without an add-on, so Ares can still
+    # put a Tech Lab on one when the composition asks for it.
     techlab_reserve: int = 1
+    # The army style the composition and the upgrades come from.
+    army: str = "bio"
 
 
 @dataclass(frozen=True, slots=True)

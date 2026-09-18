@@ -46,7 +46,7 @@ def planned(*, opening_done: bool = True, objective: Objective = Objective.BUILD
 def test_after_the_opening_the_plan_researches_upgrades_and_runs_orbitals() -> None:
     plan = planned()
 
-    assert plan.upgrades == economy.UPGRADES
+    assert plan.upgrades == economy.styles.BIO.upgrades
     assert plan.upgrades[:3] == (
         UpgradeId.STIMPACK,
         UpgradeId.SHIELDWALL,
@@ -100,7 +100,7 @@ def test_what_must_not_wait_for_the_army_runs_before_the_spawn_controller() -> N
         economy_behavior.AddReactors,
     ]
     upgrades = macro.macros[4]
-    assert upgrades.upgrade_list == list(economy.UPGRADES)
+    assert upgrades.upgrade_list == list(economy.styles.BIO.upgrades)
     assert not upgrades.prioritize
     assert macro.macros[1].to is UnitTypeId.ORBITALCOMMAND
 
@@ -151,7 +151,7 @@ class ResearchBot:
 def test_the_upgrade_controller_researches_the_first_upgrade_not_yet_done() -> None:
     lab = Lab()
     bot = ResearchBot({UpgradeId.STIMPACK}, lab)
-    controller = UpgradeController(list(economy.UPGRADES), base_location=None)
+    controller = UpgradeController(list(economy.styles.BIO.upgrades), base_location=None)
 
     acted = controller.execute(bot, {}, bot.mediator)
 
@@ -241,7 +241,7 @@ def opening_plan(defense: float, objective: Objective = Objective.STABILIZE):
 
 
 def test_an_emergency_interrupts_the_opening_and_the_plan_takes_over() -> None:
-    plan = opening_plan(economy.OPENING_ABORT_DANGER)
+    plan = opening_plan(economy.investment.OPENING_ABORT_DANGER)
 
     assert (plan.active, plan.interrupt_opening, plan.reason) == (
         True,
@@ -251,13 +251,13 @@ def test_an_emergency_interrupts_the_opening_and_the_plan_takes_over() -> None:
     # Stabilizing: everything to the army.
     assert plan.freeflow and plan.upgrades == ()
     assert (plan.orbitals, plan.mules) == (True, True)
-    assert dict(plan.inputs)["danger"] == economy.OPENING_ABORT_DANGER
+    assert dict(plan.inputs)["danger"] == economy.investment.OPENING_ABORT_DANGER
 
 
 @pytest.mark.parametrize(
     "defense, objective",
     [
-        (economy.OPENING_ABORT_DANGER - 0.01, Objective.STABILIZE),
+        (economy.investment.OPENING_ABORT_DANGER - 0.01, Objective.STABILIZE),
         # A threat the strategy does not stabilize against yet.
         (0.9, Objective.BUILD_ADVANTAGE),
     ],
@@ -309,7 +309,7 @@ def test_the_production_ceiling_grows_with_the_bases(count: int, ceiling: int) -
     plan = planned(bases=bases(count), workers=16 * count)
 
     assert plan.max_production == ceiling
-    assert dict(plan.inputs)["production_per_base"] == economy.PRODUCTION_PER_BASE
+    assert dict(plan.inputs)["production_per_base"] == economy.investment.PRODUCTION_PER_BASE
 
 
 class Producer:
@@ -401,7 +401,7 @@ def production_after(monkeypatch, count: int, barracks: int = 12) -> list[UnitTy
         "ares.behaviors.macro.production_controller.TechUp.execute",
         lambda self, ai, config, mediator: False,
     )
-    ceiling = economy.PRODUCTION_PER_BASE * count
+    ceiling = economy.investment.PRODUCTION_PER_BASE * count
     bot = IncomeBot(barracks, others=max(ceiling, 12))
     economy_behavior.execute(bot, planned(bases=bases(count), workers=16 * count))
     (macro,) = [item for item in bot.registered if isinstance(item, MacroPlan)]
@@ -471,7 +471,7 @@ def test_the_plan_adds_reactors_after_the_opening_and_keeps_one_barracks_free() 
     plan = planned()
 
     assert plan.reactors
-    assert plan.techlab_reserve == economy.TECHLAB_RESERVE == 1
+    assert plan.techlab_reserve == economy.styles.BIO.techlab_reserve == 1
     assert dict(plan.inputs)["techlab_reserve"] == 1.0
     assert not planned(opening_done=False).reactors
     assert not planned(objective=Objective.STABILIZE).reactors
@@ -577,7 +577,7 @@ def test_the_gas_target_takes_every_geyser_the_workers_can_man() -> None:
     plan = planned(bases=bases(6), workers=83)
 
     assert plan.gas == 11
-    assert dict(plan.inputs)["gas_worker_share"] == economy.GAS_WORKER_SHARE
+    assert dict(plan.inputs)["gas_worker_share"] == economy.investment.GAS_WORKER_SHARE
 
 
 @pytest.mark.parametrize(
@@ -623,13 +623,13 @@ def test_the_sixth_base_is_not_the_last() -> None:
     # 494-570 s and then held six for the 205-693 s that were left, banking
     # 7,585-18,850 minerals. With six bases the old test wanted 96 workers and
     # the plan builds at most MAX_WORKERS, so it could never be met again.
-    assert economy.MINERAL_WORKERS_PER_BASE * 6 > economy.MAX_WORKERS
+    assert economy.investment.MINERAL_WORKERS_PER_BASE * 6 > economy.investment.MAX_WORKERS
 
     plan = planned(bases=bases(6), workers=83, map_view=map_with(9))
 
     assert (plan.expand, plan.bases) == (True, 7)
     assert plan.reason == "worker_cap_reached"
-    assert dict(plan.inputs)["saturated_at"] == float(economy.MAX_WORKERS)
+    assert dict(plan.inputs)["saturated_at"] == float(economy.investment.MAX_WORKERS)
 
 
 def test_the_target_stops_at_the_bases_the_map_offers() -> None:
