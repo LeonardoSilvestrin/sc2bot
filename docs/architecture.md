@@ -287,6 +287,18 @@ Toda medição até aqui: Persephone AIE, IA VeryHard Macro, Zerg/Terran/Protoss
 | `bench/7jk` | `bcd324a` | 7/7 jogadas (2 não jogadas) | Expansão além da sexta base + pedido de base mantido. Bases 6 → 7–9; banco, army supply e duração não mudaram |
 | `bench/6g` | `3fd7723` | 2 `crash`, 1 sem resultado | Tentativa de medir o HEAD; o cliente do SC2 caiu (`WSMessageTypeError`). Não refeita |
 | `bench/rush-probe` | `3fd7723` | 1 timeout (Zerg Rush) | Única partida fora de Macro |
+| `bench/smoke-mech` | `810185f` | derrota 882 s (Zerg CheatInsane Macro, mech) | O `UpgradeController` "pesquisou" o plating 950 vezes e o `MacroPlan` parou nele: 12 unidades e 3.000 minerais aos 490 s → `ExactResearch` |
+| `bench/smoke-mech2` | `1bd236e` | derrota 1.020 s | Plating ok, mas o `ExactResearch` pulou a fila e o Weapons nunca saiu; 5 de 7 Factories com Reactor, Tanks esperando 2 Tech Labs → pesquisa em ordem, `reactor_share` |
+| `bench/ci-mech-d784` | `d784503` | derrota 1.013 s (Macro) | 9 de 13 Factories sem add-on aos 502 s: os add-ons, depois do `SpawnController`, quase nunca rodavam → add-ons antes do `MacroPlan` |
+| `bench/ci-mech-542` | `542151e` | Macro/Timing timeout; Rush derrota 520 s; Air derrota 600 s | Com add-ons: 200/200 aos 655 s (15 Hellion, 11 Cyclone, 20 Tank). Rush: Barracks ociosa sem Marine no mix → Marines. Air: abertura travada no 3º gás (banco 9.415) → `OPENING_STALL_BANK` |
+| `bench/ci-bio` | `1bd236e` | 4 timeout, 1 derrota (Rush 953 s) | Linha de base bio contra Zerg CheatInsane × Macro/Timing/Rush/Air/Power |
+| `bench/ci-bio-5f1` | `5f163e5` | 4 timeout, 1 derrota (Rush 737 s) | Bio no HEAD (regra de add-on nova, proteção da abertura); mesmo placar da linha de base |
+| `bench/ci-mech-5f1` | `5f163e5` | **5 timeout, 0 derrota** | Mech no HEAD. Air: a proteção disparou aos 235 s e a matriz levou Cyclone 0,22 → 0,42 e Marine 0,10 → 0,17 contra Mutalisk |
+
+Contra Zerg CheatInsane nenhum jogo terminou em vitória: todo jogo sobrevivido é timeout, com o bot em 200/200
+e banco de 1.500–19.000. A ofensiva entra em ASSEMBLE/ADVANCE, mas o grupo não se junta (`assembled_share` 0–0,22) e
+`home_threatened` o chama de volta: o limite agora é fechar o jogo (N7.1), não a composição. Um seed por célula;
+Rush perde com bio nos dois commits e trajetórias divergem cedo, então 953 → 737 s não é atribuível.
 
 Wilson 95 % de 9/9 é 0,70–1,00 e de 8/9 é 0,57–0,98: o placar não separa nenhuma mudança. O que
 sustenta cada uma é a medida do mecanismo no JSONL.
