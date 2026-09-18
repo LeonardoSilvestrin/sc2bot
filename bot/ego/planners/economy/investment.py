@@ -9,6 +9,13 @@ stabilizing against a threat of at least `OPENING_ABORT_DANGER` before the
 opening is over, the plan interrupts it: from that frame on this plan runs,
 spending on the army first.
 
+A script can also stall. Ares' build runner stopped at the third gas of the
+mech opening in `bench/ci-mech/003` and `004` and never moved on: the bank grew
+to 9,415 and 2,125 minerals with two units of army. Seventeen openings that
+ran through (`bench/6f`, `ci-bio`, `ci-mech`) never held more than 680 -- what
+they save for the natural -- so a bank of `OPENING_STALL_BANK` means the
+script stopped, and the plan takes over.
+
 Ares adds production as income allows, up to a ceiling per structure type. A
 fixed ceiling of 12 Barracks capped the army's growth once the bot had more
 than three bases (`bench/7b`), so the ceiling grows with the bases.
@@ -42,6 +49,8 @@ from bot.ego.strategy import Objective, StrategyState
 # The remembered threat, in [0, 1], that ends the opening while stabilizing:
 # the strategy's emergency level.
 OPENING_ABORT_DANGER = 0.6
+# Minerals no opening that runs ever holds.
+OPENING_STALL_BANK = 1000
 MAX_WORKERS = 80
 # 16 on minerals and 6 on gas.
 WORKERS_PER_BASE = 22
@@ -94,12 +103,12 @@ def plan(attention: AttentionState, strategy: StrategyState) -> Investment:
         GAS_BUILDINGS_PER_BASE * bases, gas_workers // WORKERS_PER_GAS_BUILDING
     )
     stabilizing = strategy.objective is Objective.STABILIZE
-    interrupt = (
-        not attention.opening_done and stabilizing and strategy.defense >= OPENING_ABORT_DANGER
-    )
+    emergency = stabilizing and strategy.defense >= OPENING_ABORT_DANGER
+    stalled = attention.minerals >= OPENING_STALL_BANK
+    interrupt = not attention.opening_done and (emergency or stalled)
     active = attention.opening_done or interrupt
     if interrupt:
-        reason = "opening_interrupted"
+        reason = "opening_interrupted" if emergency else "opening_stalled"
     elif not active:
         reason = "opening_runs"
     elif stabilizing:

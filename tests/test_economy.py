@@ -259,6 +259,21 @@ def opening_plan(defense: float, objective: Objective = Objective.STABILIZE):
     return economy.plan(frame, replace(strategy, objective=objective, defense=defense))
 
 
+@pytest.mark.parametrize("minerals, stalled", [(999, False), (1000, True), (9415, True)])
+def test_a_stalled_opening_is_interrupted_by_its_bank(minerals: int, stalled: bool) -> None:
+    # bench/ci-mech/003: Ares' runner stopped at a gas step and the bank grew
+    # to 9,415 minerals; no opening that ran held more than 680.
+    frame = replace(attention(time=300.0, opening_done=False), minerals=minerals)
+    strategy = StrategyModel().decide(frame, AwarenessModel().infer(frame))
+
+    plan = economy.plan(frame, replace(strategy, objective=Objective.BUILD_ADVANTAGE))
+
+    assert (plan.active, plan.interrupt_opening) == (stalled, stalled)
+    assert plan.reason == ("opening_stalled" if stalled else "opening_runs")
+    # Nothing is being stabilized: the plan invests as after any opening.
+    assert bool(plan.upgrades) == stalled and not plan.freeflow
+
+
 def test_an_emergency_interrupts_the_opening_and_the_plan_takes_over() -> None:
     plan = opening_plan(economy.investment.OPENING_ABORT_DANGER)
 

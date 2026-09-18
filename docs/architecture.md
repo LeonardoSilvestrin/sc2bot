@@ -111,12 +111,12 @@ Todo o resto lê estados imutáveis e é testável sem `AresBot`.
   `alcance` é física (0 se `u` não atira onde `e` está: `REACH` nosso, `flying` do `UNIT_DATA` do Ares); `COUNTERS`
   é a troca por custo, 1 = par; `PRIOR_POWER` = 20 Marines. Sem limiar: a mistura desliza com a crença. Unidade que
   não atira (Medivac) fica no prior.
-- Add-ons: `reactors` liga depois do opening e fora de STABILIZE (como os upgrades). A estrutura `reactor_on` do estilo
-  (Barracks na bio, Factory no mech) pronta, ociosa e sem add-on de menor tag recebe o Reactor, uma por frame, enquanto sobrarem mais de
-  `techlab_reserve` (1) sem add-on — as que o Ares usa para os Tech Labs dos Marauders — e o bot puder pagar
-  50/50, sem custo de supply. `AddReactors` é a última behavior do `MacroPlan`: um add-on mandado numa Barracks
-  que acabou de receber ordem de treino substitui a ordem, e uma ordem que o jogo recusa (sem espaço ao lado)
-  agiria todo frame.
+- Add-ons: `addons` liga depois do opening e fora de STABILIZE (como os upgrades). Antes do `MacroPlan`, fora dele, uma
+  por frame: a estrutura `addons_on` do estilo (Barracks na bio, Factory no mech) pronta, ociosa e sem add-on de menor tag
+  recebe Reactor enquanto `reactors + 1 ≤ reactor_share · n`, e Tech Lab senão; `reactor_share = s_r / (s_r + 2·s_t)`, com `s_t` a
+  parcela da mistura que exige Tech Lab (requisitos do Ares). O `SpawnController` ignora essa estrutura no frame
+  (`ignored_build_from_tags`), senão a ordem de treino substituiria a do add-on. Dentro do `MacroPlan`, depois do
+  `SpawnController`, os add-ons quase nunca rodavam: `ci-mech/000` (`d784503`) tinha 9 de 13 Factories sem add-on aos 502 s.
 - Pesquisa: `ExactResearch` roda antes do `UpgradeController` do Ares e só age num upgrade cuja habilidade no
   `game_data` difere da tabela `RESEARCH_INFO` do python-sc2 (o plating de veículo e nave): manda a habilidade da tabela.
   Sem isso o `UpgradeController` "pesquisava" o plating todo frame, o jogo recusava, e o `MacroPlan` parava nele — o
@@ -131,7 +131,7 @@ Todo o resto lê estados imutáveis e é testável sem `AresBot`.
   `plan_inactive` no opening.
 - Opening: com STABILIZE e `defense ≥ OPENING_ABORT_DANGER` (0,6, o nível de emergência da estratégia) antes do fim do
   opening, o plano econômico fica ativo (`opening_interrupted`, `interrupt_opening`) e o Body chama
-  `build_order_runner.set_build_completed()`; o `MacroPlan` roda no mesmo frame, em `freeflow`.
+  `build_order_runner.set_build_completed()`; o `MacroPlan` roda no mesmo frame, em `freeflow`. Também com `minerals ≥ OPENING_STALL_BANK` (1.000) antes do fim do opening (`opening_stalled`): nenhuma abertura que andou passou de 680 (17 jogos), e o runner do Ares parou num passo de gás da abertura mech em `ci-mech/003` e `004` (banco de 9.415 e 2.125).
 - Produção (ordem): o `ProductionController` fica depois do `SpawnController` no `MacroPlan` e só roda num frame em que
   ele não agiu; registrado à parte, mandava Tech Labs em Barracks que o `SpawnController` acabara de mandar treinar
   (a última ordem vale).
