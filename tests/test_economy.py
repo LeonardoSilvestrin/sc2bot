@@ -94,12 +94,14 @@ def test_what_must_not_wait_for_the_army_runs_before_the_spawn_controller() -> N
         UpgradeCCs,
         BuildWorkers,
         GasBuildingController,
+        economy_behavior.ExactResearch,
         UpgradeController,
         SpawnController,
         ProductionController,
         economy_behavior.AddReactors,
     ]
-    upgrades = macro.macros[4]
+    assert macro.macros[4].upgrades == economy.styles.BIO.upgrades
+    upgrades = macro.macros[5]
     assert upgrades.upgrade_list == list(economy.styles.BIO.upgrades)
     assert not upgrades.prioritize
     assert macro.macros[1].to is UnitTypeId.ORBITALCOMMAND
@@ -215,6 +217,9 @@ def test_production_is_not_added_in_a_frame_the_spawn_controller_acts(monkeypatc
 
     for behavior in (AutoSupply, UpgradeCCs, BuildWorkers, GasBuildingController):
         monkeypatch.setattr(behavior, "execute", recorder(behavior.__name__, False))
+    monkeypatch.setattr(
+        economy_behavior.ExactResearch, "execute", recorder("ExactResearch", False)
+    )
     monkeypatch.setattr(UpgradeController, "execute", recorder("UpgradeController", False))
     monkeypatch.setattr(SpawnController, "execute", recorder("SpawnController", True))
     monkeypatch.setattr(ProductionController, "execute", recorder("ProductionController", True))
@@ -705,3 +710,74 @@ def test_six_bases_take_a_seventh_that_the_old_target_refused() -> None:
     ExpansionController(to_count=plan.bases).execute(bot, {}, bot.mediator)
 
     assert bot.built == [bot.sites[6]]
+
+
+class Armory:
+    """A ready Armory, idle or researching by ability."""
+
+    def __init__(self, tag: int, *, researching: AbilityId | None = None) -> None:
+        self.tag = tag
+        self.is_ready = True
+        self.is_idle = researching is None
+        order = SimpleNamespace(ability=SimpleNamespace(exact_id=researching))
+        self.orders = [] if researching is None else [order]
+        self.abilities = {
+            AbilityId.ARMORYRESEARCH_TERRANVEHICLEWEAPONSLEVEL1,
+            AbilityId.ARMORYRESEARCH_TERRANVEHICLEANDSHIPPLATINGLEVEL1,
+        }
+        self.ordered: list[AbilityId] = []
+
+    def __call__(self, ability: AbilityId) -> None:
+        self.ordered.append(ability)
+
+
+def research_bot(armories: list[Armory], *, game_ability: AbilityId) -> FakeBot:
+    """The game's data names `game_ability` for the plating, and the table of
+    python-sc2 the plating's own ability."""
+
+    bot = FakeBot()
+    bot.minerals, bot.vespene = 1000, 1000
+    bot.state = SimpleNamespace(upgrades=set())
+    own = {
+        UpgradeId.TERRANVEHICLEWEAPONSLEVEL1: AbilityId.ARMORYRESEARCH_TERRANVEHICLEWEAPONSLEVEL1,
+        UpgradeId.TERRANVEHICLEANDSHIPARMORSLEVEL1: game_ability,
+    }
+    bot.game_data = SimpleNamespace(
+        upgrades={
+            upgrade.value: SimpleNamespace(research_ability=SimpleNamespace(exact_id=ability))
+            for upgrade, ability in own.items()
+        }
+    )
+    bot.can_afford = lambda item: True
+    bot.mediator.get_own_structures_dict[UnitTypeId.ARMORY] = armories
+    return bot
+
+
+PLATING = (UpgradeId.TERRANVEHICLEWEAPONSLEVEL1, UpgradeId.TERRANVEHICLEANDSHIPARMORSLEVEL1)
+
+
+def test_the_plating_is_ordered_by_the_ability_the_armory_offers() -> None:
+    armory = Armory(1)
+    bot = research_bot([armory], game_ability=AbilityId.RESEARCH_TERRANVEHICLEANDSHIPPLATING)
+
+    assert economy_behavior.ExactResearch(PLATING).execute(bot, {}, bot.mediator)
+    # The weapons resolve the same way both ways: Ares' UpgradeController has them.
+    assert armory.ordered == [AbilityId.ARMORYRESEARCH_TERRANVEHICLEANDSHIPPLATINGLEVEL1]
+
+
+def test_exact_research_leaves_alone_what_resolves_and_what_is_underway() -> None:
+    fine = Armory(1)
+    bot = research_bot(
+        [fine], game_ability=AbilityId.ARMORYRESEARCH_TERRANVEHICLEANDSHIPPLATINGLEVEL1
+    )
+    assert not economy_behavior.ExactResearch(PLATING).execute(bot, {}, bot.mediator)
+
+    busy, idle = (
+        Armory(1, researching=AbilityId.ARMORYRESEARCH_TERRANVEHICLEANDSHIPPLATINGLEVEL1),
+        Armory(2),
+    )
+    bot = research_bot(
+        [busy, idle], game_ability=AbilityId.RESEARCH_TERRANVEHICLEANDSHIPPLATING
+    )
+    assert not economy_behavior.ExactResearch(PLATING).execute(bot, {}, bot.mediator)
+    assert idle.ordered == []

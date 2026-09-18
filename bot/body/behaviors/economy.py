@@ -14,6 +14,17 @@ spends freely instead: whatever it trains takes the counts off the multiple.
 A plan that interrupts the opening stops Ares' build runner before anything
 else, so the macro plan takes over that same frame.
 
+`ExactResearch` runs right before Ares' UpgradeController. The
+UpgradeController orders `unit.research(upgrade)`, which python-sc2 resolves
+through the game's data, while it checks the structure for the ability of
+python-sc2's own research table. For the vehicle and ship plating the two
+differ: the game dropped the order, the UpgradeController "researched" it again
+every frame from 7:14 on (950 times in `bench/smoke-mech`), and since Ares'
+MacroPlan stops at the first behavior that acts, nothing after it -- the army
+above all -- was bought for the rest of the game. `ExactResearch` orders the
+ability of the table for those upgrades only, so the structure is busy and the
+UpgradeController passes.
+
 `AddReactors` is last in the plan. It must come after the SpawnController, for
 the same reason the ProductionController does -- ordering an add-on on a
 structure that was just told to train replaces the training order (`bench/7/002`)
@@ -40,8 +51,11 @@ from ares.behaviors.macro import (
 )
 from ares.behaviors.macro.macro_behavior import MacroBehavior
 from ares.consts import UnitRole
+from sc2.dicts.unit_research_abilities import RESEARCH_INFO
+from sc2.dicts.upgrade_researched_from import UPGRADE_RESEARCHED_FROM
 from sc2.ids.ability_id import AbilityId
 from sc2.ids.unit_typeid import UnitTypeId
+from sc2.ids.upgrade_id import UpgradeId
 
 from bot.attention import AttentionState
 from bot.body.engine import EngineResult
@@ -86,6 +100,32 @@ class AddReactors(MacroBehavior):
             return False
         free[0].build(reactor)
         return True
+
+
+@dataclass
+class ExactResearch(MacroBehavior):
+    """The first upgrade of `upgrades` whose research ability in the game's
+    data is not the one its structure offers, ordered by the ability it
+    offers; every other upgrade is left to Ares' UpgradeController."""
+
+    upgrades: tuple[UpgradeId, ...] = ()
+
+    def execute(self, ai, config, mediator) -> bool:
+        for upgrade in self.upgrades:
+            if upgrade in ai.state.upgrades:
+                continue
+            source = UPGRADE_RESEARCHED_FROM[upgrade]
+            ability = RESEARCH_INFO[source][upgrade]["ability"]
+            if ai.game_data.upgrades[upgrade.value].research_ability.exact_id == ability:
+                continue
+            structures = mediator.get_own_structures_dict[source]
+            if any(order.ability.exact_id == ability for s in structures for order in s.orders):
+                continue
+            idle = [s for s in structures if s.is_ready and s.is_idle and ability in s.abilities]
+            if idle and ai.can_afford(upgrade):
+                min(idle, key=lambda structure: structure.tag)(ability)
+                return True
+        return False
 
 
 @dataclass(frozen=True, slots=True)
@@ -144,6 +184,7 @@ def execute(
     if plan.expand:
         macro.add(ExpansionController(to_count=plan.bases))
     if plan.upgrades:
+        macro.add(ExactResearch(plan.upgrades))
         macro.add(UpgradeController(list(plan.upgrades), base_location=bot.start_location))
     macro.add(SpawnController(composition, freeflow_mode=spawn.freeflow))
     # Only in a frame the SpawnController did not act: on its own it would add
