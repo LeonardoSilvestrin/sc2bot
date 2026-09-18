@@ -40,7 +40,8 @@ seleção (ver regra no prompt corrigido).
 | 7i | Macro: gás pelos geysers das bases | Feito (sem evidência de partida) | `macro: a refinery on every geyser the workers can mine` |
 | 6f | Ofensiva: a luta é do grupo, não do núcleo | Feito (a medir) | `offense: the fight belongs to the group, not to its core` |
 | 7j | Macro: a expansão não para na sexta base | Feito (sem evidência de partida) | `macro: the sixth base is not the last` |
-| 7 | Resto da macro (alvo estável de bases, supply antecipado, reação a rush, reposição de produção, pico de banco) | Pendente | — |
+| 7k | Macro: o pedido de base não é redecidido a cada frame | Feito (sem evidência de partida) | `macro: an ask for a base is held until it is a base` |
+| 7 | Resto da macro (supply antecipado, reação a rush, reposição de produção, pico de banco) | Pendente | — |
 | 8a | Micro: Stim e Medivac acompanhando o grupo | Feito | `offense: fight, retreat and search; macro upgrades; bio micro` |
 | 8b | Micro: Stim no HOLD | Feito | `macro: detection and opening interrupt; hold stim` |
 | 8 | `RegionState` e o resto do micro | Pendente | — |
@@ -1480,12 +1481,68 @@ nunca constrói, e a condição não podia mais ser satisfeita.
 - O alvo ainda oscila com `strategy.economy`: em `bench/base3/001` o plano pediu
   a sexta base aos 495,0 s, voltou a 5 aos 517,9 s quando `strategy.economy` caiu
   de 0,69 para 0,46 sem que nada tivesse sido construído, e só pediu de novo aos
-  537,9 s — a base começou aos 564,6 s. Cooldown/alvo estável continua pendente e
-  ficou fora desta fatia.
+  537,9 s — a base começou aos 564,6 s. Cooldown/alvo estável ficou fora desta
+  fatia; é a 7k.
 - Também fora: `MAX_WORKERS` e `MINERAL_WORKERS_PER_BASE` não foram calibrados
   nem entram no fingerprint; nada olha os minerais que restam numa base (uma base
   esgotada continua contando); supply antecipado, reposição de produção destruída
   e reação a rush seguem pendentes.
+
+## 7k. O pedido de base é mantido até virar base — feito (sem evidência de partida)
+
+Seleção: a mesma regra (bug decisório reproduzível → fatia de gameplay →
+operacional) sobre o que a 7j deixou escrito no "Não feito". É o "cooldown e
+alvo estável" que a P0.4 pede, e o pré-requisito (o alvo de bases da 7j) acabou
+de ficar pronto.
+
+Evidência do problema (`bench/base3/001`, Terran seed 1): o plano pediu a sexta
+base aos 495,0 s (`expand=true`, `bases=6`); aos 517,9 s parou de pedir
+(`expand=false`, `bases=5`) porque `strategy.economy` caiu de 0,694 para 0,458,
+sem que nada tivesse sido construído — `attention.bases` continuava em 5 nos
+dois frames; voltou a pedir aos 537,9 s com `strategy.economy` em 0,501, e o
+Command Center só apareceu aos 564,6 s. Pedir uma base não é ter pedido: o Ares
+precisa ganhar a vez no `MacroPlan`, pagar 400 minerais e mandar um worker
+andar até lá, o que levou 26,7 s na vez que deu certo. O pedido era redecidido a
+cada frame contra uma preferência contínua com corte em 0,5.
+
+**Feito**
+
+- Ego/economy: `EconomyConfig` (`expand_commit = 60 s`, `expand_economy = 0,5`)
+  e `Economy`, um planner com estado, como `Offense`, `Detection` e
+  `StructureControl`. `strategy.economy` decide só o **início** do pedido; um
+  pedido já feito se mantém até uma destas condições, todas observáveis:
+  a townhall existe ou está em construção (`attention.bases` já conta pendente),
+  as linhas deixaram de estar saturadas, o mapa não tem mais lugar, o objetivo é
+  `STABILIZE` (uma ameaça vale mais que o investimento, como já vale para os
+  upgrades), ou passaram `expand_commit` segundos sem nada construído.
+- `bot/main.py`: `Layers.economy` e `configs()["economy"]`, então a
+  `EconomyConfig` entra no `config_fingerprint` — o fingerprint desta versão
+  difere do da linha de base por construção.
+- Logs: razão `expansion_asked_for` (o pedido está sendo mantido) e input
+  `expansion_held`.
+- Testes (`tests/test_economy.py`): a sequência 495,0 / 517,9 / 533,7 s de
+  `bench/base3/001` mantém o pedido, e o mesmo frame pelo `plan` sem estado o
+  larga (a reprodução do bug está dentro do teste); o pedido acaba quando a
+  townhall aparece, quando o objetivo vira `STABILIZE` (e aí é redecidido do
+  zero, não só pausado), quando `expand_commit` expira (dentro/fora por 0,1 s),
+  quando as linhas esvaziam e quando o mapa acaba; um plano abaixo do limiar
+  nunca **começa** um pedido, que é a propriedade que a fatia 5 (névoa) protege;
+  e config fora dos limites é recusada.
+- Verificação local: `pytest` 276 testes verdes e
+  `ruff check bot tests run.py harness bench.py` limpo.
+
+**Não feito**
+
+- **Nenhuma partida foi jogada com esta mudança nem com a 7j.** As duas mexem na
+  mesma decisão e nenhuma tem evidência de gameplay.
+- `expand_commit = 60 s` não foi calibrado: é o tempo de construção de um Command
+  Center (71 s) arredondado para baixo, com o único dado de conversão que existe
+  (26,7 s em `bench/base3/001`).
+- O corte em `expand_economy` continua sendo um corte; só deixou de ser
+  reavaliado a cada frame. Trocar o par `army`/`economy` por uma utilidade
+  contínua com a base como uma das opções de gasto não foi tentado.
+- A pausa por `STABILIZE` descarta o pedido inteiro em vez de suspendê-lo; com
+  `minimum_dwell` de 8 s isso custa ao menos esses 8 s mais um novo pedido.
 
 ## Itens de `propostas.md` fora de qualquer fatia concluída
 
@@ -1495,7 +1552,7 @@ nunca constrói, e a condição não podia mais ser satisfeita.
   ofensiva (a 6f pôs o grupo inteiro na conta da luta, falta medir); encerrar partidas contra Terran.
 - P0.4: banco que continua alto com supply cheio (7g; a 7h deu aos Reactors um
   destino para ele, a 7i deu ao gás e a 7j voltou a abrir bases, nenhuma das três
-  com partida que o meça), alvo de bases que não oscila com `strategy.economy`,
+  com partida que o meça, e a 7k parou de redecidir o pedido a cada frame),
   reposição de produção destruída; reação a rush além da interrupção do opening
   (bunker, reparo, worker pull, proxy); Raven e scan de informação.
 - P1.1–P1.5 e P2: scouting recorrente e estimativa do inimigo por produção ou

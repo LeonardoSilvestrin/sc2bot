@@ -25,9 +25,9 @@ from bot.ego.planners import (
     StructurePlan,
     core_army,
     defense,
-    economy,
 )
 from bot.ego.planners.detection import Detection
+from bot.ego.planners.economy import Economy
 from bot.ego.planners.intel import Intel
 from bot.ego.planners.offense import OWNER as OFFENSE
 from bot.ego.planners.offense import Offense, OffensePlan
@@ -47,6 +47,7 @@ class Layers:
     awareness: AwarenessModel = field(default_factory=AwarenessModel)
     strategy: StrategyModel = field(default_factory=StrategyModel)
     offense: Offense = field(default_factory=Offense)
+    economy: Economy = field(default_factory=Economy)
     intel: Intel = field(default_factory=Intel)
     structure_control: StructureControl = field(default_factory=StructureControl)
     detection: Detection = field(default_factory=Detection)
@@ -57,6 +58,7 @@ class Layers:
             "awareness": self.awareness.config,
             "strategy": self.strategy.config,
             "offense": self.offense.config,
+            "economy": self.economy.config,
             "structure_control": self.structure_control.config,
             "detection": self.detection.config,
         }
@@ -93,7 +95,7 @@ def play_frame(bot, iteration: int, layers: Layers) -> Frame:
     )
     proposals += offense.proposals
     proposals += layers.intel.plan(attention)
-    economy_plan = economy.plan(attention, strategy)
+    economy_plan = layers.economy.plan(attention, strategy)
     structures = layers.structure_control.plan(attention)
     detection = layers.detection.plan(attention, awareness)
     laps.mark("planners")
