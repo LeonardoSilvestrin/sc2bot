@@ -59,10 +59,11 @@ def test_support_keeps_its_prior_value_and_the_priorities_stay() -> None:
 
 
 def test_reactors_follow_what_the_structure_trains_without_a_tech_lab() -> None:
-    # Mech: Hellions (0.4) on Reactors, Cyclones and tanks (0.6) on Tech Labs.
+    # Mech: Hellions (0.35) on Reactors, Cyclones and tanks (0.55) on Tech
+    # Labs; its Marines come from Barracks.
     assert composition.reactor_share(
         styles.MECH.composition, UnitTypeId.FACTORY
-    ) == pytest.approx(0.4 / (0.4 + 2 * 0.6))
+    ) == pytest.approx(0.35 / (0.35 + 2 * 0.55))
     # Bio: Marines (0.55) on Reactors, Marauders (0.2) on Tech Labs; tanks and
     # Medivacs come from other structures.
     assert composition.reactor_share(
