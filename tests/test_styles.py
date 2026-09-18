@@ -56,7 +56,7 @@ def test_the_announcement_names_the_style_and_its_units() -> None:
 @pytest.mark.parametrize("style", list(styles.STYLES.values()), ids=list(styles.STYLES))
 def test_every_style_is_complete(style: styles.ArmyStyle) -> None:
     assert sum(proportion for _, proportion, _ in style.composition) == pytest.approx(1.0)
-    assert style.reactor_on in economy_behavior.REACTOR_OF
+    assert style.addons_on in economy_behavior.ADD_ONS
     assert len(set(style.upgrades)) == len(style.upgrades)
 
 
@@ -83,13 +83,13 @@ def test_the_mech_plan_builds_mech_and_puts_reactors_on_factories() -> None:
     assert plan.army == "mech"
     assert plan.composition == styles.MECH.composition
     assert plan.upgrades == styles.MECH.upgrades
-    assert (plan.reactors, plan.reactor_on) == (True, UnitTypeId.FACTORY)
+    assert (plan.addons, plan.addons_on) == (True, UnitTypeId.FACTORY)
 
 
 def test_stabilizing_with_mech_still_spends_on_the_army_only() -> None:
     plan = mech_plan(Objective.STABILIZE)
 
-    assert plan.freeflow and plan.upgrades == () and not plan.reactors
+    assert plan.freeflow and plan.upgrades == () and not plan.addons
     # The composition does not change while stabilizing: Ares spends freely on it.
     assert plan.composition == styles.MECH.composition
 
@@ -108,27 +108,23 @@ def factories_bot(bare: int, reactors: int) -> tuple[FakeBot, list[Barracks]]:
     return bot, factories
 
 
-def add_reactor(bot: FakeBot) -> bool:
+def add_on(bot: FakeBot) -> int | None:
     plan = mech_plan()
-    return economy_behavior.AddReactors(
-        techlab_reserve=plan.techlab_reserve,
-        structure=plan.reactor_on,
-        reactor_share=plan.reactor_share,
-    ).execute(bot, {}, bot.mediator)
+    return economy_behavior.add_add_on(bot, plan.addons_on, plan.reactor_share)
 
 
-def test_reactors_go_on_the_factories_the_plan_names_within_the_share() -> None:
+def test_add_ons_go_on_the_factories_the_plan_names_within_the_share() -> None:
     # 0.25 of the Factories: the first Reactor of four fits.
     bot, factories = factories_bot(bare=4, reactors=0)
 
     assert mech_plan().reactor_share == pytest.approx(0.25)
-    assert add_reactor(bot)
+    assert add_on(bot) == 1
     assert [factory.built for factory in factories] == [[UnitTypeId.FACTORYREACTOR], [], [], []]
 
 
-def test_a_reactor_beyond_the_share_is_not_added() -> None:
+def test_past_the_share_a_factory_takes_a_tech_lab_for_the_tanks() -> None:
     # Four Factories with one Reactor already: a second is past 0.25.
     bot, factories = factories_bot(bare=3, reactors=1)
 
-    assert not add_reactor(bot)
-    assert all(factory.built == [] for factory in factories)
+    assert add_on(bot) == 1
+    assert [factory.built for factory in factories] == [[UnitTypeId.FACTORYTECHLAB], [], []]

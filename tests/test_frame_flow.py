@@ -184,7 +184,6 @@ def test_a_worker_inside_a_gas_building_does_not_flip_the_economy_plan() -> None
             "upgrades_done": 0.0,
             "danger": dangers[0],
             "production_per_base": 4.0,
-            "techlab_reserve": 1.0,
             "gas_worker_share": economy.investment.GAS_WORKER_SHARE,
             "enemy_seen_power": 0.0,
         }
@@ -237,8 +236,9 @@ def test_finished_upgrades_reach_the_log_and_the_economy_plan() -> None:
     assert frame.economy.max_production == (
         planned["data"]["inputs"]["production_per_base"] * bases
     )
-    # The add-on decision and the Barracks kept free for Ares' Tech Labs.
-    assert (planned["data"]["reactors"], planned["data"]["techlab_reserve"]) == (True, 1)
+    # The add-on decision and the share of Barracks that should carry Reactors.
+    assert (planned["data"]["addons"], planned["data"]["addons_on"]) == (True, "BARRACKS")
+    assert planned["data"]["reactor_share"] == frame.economy.reactor_share
 
 
 def test_the_fog_does_not_let_a_threatened_bot_expand_as_if_the_enemy_had_no_army() -> None:

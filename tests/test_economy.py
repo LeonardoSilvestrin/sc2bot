@@ -98,7 +98,6 @@ def test_what_must_not_wait_for_the_army_runs_before_the_spawn_controller() -> N
         UpgradeController,
         SpawnController,
         ProductionController,
-        economy_behavior.AddReactors,
     ]
     assert macro.macros[4].upgrades == economy.styles.BIO.upgrades
     upgrades = macro.macros[5]
@@ -110,8 +109,6 @@ def test_what_must_not_wait_for_the_army_runs_before_the_spawn_controller() -> N
     economy_behavior.execute(bot, planned(objective=Objective.STABILIZE))
     (macro,) = [item for item in bot.registered if isinstance(item, MacroPlan)]
     assert not any(isinstance(item, UpgradeController) for item in macro.macros)
-    # Stabilizing spends on the army, not on add-ons.
-    assert not any(isinstance(item, economy_behavior.AddReactors) for item in macro.macros)
 
 
 class Lab:
@@ -223,9 +220,6 @@ def test_production_is_not_added_in_a_frame_the_spawn_controller_acts(monkeypatc
     monkeypatch.setattr(UpgradeController, "execute", recorder("UpgradeController", False))
     monkeypatch.setattr(SpawnController, "execute", recorder("SpawnController", True))
     monkeypatch.setattr(ProductionController, "execute", recorder("ProductionController", True))
-    monkeypatch.setattr(
-        economy_behavior.AddReactors, "execute", recorder("AddReactors", True)
-    )
     bot = FakeBot()
 
     economy_behavior.execute(bot, planned())
@@ -234,9 +228,29 @@ def test_production_is_not_added_in_a_frame_the_spawn_controller_acts(monkeypatc
 
     assert calls[-1] == "SpawnController"
     assert "ProductionController" not in calls
-    # An add-on order would replace the training order the SpawnController
-    # just gave that Barracks.
-    assert "AddReactors" not in calls
+
+
+def test_the_spawn_controller_leaves_alone_the_structure_that_took_an_add_on() -> None:
+    # The last order wins (`bench/7/002`): a training order after the add-on
+    # would cancel it. Add-ons run before the MacroPlan, outside it, because
+    # inside it they came after a SpawnController that almost always acted
+    # (`bench/ci-mech/000`: 9 of 13 Factories bare at 502 s).
+    bare = Barracks(5)
+    bot = add_on_bot([Barracks(1, add_on=True), bare])
+
+    economy_behavior.execute(bot, planned())
+
+    (macro,) = [item for item in bot.registered if isinstance(item, MacroPlan)]
+    (spawn,) = [item for item in macro.macros if isinstance(item, SpawnController)]
+    assert bare.built == [UnitTypeId.BARRACKSREACTOR]
+    assert spawn.ignored_build_from_tags == {5}
+
+    bot = add_on_bot([Barracks(1, add_on=True), Barracks(6)])
+    economy_behavior.execute(bot, planned(objective=Objective.STABILIZE))
+    (macro,) = [item for item in bot.registered if isinstance(item, MacroPlan)]
+    (spawn,) = [item for item in macro.macros if isinstance(item, SpawnController)]
+    # Stabilizing spends on the army, not on add-ons.
+    assert spawn.ignored_build_from_tags == set()
 
 
 def opening_plan(defense: float, objective: Objective = Objective.STABILIZE):
@@ -452,49 +466,55 @@ class Barracks:
         self.built.append(unit_type)
 
 
-def reactor_bot(barracks: list[Barracks], *, minerals: int = 9930, vespene: int = 3041) -> FakeBot:
+def add_on_bot(
+    barracks: list[Barracks],
+    *,
+    reactors: int = 0,
+    minerals: int = 9930,
+    vespene: int = 3041,
+) -> FakeBot:
     bot = FakeBot()
     bot.minerals = minerals
     bot.vespene = vespene
     bot.mediator.get_own_structures_dict[UnitTypeId.BARRACKS] = list(barracks)
+    bot.mediator.get_own_structures_dict[UnitTypeId.BARRACKSREACTOR] = [
+        object() for _ in range(reactors)
+    ]
     return bot
 
 
-def reactors_ordered(barracks: list[Barracks], **kw) -> list[int]:
-    bot = reactor_bot(barracks, **kw)
-    plan = planned()
-    behavior = economy_behavior.AddReactors(techlab_reserve=plan.techlab_reserve)
+def add_ons_ordered(barracks: list[Barracks], *, share: float = 1.0, **kw) -> list:
+    bot = add_on_bot(barracks, **kw)
 
-    acted = behavior.execute(bot, {}, bot.mediator)
+    tag = economy_behavior.add_add_on(bot, UnitTypeId.BARRACKS, share)
 
-    ordered = [item.tag for item in barracks if item.built == [UnitTypeId.BARRACKSREACTOR]]
-    assert acted == bool(ordered)
+    ordered = [(item.tag, item.built[0]) for item in barracks if item.built]
+    assert tag == (ordered[0][0] if ordered else None)
     return ordered
 
 
-def test_the_plan_adds_reactors_after_the_opening_and_keeps_one_barracks_free() -> None:
+def test_the_plan_adds_add_ons_after_the_opening_by_the_mix() -> None:
     plan = planned()
 
-    assert plan.reactors
-    assert plan.techlab_reserve == economy.styles.BIO.techlab_reserve == 1
-    assert dict(plan.inputs)["techlab_reserve"] == 1.0
-    assert not planned(opening_done=False).reactors
-    assert not planned(objective=Objective.STABILIZE).reactors
+    assert plan.addons and plan.addons_on is UnitTypeId.BARRACKS
+    # Marines (0.55) on Reactors, Marauders (0.2) on Tech Labs.
+    assert plan.reactor_share == pytest.approx(0.55 / (0.55 + 2 * 0.2))
+    assert not planned(opening_done=False).addons
+    assert not planned(objective=Objective.STABILIZE).addons
 
 
-def test_a_barracks_with_no_add_on_gets_a_reactor_lowest_tag_first() -> None:
+def test_a_barracks_with_no_add_on_gets_one_lowest_tag_first() -> None:
     # bench/7b/001: 5 of the 12 Barracks had no add-on at 773 s, while the bank
     # grew to 9,930 minerals with 37 supply free and the army fell to 31 units.
-    # A Reactor trains two Marines at a time.
     with_add_on = [Barracks(tag, add_on=True) for tag in range(7)]
     without = [Barracks(tag, add_on=False) for tag in range(7, 12)]
 
-    assert reactors_ordered(with_add_on + without) == [7]
+    assert add_ons_ordered(with_add_on + without) == [(7, UnitTypeId.BARRACKSREACTOR)]
 
 
-def test_only_a_ready_and_idle_barracks_takes_a_reactor() -> None:
+def test_only_a_ready_and_idle_barracks_takes_an_add_on() -> None:
     # An add-on order replaces the order a training Barracks already has.
-    assert reactors_ordered(
+    assert add_ons_ordered(
         [
             Barracks(1, idle=False),
             Barracks(2, ready=False),
@@ -502,33 +522,36 @@ def test_only_a_ready_and_idle_barracks_takes_a_reactor() -> None:
             Barracks(4),
             Barracks(5),
         ]
-    ) == [4]
+    ) == [(4, UnitTypeId.BARRACKSREACTOR)]
+    assert add_ons_ordered([]) == []
 
 
-def test_the_last_barracks_without_an_add_on_is_left_for_ares_tech_labs() -> None:
-    assert reactors_ordered([Barracks(1, add_on=True), Barracks(2)]) == []
-    assert reactors_ordered([Barracks(1)]) == []
-    assert reactors_ordered([]) == []
+def test_past_the_reactor_share_the_add_on_is_a_tech_lab() -> None:
+    # Four Barracks, one with a Reactor: a second Reactor would be half.
+    barracks = [Barracks(1, add_on=True), Barracks(2), Barracks(3), Barracks(4)]
+
+    assert add_ons_ordered(barracks, share=0.5, reactors=1) == [
+        (2, UnitTypeId.BARRACKSREACTOR)
+    ]
+    barracks = [Barracks(1, add_on=True), Barracks(2), Barracks(3), Barracks(4)]
+    assert add_ons_ordered(barracks, share=0.4, reactors=1) == [
+        (2, UnitTypeId.BARRACKSTECHLAB)
+    ]
 
 
-def test_ares_can_still_add_a_tech_lab_to_the_reserved_barracks() -> None:
-    # What the reserve is for: Ares puts a Tech Lab on the first ready, idle
-    # Barracks with no add-on when the composition asks for Marauders.
-    reserved = Barracks(2)
-    bot = reactor_bot([Barracks(1, add_on=True), reserved])
-    bot.time_formatted = "12:53"
-    controller = ProductionController({}, base_location=bot.start_location)
+def test_no_add_on_the_bot_cannot_pay_for() -> None:
+    def barracks():
+        return [Barracks(tag) for tag in range(3)]
 
-    assert controller._add_techlab_to_existing(bot, UnitTypeId.MARAUDER, UnitTypeId.BARRACKSTECHLAB)
-    assert reserved.built == [UnitTypeId.BARRACKSTECHLAB]
-
-
-def test_no_reactor_the_bot_cannot_pay_for() -> None:
-    barracks = [Barracks(tag) for tag in range(3)]
-
-    assert reactors_ordered(barracks, minerals=50, vespene=49) == []
-    assert reactors_ordered(barracks, minerals=49, vespene=50) == []
-    assert reactors_ordered(barracks, minerals=50, vespene=50) == [0]
+    assert add_ons_ordered(barracks(), minerals=50, vespene=49) == []
+    assert add_ons_ordered(barracks(), minerals=49, vespene=50) == []
+    assert add_ons_ordered(barracks(), minerals=50, vespene=50) == [
+        (0, UnitTypeId.BARRACKSREACTOR)
+    ]
+    # A Tech Lab costs 50/25.
+    assert add_ons_ordered(barracks(), share=0.0, minerals=50, vespene=25) == [
+        (0, UnitTypeId.BARRACKSTECHLAB)
+    ]
 
 
 class Geyser:

@@ -25,12 +25,17 @@ above all -- was bought for the rest of the game. `ExactResearch` orders the
 ability of the table for those upgrades only, so the structure is busy and the
 UpgradeController passes.
 
-`AddReactors` is last in the plan. It must come after the SpawnController, for
-the same reason the ProductionController does -- ordering an add-on on a
-structure that was just told to train replaces the training order (`bench/7/002`)
--- and last of all because an add-on the game refuses (no room beside the
-structure) would otherwise keep acting every frame and starve what comes after
-it.
+Add-ons run before the MacroPlan, outside it, one per frame: an idle
+production structure of the plan's type with no add-on takes a Reactor while
+fewer than `reactor_share` of them carry one, and a Tech Lab otherwise. Inside
+the MacroPlan they came after the SpawnController, which acts whenever
+production is idle and the bank is up, so they almost never ran: at 502 s of
+`bench/ci-mech/000` 9 of 13 Factories had no add-on, one had a Tech Lab, and
+not one Cyclone was built all game. An add-on ordered on a structure the
+SpawnController then orders to train is lost -- the last order wins
+(`bench/7/002`) -- so the SpawnController is told to leave that structure
+alone this frame (`ignored_build_from_tags`). An add-on the game refuses (no
+room beside the structure) is ordered again later and starves nothing.
 """
 
 from __future__ import annotations
@@ -69,42 +74,36 @@ MULE_ENERGY = 50.0
 MINING_DISTANCE = 10.0
 
 
-# The Reactor each production structure builds.
-REACTOR_OF = {
-    UnitTypeId.BARRACKS: UnitTypeId.BARRACKSREACTOR,
-    UnitTypeId.FACTORY: UnitTypeId.FACTORYREACTOR,
-    UnitTypeId.STARPORT: UnitTypeId.STARPORTREACTOR,
+# The (Reactor, Tech Lab) each production structure builds.
+ADD_ONS = {
+    UnitTypeId.BARRACKS: (UnitTypeId.BARRACKSREACTOR, UnitTypeId.BARRACKSTECHLAB),
+    UnitTypeId.FACTORY: (UnitTypeId.FACTORYREACTOR, UnitTypeId.FACTORYTECHLAB),
+    UnitTypeId.STARPORT: (UnitTypeId.STARPORTREACTOR, UnitTypeId.STARPORTTECHLAB),
 }
 
 
-@dataclass
-class AddReactors(MacroBehavior):
-    """A Reactor on the idle `structure` with no add-on, lowest tag first, one
-    per frame, while more than `techlab_reserve` of them are free for Ares'
-    Tech Labs and one more Reactor keeps them within `reactor_share`."""
+def add_add_on(bot, structure: UnitTypeId, reactor_share: float) -> int | None:
+    """An add-on on the ready, idle `structure` with no add-on of lowest tag:
+    a Reactor while one more keeps the Reactors within `reactor_share` of every
+    `structure`, a Tech Lab otherwise. Returns the tag ordered, if any."""
 
-    techlab_reserve: int = 1
-    structure: UnitTypeId = UnitTypeId.BARRACKS
-    reactor_share: float = 1.0
-
-    def execute(self, ai, config, mediator) -> bool:
-        reactor = REACTOR_OF[self.structure]
-        structures = mediator.get_own_structures_dict
-        reactors = len(structures[reactor])
-        if reactors + 1 > self.reactor_share * len(structures[self.structure]):
-            return False
-        free = sorted(
-            (
-                building
-                for building in mediator.get_own_structures_dict[self.structure]
-                if building.is_ready and building.is_idle and not building.has_add_on
-            ),
-            key=lambda building: building.tag,
-        )
-        if len(free) <= self.techlab_reserve or not ai.can_afford(reactor):
-            return False
-        free[0].build(reactor)
-        return True
+    reactor, techlab = ADD_ONS[structure]
+    structures = bot.mediator.get_own_structures_dict
+    free = [
+        building
+        for building in structures[structure]
+        if building.is_ready and building.is_idle and not building.has_add_on
+    ]
+    if not free:
+        return None
+    wanted = reactor if len(structures[reactor]) + 1 <= reactor_share * len(
+        structures[structure]
+    ) else techlab
+    if not bot.can_afford(wanted):
+        return None
+    building = min(free, key=lambda item: item.tag)
+    building.build(wanted)
+    return building.tag
 
 
 @dataclass
@@ -182,6 +181,7 @@ def execute(
         unit_type: {"proportion": proportion, "priority": priority}
         for unit_type, proportion, priority in plan.composition
     }
+    add_on = add_add_on(bot, plan.addons_on, plan.reactor_share) if plan.addons else None
     # Ares' MacroPlan stops at the first behavior that acts, and the
     # SpawnController acts whenever production is idle: whatever should not
     # wait for the army to stop growing goes before it.
@@ -197,7 +197,13 @@ def execute(
     if plan.upgrades:
         macro.add(ExactResearch(plan.upgrades))
         macro.add(UpgradeController(list(plan.upgrades), base_location=bot.start_location))
-    macro.add(SpawnController(composition, freeflow_mode=spawn.freeflow))
+    macro.add(
+        SpawnController(
+            composition,
+            freeflow_mode=spawn.freeflow,
+            ignored_build_from_tags=set() if add_on is None else {add_on},
+        )
+    )
     # Only in a frame the SpawnController did not act: on its own it would add
     # a Tech Lab to a Barracks the SpawnController just ordered to train, and
     # the last order wins (`bench/7/002`).
@@ -208,14 +214,6 @@ def execute(
             max_production_structures=plan.max_production,
         )
     )
-    if plan.reactors:
-        macro.add(
-            AddReactors(
-                techlab_reserve=plan.techlab_reserve,
-                structure=plan.reactor_on,
-                reactor_share=plan.reactor_share,
-            )
-        )
     bot.register_behavior(macro)
     if plan.mules:
         call_mules(bot, reserve=energy_reserve, busy=busy)

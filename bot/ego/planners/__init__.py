@@ -95,16 +95,14 @@ class EconomyPlan:
     # The most structures of one production type (Barracks, Factory, Starport)
     # Ares may build; how many it builds within that is its income rule.
     max_production: int = 12
-    # Add a Reactor to an idle `reactor_on` with no add-on: two units at a time.
-    reactors: bool = False
-    # The production structure that takes those Reactors.
-    reactor_on: UnitTypeId = UnitTypeId.BARRACKS
-    # The most of those structures that may carry a Reactor; the rest train
-    # what needs a Tech Lab.
+    # Put an add-on on an idle `addons_on` with none: a Reactor trains two
+    # units at a time, a Tech Lab what needs one.
+    addons: bool = False
+    # The production structure that takes those add-ons.
+    addons_on: UnitTypeId = UnitTypeId.BARRACKS
+    # The share of those structures that should carry a Reactor; the rest take
+    # Tech Labs.
     reactor_share: float = 1.0
-    # Structures of that type that stay without an add-on, so Ares can still
-    # put a Tech Lab on one when the composition asks for it.
-    techlab_reserve: int = 1
     # The army style the composition and the upgrades come from.
     army: str = "bio"
 

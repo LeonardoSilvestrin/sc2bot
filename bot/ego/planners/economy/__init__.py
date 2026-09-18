@@ -55,7 +55,6 @@ def plan(
         inputs=(
             *spend.inputs,
             ("upgrades_done", float(upgrades_done)),
-            ("techlab_reserve", float(army.techlab_reserve)),
             ("enemy_seen_power", sum(power for _, power in enemy)),
         ),
         upgrades=army.upgrades if invests else (),
@@ -63,12 +62,11 @@ def plan(
         mules=spend.active,
         interrupt_opening=spend.interrupt_opening,
         max_production=spend.max_production,
-        # A Reactor is an investment in throughput: while stabilizing, every
-        # resource goes to the army instead, as with the upgrades.
-        reactors=invests,
-        reactor_on=army.reactor_on,
-        reactor_share=composition.reactor_share(mix, army.reactor_on),
-        techlab_reserve=army.techlab_reserve,
+        # An add-on stops its structure for half a minute: while stabilizing,
+        # every resource goes to the army instead, as with the upgrades.
+        addons=invests,
+        addons_on=army.addons_on,
+        reactor_share=composition.reactor_share(mix, army.addons_on),
         army=army.name,
     )
 

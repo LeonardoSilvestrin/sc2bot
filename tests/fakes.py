@@ -318,6 +318,8 @@ class FakeDebugClient:
 _COST = {
     UnitTypeId.BARRACKSREACTOR: (50, 50),
     UnitTypeId.FACTORYREACTOR: (50, 50),
+    UnitTypeId.BARRACKSTECHLAB: (50, 25),
+    UnitTypeId.FACTORYTECHLAB: (50, 25),
     UnitTypeId.BARRACKS: (150, 0),
     UnitTypeId.MARINE: (50, 0),
 }

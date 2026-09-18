@@ -453,10 +453,9 @@ class Telemetry:
             economy.mules,
             economy.interrupt_opening,
             economy.max_production,
-            economy.reactors,
-            economy.reactor_on,
+            economy.addons,
+            economy.addons_on,
             round(economy.reactor_share, 2),
-            economy.techlab_reserve,
             economy.army,
             # The mix slides every frame the belief decays: a change of a
             # whole percent is news.
@@ -490,10 +489,9 @@ class Telemetry:
                 "mules": economy.mules,
                 "interrupt_opening": economy.interrupt_opening,
                 "max_production": economy.max_production,
-                "reactors": economy.reactors,
-                "reactor_on": economy.reactor_on.name,
+                "addons": economy.addons,
+                "addons_on": economy.addons_on.name,
                 "reactor_share": economy.reactor_share,
-                "techlab_reserve": economy.techlab_reserve,
                 "army": economy.army,
             },
         )

@@ -3,7 +3,7 @@
 A style is data, not code: the opening Ares plays (a build of
 `terran_builds.yml`), the composition Ares' SpawnController and
 ProductionController keep, the upgrades in order, and which production
-structure takes Reactors. The economy plan reads whichever style was chosen;
+structure takes add-ons. The economy plan reads whichever style was chosen;
 nothing else in the bot asks which one it is.
 
 The choice is a draw among the styles meant for the enemy's race, made in
@@ -13,9 +13,8 @@ style is measured on its own.
 Bio: a Barracks with a Reactor trains two Marines at a time, and 5 of the 12
 Barracks of `bench/7b/001` never got an add-on while the bank grew past 9,900
 minerals with supply free. Once the opening is over, and while nothing is being
-stabilized, idle Barracks with no add-on take Reactors, up to the share the
-mix asks for (`composition.reactor_share`), and always leaving
-`techlab_reserve` of them free for the Tech Labs Ares adds for Marauders.
+stabilized, idle Barracks with no add-on take Reactors up to the share the mix
+asks for (`composition.reactor_share`), and Tech Labs for Marauders beyond it.
 
 Mech: Hellions on reactor Factories, Siege Tanks and Cyclones on Tech Lab
 Factories, by the same rule. Ares builds the Armory the vehicle upgrades need
@@ -44,10 +43,8 @@ class ArmyStyle:
     composition: tuple[tuple[UnitTypeId, float, int], ...]
     # Researched in this order once the opening is over.
     upgrades: tuple[UpgradeId, ...]
-    # The production structure that takes a Reactor when idle and bare.
-    reactor_on: UnitTypeId
-    # Structures of that type left bare for the Tech Labs Ares adds.
-    techlab_reserve: int
+    # The production structure that takes an add-on when idle and bare.
+    addons_on: UnitTypeId
     # The enemy races this style is drawn against.
     against: frozenset[Race]
 
@@ -77,10 +74,7 @@ BIO = ArmyStyle(
         UpgradeId.TERRANVEHICLEWEAPONSLEVEL2,
         UpgradeId.TERRANVEHICLEWEAPONSLEVEL3,
     ),
-    reactor_on=UnitTypeId.BARRACKS,
-    # One is enough: Ares adds a Tech Lab to the first idle Barracks with no
-    # add-on, one per frame.
-    techlab_reserve=1,
+    addons_on=UnitTypeId.BARRACKS,
     against=ANY_RACE,
 )
 
@@ -103,8 +97,7 @@ MECH = ArmyStyle(
         UpgradeId.TERRANVEHICLEWEAPONSLEVEL3,
         UpgradeId.TERRANVEHICLEANDSHIPARMORSLEVEL3,
     ),
-    reactor_on=UnitTypeId.FACTORY,
-    techlab_reserve=1,
+    addons_on=UnitTypeId.FACTORY,
     against=frozenset((Race.Zerg,)),
 )
 
