@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from dataclasses import replace
 
 import pytest
 from ares.behaviors.combat import CombatManeuver
@@ -10,6 +11,7 @@ from ares.behaviors.macro import MacroPlan, Mining, SpawnController
 from sc2.ids.ability_id import AbilityId
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.ids.upgrade_id import UpgradeId
+from sc2.position import Point2
 
 from bot.attention import observe, read_map
 from bot.awareness import AwarenessConfig
@@ -20,6 +22,11 @@ from bot.main import Layers, play_frame
 
 from .fakes import MAIN, MAP, FakeBot, FakeLogger, FakeUnit
 from .test_economy import Runner
+
+# The fake map has one expansion per base these tests hold, so a bot on all of
+# them has nowhere left to expand. They are about worker counting and about
+# the fog, not about running out of the map: give them a free site.
+ROOMY_MAP = replace(MAP, expansions=(*MAP.expansions, Point2((40.5, 40.5))))
 
 ARMY_TAGS = {200, 201, 202, 203, 204, 205, 300}
 
@@ -148,7 +155,7 @@ def test_a_worker_inside_a_gas_building_does_not_flip_the_economy_plan() -> None
     scvs = [
         FakeUnit(100 + index, UnitTypeId.SCV, 12, 8 + index % 4, dps=5.0) for index in range(48)
     ]
-    layers = Layers(map_view=MAP, logs=Logs(logger))
+    layers = Layers(map_view=ROOMY_MAP, logs=Logs(logger))
 
     plans, workers, economies, dangers = [], [], [], []
     for iteration in range(8):
@@ -172,6 +179,7 @@ def test_a_worker_inside_a_gas_building_does_not_flip_the_economy_plan() -> None
             "workers": 48.0,
             "bases": 3.0,
             "saturated_at": 48.0,
+            "expansion_sites": 4.0,
             "strategy_economy": economies[0],
             "upgrades_done": 0.0,
             "danger": dangers[0],
@@ -254,7 +262,7 @@ def test_the_fog_does_not_let_a_threatened_bot_expand_as_if_the_enemy_had_no_arm
     ]
     bot.units = [*scvs, *army]
 
-    frame = play_frame(bot, 0, Layers(map_view=MAP, logs=Logs(logger)))
+    frame = play_frame(bot, 0, Layers(map_view=ROOMY_MAP, logs=Logs(logger)))
 
     assert frame.awareness.danger > 0.0
     assert frame.strategy.economy < 0.5

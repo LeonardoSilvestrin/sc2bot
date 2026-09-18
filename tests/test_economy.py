@@ -11,6 +11,7 @@ from ares.behaviors.macro import (
     AutoSupply,
     BuildStructure,
     BuildWorkers,
+    ExpansionController,
     GasBuildingController,
     MacroPlan,
     Mining,
@@ -27,12 +28,13 @@ from sc2.ids.upgrade_id import UpgradeId
 from sc2.position import Point2
 
 from bot.attention import BaseView
+from bot.attention.map import MapView
 from bot.awareness import AwarenessModel
 from bot.body.behaviors import economy as economy_behavior
 from bot.ego.planners import economy
 from bot.ego.strategy import Objective, StrategyModel
 
-from .fakes import MAIN, FakeBot, FakeUnit, attention
+from .fakes import MAIN, MAP, FakeBot, FakeUnit, attention
 
 
 def planned(*, opening_done: bool = True, objective: Objective = Objective.BUILD_ADVANTAGE, **kw):
@@ -605,3 +607,101 @@ def test_six_bases_take_an_eighth_geyser_that_the_old_target_refused() -> None:
 
     # The nearest geyser with no Refinery on it, of the five still free.
     assert bot.built == [bot.vespene_geyser[7].tag]
+
+
+def map_with(sites: int) -> MapView:
+    """The test map, but with `sites` places to put a townhall."""
+
+    return replace(
+        MAP,
+        expansions=tuple(Point2((10.5 + 8.0 * index, 40.5)) for index in range(sites)),
+    )
+
+
+def test_the_sixth_base_is_not_the_last() -> None:
+    # bench/base3: every one of the nine games asked for its last base at
+    # 494-570 s and then held six for the 205-693 s that were left, banking
+    # 7,585-18,850 minerals. With six bases the old test wanted 96 workers and
+    # the plan builds at most MAX_WORKERS, so it could never be met again.
+    assert economy.MINERAL_WORKERS_PER_BASE * 6 > economy.MAX_WORKERS
+
+    plan = planned(bases=bases(6), workers=83, map_view=map_with(9))
+
+    assert (plan.expand, plan.bases) == (True, 7)
+    assert plan.reason == "worker_cap_reached"
+    assert dict(plan.inputs)["saturated_at"] == float(economy.MAX_WORKERS)
+
+
+def test_the_target_stops_at_the_bases_the_map_offers() -> None:
+    plan = planned(bases=bases(4), workers=83, map_view=map_with(4))
+
+    assert (plan.expand, plan.bases) == (False, 4)
+    assert plan.reason == "no_expansion_left"
+    assert dict(plan.inputs)["expansion_sites"] == 4.0
+
+
+@pytest.mark.parametrize(
+    "count, workers, expand, reason",
+    [
+        # Below the cap the mineral lines still decide, as before.
+        (3, 47, False, "build_economy"),
+        (3, 48, True, "mineral_lines_saturated"),
+        (5, 79, False, "build_economy"),
+        (5, 80, True, "mineral_lines_saturated"),
+    ],
+)
+def test_below_the_worker_cap_the_mineral_lines_still_decide(
+    count: int, workers: int, expand: bool, reason: str
+) -> None:
+    plan = planned(bases=bases(count), workers=workers, map_view=map_with(9))
+
+    assert (plan.expand, plan.reason) == (expand, reason)
+
+
+class ExpansionBot:
+    """The AresBot surface Ares' ExpansionController reads: `held` ready
+    townhalls and free expansion sites beyond them."""
+
+    def __init__(self, held: int, sites: int) -> None:
+        self.minerals = 4000
+        self.vespene = 500
+        self.base_townhall_type = UnitTypeId.COMMANDCENTER
+        self.sites = [Point2((10.5 + 8.0 * index, 40.5)) for index in range(sites)]
+        self.townhalls = [
+            SimpleNamespace(tag=index, is_ready=True, position=self.sites[index])
+            for index in range(held)
+        ]
+        self.built: list[Point2] = []
+        self.mediator = SimpleNamespace(
+            get_ground_grid=None,
+            get_own_expansions=[(site, 0.0) for site in self.sites[held:]],
+            is_position_safe=lambda **kwargs: True,
+            can_place_structure=lambda **kwargs: True,
+            select_worker=lambda **kwargs: SimpleNamespace(tag=7),
+            build_with_specific_worker=self._build,
+        )
+
+    def _build(self, *, worker, structure_type, pos) -> None:
+        self.built.append(pos)
+
+    def structure_pending(self, structure_type: UnitTypeId) -> int:
+        return 0
+
+    def can_afford(self, item) -> bool:
+        return True
+
+    def location_is_blocked(self, mediator, location) -> bool:
+        return False
+
+
+def test_six_bases_take_a_seventh_that_the_old_target_refused() -> None:
+    bot = ExpansionBot(held=6, sites=9)
+
+    # What the old plan asked for with six bases and 83 workers: no expansion.
+    assert not ExpansionController(to_count=6).execute(bot, {}, bot.mediator)
+    assert bot.built == []
+
+    plan = planned(bases=bases(6), workers=83, map_view=map_with(9))
+    ExpansionController(to_count=plan.bases).execute(bot, {}, bot.mediator)
+
+    assert bot.built == [bot.sites[6]]

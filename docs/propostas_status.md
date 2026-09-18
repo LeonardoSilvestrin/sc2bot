@@ -39,7 +39,8 @@ seleção (ver regra no prompt corrigido).
 | 7h | Macro: Reactors nas Barracks sem add-on | Feito (sem evidência de partida) | `macro: a reactor on every barracks with no add-on` |
 | 7i | Macro: gás pelos geysers das bases | Feito (sem evidência de partida) | `macro: a refinery on every geyser the workers can mine` |
 | 6f | Ofensiva: a luta é do grupo, não do núcleo | Feito (a medir) | `offense: the fight belongs to the group, not to its core` |
-| 7 | Resto da macro (bases `ready + pending`, supply antecipado, reação a rush, reposição de produção, pico de banco) | Pendente | — |
+| 7j | Macro: a expansão não para na sexta base | Feito (sem evidência de partida) | `macro: the sixth base is not the last` |
+| 7 | Resto da macro (alvo estável de bases, supply antecipado, reação a rush, reposição de produção, pico de banco) | Pendente | — |
 | 8a | Micro: Stim e Medivac acompanhando o grupo | Feito | `offense: fight, retreat and search; macro upgrades; bio micro` |
 | 8b | Micro: Stim no HOLD | Feito | `macro: detection and opening interrupt; hold stim` |
 | 8 | `RegionState` e o resto do micro | Pendente | — |
@@ -1417,6 +1418,75 @@ para dentro da linha de tanques; o esquadrão caiu de 62 para 27 de poder em
   2,3 Marines, sem alcance nem splash. É o outro candidato da análise contra
   Terran e continua pendente.
 
+## 7j. A expansão não para na sexta base — feito (sem evidência de partida)
+
+Seleção: a regra do prompt corrigido (bug decisório reproduzível → fatia de
+gameplay → operacional) sobre as partes pendentes da fatia 7. É um bug
+decisório reproduzível por trace, e a menor fatia cujos pré-requisitos já
+existem (o alvo de bases, o `ExpansionController` e `attention.map.expansions`
+já estavam no lugar).
+
+Evidência do problema (`bench/base3`, os nove jogos da linha de base): o último
+`behavior.economy_planned` de cada partida diz `bases=6`, `expand=false`,
+`saturated_at=96` e `workers=83`. O alvo era
+`saturated = workers >= MINERAL_WORKERS_PER_BASE · bases`, e
+`MINERAL_WORKERS_PER_BASE · 6 = 96` passa de `MAX_WORKERS = 80`: da sexta base
+em diante o plano comparava a força de trabalho com um número que ele próprio
+nunca constrói, e a condição não podia mais ser satisfeita.
+
+| Jogo | Último `expand` | Fim | Parado em 6 bases | Pico de minerais depois |
+| --- | --- | --- | --- | --- |
+| 000 Zerg s1 | 563,6 s | 899,6 s | 336,0 s | 18.645 |
+| 001 Terran s1 | 537,9 s | 868,8 s | 330,9 s | 16.040 |
+| 002 Protoss s1 | 497,4 s | 868,8 s | 371,3 s | 18.850 |
+| 003 Zerg s2 | 554,5 s | 775,4 s | 221,0 s | 10.020 |
+| 004 Terran s2 | 569,9 s | 788,5 s | 218,6 s | 10.615 |
+| 005 Protoss s2 | 495,5 s | 700,7 s | 205,2 s | 7.585 |
+| 006 Zerg s3 | 494,4 s | 725,8 s | 231,4 s | 8.245 |
+| 007 Terran s3 | 507,3 s | 1.200,0 s | 692,7 s | 18.530 |
+| 008 Protoss s3 | 494,4 s | 708,0 s | 213,7 s | 8.735 |
+
+**Feito**
+
+- Ego/economy: a saturação passa a ser medida contra a força de trabalho que o
+  próprio plano pede, `saturated_at = min(MAX_WORKERS, 16 · bases)`, e o alvo é
+  limitado pelos lugares que o mapa oferece (`len(attention.map.expansions)`),
+  uma constraint discreta antes do score.
+- Razões novas na trilha causal: `worker_cap_reached` (saturado porque a força
+  de trabalho parou, não porque as linhas encheram) ao lado de
+  `mineral_lines_saturated`, e `no_expansion_left` quando o mapa acabou.
+- Logs: input `expansion_sites`; `saturated_at` passa a valer no máximo
+  `MAX_WORKERS`.
+- Testes (`tests/test_economy.py`): com 6 bases e 83 workers num mapa de 9
+  lugares o plano pede a sétima com razão `worker_cap_reached`; com 4 bases num
+  mapa de 4 lugares não pede nada e a razão é `no_expansion_left`; abaixo do
+  teto as linhas continuam decidindo (47/48 workers em 3 bases, 79/80 em 5); e o
+  `ExpansionController` real do Ares, sobre um fake com 6 townhalls prontas e 3
+  lugares livres, não constrói nada com o alvo antigo (6) e constrói a sétima
+  com o alvo do plano. Os três primeiros falham contra o código anterior.
+- `tests/test_frame_flow.py`: os dois testes que punham uma townhall em cada
+  expansão do mapa falso ficavam sem lugar para expandir; passaram a usar um
+  mapa com um lugar livre, porque tratam de contagem de workers e de névoa, não
+  do fim do mapa.
+- Verificação local: `pytest` 268 testes verdes e
+  `ruff check bot tests run.py harness bench.py` limpo
+  (`.venv/Scripts/python.exe`).
+
+**Não feito**
+
+- **Nenhuma partida foi jogada com esta mudança**: não há evidência de ganho de
+  gameplay, e o efeito sobre o banco (a base extra também sobe o teto de
+  produção, `4 · bases`) é hipótese, não medida.
+- O alvo ainda oscila com `strategy.economy`: em `bench/base3/001` o plano pediu
+  a sexta base aos 495,0 s, voltou a 5 aos 517,9 s quando `strategy.economy` caiu
+  de 0,69 para 0,46 sem que nada tivesse sido construído, e só pediu de novo aos
+  537,9 s — a base começou aos 564,6 s. Cooldown/alvo estável continua pendente e
+  ficou fora desta fatia.
+- Também fora: `MAX_WORKERS` e `MINERAL_WORKERS_PER_BASE` não foram calibrados
+  nem entram no fingerprint; nada olha os minerais que restam numa base (uma base
+  esgotada continua contando); supply antecipado, reposição de produção destruída
+  e reação a rush seguem pendentes.
+
 ## Itens de `propostas.md` fora de qualquer fatia concluída
 
 - P0.2: distinguir scout, worker rush e ataque; histerese de admissão/liberação (a 3b tirou a troca de id, não a do poder)
@@ -1424,9 +1494,9 @@ para dentro da linha de tanques; o esquadrão caiu de 62 para 27 de poder em
 - P0.3: combat simulation com contatos fora de visão (6d medida e revertida), poder com alcance/splash, coesão e reforços da
   ofensiva (a 6f pôs o grupo inteiro na conta da luta, falta medir); encerrar partidas contra Terran.
 - P0.4: banco que continua alto com supply cheio (7g; a 7h deu aos Reactors um
-  destino para ele e a 7i deu ao gás, nenhuma das duas com partida que o meça),
-  bases por `ready + pending` e expansão presa em 6 bases, reposição de produção
-  destruída; reação a rush além da interrupção do opening
+  destino para ele, a 7i deu ao gás e a 7j voltou a abrir bases, nenhuma das três
+  com partida que o meça), alvo de bases que não oscila com `strategy.economy`,
+  reposição de produção destruída; reação a rush além da interrupção do opening
   (bunker, reparo, worker pull, proxy); Raven e scan de informação.
 - P1.1–P1.5 e P2: scouting recorrente e estimativa do inimigo por produção ou
   economia vista, `RegionState`, micro além de Stim e escolta de Medivac, contrato completo de

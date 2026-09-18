@@ -33,6 +33,15 @@ minerals with supply free. Once the opening is over, and while nothing is being
 stabilized, every Barracks with no add-on should take a Reactor -- except
 `TECHLAB_RESERVE` of them, which stay free for the Tech Labs Ares adds when the
 composition asks for Marauders.
+
+The bot expanded while its mineral lines were saturated, and saturation was
+`MINERAL_WORKERS_PER_BASE` workers per base held. That count passes
+`MAX_WORKERS` at five bases, so from the sixth on the test compared the
+workforce against a number the same plan never builds: all nine games of
+`bench/base3` asked for their last base at 494-570 s and then held six for the
+205-693 s that were left, banking 7,585-18,850 minerals. Saturation is measured
+against the workforce the plan itself asks for, and the bases the map offers
+bound the target.
 """
 
 from __future__ import annotations
@@ -91,9 +100,18 @@ TECHLAB_RESERVE = 1
 
 def plan(attention: AttentionState, strategy: StrategyState) -> EconomyPlan:
     bases = max(1, len(attention.bases))
-    saturated_at = MINERAL_WORKERS_PER_BASE * bases
+    # The workforce the plan will actually build; past `MAX_WORKERS` the
+    # mineral lines stay open but no worker is ever added to fill them, and a
+    # base beyond that is still worth taking: the patches held run down and
+    # every base raises the production ceiling.
+    saturated_at = min(MAX_WORKERS, MINERAL_WORKERS_PER_BASE * bases)
     saturated = attention.workers >= saturated_at
-    expand = strategy.economy >= 0.5 and saturated
+    lines_full = attention.workers >= MINERAL_WORKERS_PER_BASE * bases
+    # A physical constraint before the score: the map has this many places to
+    # put a townhall, the bases held included.
+    sites = len(attention.map.expansions)
+    room = bases < sites
+    expand = strategy.economy >= 0.5 and saturated and room
     wanted_bases = bases + (1 if expand else 0)
     gas_workers = int(attention.workers * GAS_WORKER_SHARE)
     gas_buildings = min(
@@ -111,7 +129,9 @@ def plan(attention: AttentionState, strategy: StrategyState) -> EconomyPlan:
     elif stabilizing:
         reason = "stabilize_spend_on_army"
     elif expand:
-        reason = "mineral_lines_saturated"
+        reason = "mineral_lines_saturated" if lines_full else "worker_cap_reached"
+    elif saturated and not room:
+        reason = "no_expansion_left"
     else:
         reason = "build_economy"
     return EconomyPlan(
@@ -127,6 +147,7 @@ def plan(attention: AttentionState, strategy: StrategyState) -> EconomyPlan:
             ("workers", float(attention.workers)),
             ("bases", float(bases)),
             ("saturated_at", float(saturated_at)),
+            ("expansion_sites", float(sites)),
             ("strategy_economy", strategy.economy),
             ("upgrades_done", float(sum(item in attention.upgrades for item in UPGRADES))),
             ("danger", strategy.defense),
