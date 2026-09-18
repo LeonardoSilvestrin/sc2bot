@@ -37,6 +37,29 @@ _NOT_ARMY = frozenset(
 )
 # sqrt(dps * hit points) of a Marine: `UnitView.power` is counted in Marines.
 MARINE_POWER = math.sqrt(9.8 * 45.0)
+# How many targets one shot covers, in full-damage equivalents, against a group
+# standing as our bio ball stands. A shot that covers three units is three times
+# the damage of the same shot against one, and that is what makes a sieged tank
+# line worth crossing or not. Only auto-attacks count: a spell is not a weapon
+# the model can price, and `ground_dps`/`air_dps` do not see one either.
+#
+# The numbers come from each weapon's splash radii against units of the size of
+# a Marine, clumped: the Siege Tank's shot does full damage inside 0.47,
+# half inside 0.78 and a quarter inside 1.25, which is about two and a half
+# Marines' worth of damage on a ball. A unit with no splash is one target.
+SPLASH_TARGETS: Mapping[UnitTypeId, float] = {
+    UnitTypeId.SIEGETANKSIEGED: 2.5,
+    UnitTypeId.WIDOWMINEBURROWED: 2.5,
+    UnitTypeId.LIBERATORAG: 2.0,
+    UnitTypeId.HELLION: 2.0,
+    UnitTypeId.HELLIONTANK: 2.5,
+    UnitTypeId.BANELING: 3.0,
+    UnitTypeId.COLOSSUS: 2.5,
+    UnitTypeId.ARCHON: 2.0,
+    UnitTypeId.LURKERMPBURROWED: 2.5,
+    # The glaive bounces twice, at a third and a ninth of the damage.
+    UnitTypeId.MUTALISK: 1.5,
+}
 # A townhall this close to an expansion location is that base.
 _BASE_SNAP_DISTANCE = 6.0
 
@@ -104,10 +127,17 @@ class AttentionState:
         return 0 <= y < grid.shape[0] and 0 <= x < grid.shape[1] and grid[y, x] == 2
 
 
-def unit_power(dps: float, hit_points: float) -> float:
-    """Lanchester-style fighting value, sqrt(dps * hit points), in Marines."""
+def unit_power(dps: float, hit_points: float, targets: float = 1.0) -> float:
+    """Lanchester-style fighting value, sqrt(dps * targets * hit points), in
+    Marines.
 
-    return math.sqrt(max(0.0, dps) * max(0.0, hit_points)) / MARINE_POWER
+    A shot covers at least the target it is aimed at; one that covers more
+    deals that much more damage per shot, so splash multiplies the damage the
+    unit puts out, not the damage it takes.
+    """
+
+    damage = max(0.0, dps) * max(1.0, targets)
+    return math.sqrt(damage * max(0.0, hit_points)) / MARINE_POWER
 
 
 def is_army(unit: UnitView) -> bool:
@@ -157,7 +187,11 @@ def unit_view(
         type_id=unit.type_id,
         position=as_point(unit.position),
         health=hit_points / max_hit_points if max_hit_points > 0.0 else 0.0,
-        power=unit_power(max(float(unit.ground_dps), float(unit.air_dps)), hit_points),
+        power=unit_power(
+            max(float(unit.ground_dps), float(unit.air_dps)),
+            hit_points,
+            SPLASH_TARGETS.get(unit.type_id, 1.0),
+        ),
         supply=supply(unit.type_id),
         is_flying=bool(unit.is_flying),
         can_attack_ground=bool(unit.can_attack_ground),

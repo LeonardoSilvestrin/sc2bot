@@ -42,7 +42,12 @@ Todo o resto lê estados imutáveis e é testável sem `AresBot`.
 ## Matemática
 
 - Kernel `K(d, σ) = exp(-½·d²/σ²)` e saturação `S(x) = 1 - exp(-x)` ([field.py](../bot/awareness/field.py)).
-- Poder de uma unidade: `sqrt(dps · (hp + shield))`, em Marines.
+- Poder de uma unidade: `sqrt(dps · alvos · (hp + shield))`, em Marines. `alvos` é quantos alvos um tiro cobre,
+  em equivalentes de dano cheio, contra um grupo aglomerado como a nossa bola de bio (`SPLASH_TARGETS`, ≥ 1;
+  Siege Tank em siege 2,5, Baneling 3,0, Widow Mine enterrada / Hellbat / Colossus / Lurker enterrado 2,5,
+  Liberator em modo terrestre / Archon 2,0, Mutalisk 1,5). Splash multiplica o dano que a unidade **causa**,
+  dentro da raiz: um tanque em siege com a vida cheia vale 4,3 Marines em vez de 2,7. Só armas automáticas
+  entram — o `ground_dps`/`air_dps` não enxerga feitiço.
 - Pressão na base: `Σ poder·confiança·K(d, σ_base + incerteza)` dos atacantes ao alcance
   físico (`base_reach + incerteza`); `threat = S(pressão / full_pressure)`.
 - Ameaça lembrada por base: `recent_threat = max(threat, recent_threat anterior · exp(-Δt / threat_memory))`,
@@ -227,7 +232,8 @@ as fatias de tempo são `attention`, `awareness`, `strategy`, `planners`, `engin
 Belief probabilístico de exército, forças agregadas, avaliação dinâmica de território, `RegionState` (nenhuma decisão o consome ainda),
 scouting depois do early game, map control, harass, combat simulation do Ares na decisão de lutar e scan de reconhecimento da
 luta (ambos medidos e revertidos), pedido de expansão mantido por um planner com estado (idem), path de grupo
-consciente de risco, coesão/reforços da ofensiva (hoje toda unidade livre vai sozinha até o grupo), alcance de
+consciente de risco, coesão/reforços da ofensiva (hoje toda unidade livre vai sozinha até o grupo), alcance no modelo
+de poder (o splash já conta, o alcance não) e splash contado contra a aglomeração real em vez da suposta, alcance de
 estruturas voando sobre terreno impassável, stutter/focus/target scoring, Medivac evacuando, Raven e scan ofensivo/de informação, turret por rota aérea,
 preempção com compromisso e ciclo de siege próprio da
 defesa. No wall: antecipar o fechamento por contato lembrado ou pela rota, alcance pela velocidade do inimigo, distinguir

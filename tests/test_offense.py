@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import replace
 
 import numpy as np
@@ -7,6 +8,7 @@ import pytest
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
+from bot.attention import unit_power, unit_view
 from bot.awareness import AwarenessModel
 from bot.body.engine import Engine, GrantStatus
 from bot.ego.planners import Command, Domain, core_army, defense
@@ -23,7 +25,7 @@ from bot.ego.planners.offense import (
 )
 from bot.ego.strategy import Objective, StrategyModel
 
-from .fakes import MAIN, MAP, attention, unit
+from .fakes import MAIN, MAP, FakeUnit, attention, unit
 
 CONFIG = OffenseConfig()
 # With only the main and no threat, Strategy rallies at the main ramp.
@@ -774,6 +776,32 @@ def test_a_fight_is_not_won_while_the_enemy_shoots_the_front_of_the_group() -> N
     *_, plan = game.step(701.0, army=squad, enemies=tanks, supply=MAXED)
 
     assert plan.fight.enemy_power == pytest.approx(20 * TANK_POWER)
+    assert plan.fight.share < CONFIG.engage_share
+    assert (plan.stage, plan.reason) == (Stage.RETREAT, "unfavorable_fight")
+
+
+def test_the_splash_of_a_tank_line_turns_the_advance_away() -> None:
+    # bench/base3/007, 520.7 s: the squad advanced into the tank line with 42
+    # of its own power against 36 of enemy power in sight -- a favourable
+    # fight by the old price of a sieged tank -- and was down to 15 fourteen
+    # seconds later. The tanks are priced here by the model itself.
+    game, _ = advancing_game()
+    squad = marines(30, FRONT.x, FRONT.y)
+    tanks = tuple(
+        unit_view(
+            FakeUnit(900 + index, UnitTypeId.SIEGETANKSIEGED, FRONT.x, FRONT.y + 14.0,
+                     dps=40.0 / 2.14, hit_points=175.0),
+            lambda _: 3.0,
+        )
+        for index in range(8)
+    )
+
+    without_splash = 8 * unit_power(40.0 / 2.14, 175.0)
+    assert 30.0 / (30.0 + without_splash) > CONFIG.engage_share
+
+    *_, plan = game.step(701.0, army=squad, enemies=tanks, supply=MAXED)
+
+    assert plan.fight.enemy_power == pytest.approx(without_splash * math.sqrt(2.5))
     assert plan.fight.share < CONFIG.engage_share
     assert (plan.stage, plan.reason) == (Stage.RETREAT, "unfavorable_fight")
 

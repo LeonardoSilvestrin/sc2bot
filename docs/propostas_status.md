@@ -11,20 +11,26 @@ vitória.
 
 ## Estado atual do branch
 
-- `botbandido` em `e492524`, árvore limpa; 273 testes verdes e
+- `botbandido`, árvore limpa; 279 testes verdes e
   `ruff check bot tests harness run.py bench.py` limpo.
 - O código de hoje é a linha de base de nove partidas (`fe3cea0`) mais as
-  fatias 7h (Reactors), 7i (gás), 6f (luta do grupo) e 7j (expansão além da
-  sexta base). Fingerprint `ab57813d0bfcc3fe`, o mesmo de `bench/base3` e
-  `bench/6f`.
+  fatias 7h (Reactors), 7i (gás), 6f (luta do grupo), 7j (expansão além da
+  sexta base) e 6g (splash no poder). O fingerprint continua
+  `ab57813d0bfcc3fe`: nenhuma dessas fatias mexeu numa config — o poder é
+  constante de Attention, como `MARINE_POWER`, e não entra nele.
 - **O que já foi medido**: a 6f e a 7i juntas, em `bench/6f` (9/9 contra 8/9 da
   linha de base, e o defeito da luta de 16 → 1); a 7j junto da 7k, em
   `bench/7jk` (7/7 dos dois lados, mecanismo sem efeito). A 7h nunca foi
   medida, e o código atual — 7j sem a 7k — não tem matriz própria.
-- **Ordem seguida a partir daqui**: primeiro separar falha de ambiente de
-  derrota no harness (é operacional, mas bloqueia a verificação de tudo o
-  mais), depois dar alcance e splash ao modelo de poder, que é o bug decisório
-  reproduzível mais antigo ainda aberto.
+- **Ordem seguida**: a 2b separou falha de ambiente de derrota no harness (é
+  operacional, mas bloqueava a verificação de tudo o mais) e a 6g deu splash ao
+  modelo de poder, o bug decisório reproduzível mais antigo ainda aberto.
+- **O que falta antes da próxima fatia**: uma matriz de 9 partidas de
+  `bench/6f` contra o código de hoje. Quatro fatias (7h, 7j, 6g e o que a 7i
+  não isolou) nunca foram medidas sozinhas, e a 6g mexe no que todas as
+  camadas leem — é a que mais precisa da partida, e a única cuja hipótese
+  ("a ofensiva para de entrar em linha de tanque") pode falhar para os dois
+  lados: pode também deixar o exército tímido demais e parado.
 
 ## Fatias
 
@@ -59,6 +65,7 @@ seleção (ver regra no prompt corrigido).
 | 7j | Macro: a expansão não para na sexta base | Feito; mecanismo medido, sem efeito medido | `macro: the sixth base is not the last` |
 | 7k | Macro: o pedido de base não é redecidido a cada frame | Medida e revertida | `macro: an ask for a base is held until it is a base`, revertida em `macro: the held ask for a base goes back out` |
 | 2b | Harness: partida que o bot não jogou não é derrota | Feito | `harness: a game the bot never played is not a defeat` |
+| 6g | Poder: um tiro que cobre vários alvos vale por vários | Feito (sem evidência de partida) | `attention: a shot that covers three units is worth three shots` |
 | 7 | Resto da macro (supply antecipado, reação a rush, reposição de produção, pico de banco) | Pendente | — |
 | 8a | Micro: Stim e Medivac acompanhando o grupo | Feito | `offense: fight, retreat and search; macro upgrades; bio micro` |
 | 8b | Micro: Stim no HOLD | Feito | `macro: detection and opening interrupt; hold stim` |
@@ -1752,12 +1759,77 @@ relógio e o stdout denunciavam. O resumo daquela execução dizia 7 vitórias e
 - As execuções antigas não foram regravadas; o `summarize` aplica a regra na
   leitura, e o `result.json` de `bench/7jk` continua dizendo `defeat`.
 
+## 6g. Um tiro que cobre vários alvos vale por vários — feito (sem evidência de partida)
+
+Seleção: bug decisório reproduzível por trace (classe 1). É o candidato que a
+análise das trocas perdidas contra Terran deixou escrito, o item de poder com
+alcance/splash da P0.3, e o pré-requisito (a luta local do grupo) ficou pronto
+na 6f.
+
+Evidência do problema (`bench/base3/007`, o mesmo trace da 6f): o modelo de
+poder é `sqrt(dps · vida)` por unidade, então um Siege Tank em siege com a vida
+cheia vale 2,7 Marines — o mesmo que ele valeria se cada tiro acertasse um
+Marine só. Aos 520,7 s o esquadrão avançou com 42,2 de poder próprio contra 36
+de poder inimigo à vista, dominado por tanques em siege, e 14 s depois estava
+com 15. Pela conta antiga a luta era favorável; pelo que os tiros fazem, não
+era. A 6f corrigiu **quem** entra na conta da luta; o que cada um vale continuou
+igual.
+
+**Feito**
+
+- Attention: `SPLASH_TARGETS`, quantos alvos um tiro cobre em equivalentes de
+  dano cheio contra um grupo aglomerado como a nossa bola de bio — Siege Tank
+  em siege 2,5 (dano cheio até 0,47, metade até 0,78, um quarto até 1,25),
+  Baneling 3,0, Widow Mine enterrada, Hellbat, Colossus e Lurker enterrado 2,5,
+  Liberator em modo terrestre e Archon 2,0, Mutalisk 1,5 (a glaive pula duas
+  vezes, a um terço e a um nono). Quem não está na tabela cobre 1 alvo.
+- `unit_power(dps, hit_points, targets)`: `sqrt(dps · alvos · vida)`. Splash
+  multiplica o dano que a unidade **causa**, não o que ela aguenta, e um tiro
+  sempre cobre ao menos o alvo em que foi mirado (`alvos ≥ 1`). Um tanque em
+  siege passa de 2,7 para 4,3 Marines; o mesmo tanque fora de siege continua em
+  2,7, porque fora de siege ele não tem splash.
+- Só armas automáticas entram: `ground_dps`/`air_dps` não enxerga feitiço, e um
+  High Templar continua valendo o que sempre valeu (nada). A mudança é uma
+  função pura da Attention; nenhuma camada acima mudou.
+- Testes: `tests/test_attention.py` (novo) — um Marine é 1 Marine, três alvos
+  valem `sqrt(3)`, alvo nenhum não baixa o preço, o tanque em siege é
+  `sqrt(2,5)` do tanque andando, um tanque com metade da vida é `sqrt(0,5)` do
+  inteiro (splash não protege ninguém) e quem não tem splash não muda.
+  `tests/test_offense.py`: a linha de oito tanques em siege do trace, precificada
+  pelo próprio modelo, era luta favorável pelo preço antigo (parcela acima de
+  `engage_share`) e vira RETREAT `unfavorable_fight`.
+- Verificação local: 279 testes verdes e `ruff check bot tests harness run.py
+  bench.py` limpo.
+
+**Não feito**
+
+- **Nenhuma partida**: não há evidência de que a ofensiva pare de trocar mal,
+  nem de que ela não fique tímida demais. A matriz de 9 contra `bench/6f` é o
+  próximo passo, e esta é a primeira fatia desde a 6f que mexe no que todas as
+  camadas leem.
+- O alcance continua fora: um tanque que atira de 13 células vale o mesmo que
+  um Marine que precisa chegar a 5. É o outro candidato da análise contra
+  Terran, e ficou de fora de propósito — é o mesmo local de edição, e medir as
+  duas juntas repetiria o erro de não separar a 7i da 6f.
+- Os números da tabela não foram calibrados contra partida nenhuma: saem das
+  raias de splash de cada arma contra unidades do tamanho de um Marine. Nada
+  os põe no `config_fingerprint` (são constantes de Attention, como
+  `MARINE_POWER`).
+- O preço é o mesmo esteja o inimigo aglomerado ou espalhado: `SPLASH_TARGETS`
+  supõe a aglomeração em que o nosso bio anda. Contar os alvos que de fato
+  estão no raio pediria o contexto da luta dentro do modelo de poder, que hoje
+  é por unidade.
+- Thor e outras armas com splash só antiaéreo ficaram fora: o poder usa
+  `max(ground_dps, air_dps)`, e aplicar um splash aéreo a um dps terrestre
+  seria mentira.
+
 ## Itens de `propostas.md` fora de qualquer fatia concluída
 
 - P0.2: distinguir scout, worker rush e ataque; histerese de admissão/liberação (a 3b tirou a troca de id, não a do poder)
   da defesa; antecipação e tráfego amigo do wall.
-- P0.3: combat simulation com contatos fora de visão (6d medida e revertida), poder com alcance/splash, coesão e reforços da
-  ofensiva (a 6f pôs o grupo inteiro na conta da luta, falta medir); encerrar partidas contra Terran.
+- P0.3: combat simulation com contatos fora de visão (6d medida e revertida), alcance no poder (a 6g deu o splash,
+  falta o alcance), coesão e reforços da ofensiva (a 6f pôs o grupo inteiro na conta da luta); encerrar partidas
+  contra Terran.
 - P0.4: banco que continua alto com supply cheio (7g; a 7h deu aos Reactors um
   destino para ele, a 7i deu ao gás e a 7j voltou a abrir bases, nenhuma das três
   com partida que o meça, e a 7k parou de redecidir o pedido a cada frame),

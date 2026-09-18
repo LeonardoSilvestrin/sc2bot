@@ -39,9 +39,10 @@ Starport) para todos os adversários; depois dela:
 - Com o exército morto, o bot pode acumular milhares de minerais com supply
   livre. Teto de produção, Reactors, gás e bases a mais deram destino ao banco
   sem que ele caísse nas partidas medidas; a causa continua em aberto.
-- Sem combat simulation: o poder de uma unidade é `sqrt(dps · vida)` e não vê
-  alcance nem splash — um Siege Tank em siege vale 2,3 Marines. É a maior
-  lacuna conhecida do combate.
+- Sem combat simulation: o poder de uma unidade é `sqrt(dps · alvos · vida)`.
+  O splash já conta (um Siege Tank em siege vale 4,3 Marines em vez de 2,7),
+  o alcance não: um tanque que atira de 13 células vale o mesmo que um Marine
+  que precisa chegar a 5.
 - Sem Raven, scouting recorrente, stutter-step, foco de fogo ou harass.
 
 O andamento e as evidências de cada item estão em
@@ -125,9 +126,12 @@ Testes e lint (o CI roda os dois antes de gerar qualquer artefato):
 
 O harness joga uma matriz fixa de partidas contra a IA do jogo, cada uma num
 processo com timeout, e grava por partida um `result.json` com resultado
-(`victory`, `defeat`, `tie`, `timeout`, `crash`, `no_result`), commit, SHA do
-Ares, fingerprint da configuração, replay e log. Os resultados ficam em
-`bench/` (fora do git).
+(`victory`, `defeat`, `tie`, `timeout`, `crash`, `no_result`, `not_played`),
+commit, SHA do Ares, fingerprint da configuração, replay e log. Os resultados
+ficam em `bench/` (fora do git). Uma partida que o bot nunca chegou a jogar —
+o cliente falha no `on_start`, o python-sc2 resigna e o jogo reporta derrota
+com o relógio em zero — é `not_played`: fica fora da taxa de vitória e é
+jogada de novo na execução seguinte.
 
 ```text
 .venv\Scripts\python.exe bench.py run --out bench\<rótulo> --maps PersephoneAIE_v4 --races Zerg Terran Protoss --time-limit 1200
