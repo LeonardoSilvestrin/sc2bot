@@ -11,6 +11,8 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from time import perf_counter
 
+from sc2.position import Point2
+
 from bot.attention import AttentionState, MapView
 from bot.awareness import AwarenessState
 from bot.body.behaviors.attack import MicroReport
@@ -76,6 +78,13 @@ class Logs:
             opening=str(getattr(runner, "chosen_opening", "") or "") or None,
             configs=configs,
         )
+
+    def kept_clear(
+        self, time: float, map_view: MapView, sites: Sequence[Point2], cleared: int
+    ) -> None:
+        """The production sites StructureControl keeps empty, from the start."""
+
+        self.telemetry.kept_clear(time=time, map_view=map_view, sites=sites, cleared=cleared)
 
     def record(
         self,

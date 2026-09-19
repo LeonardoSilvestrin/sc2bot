@@ -2,8 +2,8 @@
 
 `read_map` reads what the physical map is -- playable area, starts, main ramp,
 expansions, a pathable lattice and its `MapTopology` (regions, passages,
-adjacency). It says nothing about who holds a place: Awareness paints that
-over this map during the game.
+adjacency), and where a production structure fits in our main. It says nothing
+about who holds a place: Awareness paints that over this map during the game.
 """
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import numpy as np
+from ares.consts import BuildingSize
 from sc2.position import Point2
 
 from .topology import MapTopology, build_topology
@@ -29,6 +30,10 @@ class MapView:
     lattice: tuple[Point2, ...]
     lattice_spacing: float
     topology: MapTopology = field(default_factory=MapTopology)
+    # Centres where a 3x3 structure and its add-on fit in our main, as Ares'
+    # placement solved them at the start (the ramp wall's left out); a site
+    # may be taken by now.
+    production_sites: tuple[Point2, ...] = ()
 
 
 def read_map(bot, *, lattice_spacing: int = 4) -> MapView:
@@ -75,6 +80,7 @@ def read_map(bot, *, lattice_spacing: int = 4) -> MapView:
         lattice=lattice,
         lattice_spacing=float(lattice_spacing),
         topology=topology,
+        production_sites=_production_sites(bot),
     )
 
 
@@ -97,6 +103,23 @@ def pathable_lattice(
 
 def as_point(value) -> Point2:
     return Point2((float(value[0]), float(value[1])))
+
+
+def _production_sites(bot) -> tuple[Point2, ...]:
+    """Kept as Ares' own keys: its bookkeeping and its landing test compare
+    positions exactly."""
+
+    try:
+        placements = bot.mediator.get_placements_dict
+    except (AttributeError, KeyError, RuntimeError, TypeError):
+        return ()
+    main = placements.get(bot.start_location, {}).get(BuildingSize.THREE_BY_THREE, {})
+    return tuple(
+        sorted(
+            (site for site, info in main.items() if not info.get("is_wall", False)),
+            key=lambda point: (point.x, point.y),
+        )
+    )
 
 
 def _map_data(bot):

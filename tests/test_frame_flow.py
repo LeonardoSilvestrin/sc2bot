@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 from ares.behaviors.combat import CombatManeuver
@@ -155,6 +156,37 @@ def test_a_lowered_depot_in_the_attack_path_rises_and_the_log_says_why() -> None
     (planned,) = logger.named("planner.structures_planned")
     assert (planned["data"]["raise"], planned["data"]["reason"]) == ([2], "enemy_near")
     assert planned["data"]["inputs"]["enemy_near"] == 1.0
+
+
+def test_a_tank_walled_in_by_a_barracks_lifts_it_and_the_log_says_why() -> None:
+    logger = FakeLogger()
+    bot = build_bot(attackers=0)
+    (tank,) = [unit for unit in bot.units if unit.type_id is UnitTypeId.SIEGETANK]
+    tank.position = Point2((30.5, 35.5))
+    # Every frame it is ordered north, through the Barracks, and never gets there.
+    tank.orders = [
+        SimpleNamespace(ability=SimpleNamespace(id=AbilityId.MOVE), target=Point2((30.5, 50.5)))
+    ]
+    barracks = FakeUnit(10, UnitTypeId.BARRACKS, 30.5, 38.5, dps=0.0, structure=True)
+    bot.structures.append(barracks)
+    layers = Layers(map_view=MAP, logs=Logs(logger))
+
+    frames = []
+    for iteration, time in enumerate((0.0, 1.0, 2.0, 3.0, 4.0)):
+        bot.time = time
+        frames.append(play_frame(bot, iteration, layers))
+
+    assert [frame.structures.lift for frame in frames] == [(), (), (), (), (10,)]
+    assert barracks.commands == [AbilityId.CANCEL_QUEUE5, ("queue", AbilityId.LIFT)]
+    logged = [
+        (event["data"]["transition"], event["data"]["tank"], event["data"]["structure"])
+        for event in logger.named("planner.structure_relocation")
+    ]
+    assert logged == [
+        ("tank_stuck", 300, None),
+        ("blocker_selected", 300, 10),
+        ("lifting", 300, 10),
+    ]
 
 
 def test_a_worker_inside_a_gas_building_does_not_flip_the_economy_plan() -> None:

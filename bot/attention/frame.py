@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 from sc2.dicts.unit_trained_from import UNIT_TRAINED_FROM
+from sc2.ids.ability_id import AbilityId
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.ids.upgrade_id import UpgradeId
 from sc2.position import Point2
@@ -67,6 +68,8 @@ SPLASH_TARGETS: Mapping[UnitTypeId, float] = {
 }
 # A townhall this close to an expansion location is that base.
 _BASE_SNAP_DISTANCE = 6.0
+# Orders that walk a unit to a point.
+_WALKING_ORDERS = frozenset({AbilityId.MOVE, AbilityId.ATTACK, AbilityId.PATROL, AbilityId.SMART})
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,6 +94,12 @@ class UnitView:
     is_cloaked: bool = False
     # Cloaked or burrowed and not detected: nothing can shoot it.
     is_hidden: bool = False
+    # The point the unit's first order walks it to -- a move, attack-move,
+    # patrol or right click on the ground; None when it is idle or its order
+    # targets a unit. Only our own units show their orders.
+    moving_to: Point2 | None = None
+    # A Barracks, Factory or Starport with a Reactor or Tech Lab attached.
+    has_add_on: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -218,7 +227,20 @@ def unit_view(
         energy=float(getattr(unit, "energy", 0.0) or 0.0),
         is_cloaked=cloaked,
         is_hidden=cloaked and not bool(getattr(unit, "is_revealed", False)),
+        moving_to=_moving_to(unit),
+        has_add_on=bool(getattr(unit, "has_add_on", False)),
     )
+
+
+def _moving_to(unit) -> Point2 | None:
+    orders = getattr(unit, "orders", ())
+    if not orders:
+        return None
+    order = orders[0]
+    # The generic id: MOVE_MOVE, SCAN_MOVE and the like remap to these.
+    if order.ability.id not in _WALKING_ORDERS or not isinstance(order.target, Point2):
+        return None
+    return as_point(order.target)
 
 
 def _views(

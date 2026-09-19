@@ -3,7 +3,7 @@
 - `Proposal`, with its `Command` and `Domain`: what a domain planner asks
   the Engine for.
 - `EconomyPlan`: what Ares' macro behaviors should buy.
-- `StructurePlan`: which existing structure acts.
+- `StructurePlan`: which existing structure acts, and how (`RelocationEvent`).
 - `IntelPlan`: scouting proposals, detection and information infrastructure.
 """
 
@@ -138,6 +138,22 @@ class EconomyPlan:
 
 
 @dataclass(frozen=True, slots=True)
+class RelocationEvent:
+    """One step of moving a production structure out of a Siege Tank's way."""
+
+    # tank_stuck, blocker_selected, lifting, tank_moving, tank_gone,
+    # tank_still_stuck, relocating, no_landing_site, landing,
+    # relocation_complete or relocation_aborted.
+    transition: str
+    reason: str
+    tank: int | None = None
+    structure: int | None = None
+    # The landing site, or where the structure landed.
+    site: Point2 | None = None
+    inputs: tuple[tuple[str, float], ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class StructurePlan:
     # Supply depots to lower, by tag.
     lower: tuple[int, ...]
@@ -145,6 +161,12 @@ class StructurePlan:
     inputs: tuple[tuple[str, float], ...] = ()
     # Supply depots to raise, by tag.
     raise_: tuple[int, ...] = ()
+    # Production structures to lift out of a Siege Tank's way, by tag.
+    lift: tuple[int, ...] = ()
+    # Flying structures to fly to a site and land on it: (tag, site).
+    land: tuple[tuple[int, Point2], ...] = ()
+    # What the relocation did this frame, in order.
+    relocation: tuple[RelocationEvent, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

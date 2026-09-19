@@ -69,6 +69,8 @@ def unit(
     role: str | None = None,
     energy: float = 0.0,
     hidden: bool = False,
+    moving_to: tuple[float, float] | None = None,
+    add_on: bool = False,
 ) -> UnitView:
     return UnitView(
         tag=tag,
@@ -87,6 +89,8 @@ def unit(
         energy=energy,
         is_cloaked=hidden,
         is_hidden=hidden,
+        moving_to=None if moving_to is None else Point2(moving_to),
+        has_add_on=add_on,
     )
 
 
@@ -258,8 +262,9 @@ class FakeUnit:
     def distance_to(self, other) -> float:
         return self.position.distance_to(getattr(other, "position", other))
 
-    def __call__(self, ability, target=None) -> None:
-        self.commands.append(ability if target is None else (ability, target))
+    def __call__(self, ability, target=None, queue: bool = False) -> None:
+        command = ability if target is None else (ability, target)
+        self.commands.append(("queue", command) if queue else command)
 
 
 class FakeMediator:
@@ -274,6 +279,11 @@ class FakeMediator:
         self.get_own_structures_dict: dict[UnitTypeId, list] = defaultdict(list)
         # What Ares counts of each own unit type, aliases and production included.
         self.own_unit_counts: dict[UnitTypeId, int] = {}
+        # (tag, target, should_land) of every structure Ares was asked to fly.
+        self.moved_structures: list[tuple[int, Point2, bool]] = []
+
+    def move_structure(self, *, structure, target: Point2, should_land: bool = False) -> None:
+        self.moved_structures.append((structure.tag, target, should_land))
 
     def get_own_unit_count(self, *, unit_type_id: UnitTypeId) -> int:
         return self.own_unit_counts.get(unit_type_id, 0)

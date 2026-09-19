@@ -266,7 +266,36 @@ class Telemetry:
             },
         )
 
+    def kept_clear(
+        self, *, time: float, map_view: MapView, sites: Sequence[Point2], cleared: int
+    ) -> None:
+        self._event(
+            "planner.production_kept_clear",
+            "planners",
+            time,
+            {
+                "production_sites": len(map_view.production_sites),
+                "sites": [_xy(site) for site in sites],
+                "cleared": cleared,
+            },
+        )
+
     def _record_structures(self, now: float, structures: StructurePlan) -> None:
+        # Every relocation step is a decision.
+        for event in structures.relocation:
+            self._event(
+                "planner.structure_relocation",
+                "planners",
+                now,
+                {
+                    "transition": event.transition,
+                    "reason": event.reason,
+                    "tank": event.tank,
+                    "structure": event.structure,
+                    "site": None if event.site is None else _xy(event.site),
+                    "inputs": dict(event.inputs),
+                },
+            )
         signature = (structures.lower, structures.raise_, structures.reason)
         if not self._structures.admit(signature, now=now):
             return

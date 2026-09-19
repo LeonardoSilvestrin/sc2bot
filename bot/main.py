@@ -236,6 +236,9 @@ class MyBot(AresBot):
         self.build_order_runner.switch_opening(army.opening, remove_completed=False)
         self.layers = Layers(map_view=map_view, logs=self.bot_logs, army=army)
         self.bot_logs.game_started(self, map_view, self.layers.configs())
+        corridor = self.layers.structure_control.corridor(map_view)
+        cleared = behaviors.structure_control.keep_clear(self, corridor)
+        self.bot_logs.kept_clear(float(self.time), map_view, corridor, cleared)
         await self.chat_send(styles.announcement(army))
 
     async def on_step(self, iteration: int) -> None:

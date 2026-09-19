@@ -1,6 +1,7 @@
 """StructureControl: what our own structures do by themselves.
 
-For now only supply depots, in both directions. A finished depot goes up the
+Supply depots go up and down, and a Barracks, Factory or Starport that walls a
+Siege Tank in flies out of its way (`relocation`). A finished depot goes up the
 frame a ground enemy comes within `raise_reach` of it, and down again once no
 ground enemy has been that close for `lower_after` seconds, so an enemy pacing
 at the edge of reach cannot toggle it faster than that. Flying enemies do not
@@ -10,17 +11,22 @@ Raising a depot pushes our own units on top of it to its nearest edge, and an
 enemy on top keeps it from rising until it steps off (the Body simply orders
 it again). The plan counts our units on the depots it raises, so that cost is
 in the log.
+
+The relocation never touches a depot, and the depots' plan does not depend on it.
 """
 
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 
 from sc2.ids.unit_typeid import UnitTypeId
+from sc2.position import Point2
 
-from bot.attention import AttentionState
+from bot.attention import AttentionState, MapView
 from bot.ego.planners import StructurePlan
+
+from .relocation import RelocationConfig, Relocator
 
 DEPOT_TYPES = frozenset({UnitTypeId.SUPPLYDEPOT, UnitTypeId.SUPPLYDEPOTLOWERED})
 # A 2x2 depot's half side plus a small unit's radius: a unit this close to the
@@ -34,6 +40,7 @@ class StructureConfig:
     raise_reach: float = 8.0
     # Seconds a depot stays up after the last ground enemy left its reach.
     lower_after: float = 3.0
+    relocation: RelocationConfig = field(default_factory=RelocationConfig)
 
     def __post_init__(self) -> None:
         if self.raise_reach <= 0.0:
@@ -47,8 +54,23 @@ class StructureControl:
         self.config = config or StructureConfig()
         # When a ground enemy was last within reach, by depot tag.
         self._threatened_at: dict[int, float] = {}
+        self._relocator = Relocator(self.config.relocation)
+
+    def corridor(self, map_view: MapView) -> tuple[Point2, ...]:
+        """Production sites of the main to leave empty: the way to the ramp."""
+
+        return self._relocator.corridor(map_view)
 
     def plan(self, attention: AttentionState) -> StructurePlan:
+        relocation = self._relocator.plan(attention)
+        return replace(
+            self._depots(attention),
+            lift=relocation.lift,
+            land=relocation.land,
+            relocation=relocation.events,
+        )
+
+    def _depots(self, attention: AttentionState) -> StructurePlan:
         config = self.config
         now = attention.time
         depots = tuple(
