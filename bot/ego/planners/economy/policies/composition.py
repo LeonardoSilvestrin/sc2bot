@@ -18,7 +18,7 @@ from bot.ego.planners import (
     CounterAdaptation,
     SurvivalComposition,
 )
-from bot.ego.strategy import EconomyPosture, StrategyState
+from bot.ego.strategy import StrategicIntent
 
 from ..knowledge.counter_catalog import (
     REACH,
@@ -79,7 +79,7 @@ class CompositionPolicy:
     def plan(
         self,
         attention: AttentionState,
-        strategy: StrategyState,
+        intent: StrategicIntent,
         enemy: Iterable[tuple[UnitTypeId, float]] = (),
         *,
         contacts: Iterable[Contact] = (),
@@ -156,7 +156,7 @@ class CompositionPolicy:
         survival = None
         reason = "counter_adaptation" if response_power else "style_baseline"
 
-        if strategy.economy_policy.posture is EconomyPosture.SURVIVE:
+        if intent.emergency:
             incident = _strongest(tuple(incidents))
             if incident is not None:
                 units, survival = self._survival_units(attention, units, incident, tuple(contacts))

@@ -206,7 +206,7 @@
     const endTime = sorted.length ? sorted[sorted.length - 1].game_time : 0;
 
     const t = {
-      objective: stateTrack("strategy.objective", "Objective", "Strategy"),
+      posture: stateTrack("strategy.posture", "Posture", "Strategy"),
       defensePreference: seriesTrack("strategy.defense", "Defense preference", "Strategy", { min: 0, max: 1, format: 2 }),
       armyPreference: seriesTrack("strategy.army", "Army spending", "Strategy", { min: 0, max: 1, format: 2 }),
       risk: seriesTrack("strategy.risk", "Risk tolerance", "Strategy", { min: 0, max: 1, format: 2 }),
@@ -236,8 +236,10 @@
       switch (record.event) {
         case "strategy.decided": {
           strategySeen = true;
+          // Logs before the posture had a binary objective.
+          const posture = data.posture ?? data.objective;
           const detail = {
-            objective: data.objective,
+            posture,
             previous: data.previous ?? null,
             since: finite(data.since),
             reason: data.reason,
@@ -247,7 +249,7 @@
             inputs: data.inputs && typeof data.inputs === "object" ? data.inputs : {},
             scores: data.scores && typeof data.scores === "object" ? data.scores : {},
           };
-          pushState(t.objective, time, data.objective, record, detail);
+          pushState(t.posture, time, posture, record, detail);
           pushSeries(t.defensePreference, time, data.defense);
           pushSeries(t.armyPreference, time, data.army);
           pushSeries(t.risk, time, data.risk);
@@ -348,10 +350,10 @@
   // The world state every view shows for one instant, layer by layer.
   function snapshotAt(model, time) {
     const t = model.t;
-    const objective = stateAt(t.objective, time);
+    const posture = stateAt(t.posture, time);
     return {
       time,
-      strategy: objective ? { ...(objective.lastDetail ?? objective.detail), since: objective.t } : undefined,
+      strategy: posture ? { ...(posture.lastDetail ?? posture.detail), since: posture.t } : undefined,
       strategyRecord: recordAt(model.strategyRecords, time),
       awarenessRecord: recordAt(model.awarenessRecords, time),
       attentionRecord: recordAt(model.attentionRecords, time),
@@ -387,7 +389,7 @@
 
   function transitions(model) {
     const result = [];
-    for (const name of ["objective", "economy"]) {
+    for (const name of ["posture", "economy"]) {
       const track = model.t[name];
       track.points.forEach((point, index) => {
         result.push({
@@ -456,14 +458,14 @@
         : before !== after;
       signals.push({ signal: label, before: formatValue(before, digits), after: formatValue(after, digits), changed });
     }
-    const strategy = transition.trackKey === "strategy.objective" ? transition.detail : undefined;
+    const strategy = transition.trackKey === "strategy.posture" ? transition.detail : undefined;
     const command = transition.record?.event === "engine.commanded" ? transition.record.data : undefined;
     const inputs = strategy?.inputs ?? command?.inputs ?? {};
     return {
       reason: transition.reason ?? null,
       signals: signals.sort((a, b) => Number(b.changed) - Number(a.changed)),
       inputs: Object.entries(inputs).map(([signal, value]) => ({ signal, value: formatValue(finite(value) ?? value, 2) })),
-      scores: Object.entries(strategy?.scores ?? {}).map(([objective, value]) => ({ objective, value: formatValue(finite(value), 2) })),
+      scores: Object.entries(strategy?.scores ?? {}).map(([posture, value]) => ({ posture, value: formatValue(finite(value), 2) })),
     };
   }
 

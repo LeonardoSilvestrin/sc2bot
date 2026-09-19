@@ -18,7 +18,7 @@ attack through its phases, with at most one transition per frame:
 
 The mission ends by itself as FAILED when the army fell below
 `depleted_share` of the power it committed with (`army_depleted`), or when a
-regroup finds the commitment no longer holds (`advantage_lost`). An immediate
+regroup finds Strategy's posture no longer offensive (`window_closed`). An immediate
 cancel request, or a graceful one while the mission holds no unit (ASSEMBLE,
 REGROUP), ends it as CANCELLED at once. The proposal keeps the id `offense`
 through every phase and every mission, so the Engine keeps the same units.
@@ -39,8 +39,8 @@ share moving inside the band does not flip the decision. A fight with no
 enemy near for `clear_after` seconds is won: the squad advances again. A
 retreat ends at the rally, with the army assembled or `retreat_timeout` after
 it began, and the army regroups for at least `regroup_dwell` seconds: then it
-advances again if the commitment still holds (advantage or maxed supply), or
-the mission fails.
+advances again if the posture is still offensive (PRESSURE or COMMIT), or the
+mission fails.
 
 The target is a remembered enemy structure: a townhall on the ground before
 any other structure on the ground, and those before a structure in the air;
@@ -82,7 +82,7 @@ from bot.ego.missions import (
     MissionView,
 )
 from bot.ego.planners import Command, Domain, Proposal
-from bot.ego.strategy import StrategyState
+from bot.ego.strategy import StrategicIntent
 
 OWNER = "offense"
 KIND = "main_attack"
@@ -128,8 +128,6 @@ _MOVING = frozenset({Stage.ADVANCE, Stage.SEARCH})
 class OffenseConfig:
     # Army, in Marines, the bot never commits with less of.
     minimum_power: float = 20.0
-    # Supply at which the army cannot grow any more.
-    maxed_supply: float = 190.0
     # The army is assembled once this share of its power stands this close to
     # the rally, in cells ...
     assemble_share: float = 0.8
@@ -162,8 +160,6 @@ class OffenseConfig:
     def __post_init__(self) -> None:
         if min(self.minimum_power, self.assemble_radius, self.engage_radius) <= 0.0:
             raise ValueError("minimum_power, assemble_radius and engage_radius must be positive")
-        if not 0.0 < self.maxed_supply <= 200.0:
-            raise ValueError("maxed_supply must be in (0, 200]")
         if not 0.0 < self.assemble_share <= 1.0:
             raise ValueError("assemble_share must be in (0, 1]")
         if not 0.0 <= self.depleted_share < 1.0:
@@ -209,7 +205,7 @@ class OffenseContext:
 
     attention: AttentionState
     awareness: AwarenessState
-    strategy: StrategyState
+    intent: StrategicIntent
     # Where the army assembles and falls back to: MapControl's anchor.
     rally: Point2
     # The searchable places, and when each was last in vision (the planner's
@@ -221,8 +217,8 @@ class OffenseContext:
     assembled: float
     known: tuple[Contact, ...]
     start_cleared: bool
-    # The army is at least the enemy planned against, or supply is maxed.
-    advantage: bool
+    # Strategy's posture lets the offense attack: PRESSURE or COMMIT.
+    offensive: bool
     cooldown_left: float
 
     @property
@@ -475,12 +471,12 @@ class MainAttackMission:
                 and stage_for < config.regroup_dwell + config.assemble_timeout - _TOLERANCE
             ):
                 return "army_not_assembled"
-            if ctx.advantage:
+            if ctx.offensive:
                 # A new commitment, measured against the army it now has.
                 self._enter(Stage.ADVANCE, "regrouped", now)
                 self._committed = ctx.own_power
             else:
-                self._end(MissionStatus.FAILED, "advantage_lost", now)
+                self._end(MissionStatus.FAILED, "window_closed", now)
         return None
 
     def _proposal(
@@ -564,7 +560,9 @@ def offense_inputs(
 
     return (
         ("own_power", ctx.own_power),
-        ("army_share", ctx.strategy.army_share),
+        ("army_share", ctx.intent.army_share),
+        ("power_spike", ctx.intent.assessment.power_spike),
+        ("offensive", float(ctx.offensive)),
         ("supply_used", ctx.attention.supply_used),
         ("assembled_share", ctx.assembled),
         ("committed_power", committed),

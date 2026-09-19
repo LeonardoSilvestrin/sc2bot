@@ -18,7 +18,7 @@ from bot.attention import observe, read_map
 from bot.awareness import AwarenessConfig
 from bot.ego.planners import defense, map_control, offense
 from bot.ego.planners.economy.policies import investment
-from bot.ego.strategy import StrategyConfig
+from bot.ego.strategy import AssessmentConfig, StrategicPosture, StrategyConfig
 from bot.logs import Logs, OverlayConfig, SnapshotConfig
 from bot.main import Layers, play_frame
 
@@ -136,6 +136,40 @@ def test_a_frame_flows_from_attention_to_logs() -> None:
     assert grant["tags"] == list(defended)
 
 
+def test_every_posture_change_is_logged_once_with_why() -> None:
+    logger = FakeLogger()
+    bot = build_bot(attackers=6)
+    layers = Layers(map_view=MAP, logs=Logs(logger))
+    frames = []
+    for iteration in range(60):
+        bot.time = float(iteration)
+        if iteration == 2:
+            bot.state.dead_units = {enemy.tag for enemy in bot.enemy_units}
+            bot.enemy_units = []
+        frames.append(play_frame(bot, iteration, layers))
+
+    postures = [frame.intent.posture for frame in frames]
+    changes = [
+        frame.intent
+        for before, frame in zip([None, *frames], frames, strict=False)
+        if before is None or before.intent.posture is not frame.intent.posture
+    ]
+    written = [event["data"] for event in logger.named("strategy.posture_changed")]
+    assert postures[0] is StrategicPosture.DEFEND and postures[-1] is not StrategicPosture.DEFEND
+    assert [item["posture"] for item in written] == [intent.posture.value for intent in changes]
+    first, second = written[:2]
+    assert (first["previous"], first["reason"], first["threat"]) == (
+        None,
+        changes[0].reason,
+        changes[0].assessment.threat.value,
+    )
+    assert first["summary"].startswith("START -> DEFEND (")
+    assert "threat=" in first["summary"] and "army_position=" in first["summary"]
+    assert (second["previous"], second["reason"]) == ("DEFEND", changes[1].reason)
+    assert second["summary"] == changes[1].summary()
+    assert set(second["gates"]) == {"DEFEND", "RECOVER", "COMMIT", "PRESSURE"}
+
+
 def test_a_lowered_depot_in_the_attack_path_rises_and_the_log_says_why() -> None:
     logger = FakeLogger()
     bot = build_bot()
@@ -227,8 +261,8 @@ def test_a_worker_inside_a_gas_building_does_not_flip_the_economy_plan() -> None
         frame = play_frame(bot, iteration, layers)
         plans.append((frame.economy.bases, frame.economy.expand, frame.economy.gas))
         workers.append(frame.attention.workers)
-        economies.append(frame.strategy.economy)
-        dangers.append(frame.strategy.defense)
+        economies.append(frame.intent.economy)
+        dangers.append(frame.intent.defense)
 
     # Three bases: six geysers, and 48 workers can mine them all.
     assert set(plans) == {(4, True, 6)}
@@ -335,7 +369,7 @@ def test_the_fog_does_not_let_a_threatened_bot_expand_as_if_the_enemy_had_no_arm
     frame = play_frame(bot, 0, Layers(map_view=ROOMY_MAP, logs=Logs(logger)))
 
     assert frame.awareness.danger > 0.0
-    assert frame.strategy.economy < 0.5
+    assert frame.intent.economy < 0.5
     assert (frame.economy.expand, frame.economy.reason) == (False, "build_economy")
     config = AwarenessConfig()
     expected = config.army_growth * (600.0 - config.army_onset)
@@ -346,10 +380,10 @@ def test_the_fog_does_not_let_a_threatened_bot_expand_as_if_the_enemy_had_no_arm
     assert updated["enemy_uncertainty"] == pytest.approx(expected - updated["enemy_power"])
     decided = logger.named("strategy.decided")[0]["data"]["inputs"]
     assert decided["planned_enemy_power"] == pytest.approx(
-        expected + StrategyConfig().commit_margin * updated["enemy_uncertainty"]
+        expected + AssessmentConfig().commit_margin * updated["enemy_uncertainty"]
     )
     (planned,) = logger.named("planner.economy_planned")
-    assert planned["data"]["inputs"]["strategy_economy"] == pytest.approx(frame.strategy.economy)
+    assert planned["data"]["inputs"]["strategy_economy"] == pytest.approx(frame.intent.economy)
     assert planned["data"]["expand"] is False
 
 
@@ -409,7 +443,7 @@ def test_a_maxed_army_attacks_the_known_enemy_base_and_the_log_says_why() -> Non
 
     planned = [event["data"] for event in logger.named("planner.offense_planned")]
     assert [(item["stage"], item["reason"]) for item in planned] == [
-        ("ASSEMBLE", "supply_maxed"),
+        ("ASSEMBLE", "power_spike"),
         ("ADVANCE", "army_assembled"),
     ]
     assert planned[0]["committed_power"] == pytest.approx(first.awareness.own_power)
@@ -509,7 +543,7 @@ def test_the_same_game_replays_to_the_same_decisions() -> None:
             if time >= 9.0:
                 bot.enemy_units = bot.enemy_units[:1]
             frame = play_frame(bot, iteration, layers)
-            frames.append((frame.strategy, frame.proposals, frame.result))
+            frames.append((frame.intent, frame.proposals, frame.result))
         return frames
 
     assert replay() == replay()
@@ -564,7 +598,7 @@ def test_debug_observers_draw_and_write_without_changing_decisions(tmp_path) -> 
         for iteration, time in enumerate((0.0, 1.0)):
             bot.time = time
             frame = play_frame(bot, iteration, layers)
-            frames.append((frame.strategy, frame.result))
+            frames.append((frame.intent, frame.result))
         return bot, frames
 
     logger = FakeLogger()
@@ -594,7 +628,7 @@ def test_an_attack_during_the_opening_interrupts_it_and_the_log_says_so() -> Non
     frame = play_frame(bot, 0, layers)
 
     assert frame.attention.opening_done is False
-    assert frame.strategy.defense >= StrategyConfig().emergency_danger
+    assert frame.intent.defense >= StrategyConfig().emergency_danger
     assert (frame.economy.active, frame.economy.interrupt_opening) == (True, True)
     assert bot.build_order_runner.stopped == 1
     assert any(isinstance(item, MacroPlan) for item in bot.registered)
@@ -603,7 +637,7 @@ def test_an_attack_during_the_opening_interrupts_it_and_the_log_says_so() -> Non
         "opening_interrupted",
         True,
     )
-    assert planned["data"]["inputs"]["danger"] == frame.strategy.defense
+    assert planned["data"]["inputs"]["danger"] == frame.intent.defense
 
     # From the next frame on, the opening is over and the plan simply runs.
     bot.time = 0.5

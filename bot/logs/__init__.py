@@ -29,7 +29,7 @@ from bot.ego.planners import (
 )
 from bot.ego.planners.map_control import MapControlPlan
 from bot.ego.planners.offense import OffensePlan
-from bot.ego.strategy import StrategyState
+from bot.ego.strategy import StrategicIntent
 
 from .jsonl import BotLogger, ChangeGate, JsonlLogger, NullLogger
 from .overlay import Overlay, OverlayConfig
@@ -91,7 +91,7 @@ class Logs:
         bot,
         attention: AttentionState,
         awareness: AwarenessState,
-        strategy: StrategyState,
+        intent: StrategicIntent,
         map_control: MapControlPlan,
         offense: OffensePlan,
         proposals: Sequence[Proposal],
@@ -114,7 +114,7 @@ class Logs:
             self.telemetry.record(
                 attention,
                 awareness,
-                strategy,
+                intent,
                 map_control,
                 offense,
                 proposals,
@@ -130,8 +130,8 @@ class Logs:
                 infrastructure=infrastructure,
                 missions=missions,
             )
-            self.snapshots.capture(attention, awareness, strategy, map_control, result)
-            self.overlay.render(bot, attention, awareness, strategy, map_control, result)
+            self.snapshots.capture(attention, awareness, intent, map_control, result)
+            self.overlay.render(bot, attention, awareness, intent, map_control, result)
         finally:
             self.logger.end_frame()
             self._last_ms = (perf_counter() - started) * 1000.0

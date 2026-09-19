@@ -20,11 +20,10 @@ from .missions.main_attack import (
     OffenseConfig,
     Stage,
 )
-from .planner import EVEN_SHARE, OffensePlan, OffensePlanner
+from .planner import OffensePlan, OffensePlanner
 
 __all__ = [
     "ENEMY_START",
-    "EVEN_SHARE",
     "FLYING_STRUCTURE",
     "KIND",
     "KNOWN_BASE",

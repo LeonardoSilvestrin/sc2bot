@@ -8,19 +8,23 @@ frame), for the reason it ended. The planner keeps only what outlives an
 attack: when the last one ended (the cooldown), and when each searchable place
 was last in vision (an attack that searches reads it).
 
-An attack opens, from IDLE, while Strategy lets the offense pursue (its policy
-is not WITHDRAW), no mission ended in the last `cooldown` seconds and with at
-least `minimum_power` of army, once either
+Whether to attack is read from Strategy's intent; how the offense serves
+each posture is this planner's:
 
-- the army is at least the enemy army Strategy plans against -- its estimate
-  plus a margin on the part no contact places (`army_share` >= 1/2); or
-- supply reached `maxed_supply`: the army cannot grow any more, so waiting
-  only lets the enemy catch up.
+- PRESSURE or COMMIT: an attack opens, from IDLE, with at least
+  `minimum_power` of army and no mission ended in the last `cooldown`
+  seconds -- except under COMMIT, where the window is now: the cooldown is
+  waived, so a defense won against a spent enemy turns into a counterattack.
+  The attack opens for the intent's reason (`army_advantage`, `power_spike`,
+  `decisive_advantage`).
+- DEVELOP: no attack opens; a running one carries on until it ends itself --
+  at its next regroup, since the posture is no longer offensive.
+- RECOVER: no attack opens, and a running one is asked to cancel GRACEFULLY:
+  it walks the army back to the rally before it ends.
+- DEFEND: no attack opens, and a running one is asked to cancel IMMEDIATELY:
+  its units are free for Defense and MapControl in the same allocation.
 
-When Strategy's policy turns to WITHDRAW (home is threatened), the planner
-asks the running mission to cancel IMMEDIATELY: its units are free for
-Defense and MapControl in the same allocation, as they always were. The mission
-also ends by itself (`main_attack`); every end starts the cooldown.
+The mission also ends by itself (`main_attack`); every end starts the cooldown.
 
 Priority: Defense (positive exactly while an attacker is in reach) outranks the
 offense (0), which outranks MapControl (-1). Defense takes the power
@@ -44,7 +48,7 @@ from bot.ego.missions import (
     MissionView,
 )
 from bot.ego.planners import Proposal
-from bot.ego.strategy import Posture, StrategyState
+from bot.ego.strategy import StrategicIntent, StrategicPosture
 
 from .missions.main_attack import (
     KIND,
@@ -63,10 +67,14 @@ if TYPE_CHECKING:
     from bot.body.engine import EngineResult
 
 
-# The army is at least the enemy army planned against.
-EVEN_SHARE = 0.5
 # Absorbs float noise so a value exactly at its threshold counts.
 _TOLERANCE = 1e-9
+# Why no attack opens, and why a running one is asked to end, by posture.
+_HELD_BACK = {
+    StrategicPosture.DEFEND: "home_threatened",
+    StrategicPosture.RECOVER: "recovering",
+    StrategicPosture.DEVELOP: "no_opportunity",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,7 +141,7 @@ class OffensePlanner:
         self,
         attention: AttentionState,
         awareness: AwarenessState,
-        strategy: StrategyState,
+        intent: StrategicIntent,
         rally: Point2,
         feedback: EngineResult | None = None,
     ) -> OffensePlan:
@@ -159,7 +167,7 @@ class OffensePlanner:
         ctx = OffenseContext(
             attention=attention,
             awareness=awareness,
-            strategy=strategy,
+            intent=intent,
             rally=rally,
             places=places,
             seen_at=MappingProxyType(self._seen_at),
@@ -168,8 +176,7 @@ class OffensePlanner:
             known=known,
             start_cleared=not known
             and recent(self._seen_at.get(attention.map.enemy_start), now, config.search_memory),
-            advantage=strategy.army_share >= EVEN_SHARE - _TOLERANCE
-            or attention.supply_used >= config.maxed_supply - _TOLERANCE,
+            offensive=intent.posture.offensive,
             cooldown_left=(
                 0.0
                 if self._ended is None
@@ -185,11 +192,14 @@ class OffensePlanner:
         self, mission: MainAttackMission, ctx: OffenseContext, feedback: EngineResult | None
     ) -> OffensePlan:
         now = ctx.now
-        policy = ctx.strategy.offense
-        if policy.posture is Posture.WITHDRAW:
+        posture = ctx.intent.posture
+        if posture is StrategicPosture.DEFEND:
             # Defense needs the units now, and MapControl holds the rest at the
             # threatened base: no walk back first.
-            mission.request_cancel(CancelMode.IMMEDIATE, policy.reason, now)
+            mission.request_cancel(CancelMode.IMMEDIATE, _HELD_BACK[posture], now)
+        elif posture is StrategicPosture.RECOVER:
+            # Nothing presses at home: bring the army back whole.
+            mission.request_cancel(CancelMode.GRACEFUL, _HELD_BACK[posture], now)
         granted = MissionFeedback.of(feedback, mission.mission_id)
         step = mission.step(ctx, granted)
         self._views = (mission.view(granted, step.proposals),)
@@ -221,22 +231,18 @@ class OffensePlanner:
         ended = self._ended
         assert self._started is not None
         since = self._started if ended is None else ended.time
-        policy = ctx.strategy.offense
+        intent = ctx.intent
         own = ctx.own_power
         opened: str | None = None
         blocked_by: str | None = None
-        if policy.posture is Posture.WITHDRAW:
-            blocked_by = policy.reason
-        elif ctx.cooldown_left > _TOLERANCE:
+        if not ctx.offensive:
+            blocked_by = _HELD_BACK[intent.posture]
+        elif ctx.cooldown_left > _TOLERANCE and intent.posture is not StrategicPosture.COMMIT:
             blocked_by = "cooling_down"
         elif own < config.minimum_power - _TOLERANCE:
             blocked_by = "army_below_minimum"
-        elif ctx.strategy.army_share >= EVEN_SHARE - _TOLERANCE:
-            opened = "army_advantage"
-        elif ctx.attention.supply_used >= config.maxed_supply - _TOLERANCE:
-            opened = "supply_maxed"
         else:
-            blocked_by = "no_advantage"
+            opened = intent.reason
         if opened is None:
             return OffensePlan(
                 stage=Stage.IDLE,

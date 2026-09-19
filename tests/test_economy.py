@@ -34,21 +34,21 @@ from bot.body.behaviors import economy as economy_behavior
 from bot.ego.planners import economy
 from bot.ego.planners.economy.knowledge import styles
 from bot.ego.planners.economy.policies import investment
-from bot.ego.strategy import (
-    EconomyPolicy,
-    EconomyPosture,
-    Objective,
-    StrategyConfig,
-    StrategyModel,
-)
+from bot.ego.strategy import StrategicPosture, StrategyConfig, StrategyModel
 
 from .fakes import MAIN, MAP, FakeBot, FakeUnit, attention
 
+DEFEND = StrategicPosture.DEFEND
+RECOVER = StrategicPosture.RECOVER
+DEVELOP = StrategicPosture.DEVELOP
+PRESSURE = StrategicPosture.PRESSURE
+COMMIT = StrategicPosture.COMMIT
 
-def planned(*, opening_done: bool = True, objective: Objective = Objective.BUILD_ADVANTAGE, **kw):
+
+def planned(*, opening_done: bool = True, posture: StrategicPosture = DEVELOP, **kw):
     frame = attention(time=400.0, opening_done=opening_done, **kw)
-    strategy = StrategyModel().decide(frame, AwarenessModel().infer(frame))
-    return economy.plan(frame, replace(strategy, objective=objective))
+    intent = StrategyModel().decide(frame, AwarenessModel().infer(frame))
+    return economy.plan(frame, replace(intent, posture=posture))
 
 
 def test_after_the_opening_the_plan_researches_upgrades_and_runs_orbitals() -> None:
@@ -63,9 +63,10 @@ def test_after_the_opening_the_plan_researches_upgrades_and_runs_orbitals() -> N
     assert (plan.orbitals, plan.mules) == (True, True)
 
 
-def test_stabilizing_spends_on_the_army_not_on_upgrades() -> None:
-    plan = planned(objective=Objective.STABILIZE)
+def test_defending_spends_on_the_army_not_on_upgrades() -> None:
+    plan = planned(posture=DEFEND)
 
+    assert plan.reason == "defend_spend_on_army"
     assert plan.upgrades == ()
     assert (plan.orbitals, plan.mules, plan.freeflow) == (True, True, True)
 
@@ -119,7 +120,7 @@ def test_what_must_not_wait_for_the_army_runs_before_the_spawn_controller() -> N
     assert macro.macros[1].to is UnitTypeId.ORBITALCOMMAND
 
     bot = FakeBot()
-    economy_behavior.execute(bot, planned(objective=Objective.STABILIZE))
+    economy_behavior.execute(bot, planned(posture=DEFEND))
     (macro,) = [item for item in bot.registered if isinstance(item, MacroPlan)]
     assert not any(isinstance(item, UpgradeController) for item in macro.macros)
 
@@ -266,10 +267,10 @@ def test_the_spawn_controller_leaves_alone_the_structure_that_took_an_add_on() -
     assert spawn.ignored_build_from_tags == {5}
 
     bot = add_on_bot([Barracks(1, add_on=True), Barracks(6)])
-    economy_behavior.execute(bot, planned(objective=Objective.STABILIZE))
+    economy_behavior.execute(bot, planned(posture=DEFEND))
     (macro,) = [item for item in bot.registered if isinstance(item, MacroPlan)]
     (spawn,) = [item for item in macro.macros if isinstance(item, SpawnController)]
-    # Stabilizing spends on the army, not on add-ons.
+    # Defending spends on the army, not on add-ons.
     assert spawn.ignored_build_from_tags == set()
 
 
@@ -288,25 +289,12 @@ def test_nothing_is_trained_or_built_on_a_structure_being_lifted() -> None:
     assert spawn.ignored_build_from_tags == {5, 6}
 
 
-def opening_plan(defense: float, objective: Objective = Objective.STABILIZE):
+def opening_plan(defense: float, posture: StrategicPosture = DEFEND):
     frame = attention(time=150.0, opening_done=False)
-    strategy = StrategyModel().decide(frame, AwarenessModel().infer(frame))
-    posture = (
-        EconomyPosture.SURVIVE
-        if objective is Objective.STABILIZE and defense >= StrategyConfig().emergency_danger
-        else EconomyPosture.ARMY_FIRST
-        if objective is Objective.STABILIZE
-        else EconomyPosture.INVEST
-    )
-    policy = EconomyPolicy(posture, "test")
+    intent = StrategyModel().decide(frame, AwarenessModel().infer(frame))
+    emergency = posture is DEFEND and defense >= StrategyConfig().emergency_danger
     return economy.plan(
-        frame,
-        replace(
-            strategy,
-            objective=objective,
-            defense=defense,
-            economy_policy=policy,
-        ),
+        frame, replace(intent, posture=posture, defense=defense, emergency=emergency)
     )
 
 
@@ -317,11 +305,11 @@ def test_a_stalled_opening_is_interrupted_by_its_bank(minerals: int, stalled: bo
     frame = replace(attention(time=300.0, opening_done=False), minerals=minerals)
     strategy = StrategyModel().decide(frame, AwarenessModel().infer(frame))
 
-    plan = economy.plan(frame, replace(strategy, objective=Objective.BUILD_ADVANTAGE))
+    plan = economy.plan(frame, replace(strategy, posture=DEVELOP))
 
     assert (plan.active, plan.interrupt_opening) == (stalled, stalled)
     assert plan.reason == ("opening_stalled" if stalled else "opening_runs")
-    # Nothing is being stabilized: the plan invests as after any opening.
+    # Nothing is being defended: the plan invests as after any opening.
     assert bool(plan.upgrades) == stalled and not plan.freeflow
 
 
@@ -333,22 +321,22 @@ def test_an_emergency_interrupts_the_opening_and_the_plan_takes_over() -> None:
         True,
         "opening_interrupted",
     )
-    # Stabilizing: everything to the army.
+    # Defending: everything to the army.
     assert plan.freeflow and plan.upgrades == ()
     assert (plan.orbitals, plan.mules) == (True, True)
     assert dict(plan.inputs)["danger"] == StrategyConfig().emergency_danger
 
 
 @pytest.mark.parametrize(
-    "defense, objective",
+    "defense, posture",
     [
-        (StrategyConfig().emergency_danger - 0.01, Objective.STABILIZE),
-        # A threat the strategy does not stabilize against yet.
-        (0.9, Objective.BUILD_ADVANTAGE),
+        (StrategyConfig().emergency_danger - 0.01, DEFEND),
+        # A threat the strategy does not defend against yet.
+        (0.9, DEVELOP),
     ],
 )
-def test_the_opening_runs_on_below_the_emergency(defense, objective) -> None:
-    plan = opening_plan(defense, objective)
+def test_the_opening_runs_on_below_the_emergency(defense, posture) -> None:
+    plan = opening_plan(defense, posture)
 
     assert (plan.active, plan.interrupt_opening, plan.reason) == (
         False,
@@ -401,6 +389,33 @@ def test_the_production_ceiling_grows_with_the_bases(count: int, ceiling: int) -
 
     assert plan.max_production == ceiling
     assert dict(plan.inputs)["production_per_base"] == investment.PRODUCTION_PER_BASE
+
+
+@pytest.mark.parametrize("posture", [PRESSURE, COMMIT])
+def test_an_offensive_posture_accepts_a_larger_military_commitment(posture) -> None:
+    plan = planned(bases=bases(3), workers=48, posture=posture)
+
+    assert plan.max_production == 3 * investment.OFFENSIVE_PRODUCTION_PER_BASE
+    assert dict(plan.inputs)["production_per_base"] == investment.OFFENSIVE_PRODUCTION_PER_BASE
+
+
+@pytest.mark.parametrize(
+    "posture, expand, reason",
+    [
+        (DEVELOP, True, "mineral_lines_saturated"),
+        (PRESSURE, True, "mineral_lines_saturated"),
+        (RECOVER, False, "recover_army_first"),
+        (COMMIT, False, "commit_army_first"),
+        (DEFEND, False, "defend_spend_on_army"),
+    ],
+)
+def test_greed_follows_the_posture(posture, expand: bool, reason: str) -> None:
+    plan = planned(bases=bases(3), workers=48, map_view=map_with(9), posture=posture)
+
+    assert (plan.expand, plan.reason) == (expand, reason)
+    # Only DEFEND drops upgrades and add-ons; a recovering army still gets them.
+    assert bool(plan.upgrades) == (posture is not DEFEND)
+    assert plan.addons == (posture is not DEFEND)
 
 
 class Producer:
@@ -572,7 +587,7 @@ def test_the_plan_adds_add_ons_after_the_opening_by_the_mix() -> None:
     # Marines (0.55) on Reactors, Marauders (0.2) on Tech Labs.
     assert plan.reactor_share == pytest.approx(0.55 / (0.55 + 2 * 0.2))
     assert not planned(opening_done=False).addons
-    assert not planned(objective=Objective.STABILIZE).addons
+    assert not planned(posture=DEFEND).addons
 
 
 def test_a_barracks_with_no_add_on_gets_one_lowest_tag_first() -> None:

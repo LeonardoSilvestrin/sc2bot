@@ -33,8 +33,9 @@ map). D is the one between the two starts; E is the enemy start.
   the territory grows, a base at a time, and never to the forward base alone,
   since in front of a base r_b still grows by 1 - advance for every cell. With
   two entrances that share no approach, being behind both costs no more than
-  being behind one, and the point between them wins. `advance` is the posture:
-  0 while stabilizing, when the point only covers.
+  being behind one, and the point between them wins. `advance` is how far
+  forward Strategy's posture lets the army stand, which the planner decides:
+  0 while defending or recovering, when the point only covers.
 - choke: choke_weight * guarded * exp(-width / width_scale), at the hold
   point of a passage: guarded is the share of our bases the enemy start no
   longer reaches with the passage closed -- every approach to them crosses
@@ -49,7 +50,7 @@ map). D is the one between the two starts; E is the enemy start.
 
 `evaluate` computes the distances once per map and set of bases; the field is
 read every frame. `StagingPolicy` chooses again when a base is taken or lost
-or the objective changes, and otherwise keeps the point it holds until
+or the advance changes, and otherwise keeps the point it holds until
 another outscores it by `staging_margin`.
 """
 
@@ -65,7 +66,6 @@ from sc2.position import Point2
 
 from bot.attention import AttentionState, BaseView, MapView
 from bot.awareness import InfluenceField
-from bot.ego.strategy import Objective
 
 if TYPE_CHECKING:
     from ..planner import MapControlConfig
@@ -348,9 +348,7 @@ class StagingPlan:
     # When the held point was chosen, and the one it replaced.
     since: float
     previous: Point2 | None
-    # The objective read, and how much standing in front of a base shortened
-    # the response under it.
-    objective: Objective
+    # How much standing in front of a base shortened the response.
     advance: float
     # The best candidate of each region, best first, up to `top_candidates`.
     top: tuple[StagingPoint, ...]
@@ -373,20 +371,19 @@ class StagingPolicy:
         self._held: int | None = None
         self._since = 0.0
         self._previous: Point2 | None = None
-        self._objective: Objective | None = None
+        self._advance: float | None = None
 
     def plan(
-        self, attention: AttentionState, field: InfluenceField, objective: Objective
+        self, attention: AttentionState, field: InfluenceField, advance: float
     ) -> tuple[StagingPlan | None, str | None]:
         bases_changed = self._evaluate(attention)
         candidates = self._candidates
-        posture_changed = self._objective is not None and objective is not self._objective
-        self._objective = objective
+        posture_changed = self._advance is not None and advance != self._advance
+        self._advance = advance
         if candidates is None:
             self._held, self._previous = None, None
             return None, self._fallback
         config = self.config
-        advance = config.advance if objective is Objective.BUILD_ADVANTAGE else 0.0
         if advance not in self._reaction:
             response = candidates.response(advance)
             self._reaction[advance] = (
@@ -460,7 +457,6 @@ class StagingPolicy:
                 switch=switch,
                 since=self._since,
                 previous=self._previous,
-                objective=objective,
                 advance=advance,
                 top=tuple(point(row) for row in top),
                 candidate_count=len(candidates.indices),

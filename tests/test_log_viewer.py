@@ -31,6 +31,7 @@ CATALOG = (
     "attention.observed",
     "awareness.updated",
     "strategy.decided",
+    "strategy.posture_changed",
     "planner.proposed",
     "planner.map_control_planned",
     "planner.offense_planned",
@@ -122,7 +123,7 @@ def test_the_viewer_renders_a_real_log_in_a_browser(tmp_path: Path) -> None:
             "    switchView('decision');\n"
             "    const model = DecisionView.model();\n"
             "    counts.segments = document.querySelectorAll('.dt-seg').length;\n"
-            "    counts.objectives = model.t.objective.points.map((p) => p.value);\n"
+            "    counts.postures = model.t.posture.points.map((p) => p.value);\n"
             "    counts.commandTracks = model.commandTracks.map((t) => t.owner);\n"
             "    counts.transitions = SC2Timeline.transitions(model).length;\n"
             "    switchView('summary');\n"
@@ -168,7 +169,7 @@ def test_the_viewer_renders_a_real_log_in_a_browser(tmp_path: Path) -> None:
         for name in ("summary", "decision", "events", "attention", "awareness", "engine")
     )
     assert counts["segments"] > 0
-    assert counts["objectives"] == ["STABILIZE", "BUILD_ADVANTAGE"]
+    assert counts["postures"] == ["DEFEND", "DEVELOP"]
     assert set(counts["commandTracks"]) == {"defense", "core_army"}
     assert counts["transitions"] >= 3
     assert counts["story"] >= 4

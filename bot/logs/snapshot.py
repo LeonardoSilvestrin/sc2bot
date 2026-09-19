@@ -18,7 +18,7 @@ from bot.awareness import AwarenessState
 from bot.awareness.field import PRESENCE_FLOOR
 from bot.body.engine import EngineResult
 from bot.ego.planners.map_control import MapControlPlan
-from bot.ego.strategy import StrategyState
+from bot.ego.strategy import StrategicIntent
 
 from .jsonl import BotLogger, NullLogger
 from .overlay import OTHER_OWNER_COLOR, OWNER_COLORS, influence_color
@@ -36,8 +36,8 @@ _PANEL_X = 975
 class SnapshotConfig:
     enabled: bool = False
     interval_seconds: float = 30.0
-    # Also capture the frame an objective changes.
-    on_objective_change: bool = True
+    # Also capture the frame the posture changes.
+    on_posture_change: bool = True
     write_latest: bool = True
 
     def __post_init__(self) -> None:
@@ -84,7 +84,7 @@ class Projection:
 def render_svg(
     attention: AttentionState,
     awareness: AwarenessState,
-    strategy: StrategyState,
+    intent: StrategicIntent,
     map_control: MapControlPlan,
     result: EngineResult,
 ) -> str:
@@ -312,7 +312,7 @@ def render_svg(
     parts.append(_diamond(x, y, 7.0, fill="#ffffff"))
     parts.append(_text(x - 52, y - 10, "ANCHOR", "label"))
     parts.append("</g>")
-    parts.extend(_panel(attention, awareness, strategy, result))
+    parts.extend(_panel(attention, awareness, intent, result))
     parts.append("</svg>")
     return "\n".join(parts) + "\n"
 
@@ -343,7 +343,7 @@ class SnapshotExporter:
         self._logger = logger or NullLogger()
         self._writer = writer or FileSvgWriter()
         self._next_at = self.config.interval_seconds
-        self._objective = None
+        self._posture = None
 
     @property
     def enabled(self) -> bool:
@@ -353,7 +353,7 @@ class SnapshotExporter:
         self,
         attention: AttentionState,
         awareness: AwarenessState,
-        strategy: StrategyState,
+        intent: StrategicIntent,
         map_control: MapControlPlan,
         result: EngineResult,
     ) -> bool:
@@ -361,11 +361,11 @@ class SnapshotExporter:
             return False
         now = attention.time
         changed = (
-            self.config.on_objective_change
-            and self._objective is not None
-            and strategy.objective is not self._objective
+            self.config.on_posture_change
+            and self._posture is not None
+            and intent.posture is not self._posture
         )
-        self._objective = strategy.objective
+        self._posture = intent.posture
         due = now >= self._next_at
         if not (due or changed):
             return False
@@ -375,7 +375,7 @@ class SnapshotExporter:
         try:
             if self.directory is None:
                 raise OSError("snapshot directory is not configured")
-            svg = render_svg(attention, awareness, strategy, map_control, result)
+            svg = render_svg(attention, awareness, intent, map_control, result)
             self.directory.mkdir(parents=True, exist_ok=True)
             path = self.directory / snapshot_filename(now)
             self._writer.write(path, svg)
@@ -387,8 +387,8 @@ class SnapshotExporter:
                 game_time=now,
                 data={
                     "path": str(path),
-                    "trigger": "objective_changed" if changed else "interval",
-                    "objective": strategy.objective.value,
+                    "trigger": "posture_changed" if changed else "interval",
+                    "posture": intent.posture.value,
                     "elements": sum(
                         svg.count(tag)
                         for tag in ("<circle", "<line", "<rect", "<polygon", "<text")
@@ -418,11 +418,11 @@ def snapshot_filename(game_time: float) -> str:
 def _panel(
     attention: AttentionState,
     awareness: AwarenessState,
-    strategy: StrategyState,
+    intent: StrategicIntent,
     result: EngineResult,
 ) -> list[str]:
-    inputs = dict(strategy.inputs)
-    scores = dict(strategy.scores)
+    assessment = intent.assessment
+    scores = dict(intent.scores)
     summary = awareness.influence.summary()
     visible = sum(contact.visible for contact in awareness.contacts)
     rows: list[tuple[str, str]] = [
@@ -430,13 +430,20 @@ def _panel(
         ("panel", f"Game time      {_clock(attention.time)}"),
         ("panel", ""),
         ("head", "STRATEGY"),
-        ("panel", f"Objective {strategy.objective.value}"),
-        ("panel", f"Reason    {strategy.reason}"),
-        ("panel", f"Since     {_clock(strategy.since)}"),
-        ("panel", f"Danger {inputs['danger']:.2f}  Share {inputs['army_share']:.2f}"),
+        ("panel", f"Posture   {intent.posture.value}"),
+        ("panel", f"Reason    {intent.reason}"),
+        ("panel", f"Since     {_clock(intent.since)}"),
         (
             "panel",
-            f"Def {strategy.defense:.2f} Army {strategy.army:.2f} Risk {strategy.risk:.2f}",
+            f"Threat {assessment.threat_level:.2f}  Army {assessment.army_position:+.2f}",
+        ),
+        (
+            "panel",
+            f"Spike {assessment.power_spike:.2f}  Conf {assessment.confidence:.2f}",
+        ),
+        (
+            "panel",
+            f"Def {intent.defense:.2f} Army {intent.army:.2f} Risk {intent.risk:.2f}",
         ),
         (
             "panel",

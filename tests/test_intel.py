@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 import numpy as np
+import pytest
 from ares.behaviors.combat.individual import PathUnitToTarget
 from ares.consts import BuildingSize, UnitRole
 from sc2.ids.unit_typeid import UnitTypeId
@@ -17,8 +18,9 @@ from bot.body.behaviors import intel as intel_behavior
 from bot.body.behaviors import sensor_towers as sensor_tower_behavior
 from bot.body.engine import Engine
 from bot.ego.planners import Command, EconomyPlan, Proposal, StructurePlan, intel
-from bot.ego.planners.intel import IntelPlanner, scouting_route
+from bot.ego.planners.intel import DetectionConfig, IntelPlanner, scouting_route
 from bot.ego.planners.intel.policies.sensor_towers import MIN_BASES, RADAR_RADIUS
+from bot.ego.strategy import StrategicPosture, StrategyModel
 
 from .fakes import (
     LATTICE,
@@ -71,8 +73,14 @@ def frame(time: float, *, own_units=(), visible=(), workers=16, visibility=None)
     )
 
 
-def intel_step(planner: IntelPlanner, state):
-    return planner.plan(state, AwarenessModel().infer(state))
+def intent_for(state, awareness, posture: StrategicPosture | None = None):
+    intent = StrategyModel().decide(state, awareness)
+    return intent if posture is None else replace(intent, posture=posture)
+
+
+def intel_step(planner: IntelPlanner, state, posture: StrategicPosture | None = None):
+    awareness = AwarenessModel().infer(state)
+    return planner.plan(state, awareness, intent_for(state, awareness, posture))
 
 
 def test_no_scout_before_the_mineral_line_grows() -> None:
@@ -425,7 +433,7 @@ def test_intel_consolidates_shared_engineering_bay_before_execution() -> None:
     planner = IntelPlanner()
     state = sensor_state(time=300.0)
     awareness = replace(AwarenessModel().infer(state), cloak_seen_at=299.0)
-    plan = planner.plan(state, awareness)
+    plan = planner.plan(state, awareness, intent_for(state, awareness))
     assert plan.detection.engineering_bay and plan.sensor_towers.engineering_bay
     assert plan.engineering_bay
     bot = FakeBot()
@@ -444,10 +452,43 @@ def test_intel_consolidates_shared_engineering_bay_before_execution() -> None:
     pending = unit(
         20, UnitTypeId.ENGINEERINGBAY, structure=True, power=0.0, ready=False
     )
-    after = planner.plan(
-        replace(state, time=301.0, own_structures=(pending,)), awareness
-    )
+    later = replace(state, time=301.0, own_structures=(pending,))
+    after = planner.plan(later, awareness, intent_for(later, awareness))
     assert not after.engineering_bay
     # Destruction restores the desired prerequisite without opening an operation.
-    assert planner.plan(replace(state, time=302.0), awareness).engineering_bay
+    rebuilt = replace(state, time=302.0)
+    assert planner.plan(rebuilt, awareness, intent_for(rebuilt, awareness)).engineering_bay
     assert planner.views() == ()
+
+
+# How Intel reads the posture.
+
+
+def test_no_scout_sets_out_while_home_is_defended() -> None:
+    planner = IntelPlanner()
+
+    assert intel_step(planner, frame(50.0), StrategicPosture.DEFEND).proposals == ()
+    assert planner.mission is None
+    (proposal,) = intel_step(planner, frame(51.0)).proposals
+    assert proposal.mission_id == "intel:scout:1"
+
+
+@pytest.mark.parametrize(
+    "posture, focus, held",
+    [
+        (StrategicPosture.DEFEND, "threat", True),
+        (StrategicPosture.PRESSURE, "offense", True),
+        (StrategicPosture.COMMIT, "offense", True),
+        (StrategicPosture.DEVELOP, "economy", False),
+        (StrategicPosture.RECOVER, "economy", False),
+    ],
+)
+def test_orbitals_hold_a_scan_while_a_fight_is_expected(
+    posture: StrategicPosture, focus: str, held: bool
+) -> None:
+    # No cloak seen: only the posture makes the Orbitals keep a scan.
+    plan = intel_step(IntelPlanner(), frame(300.0), posture)
+
+    assert plan.focus == focus
+    assert plan.detection.energy_reserve == (DetectionConfig().scan_reserve if held else 0.0)
+    assert dict(plan.detection.inputs)["scan_held"] == float(held)

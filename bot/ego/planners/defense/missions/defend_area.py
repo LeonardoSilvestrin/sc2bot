@@ -1,20 +1,21 @@
 """DefendAreaMission: answer one threat incident until it is over.
 
 However many bases the incident touches, it gets one budget: COVER_MARGIN
-times its power. The budget is split by what the attackers are -- the part
-that flies can only be answered by units that shoot up, the part on the
-ground by units that shoot down -- so the parts add up to the budget and
-never repeat it. Each part is a proposal that asks the Engine for power, not
-a head count, and the Engine hands out the nearest compatible units first:
-cover already on the spot answers before anything is pulled from elsewhere.
-The air part ranks first (its id sorts first at equal priority), since fewer
-units shoot up. Both parts share the incident's id as their `demand_id`, and
-their ids follow the incident, so the Engine keeps the same defenders while
-the incident's attackers come and go.
+times its power, or DEFEND_COVER_MARGIN while Strategy's posture is DEFEND --
+home comes before anything else then, so the answer is surer. The budget is
+split by what the attackers are -- the part that flies can only be answered
+by units that shoot up, the part on the ground by units that shoot down -- so
+the parts add up to the budget and never repeat it. Each part is a proposal
+that asks the Engine for power, not a head count, and the Engine hands out the
+nearest compatible units first: cover already on the spot answers before
+anything is pulled from elsewhere. The air part ranks first (its id sorts
+first at equal priority), since fewer units shoot up. Both parts share the
+incident's id as their `demand_id`, and their ids follow the incident, so the
+Engine keeps the same defenders while the incident's attackers come and go.
 
 Priority is the incident's threat on the base it presses hardest, raised by
-how much Strategy wants defense, so it is positive exactly while an attacker
-is in reach -- always above the offense (0) and MapControl (-1).
+how much Strategy's intent wants defense, so it is positive exactly while an
+attacker is in reach -- always above the offense (0) and MapControl (-1).
 
 The mission is sized again every frame from the incident Awareness reports;
 it completes once Awareness reports the incident no more.
@@ -33,12 +34,14 @@ from bot.ego.missions import (
     MissionView,
 )
 from bot.ego.planners import Command, Domain, Proposal
-from bot.ego.strategy import StrategyState
+from bot.ego.strategy import StrategicIntent, StrategicPosture
 
 OWNER = "defense"
 KIND = "defend_area"
-# Answer an attack with this much more power than it brings.
+# Answer an attack with this much more power than it brings ...
 COVER_MARGIN = 1.5
+# ... and with this much while the posture is DEFEND.
+DEFEND_COVER_MARGIN = 2.0
 # The only phase: the incident is in reach and answered.
 DEFENDING = "DEFENDING"
 
@@ -69,22 +72,23 @@ class DefendAreaMission:
     def step(
         self,
         incident: ThreatIncident | None,
-        strategy: StrategyState,
+        intent: StrategicIntent,
         feedback: MissionFeedback,
     ) -> tuple[Proposal, ...]:
         """`incident`: this frame's report of the incident; None once it is over."""
 
         if not self.active:
             return ()
-        now = strategy.time
+        now = intent.time
         cancel = self.lifecycle.cancel
         if cancel is not None:
             # Defenders fight where they stand: nothing to walk back from.
             return self._end(MissionStatus.CANCELLED, cancel.reason, now)
         if incident is None:
             return self._end(MissionStatus.COMPLETED, "incident_over", now)
-        priority = incident.threat * (0.5 + 0.5 * strategy.defense)
-        budget = COVER_MARGIN * incident.power
+        priority = incident.threat * (0.5 + 0.5 * intent.defense)
+        margin = DEFEND_COVER_MARGIN if intent.posture is StrategicPosture.DEFEND else COVER_MARGIN
+        budget = margin * incident.power
         proposals: list[Proposal] = []
         for domain, power in (
             (Domain.AIR, incident.air_power),
@@ -101,7 +105,7 @@ class DefendAreaMission:
                     command=Command.ATTACK,
                     target=incident.center,
                     reason=f"{part}_attackers_in_reach",
-                    minimum_power=COVER_MARGIN * power,
+                    minimum_power=margin * power,
                     must_attack=domain,
                     demand_id=incident.incident_id,
                     inputs=(
@@ -110,10 +114,11 @@ class DefendAreaMission:
                         ("incident_power", incident.power),
                         ("part_power", power),
                         ("budget", budget),
+                        ("cover_margin", margin),
                         ("confidence", incident.confidence),
                         ("contacts", float(len(incident.contacts))),
                         ("affected_bases", float(len(incident.affected_bases))),
-                        ("strategy_defense", strategy.defense),
+                        ("strategy_defense", intent.defense),
                     ),
                     mission_id=self.mission_id,
                 )

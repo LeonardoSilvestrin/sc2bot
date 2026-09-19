@@ -218,3 +218,6 @@ class IntelPlan:
     sensor_towers: SensorTowerPlan
     # Consolidated infrastructure request; only the Intel executor builds it.
     engineering_bay: bool
+    # What information matters most under Strategy's posture: threat, offense
+    # or economy.
+    focus: str = "economy"

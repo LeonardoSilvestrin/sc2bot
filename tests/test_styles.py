@@ -14,7 +14,7 @@ from bot.awareness import AwarenessModel
 from bot.body.behaviors import economy as economy_behavior
 from bot.ego.planners import economy
 from bot.ego.planners.economy.knowledge import styles
-from bot.ego.strategy import Objective, StrategyModel
+from bot.ego.strategy import StrategicPosture, StrategyModel
 
 from .fakes import FakeBot, attention
 from .test_economy import Barracks
@@ -22,10 +22,10 @@ from .test_economy import Barracks
 BUILDS = Path(__file__).resolve().parents[1] / "terran_builds.yml"
 
 
-def mech_plan(objective: Objective = Objective.BUILD_ADVANTAGE):
+def mech_plan(posture: StrategicPosture = StrategicPosture.DEVELOP):
     frame = attention(time=400.0, opening_done=True)
     strategy = StrategyModel().decide(frame, AwarenessModel().infer(frame))
-    return economy.plan(frame, replace(strategy, objective=objective), styles.MECH)
+    return economy.plan(frame, replace(strategy, posture=posture), styles.MECH)
 
 
 def test_mech_is_drawn_only_against_zerg_and_bio_against_every_race() -> None:
@@ -84,11 +84,11 @@ def test_the_mech_plan_builds_mech_and_puts_reactors_on_factories() -> None:
     assert (plan.addons, plan.addons_on) == (True, UnitTypeId.FACTORY)
 
 
-def test_stabilizing_with_mech_still_spends_on_the_army_only() -> None:
-    plan = mech_plan(Objective.STABILIZE)
+def test_defending_with_mech_still_spends_on_the_army_only() -> None:
+    plan = mech_plan(StrategicPosture.DEFEND)
 
     assert plan.freeflow and plan.upgrades == () and not plan.addons
-    # The composition does not change while stabilizing: Ares spends freely on it.
+    # The composition does not change while defending: Ares spends freely on it.
     assert plan.composition == styles.MECH.composition
 
 

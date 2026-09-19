@@ -1,8 +1,8 @@
 """The event catalog: what each layer writes to the JSONL log, and when.
 
 State summaries go through a `ChangeGate` (on change, plus a heartbeat).
-Decisions never do: every objective transition, proposal set, grant and
-command change is written when it happens. ``docs/architecture.md`` lists
+Decisions never do: every posture change, proposal set, grant and command
+change is written when it happens. ``docs/architecture.md`` lists
 every event and its fields.
 """
 
@@ -32,7 +32,7 @@ from bot.ego.planners import (
 )
 from bot.ego.planners.map_control import MapControlPlan, StagingPlan, StagingPoint
 from bot.ego.planners.offense import LocalFight, OffensePlan
-from bot.ego.strategy import StrategyState
+from bot.ego.strategy import GameAssessment, StrategicIntent
 
 from .identity import describe_build, fingerprint
 from .jsonl import BotLogger, ChangeGate
@@ -53,6 +53,8 @@ class Telemetry:
         self._attention = ChangeGate(heartbeat=ATTENTION_HEARTBEAT)
         self._awareness = ChangeGate(heartbeat=heartbeat)
         self._strategy = ChangeGate(heartbeat=heartbeat)
+        # The posture last written, and since when.
+        self._posture: tuple[str, float] | None = None
         self._map_control = ChangeGate(heartbeat=MAP_CONTROL_HEARTBEAT)
         self._offense = ChangeGate()
         self._missions = ChangeGate()
@@ -153,7 +155,7 @@ class Telemetry:
         self,
         attention: AttentionState,
         awareness: AwarenessState,
-        strategy: StrategyState,
+        intent: StrategicIntent,
         map_control: MapControlPlan,
         offense: OffensePlan,
         proposals: Sequence[Proposal],
@@ -172,7 +174,7 @@ class Telemetry:
     ) -> None:
         self._record_attention(attention)
         self._record_awareness(attention.time, awareness)
-        self._record_strategy(strategy)
+        self._record_strategy(intent)
         self._record_map_control(attention.time, map_control)
         self._record_offense(attention.time, offense)
         self._record_missions(attention.time, missions)
@@ -182,7 +184,7 @@ class Telemetry:
         self._record_micro(attention.time, micro)
         self._record_structures(attention.time, structures)
         if intel is not None:
-            self._record_detection(attention.time, intel.detection)
+            self._record_detection(attention.time, intel.detection, intel.focus)
             self._record_sensor_towers(
                 attention.time,
                 intel.sensor_towers,
@@ -206,10 +208,10 @@ class Telemetry:
                 },
             )
         self._record_grants(attention, result)
-        self._record_commands(attention, awareness, strategy, result)
+        self._record_commands(attention, awareness, intent, result)
         self._record_perf(attention.time, timings)
 
-    def _record_detection(self, now: float, detection: DetectionPlan) -> None:
+    def _record_detection(self, now: float, detection: DetectionPlan, focus: str) -> None:
         # Every scan is a decision; the rest is state.
         # A build Ares has not started is asked again every frame: it is
         # written when what is asked changes.
@@ -218,6 +220,7 @@ class Telemetry:
             detection.engineering_bay,
             detection.energy_reserve,
             detection.reason,
+            focus,
         )
         changed = self._detection.admit(signature, now=now)
         acted = detection.scan is not None
@@ -233,6 +236,7 @@ class Telemetry:
                 "engineering_bay": detection.engineering_bay,
                 "energy_reserve": detection.energy_reserve,
                 "reason": detection.reason,
+                "focus": focus,
                 "inputs": dict(detection.inputs),
             },
         )
@@ -436,44 +440,52 @@ class Telemetry:
             },
         )
 
-    def _record_strategy(self, strategy: StrategyState) -> None:
+    def _record_strategy(self, intent: StrategicIntent) -> None:
+        posture = (intent.posture.value, intent.since)
+        if posture != self._posture:
+            # Why the posture changed, written once, when it changes.
+            self._posture = posture
+            self._event(
+                "strategy.posture_changed",
+                "strategy",
+                intent.time,
+                {
+                    "posture": intent.posture.value,
+                    "previous": None if intent.previous is None else intent.previous.value,
+                    "reason": intent.reason,
+                    "because": dict(intent.because),
+                    "summary": intent.summary(),
+                    "threat": intent.assessment.threat.value,
+                    "emergency": intent.emergency,
+                    "assessment": _assessment(intent.assessment),
+                    "gates": _gates(intent),
+                },
+            )
         if not self._strategy.admit(
-            (
-                strategy.objective,
-                strategy.since,
-                strategy.economy_policy.posture,
-                strategy.economy_policy.reason,
-            ),
-            now=strategy.time,
+            (intent.posture, intent.since, intent.emergency), now=intent.time
         ):
             return
         self._event(
             "strategy.decided",
             "strategy",
-            strategy.time,
+            intent.time,
             {
-                "objective": strategy.objective.value,
-                "previous": None
-                if strategy.previous is None
-                else strategy.previous.value,
-                "since": strategy.since,
-                "reason": strategy.reason,
-                "defense": strategy.defense,
-                "army": strategy.army,
-                "economy": strategy.economy,
-                "risk": strategy.risk,
-                "inputs": dict(strategy.inputs),
-                "scores": dict(strategy.scores),
-                "policy": {
-                    "offense": {
-                        "posture": strategy.offense.posture.value,
-                        "reason": strategy.offense.reason,
-                    },
-                    "economy": {
-                        "posture": strategy.economy_policy.posture.value,
-                        "reason": strategy.economy_policy.reason,
-                    },
+                "posture": intent.posture.value,
+                "previous": None if intent.previous is None else intent.previous.value,
+                "since": intent.since,
+                "reason": intent.reason,
+                "emergency": intent.emergency,
+                "defense": intent.defense,
+                "army": intent.army,
+                "economy": intent.economy,
+                "risk": intent.risk,
+                "assessment": _assessment(intent.assessment),
+                "inputs": {
+                    **dict(intent.assessment.inputs),
+                    "army_share": intent.army_share,
                 },
+                "scores": dict(intent.scores),
+                "gates": _gates(intent),
             },
         )
 
@@ -500,6 +512,8 @@ class Telemetry:
                 "anchor": _xy(plan.anchor),
                 "source": plan.source,
                 "reason": plan.reason,
+                "posture": plan.posture.value,
+                "advance": plan.advance,
                 "fallback": plan.fallback,
                 "passage": plan.held_passage,
                 "region": plan.region,
@@ -871,7 +885,7 @@ class Telemetry:
         self,
         attention: AttentionState,
         awareness: AwarenessState,
-        strategy: StrategyState,
+        intent: StrategicIntent,
         result: EngineResult,
     ) -> None:
         """One causal record per command change: what was seen, believed and
@@ -914,10 +928,10 @@ class Telemetry:
                     "mission_id": proposal.mission_id,
                     "inputs": dict(proposal.inputs),
                     "strategy": {
-                        "objective": strategy.objective.value,
-                        "reason": strategy.reason,
-                        "defense": strategy.defense,
-                        "risk": strategy.risk,
+                        "posture": intent.posture.value,
+                        "reason": intent.reason,
+                        "defense": intent.defense,
+                        "risk": intent.risk,
                     },
                     "awareness": {
                         "danger": awareness.danger,
@@ -989,13 +1003,34 @@ def _cell(point: Point2) -> tuple[int, int]:
     )
 
 
+def _assessment(assessment: GameAssessment) -> dict[str, Any]:
+    return {
+        "threat_level": assessment.threat_level,
+        "threat": assessment.threat.value,
+        "army_position": assessment.army_position,
+        "economy_position": assessment.economy_position,
+        "enemy_vulnerability": assessment.enemy_vulnerability,
+        "power_spike": assessment.power_spike,
+        "confidence": assessment.confidence,
+        "setback": assessment.setback,
+        "upgrade_spike": assessment.upgrade_spike,
+        "supply_spike": assessment.supply_spike,
+    }
+
+
+def _gates(intent: StrategicIntent) -> dict[str, Any]:
+    return {
+        gate.posture.value: {"score": gate.score, "open": gate.open, "since": gate.since}
+        for gate in intent.gates
+    }
+
+
 def _staging(plan: StagingPlan) -> dict[str, Any]:
     return {
         "anchor": _xy(plan.selected.position),
         "switch": plan.switch,
         "since": plan.since,
         "previous": None if plan.previous is None else _xy(plan.previous),
-        "objective": plan.objective.value,
         "advance": plan.advance,
         "scale": plan.scale,
         "bases": plan.bases,

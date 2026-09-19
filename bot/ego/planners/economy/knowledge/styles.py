@@ -12,8 +12,8 @@ style is measured on its own.
 
 Bio: a Barracks with a Reactor trains two Marines at a time, and 5 of the 12
 Barracks of `bench/7b/001` never got an add-on while the bank grew past 9,900
-minerals with supply free. Once the opening is over, and while nothing is being
-stabilized, idle Barracks with no add-on take Reactors up to the share the mix
+minerals with supply free. Once the opening is over, and while the posture is
+not DEFEND, idle Barracks with no add-on take Reactors up to the share the mix
 asks for (`composition.reactor_share`), and Tech Labs for Marauders beyond it.
 
 Mech: Hellions on reactor Factories, Siege Tanks and Cyclones on Tech Lab

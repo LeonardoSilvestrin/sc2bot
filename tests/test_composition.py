@@ -8,15 +8,15 @@ from sc2.ids.unit_typeid import UnitTypeId
 from bot.awareness import AwarenessModel
 from bot.ego.planners.economy.knowledge import styles
 from bot.ego.planners.economy.policies import composition
-from bot.ego.strategy import EconomyPolicy, EconomyPosture, StrategyModel
+from bot.ego.strategy import StrategyModel
 
 from .fakes import attention, unit
 
 
-def state(frame, posture: EconomyPosture = EconomyPosture.INVEST):
+def state(frame, *, emergency: bool = False):
     believed = AwarenessModel().infer(frame)
-    strategy = StrategyModel().decide(frame, believed)
-    return believed, replace(strategy, economy_policy=EconomyPolicy(posture, "test"))
+    intent = StrategyModel().decide(frame, believed)
+    return believed, replace(intent, emergency=emergency)
 
 
 def shares(plan) -> dict[UnitTypeId, float]:
@@ -127,7 +127,7 @@ def test_survive_uses_ready_barracks_and_the_fallback_leaves_with_the_policy() -
         enemy_units=(ling,),
         tech_ready={UnitTypeId.MARINE, UnitTypeId.HELLION},
     )
-    believed, survive = state(frame, EconomyPosture.SURVIVE)
+    believed, survive = state(frame, emergency=True)
     policy = composition.CompositionPolicy(styles.MECH)
 
     emergency = policy.plan(
@@ -139,7 +139,7 @@ def test_survive_uses_ready_barracks_and_the_fallback_leaves_with_the_policy() -
     )
     normal = policy.plan(
         frame,
-        replace(survive, economy_policy=EconomyPolicy(EconomyPosture.INVEST, "safe")),
+        replace(survive, emergency=False),
         believed.seen_enemy_types,
         contacts=believed.contacts,
         incidents=believed.incidents,

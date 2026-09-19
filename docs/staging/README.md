@@ -25,15 +25,16 @@ Engineering Bay estão descritos em [architecture.md](../architecture.md#papéis
 | Item | Estado | Próximo passo |
 | --- | --- | --- |
 | Economia e builds | Catálogo, composição, SURVIVE e opening stall no código | Avaliar desempenho em partidas e os limites restantes de macro |
+| Strategy: avaliação e intenção comum | `GameAssessment`, `StrategicIntent` e as posturas RECOVER/DEFEND/DEVELOP/PRESSURE/COMMIT no código, lidas por Economy, Offense, MapControl, Intel e Defense ([architecture.md](../architecture.md#matemática)); sem partidas | Bench 3 seeds × 3 raças contra a última execução medida. Mudou o gatilho do ataque (antes `army_share ≥ 0,5` ou supply 190; agora PRESSURE/COMMIT), a expansão (não em RECOVER/COMMIT), o teto de produção (5/base em PRESSURE/COMMIT), o staging (0,8 em PRESSURE/COMMIT, 0 em RECOVER), a reserva de scan e a margem da defesa (2,0 em DEFEND). Olhar `strategy.posture_changed` para trocas por minuto e o tempo em cada postura |
 
 ## Depois
 
 Não decidido. É o que os documentos de backlog já apontam como o próximo limite, para não se perder:
 
 - **Fechar o jogo.** Contra Zerg CheatInsane todo jogo sobrevivido é timeout: o grupo não se junta
-  (`assembled_share` 0–0,22) e `home_threatened` o chama de volta. É o [I1](../gaps.md#i1) (compromisso medido no
+  (`assembled_share` 0–0,22) e `home_threatened` (DEFEND) o chama de volta. É o [I1](../gaps.md#i1) (compromisso medido no
   exército inteiro, severidade alta) e o N7.1 (reforços agrupados).
 - **Quem conta como atacante** ([I2](../gaps.md#i2), [I3](../gaps.md#i3)): um worker de scout ou uma estrutura
-  estática abre incidente e pode segurar um STABILIZE. A política SURVIVE já lê a mesma ameaça.
+  estática abre incidente e pode segurar um DEFEND. A política SURVIVE já lê a mesma ameaça.
 - **Limpeza que não muda decisão**, de uma vez: C13, L1–L7, I6, I7, I8 (a ordem sugerida do gaps.md). O I6, o I7
   e o I8 entram no refactor de economia.

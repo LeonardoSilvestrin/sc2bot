@@ -24,7 +24,7 @@ from bot.ego.planners.defense import DefensePlanner
 from bot.ego.planners.intel import SCOUT_AT_WORKERS, START_BY, IntelPlanner, ScoutMission
 from bot.ego.planners.offense import OWNER, MainAttackMission, Stage
 from bot.ego.planners.offense.missions.main_attack import OffenseContext
-from bot.ego.strategy import Objective, Posture, StrategyModel
+from bot.ego.strategy import StrategicPosture, StrategyModel
 from bot.logs import Logs
 from bot.main import Layers, play_frame
 
@@ -149,16 +149,12 @@ def test_the_planner_opens_a_mission_that_keeps_its_identity_through_every_phase
     assert view.granted_units == 30
 
 
-def test_strategy_withdrawing_the_offense_blocks_admission_and_cancels_at_once() -> None:
+def test_defend_blocks_admission_and_cancels_a_running_attack_at_once() -> None:
     game = Game(engine=True)
     army = marines(30)
     *_, strategy, idle = game.step(700.0, army=army, enemies=zerglings(8), supply=MAXED)
 
-    assert strategy.objective is Objective.STABILIZE
-    assert (strategy.offense.posture, strategy.offense.reason) == (
-        Posture.WITHDRAW,
-        "home_threatened",
-    )
+    assert (strategy.posture, strategy.reason) == (StrategicPosture.DEFEND, "home_threatened")
     assert (idle.stage, idle.blocked_by, game.offense.mission) == (
         Stage.IDLE,
         "home_threatened",
@@ -174,7 +170,7 @@ def test_strategy_withdrawing_the_offense_blocks_admission_and_cancels_at_once()
     )
 
     assert advancing.stage is Stage.ADVANCE
-    assert strategy.offense.posture is Posture.WITHDRAW
+    assert strategy.posture is StrategicPosture.DEFEND
     # The planner asked; the mission ended itself, and proposes nothing more.
     assert (mission.status, mission.lifecycle.cancel.mode, mission.reason) == (
         MissionStatus.CANCELLED,
@@ -296,7 +292,8 @@ def test_the_engine_takes_units_from_a_withdrawal_without_touching_its_lifecycle
     # A raid at home: Defense outranks the withdrawal and takes what it needs.
     *_, strategy, raided = game.step(701.5, army=army, enemies=zerglings(1), supply=MAXED)
 
-    assert strategy.offense.posture is Posture.PURSUE
+    # A raid is no reason for Strategy to call the offense off.
+    assert strategy.posture is StrategicPosture.PRESSURE
     guard, withdrawal = (
         next(g for g in game.feedback.grants if g.proposal.owner == owner)
         for owner in (defense.OWNER, OWNER)
@@ -431,7 +428,7 @@ def test_a_cancelled_attack_commands_nothing_in_the_frame_its_units_move_on() ->
     ]
     cancelled = play_frame(bot, 2, layers)
 
-    assert cancelled.strategy.offense.posture is Posture.WITHDRAW
+    assert cancelled.intent.posture is StrategicPosture.DEFEND
     assert (cancelled.offense.stage, cancelled.offense.mission_status) == (
         Stage.IDLE,
         MissionStatus.CANCELLED,
@@ -564,7 +561,7 @@ def _context(game: Game, frame_, awareness, strategy):
     return OffenseContext(
         attention=frame_,
         awareness=awareness,
-        strategy=strategy,
+        intent=strategy,
         rally=game.map_control.plan(frame_, awareness, strategy).anchor,
         places=(),
         seen_at=MappingProxyType({}),
@@ -572,7 +569,7 @@ def _context(game: Game, frame_, awareness, strategy):
         assembled=0.0,
         known=(),
         start_cleared=False,
-        advantage=True,
+        offensive=True,
         cooldown_left=0.0,
     )
 

@@ -5,7 +5,8 @@ an incident's id while its attackers come and go. The planner opens a mission
 for every incident it has none for, hands each mission this frame's report of
 its incident, and lets a mission whose incident Awareness no longer reports
 complete. It never asks one to end: while an attacker is in reach, defending
-is what Strategy wants most.
+is what Strategy wants most. The intent reaches the missions: under DEFEND
+they answer with a larger budget.
 
 The planner keeps only the open missions, by incident, and the count that
 numbers them: an incident id Awareness reuses later is a new mission.
@@ -19,7 +20,7 @@ from bot.attention import AttentionState
 from bot.awareness import AwarenessState
 from bot.ego.missions import MissionFeedback, MissionView
 from bot.ego.planners import Proposal
-from bot.ego.strategy import StrategyState
+from bot.ego.strategy import StrategicIntent
 
 from .missions.defend_area import KIND, OWNER, DefendAreaMission
 
@@ -49,7 +50,7 @@ class DefensePlanner:
         self,
         attention: AttentionState,
         awareness: AwarenessState,
-        strategy: StrategyState,
+        intent: StrategicIntent,
         feedback: EngineResult | None = None,
     ) -> tuple[Proposal, ...]:
         """`feedback`: the last `EngineResult`, or None before the first."""
@@ -67,7 +68,7 @@ class DefensePlanner:
                     f"{OWNER}:{KIND}:{self._opened}", incident.incident_id, now
                 )
             granted = MissionFeedback.of(feedback, mission.mission_id)
-            made = mission.step(incident, strategy, granted)
+            made = mission.step(incident, intent, granted)
             proposals.extend(made)
             views.append(mission.view(granted, made))
             if mission.active:
@@ -76,7 +77,7 @@ class DefensePlanner:
             if incident_id in reported:
                 continue
             granted = MissionFeedback.of(feedback, mission.mission_id)
-            views.append(mission.view(granted, mission.step(None, strategy, granted)))
+            views.append(mission.view(granted, mission.step(None, intent, granted)))
         self._missions = stepped
         self._views = tuple(views)
         return tuple(proposals)

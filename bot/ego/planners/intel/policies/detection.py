@@ -2,7 +2,8 @@
 
 A cloaked or burrowed enemy nothing detects is scanned where the army can
 shoot it. Once army cloak has been seen, Orbitals reserve scan energy and
-every base is kept covered by a Missile Turret.
+every base is kept covered by a Missile Turret. The planner may also ask the
+Orbitals to hold a scan (`hold_scan`) while a fight is expected.
 """
 
 from __future__ import annotations
@@ -45,7 +46,9 @@ class Detection:
         self.config = config or DetectionConfig()
         self._scans: list[tuple[float, Point2]] = []
 
-    def plan(self, attention: AttentionState, awareness: AwarenessState) -> DetectionPlan:
+    def plan(
+        self, attention: AttentionState, awareness: AwarenessState, *, hold_scan: bool = False
+    ) -> DetectionPlan:
         config = self.config
         now = attention.time
         self._scans = [
@@ -86,7 +89,7 @@ class Detection:
             scan=scan,
             turrets=turrets,
             engineering_bay=engineering_bay,
-            energy_reserve=config.scan_reserve if cloak_seen else 0.0,
+            energy_reserve=config.scan_reserve if cloak_seen or hold_scan else 0.0,
             reason=reason,
             inputs=(
                 ("hidden_enemies", float(len(hidden))),
@@ -97,6 +100,7 @@ class Detection:
                 ("army_near_hidden", near),
                 ("orbitals_with_scan", float(orbitals)),
                 ("active_scans", float(len(self._scans) - (scan is not None))),
+                ("scan_held", float(hold_scan)),
             ),
         )
 

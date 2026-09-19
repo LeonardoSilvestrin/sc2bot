@@ -30,13 +30,13 @@
       evidence: (v) => [`unassigned ${fmt(v.unassigned, 0)}`],
     },
     {
-      id: "stabilize_without_threat",
-      title: "STABILIZE with no threat",
+      id: "defend_without_threat",
+      title: "DEFEND with no threat",
       severity: "note",
       minDuration: 20,
-      tracks: ["objective", "danger"],
-      when: (v) => v.objective === "STABILIZE" && (v.danger ?? 0) < 0.05,
-      evidence: (v) => [`objective ${v.objective}`, `danger ${fmt(v.danger)}`],
+      tracks: ["posture", "danger"],
+      when: (v) => (v.posture === "DEFEND" || v.posture === "STABILIZE") && (v.danger ?? 0) < 0.05,
+      evidence: (v) => [`posture ${v.posture}`, `danger ${fmt(v.danger)}`],
     },
     {
       id: "slow_frames",

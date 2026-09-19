@@ -11,6 +11,7 @@ from sc2.position import Point2
 from bot.attention import unit_power, unit_view
 from bot.awareness import AwarenessModel
 from bot.body.engine import Engine, GrantStatus
+from bot.ego.missions import MissionStatus
 from bot.ego.planners import Command, Domain, defense, map_control
 from bot.ego.planners.defense import DefensePlanner
 from bot.ego.planners.offense import (
@@ -24,14 +25,14 @@ from bot.ego.planners.offense import (
     OffensePlanner,
     Stage,
 )
-from bot.ego.strategy import Objective, StrategyModel
+from bot.ego.strategy import AssessmentConfig, StrategicPosture, StrategyModel
 
 from .fakes import MAIN, MAP, FakeUnit, attention, unit
 
 CONFIG = OffenseConfig()
 # With only the main and no threat, MapControl holds the main ramp.
 RALLY = MAP.main_ramp
-MAXED = CONFIG.maxed_supply
+MAXED = AssessmentConfig().maxed_supply
 
 
 def marines(count: int, x: float = RALLY.x, y: float = RALLY.y, *, first_tag: int = 100):
@@ -73,7 +74,10 @@ class Game:
         dead=(),
         supply=100.0,
         visibility=None,
+        posture=None,
     ):
+        """`posture` overrides Strategy's, for the offense's reading of each."""
+
         frame = replace(
             attention(
                 time=time,
@@ -87,6 +91,8 @@ class Game:
         )
         awareness = self.awareness.infer(frame)
         strategy = self.strategy.decide(frame, awareness)
+        if posture is not None:
+            strategy = replace(strategy, posture=posture, reason=f"test_{posture.value.lower()}")
         held = self.map_control.plan(frame, awareness, strategy)
         if self.engine is None:
             return frame, awareness, strategy, self.offense.plan(
@@ -102,30 +108,32 @@ class Game:
         return frame, awareness, strategy, plan
 
 
-def test_a_maxed_army_commits_although_the_fog_would_never_show_an_advantage() -> None:
+def test_a_maxed_army_pressures_although_the_fog_would_never_show_an_advantage() -> None:
     # Trace 3769f04, 675-896 s: supply 190-200, no threat at home and 75-82
     # Marines of army, while 4,210 minerals grew to 11,970 and every unit held
     # the rally. By then the enemy planned against in the fog was already more
-    # than a maxed army.
+    # than a maxed army. Supply at the cap is a power spike: Strategy pressures.
     hatchery = structure(900, UnitTypeId.HATCHERY, 53.5, 53.5)
     army = marines(30)
 
     held = Game()
     for step in range(20):
         *_, strategy, plan = held.step(
-            700.0 + 0.5 * step, army=army, structures=(hatchery,), supply=MAXED - 1.0
+            700.0 + 0.5 * step, army=army, structures=(hatchery,), supply=160.0
         )
-        assert (plan.stage, plan.blocked_by, plan.proposals) == (Stage.IDLE, "no_advantage", ())
+        assert (plan.stage, plan.blocked_by, plan.proposals) == (Stage.IDLE, "no_opportunity", ())
+    assert strategy.posture is StrategicPosture.DEVELOP
     assert strategy.army_share < 0.5
 
     game = Game()
-    *_, committed = game.step(700.0, army=army, structures=(hatchery,), supply=MAXED)
+    *_, strategy, committed = game.step(700.0, army=army, structures=(hatchery,), supply=MAXED)
     *_, advancing = game.step(700.5, army=army, structures=(hatchery,), supply=MAXED)
 
+    assert (strategy.posture, strategy.assessment.power_spike) == (StrategicPosture.PRESSURE, 1.0)
     assert (committed.stage, committed.previous, committed.reason) == (
         Stage.ASSEMBLE,
         Stage.IDLE,
-        "supply_maxed",
+        "power_spike",
     )
     assert (committed.proposals, committed.blocked_by) == ((), None)
     assert committed.committed_power == pytest.approx(30.0)
@@ -148,15 +156,16 @@ ROACH_POWER = 1.5
 @pytest.mark.parametrize(
     "time, army, roaches, stage, why, share",
     [
-        # 15 Marines of army in sight and 18 expected by 300 s: 18 + 0.5 * 3
-        # planned against, and 20 of our own is enough.
-        (300.0, 20, 10, Stage.ASSEMBLE, "army_advantage", 20.0 / 39.5),
-        (300.0, 19, 10, Stage.IDLE, "army_below_minimum", 19.0 / 38.5),
+        # 3 Marines of army in sight and 8 expected by 200 s: 8 + 0.5 * 5
+        # planned against. Both armies carry 20 Marines of doubt; 20 of our own
+        # is enough.
+        (200.0, 20, 2, Stage.ASSEMBLE, "army_advantage", 30.0 / 50.5),
+        (200.0, 19, 2, Stage.IDLE, "army_below_minimum", 29.0 / 49.5),
         # Nothing in sight at 600 s: 48 expected, all of it uncertain, 72 planned.
-        (600.0, 30, 0, Stage.IDLE, "no_advantage", 30.0 / 102.0),
+        (600.0, 30, 0, Stage.IDLE, "no_opportunity", 40.0 / 122.0),
     ],
 )
-def test_the_army_commits_on_an_advantage_over_the_enemy_planned_against(
+def test_the_army_pressures_on_an_advantage_over_the_enemy_planned_against(
     time: float, army: int, roaches: int, stage: Stage, why: str, share: float
 ) -> None:
     enemies = tuple(
@@ -216,25 +225,26 @@ def test_an_army_that_lost_half_its_power_calls_the_attack_off() -> None:
         None,
         None,
     )
-    assert after.blocked_by == "cooling_down"
+    # Half the army also closed the window; the cooldown runs all the same.
+    assert after.blocked_by == "no_opportunity"
     assert dict(after.inputs)["cooldown_left"] == pytest.approx(CONFIG.cooldown - 0.5)
 
 
 def test_a_threat_at_home_calls_the_attack_off_and_the_next_waits_out_the_cooldown() -> None:
-    army = marines(30)
+    army = marines(60)
     attackers = zerglings(8)
     game = Game()
     game.step(700.0, army=army, supply=MAXED)
     *_, advancing = game.step(700.5, army=army, supply=MAXED)
     *_, strategy, called_off = game.step(701.0, army=army, enemies=attackers, supply=MAXED)
     dead = tuple(attacker.tag for attacker in attackers)
-    plans = [
-        game.step(700.0 + 0.5 * step, army=army, dead=dead, supply=MAXED)[-1]
-        for step in range(3, 70)
+    steps = [
+        game.step(700.0 + 0.5 * step, army=army, dead=dead, supply=MAXED) for step in range(3, 80)
     ]
+    plans = [plan for *_, plan in steps]
 
     assert advancing.stage is Stage.ADVANCE
-    assert strategy.objective is Objective.STABILIZE
+    assert (strategy.posture, strategy.reason) == (StrategicPosture.DEFEND, "emergency_threat")
     assert (called_off.stage, called_off.reason, called_off.proposals) == (
         Stage.IDLE,
         "home_threatened",
@@ -243,14 +253,17 @@ def test_a_threat_at_home_calls_the_attack_off_and_the_next_waits_out_the_cooldo
     committed = next(index for index, plan in enumerate(plans) if plan.stage is not Stage.IDLE)
     assert (plans[committed].stage, plans[committed].reason, plans[committed].since) == (
         Stage.ASSEMBLE,
-        "supply_maxed",
+        "power_spike",
         701.0 + CONFIG.cooldown,
     )
-    # Home stays threatened while Strategy still stabilizes; then the cooldown runs out.
+    assert steps[committed][2].posture is StrategicPosture.PRESSURE
+    # Home stays threatened while Strategy defends; the window reopens as the
+    # remembered threat fades; then the cooldown runs out.
     waiting = [plan.blocked_by for plan in plans[:committed]]
-    switch = waiting.index("cooling_down")
-    assert switch > 0
-    assert waiting == ["home_threatened"] * switch + ["cooling_down"] * (len(waiting) - switch)
+    runs = [
+        reason for index, reason in enumerate(waiting) if waiting[index - 1 : index] != [reason]
+    ]
+    assert runs == ["home_threatened", "no_opportunity", "cooling_down"]
 
 
 def test_the_target_holds_until_destroyed_and_a_known_base_outranks_other_structures() -> None:
@@ -291,7 +304,7 @@ def test_defense_takes_what_an_incident_needs_and_the_offense_the_rest() -> None
 
     result = Engine().allocate(frame, proposals)
 
-    assert (strategy.objective, plan.stage) == (Objective.BUILD_ADVANTAGE, Stage.ADVANCE)
+    assert (strategy.posture, plan.stage) == (StrategicPosture.PRESSURE, Stage.ADVANCE)
     guard, attack, hold = result.grants
     assert [grant.proposal.owner for grant in result.grants] == [
         defense.OWNER,
@@ -457,21 +470,30 @@ def test_an_engaged_squad_holds_inside_the_band_and_retreats_below_it_after_the_
     )
 
 
-def test_a_regrouped_army_without_an_advantage_stands_down() -> None:
-    game, army = advancing_game(regroup_dwell=0.0)
+def test_a_regrouped_army_stands_down_once_the_window_has_closed() -> None:
+    game, army = advancing_game()
     game.step(701.0, army=army, enemies=roaches(30), supply=MAXED)
     game.step(701.5, army=marines(30), supply=MAXED)
-    *_, strategy, idle = game.step(702.0, army=marines(30), supply=100.0)
-    *_, after = game.step(702.5, army=marines(30), supply=100.0)
+    # Supply falls off the cap while the army regroups: no spike, and the fog
+    # outweighs 30 Marines, so the window closes.
+    steps = [game.step(702.0 + 0.5 * step, army=marines(30), supply=100.0) for step in range(20)]
+    *_, after = game.step(712.0, army=marines(30), supply=100.0)
+    *_, strategy, idle = steps[-1]
 
+    assert all(plan.stage is Stage.REGROUP for *_, plan in steps[:-1])
+    assert (strategy.posture, strategy.previous) == (
+        StrategicPosture.DEVELOP,
+        StrategicPosture.PRESSURE,
+    )
     assert strategy.army_share < 0.5
-    assert (idle.stage, idle.previous, idle.reason, idle.committed_power) == (
+    assert (idle.stage, idle.previous, idle.reason, idle.committed_power, idle.since) == (
         Stage.IDLE,
         Stage.REGROUP,
-        "advantage_lost",
+        "window_closed",
         0.0,
+        701.5 + CONFIG.regroup_dwell,
     )
-    assert after.blocked_by == "cooling_down"
+    assert after.blocked_by == "no_opportunity"
 
 
 def test_a_fight_the_squad_already_holds_is_no_reason_to_leave_the_target() -> None:
@@ -549,9 +571,12 @@ def vision(*points: Point2) -> np.ndarray:
 
 
 def advanced(game: Game, army=None) -> None:
+    """The army advanced under PRESSURE, however small it is."""
+
     army = marines(30) if army is None else army
-    game.step(700.0, army=army, supply=MAXED)
-    *_, plan = game.step(700.5, army=army, supply=MAXED)
+    pressure = StrategicPosture.PRESSURE
+    game.step(700.0, army=army, supply=MAXED, posture=pressure)
+    *_, plan = game.step(700.5, army=army, supply=MAXED, posture=pressure)
     assert plan.stage is Stage.ADVANCE
 
 
@@ -701,8 +726,6 @@ def test_the_same_frames_plan_the_same_offense() -> None:
     [
         {"minimum_power": 0.0},
         {"assemble_radius": -1.0},
-        {"maxed_supply": 0.0},
-        {"maxed_supply": 201.0},
         {"assemble_share": 0.0},
         {"assemble_share": 1.1},
         {"depleted_share": -0.1},
@@ -823,3 +846,57 @@ def test_an_enemy_beyond_the_reach_of_the_whole_group_is_not_in_the_fight() -> N
 
     assert plan.fight.enemy_power == 0.0
     assert plan.stage is Stage.ADVANCE
+
+
+# How the offense reads each posture.
+
+
+def test_developing_lets_a_running_attack_carry_on() -> None:
+    game, army = advancing_game()
+
+    *_, plan = game.step(701.0, army=army, supply=MAXED, posture=StrategicPosture.DEVELOP)
+
+    assert plan.stage is Stage.ADVANCE
+    assert game.offense.mission is not None and game.offense.mission.lifecycle.cancel is None
+
+
+def test_recovering_walks_a_running_attack_back_before_it_ends() -> None:
+    game, army = advancing_game()
+
+    *_, withdrawing = game.step(701.0, army=army, supply=MAXED, posture=StrategicPosture.RECOVER)
+    *_, withdrawn = game.step(
+        701.5, army=marines(30), supply=MAXED, posture=StrategicPosture.RECOVER
+    )
+    *_, idle = game.step(702.0, army=marines(30), supply=MAXED, posture=StrategicPosture.RECOVER)
+
+    assert (withdrawing.stage, withdrawing.reason) == (Stage.WITHDRAW, "recovering")
+    (proposal,) = withdrawing.proposals
+    assert (proposal.command, proposal.target) == (Command.RETREAT, RALLY)
+    assert (withdrawn.stage, withdrawn.reason, withdrawn.mission_status) == (
+        Stage.IDLE,
+        "withdrawn",
+        MissionStatus.CANCELLED,
+    )
+    assert idle.blocked_by == "recovering"
+
+
+@pytest.mark.parametrize(
+    "posture, stage, why",
+    [
+        (StrategicPosture.COMMIT, Stage.ASSEMBLE, "test_commit"),
+        (StrategicPosture.PRESSURE, Stage.IDLE, "cooling_down"),
+    ],
+)
+def test_only_a_commitment_waives_the_cooldown(posture, stage: Stage, why: str) -> None:
+    army = marines(30)
+    game = Game()
+    game.step(700.0, army=army, supply=MAXED)
+    game.step(700.5, army=army, supply=MAXED)
+    # A defense ends the attack and starts the cooldown ...
+    game.step(701.0, army=army, supply=MAXED, posture=StrategicPosture.DEFEND)
+
+    # ... which a decisive window does not wait out.
+    *_, plan = game.step(705.0, army=army, supply=MAXED, posture=posture)
+
+    assert plan.stage is stage
+    assert (plan.reason if stage is Stage.ASSEMBLE else plan.blocked_by) == why

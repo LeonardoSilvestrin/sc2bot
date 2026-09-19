@@ -1,4 +1,14 @@
-"""Intel: scouting, detection and persistent information infrastructure."""
+"""Intel: scouting, detection and persistent information infrastructure.
+
+What information matters most follows Strategy's posture, as this planner
+reads it (`IntelPlan.focus`):
+
+- `threat` (DEFEND): the threat is at home. No scout leaves while it lasts,
+  and every Orbital holds a scan to reveal what attacks cloaked.
+- `offense` (PRESSURE, COMMIT): a fight is sought. Every Orbital holds a scan
+  for the army.
+- `economy` (DEVELOP, RECOVER): Orbitals hold scans only once cloak was seen.
+"""
 
 from __future__ import annotations
 
@@ -11,6 +21,7 @@ from bot.attention import AttentionState, MapView
 from bot.awareness import AwarenessState
 from bot.ego.missions import CancelMode, MissionFeedback, MissionView
 from bot.ego.planners import IntelPlan, Proposal, SensorTowerPlan
+from bot.ego.strategy import StrategicIntent, StrategicPosture
 
 from .missions.scout import KIND, OWNER, ScoutMission
 from .policies import sensor_towers
@@ -24,6 +35,9 @@ SCOUT_AT_WORKERS = 16
 START_BY = 240.0
 LAP_SECTORS = 8
 _REOPENS = "workers_below_threshold"
+THREAT = "threat"
+OFFENSE = "offense"
+ECONOMY = "economy"
 
 
 class IntelPlanner:
@@ -44,18 +58,21 @@ class IntelPlanner:
         self,
         attention: AttentionState,
         awareness: AwarenessState,
+        intent: StrategicIntent,
         feedback: EngineResult | None = None,
     ) -> IntelPlan:
+        focus = intel_focus(intent.posture)
         views: list[MissionView] = []
-        proposals = self._plan_scout(attention, feedback, views)
+        proposals = self._plan_scout(attention, feedback, views, hold=focus == THREAT)
         sensor_towers = self._plan_sensor_towers(attention)
         self._views = tuple(views)
-        detection = self.detection.plan(attention, awareness)
+        detection = self.detection.plan(attention, awareness, hold_scan=focus != ECONOMY)
         return IntelPlan(
             proposals=proposals,
             detection=detection,
             sensor_towers=sensor_towers,
             engineering_bay=detection.engineering_bay or sensor_towers.engineering_bay,
+            focus=focus,
         )
 
     def _plan_sensor_towers(self, attention: AttentionState) -> SensorTowerPlan:
@@ -78,7 +95,10 @@ class IntelPlanner:
         attention: AttentionState,
         feedback: EngineResult | None,
         views: list[MissionView],
+        *,
+        hold: bool = False,
     ) -> tuple[Proposal, ...]:
+        """`hold`: no scout sets out while it holds; one already asked for goes on."""
         if self.finished is not None:
             return ()
         if not self.route:
@@ -97,7 +117,7 @@ class IntelPlanner:
             if now >= START_BY:
                 self.finished = "too_late"
                 return ()
-            if attention.workers < SCOUT_AT_WORKERS:
+            if attention.workers < SCOUT_AT_WORKERS or hold:
                 return ()
             self._opened += 1
             mission = ScoutMission(f"{OWNER}:{KIND}:{self._opened}", self.route, now)
@@ -117,6 +137,16 @@ class IntelPlanner:
             if mission.reason != _REOPENS:
                 self.finished = mission.reason
         return proposals
+
+
+def intel_focus(posture: StrategicPosture) -> str:
+    """What information matters most under a posture."""
+
+    if posture is StrategicPosture.DEFEND:
+        return THREAT
+    if posture.offensive:
+        return OFFENSE
+    return ECONOMY
 
 
 def scouting_route(map_view: MapView) -> tuple[Point2, ...]:

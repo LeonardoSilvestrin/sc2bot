@@ -15,7 +15,7 @@ from bot.attention import AttentionState
 from bot.awareness import AwarenessState
 from bot.body.engine import EngineResult
 from bot.ego.planners.map_control import MapControlPlan
-from bot.ego.strategy import StrategyState
+from bot.ego.strategy import StrategicIntent
 
 Color = tuple[int, int, int]
 
@@ -95,7 +95,7 @@ class Overlay:
         bot,
         attention: AttentionState,
         awareness: AwarenessState,
-        strategy: StrategyState,
+        intent: StrategicIntent,
         map_control: MapControlPlan,
         result: EngineResult,
     ) -> int:
@@ -162,17 +162,22 @@ class Overlay:
                         OWNER_COLORS.get(owner_of.get(proposal_id, ""), OTHER_OWNER_COLOR),
                     )
         client.debug_text_screen(
-            panel_text(awareness, strategy, result), (0.01, 0.16), TEXT_COLOR, 12
+            panel_text(awareness, intent, result), (0.01, 0.16), TEXT_COLOR, 12
         )
         return drawn
 
 
-def panel_text(awareness: AwarenessState, strategy: StrategyState, result: EngineResult) -> str:
+def panel_text(awareness: AwarenessState, intent: StrategicIntent, result: EngineResult) -> str:
     visible = sum(contact.visible for contact in awareness.contacts)
+    assessment = intent.assessment
     lines = [
-        f"STRATEGY {strategy.objective.value} ({strategy.reason})",
-        f"danger {awareness.danger:.2f}  army share {dict(strategy.inputs)['army_share']:.2f}",
-        f"defense {strategy.defense:.2f}  army {strategy.army:.2f}  risk {strategy.risk:.2f}",
+        f"STRATEGY {intent.posture.value} ({intent.reason})"
+        + (" EMERGENCY" if intent.emergency else ""),
+        f"threat {assessment.threat.value} {assessment.threat_level:.2f}  "
+        f"army {assessment.army_position:+.2f}  economy {assessment.economy_position:+.2f}",
+        f"spike {assessment.power_spike:.2f}  vulnerable {assessment.enemy_vulnerability:.2f}  "
+        f"setback {assessment.setback:.2f}  confidence {assessment.confidence:.2f}",
+        f"defense {intent.defense:.2f}  army {intent.army:.2f}  risk {intent.risk:.2f}",
         f"contacts {len(awareness.contacts)} ({visible} visible)  "
         f"enemy power {awareness.enemy_power:.1f} (est {awareness.estimated_enemy_power:.1f})",
         "ENGINE",

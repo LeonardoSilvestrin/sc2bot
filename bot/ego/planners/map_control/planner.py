@@ -11,7 +11,7 @@ offense assembles and falls back to, and no planner calls another.
 
 Where the anchor is, first match wins:
 
-- `threatened_base`: STABILIZE with a threatened base -- the most threatened
+- `threatened_base`: DEFEND with a threatened base -- the most threatened
   base, as the army's place is at home.
 - `staging` (`staging`): the lattice point that best answers every base of
   ours, a little in front of them, on a choke that guards them if one is at
@@ -21,6 +21,11 @@ Where the anchor is, first match wins:
 - `legacy`: in front of the forward base, `rally_forward` toward the enemy
   start, or the main ramp while the main is the only base -- whenever staging
   places no anchor (`fallback` says why).
+
+How far forward staging stands is this planner's reading of Strategy's
+posture: `advance` 0 under DEFEND and RECOVER (the point only covers our
+bases), `advance` under DEVELOP and `pressure_advance` under PRESSURE and
+COMMIT, when the army waits further out on the enemy's way.
 
 Its proposal keeps the id and owner `core_army`, its name before the renames:
 the logs, the viewer and every bench so far know it by that name.
@@ -35,7 +40,7 @@ from sc2.position import Point2
 from bot.attention import AttentionState
 from bot.awareness import AwarenessState
 from bot.ego.planners import Command, Proposal
-from bot.ego.strategy import Objective, StrategyState
+from bot.ego.strategy import StrategicIntent, StrategicPosture
 
 from .policies.staging import StagingPlan, StagingPolicy
 
@@ -53,8 +58,11 @@ class MapControlConfig:
     rally_forward: float = 6.0
     # The staging score: -reaction + choke - exposure.
     # How much standing in front of a base, on the enemy's way to it, shortens
-    # the response to it while building an advantage; none while stabilizing.
+    # the response to it while developing; none while defending or recovering
+    # ...
     advance: float = 0.7
+    # ... and more while pressuring or committing: the army waits further out.
+    pressure_advance: float = 0.8
     choke_weight: float = 0.15
     threat_weight: float = 0.3
     control_weight: float = 0.2
@@ -69,8 +77,8 @@ class MapControlConfig:
     setback: float = 4.0
 
     def __post_init__(self) -> None:
-        if not 0.0 <= self.advance <= 1.0:
-            raise ValueError("advance must be between 0 and 1")
+        if not 0.0 <= self.advance <= self.pressure_advance <= 1.0:
+            raise ValueError("0 <= advance <= pressure_advance <= 1 must hold")
         for name in (
             "rally_forward",
             "choke_weight",
@@ -93,6 +101,9 @@ class MapControlPlan:
     anchor: Point2
     # threatened_base, staging or legacy.
     source: str
+    # The posture read, and how far forward it let staging stand.
+    posture: StrategicPosture
+    advance: float
     reason: str
     # Why staging placed no anchor -- no_candidates or no_enemy_route; None
     # otherwise, and while a threatened base is held.
@@ -125,22 +136,24 @@ class MapControlPlanner:
         self._staging = StagingPolicy(self.config)
 
     def plan(
-        self, attention: AttentionState, awareness: AwarenessState, strategy: StrategyState
+        self, attention: AttentionState, awareness: AwarenessState, intent: StrategicIntent
     ) -> MapControlPlan:
-        objective = strategy.objective
-        staging, fallback = self._staging.plan(attention, awareness.influence, objective)
+        posture = intent.posture
+        advance = self.advance(posture)
+        staging, fallback = self._staging.plan(attention, awareness.influence, advance)
         threatened = awareness.most_threatened
-        if objective is Objective.STABILIZE and threatened is not None:
+        if posture is StrategicPosture.DEFEND and threatened is not None:
             source, anchor, fallback = THREATENED_BASE, threatened.position, None
         elif staging is not None:
             source, anchor = STAGING, staging.selected.position
         else:
             source, anchor = LEGACY, self._legacy(attention)
         held = STAGING if source == STAGING else "rally"
-        reason = f"hold_{held}_{objective.value.lower()}"
+        reason = f"hold_{held}_{posture.value.lower()}"
         inputs: tuple[tuple[str, float], ...] = (
-            ("risk", strategy.risk),
+            ("risk", intent.risk),
             ("danger", awareness.danger),
+            ("advance", advance),
         )
         if source == STAGING and staging is not None:
             point = staging.selected
@@ -153,6 +166,8 @@ class MapControlPlanner:
         return MapControlPlan(
             anchor=anchor,
             source=source,
+            posture=posture,
+            advance=advance,
             reason=reason,
             fallback=fallback,
             staging=staging,
@@ -168,6 +183,15 @@ class MapControlPlanner:
                 ),
             ),
         )
+
+    def advance(self, posture: StrategicPosture) -> float:
+        """How much standing in front of a base shortens the response to it."""
+
+        if posture.offensive:
+            return self.config.pressure_advance
+        if posture is StrategicPosture.DEVELOP:
+            return self.config.advance
+        return 0.0
 
     def _legacy(self, attention: AttentionState) -> Point2:
         map_view = attention.map

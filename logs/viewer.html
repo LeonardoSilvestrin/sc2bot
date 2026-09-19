@@ -425,6 +425,7 @@ const LAYERS = ["attention", "awareness", "strategy", "behaviors", "engine", "lo
 const NARRATIVE_EVENTS = new Set([
   "game.started", "game.ended",
   "strategy.decided",
+  "strategy.posture_changed",
   "planner.map_control_planned",
   "planner.offense_planned",
   "mission.updated",
@@ -509,7 +510,9 @@ function fieldsFor(record) {
     case "awareness.updated":
       return `danger=${fmt(d.danger)} contacts=${d.contacts} (${d.visible_contacts} visible) power own=${fmt(d.own_power, 1)} enemy=${fmt(d.enemy_power, 1)}`;
     case "strategy.decided":
-      return `objective=${d.objective} previous=${d.previous} danger=${fmt(d.inputs?.danger)} defense=${fmt(d.defense)} army=${fmt(d.army)} risk=${fmt(d.risk)}`;
+      return `posture=${d.posture ?? d.objective} previous=${d.previous} reason=${d.reason} danger=${fmt(d.inputs?.danger)} defense=${fmt(d.defense)} army=${fmt(d.army)} risk=${fmt(d.risk)}`;
+    case "strategy.posture_changed":
+      return d.summary ?? `${d.previous} -> ${d.posture} (${d.reason})`;
     case "planner.proposed":
       return (d.proposals || []).map((p) => `${p.proposal_id} p=${fmt(p.priority)} n=${p.minimum_power != null ? `≥${fmt(p.minimum_power, 1)}pw` : p.count ?? "all"}`).join("  ");
     case "planner.map_control_planned":
@@ -602,7 +605,7 @@ function summaryHeading(parent, title, detail = "") {
 
 function buildStoryMoments() {
   const moments = [];
-  let objective;
+  let posture;
   let openingDone = false;
   const held = new Map();
   const push = (record, title, reason = "", severity = "info") => moments.push({
@@ -618,9 +621,10 @@ function buildStoryMoments() {
     } else if (record.event === "attention.observed" && d.opening_done && !openingDone) {
       openingDone = true;
       push(record, "Opening handed over to the economy", d.opening || "", "ok");
-    } else if (record.event === "strategy.decided" && d.objective !== objective) {
-      push(record, `Objective → ${d.objective}`, `${humanize(d.reason)} · danger ${fmt(d.inputs?.danger)}`, d.objective === "STABILIZE" ? "warning" : "ok");
-      objective = d.objective;
+    } else if (record.event === "strategy.decided" && (d.posture ?? d.objective) !== posture) {
+      posture = d.posture ?? d.objective;
+      const careful = ["DEFEND", "RECOVER", "STABILIZE"].includes(posture);
+      push(record, `Posture → ${posture}`, `${humanize(d.reason)} · danger ${fmt(d.inputs?.danger)}`, careful ? "warning" : "ok");
     } else if (record.event === "engine.commanded" && d.owner !== "core_army") {
       const count = (d.tags || []).length;
       const before = held.get(d.proposal_id) || 0;
@@ -687,7 +691,7 @@ function renderSummary() {
   const result = ended ? humanize(ended.data?.result).toUpperCase() : "IN PROGRESS";
   const resultClass = result.includes("VICTORY") ? "result-win" : (result.includes("DEFEAT") ? "result-loss" : "");
   const model = DecisionView.model();
-  const stabilizing = model ? SC2Timeline.shareOf(model, model.t.objective, "STABILIZE") : undefined;
+  const defending = model ? SC2Timeline.shareOf(model, model.t.posture, "DEFEND") : undefined;
   const defenses = buildStoryMoments().filter((moment) => moment.title.startsWith("Defense took")).length;
   const worstFrame = streams.perf.reduce((max, record) => Math.max(max, Object.values(record.data?.max_ms || {}).reduce((a, b) => a + (Number(b) || 0), 0)), 0);
 
@@ -696,7 +700,7 @@ function renderSummary() {
   appendSummaryCard(hero, "Result", result, `${started?.data?.map || "Unknown map"} · ${formatTime(duration)}`, resultClass);
   appendSummaryCard(hero, "Opening", humanize(started?.data?.opening || lastOf(streams.attention)?.data?.opening || "unknown"),
     `${humanize(started?.data?.race)} vs ${humanize(started?.data?.enemy_race)}`);
-  appendSummaryCard(hero, "Stabilizing", stabilizing === undefined ? "—" : `${Math.round(stabilizing * 100)}%`,
+  appendSummaryCard(hero, "Defending", defending === undefined ? "—" : `${Math.round(defending * 100)}%`,
     `${defenses} defense${defenses === 1 ? "" : "s"} commanded`);
   appendSummaryCard(hero, "Worst frame", `${fmt(worstFrame, 1)} ms`, "sum of per-layer maxima", worstFrame > 45 ? "has-problem" : "");
   root.appendChild(hero);
@@ -992,7 +996,7 @@ function renderEngine() {
     const card = appendTextElement(el, "div", "entity-card", "");
     appendTextElement(card, "div", "id", `${formatTime(record.game_time)} ${d.proposal_id}`);
     appendTextElement(card, "div", "meta", (d.tags || []).length ? `${d.command} → ${xy(d.target)} · ${typesSummary(d.types)}` : "released");
-    if (d.strategy) appendTextElement(card, "div", "meta", `strategy ${d.strategy.objective} · danger ${fmt(d.awareness?.danger)} · ${humanize(d.reason)}`);
+    if (d.strategy) appendTextElement(card, "div", "meta", `strategy ${d.strategy.posture ?? d.strategy.objective} · danger ${fmt(d.awareness?.danger)} · ${humanize(d.reason)}`);
     card.addEventListener("click", () => openDecisionAt(record.game_time));
   }
 }

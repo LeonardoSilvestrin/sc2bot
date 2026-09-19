@@ -1,7 +1,7 @@
 """The bot. The static map is read once, in ``on_start``; then every frame, in order:
 
-ATTENTION -> AWARENESS -> EGO (strategy -> planners and their missions) -> BODY (engine ->
-behaviors) -> LOGS
+ATTENTION -> AWARENESS -> EGO (strategy: assessment -> intent; planners and their
+missions) -> BODY (engine -> behaviors) -> LOGS
 
 The Engine's result is kept for the next frame: it is the feedback the
 missions read about what they were granted. Nothing is planned or allocated
@@ -36,7 +36,7 @@ from bot.ego.planners.intel import IntelPlanner
 from bot.ego.planners.map_control import MapControlPlan, MapControlPlanner
 from bot.ego.planners.offense import OffensePlan, OffensePlanner
 from bot.ego.planners.structure_control import StructureControlPlanner
-from bot.ego.strategy import StrategyModel, StrategyState
+from bot.ego.strategy import StrategicIntent, StrategyModel
 from bot.logs import Logs
 
 DEFAULT_LATTICE_SPACING = 4
@@ -70,6 +70,7 @@ class Layers:
         return {
             "awareness": self.awareness.config,
             "strategy": self.strategy.config,
+            "assessment": self.strategy.assessment.config,
             "map_control": self.map_control.config,
             "offense": self.offense.config,
             "structure_control": self.structure_control.config,
@@ -84,7 +85,7 @@ class Layers:
 class Frame:
     attention: AttentionState
     awareness: AwarenessState
-    strategy: StrategyState
+    intent: StrategicIntent
     map_control: MapControlPlan
     offense: OffensePlan
     proposals: tuple[Proposal, ...]
@@ -118,22 +119,21 @@ def play_frame(bot, iteration: int, layers: Layers) -> Frame:
     laps.mark("attention")
     awareness = layers.awareness.infer(attention)
     laps.mark("awareness")
-    strategy = layers.strategy.decide(attention, awareness)
+    # Every planner reads the same intent and serves it in its own domain.
+    intent = layers.strategy.decide(attention, awareness)
     laps.mark("strategy")
-    proposals = layers.defense.plan(attention, awareness, strategy, layers.feedback)
-    map_control = layers.map_control.plan(attention, awareness, strategy)
+    proposals = layers.defense.plan(attention, awareness, intent, layers.feedback)
+    map_control = layers.map_control.plan(attention, awareness, intent)
     proposals += map_control.proposals
     # The offense assembles and falls back where MapControl holds the army.
-    offense = layers.offense.plan(
-        attention, awareness, strategy, map_control.anchor, layers.feedback
-    )
+    offense = layers.offense.plan(attention, awareness, intent, map_control.anchor, layers.feedback)
     proposals += offense.proposals
-    intel = layers.intel.plan(attention, awareness, layers.feedback)
+    intel = layers.intel.plan(attention, awareness, intent, layers.feedback)
     proposals += intel.proposals
     missions = layers.defense.views() + layers.offense.views() + layers.intel.views()
     economy_plan = economy.plan(
         attention,
-        strategy,
+        intent,
         layers.army,
         composition_policy=layers.composition,
         investment_config=layers.investment,
@@ -157,7 +157,7 @@ def play_frame(bot, iteration: int, layers: Layers) -> Frame:
         bot,
         attention,
         awareness,
-        strategy,
+        intent,
         map_control,
         offense,
         proposals,
@@ -176,7 +176,7 @@ def play_frame(bot, iteration: int, layers: Layers) -> Frame:
     return Frame(
         attention,
         awareness,
-        strategy,
+        intent,
         map_control,
         offense,
         proposals,

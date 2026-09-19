@@ -1,8 +1,9 @@
 """The economy planner: `plan` joins the investment and composition policies
 and the chosen style into the `EconomyPlan` the Body's economy behavior runs.
 After the opening, Command Centers become Orbital Commands and every Orbital's
-energy goes to MULEs. While stabilizing, every resource goes to the army: no
-upgrade and no add-on for throughput.
+energy goes to MULEs. While Strategy's posture is DEFEND, every resource goes
+to the army: no upgrade and no add-on for throughput. How greedy the plan is
+under each posture is `policies.investment`'s.
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ from sc2.ids.unit_typeid import UnitTypeId
 from bot.attention import AttentionState
 from bot.awareness import AwarenessState
 from bot.ego.planners import EconomyPlan
-from bot.ego.strategy import StrategyState
+from bot.ego.strategy import StrategicIntent
 
 from .knowledge.styles import BIO, ArmyStyle
 from .policies import composition, investment
@@ -24,7 +25,7 @@ from .policies.investment import InvestmentConfig
 
 def plan(
     attention: AttentionState,
-    strategy: StrategyState,
+    intent: StrategicIntent,
     army: ArmyStyle = BIO,
     enemy: Iterable[tuple[UnitTypeId, float]] = (),
     *,
@@ -34,7 +35,7 @@ def plan(
 ) -> EconomyPlan:
     """`enemy` is the enemy army believed in, as power by unit type."""
 
-    spend = investment.plan(attention, strategy, investment_config)
+    spend = investment.plan(attention, intent, investment_config)
     enemy = tuple(enemy)
     policy = composition_policy or CompositionPolicy(army)
     if awareness is not None:
@@ -44,19 +45,17 @@ def plan(
     else:
         contacts = ()
         incidents = ()
-    composition_plan = policy.plan(
-        attention, strategy, enemy, contacts=contacts, incidents=incidents
-    )
+    composition_plan = policy.plan(attention, intent, enemy, contacts=contacts, incidents=incidents)
     mix = composition_plan.units
     upgrades_done = sum(item in attention.upgrades for item in army.upgrades)
-    invests = spend.active and not spend.stabilizing
+    invests = spend.active and not spend.defending
     return EconomyPlan(
         active=spend.active,
         workers=spend.workers,
         gas=spend.gas,
         bases=spend.bases,
         expand=spend.expand,
-        freeflow=spend.stabilizing,
+        freeflow=spend.defending,
         composition=mix,
         reason=spend.reason,
         inputs=(
@@ -69,7 +68,7 @@ def plan(
         mules=spend.active,
         interrupt_opening=spend.interrupt_opening,
         max_production=spend.max_production,
-        # An add-on stops its structure for half a minute: while stabilizing,
+        # An add-on stops its structure for half a minute: while defending,
         # every resource goes to the army instead, as with the upgrades.
         addons=invests,
         addons_on=army.addons_on,

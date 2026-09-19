@@ -169,8 +169,8 @@
     rows.push({ type: "diagnostics", label: view.diagnostics.length ? "hints" : "none detected", h: Math.max(1, ...view.diagnostics.map((item) => item.lane + 1)) * LANE_H + 6 });
 
     group("Strategy");
-    if (!model.strategy.available) rows.push({ type: "na", label: "Objective", text: "N/A — no strategy.decided events", h: STATE_H });
-    track("strategy.objective");
+    if (!model.strategy.available) rows.push({ type: "na", label: "Posture", text: "N/A — no strategy.decided events", h: STATE_H });
+    track("strategy.posture");
     track("strategy.defense");
     track("strategy.army");
     track("strategy.risk");
@@ -546,10 +546,10 @@
 
     const strategy = section(grid, "Strategy");
     if (!state.strategy) {
-      kv(strategy, "objective", "N/A");
+      kv(strategy, "posture", "N/A");
     } else {
       const s = state.strategy;
-      kv(strategy, "objective", s.objective);
+      kv(strategy, "posture", s.posture);
       kv(strategy, "since", `${fmtTime(s.since)} (${fmtDelta(s.since - time)})`);
       kv(strategy, "reason", s.reason);
       kv(strategy, "defense / army / risk", `${na(s.defense)} / ${na(s.army)} / ${na(s.risk)}`);
@@ -619,7 +619,7 @@
   function describe(record) {
     const data = record.data || {};
     const parts = [];
-    for (const key of ["objective", "proposal_id", "command", "owner"]) if (data[key]) parts.push(`${key}=${data[key]}`);
+    for (const key of ["posture", "objective", "proposal_id", "command", "owner"]) if (data[key]) parts.push(`${key}=${data[key]}`);
     if (Array.isArray(data.tags)) parts.push(`${data.tags.length} units`);
     if (data.reason) parts.push(`why=${data.reason}`);
     if (!parts.length) parts.push(JSON.stringify(data).slice(0, 160));
@@ -766,7 +766,7 @@
     if (cause.inputs.length) add(block, "div", "dt-cause-title", "inputs");
     for (const input of cause.inputs) add(block, "div", "", `${input.signal}: ${input.value}`);
     if (cause.scores.length) add(block, "div", "dt-cause-title", "scores");
-    for (const score of cause.scores) add(block, "div", "", `${score.objective}: ${score.value}`);
+    for (const score of cause.scores) add(block, "div", "", `${score.posture}: ${score.value}`);
     return block;
   }
 

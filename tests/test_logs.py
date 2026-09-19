@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 import xml.etree.ElementTree as ElementTree
+from dataclasses import replace
 
 import pytest
 from sc2.ids.unit_typeid import UnitTypeId
@@ -12,7 +13,7 @@ from bot.awareness import AwarenessModel
 from bot.body.engine import Engine
 from bot.ego.planners import map_control
 from bot.ego.planners.defense import DefensePlanner
-from bot.ego.strategy import StrategyModel
+from bot.ego.strategy import StrategicPosture, StrategyModel
 from bot.logs import (
     ChangeGate,
     JsonlLogger,
@@ -102,7 +103,7 @@ def test_the_svg_snapshot_is_valid_deterministic_and_escaped() -> None:
     assert owners == ["core_army", "defense"]
 
 
-def test_snapshots_follow_the_interval_and_objective_changes(tmp_path) -> None:
+def test_snapshots_follow_the_interval_and_posture_changes(tmp_path) -> None:
     logger = FakeLogger()
     exporter = SnapshotExporter(
         config=SnapshotConfig(enabled=True, interval_seconds=30.0),
@@ -117,6 +118,11 @@ def test_snapshots_follow_the_interval_and_objective_changes(tmp_path) -> None:
     assert (tmp_path / "field-0031.svg").is_file()
     assert logger.named("logs.snapshot_written")[0]["data"]["trigger"] == "interval"
     assert snapshot_filename(12.25) == "field-0012-250.svg"
+    other = next(item for item in StrategicPosture if item is not strategy.posture)
+    changed = replace(strategy, posture=other)
+    assert exporter.capture(attention(time=32.0), awareness, changed, held, result)
+    written = logger.named("logs.snapshot_written")[-1]["data"]
+    assert (written["trigger"], written["posture"]) == ("posture_changed", other.value)
 
 
 def test_a_failing_snapshot_is_logged_not_raised() -> None:

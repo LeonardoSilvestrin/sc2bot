@@ -22,7 +22,7 @@ from bot.ego.planners.map_control import planner as map_control_planner
 from bot.ego.planners.map_control.policies import staging
 from bot.ego.planners.offense import planner as offense_planner
 from bot.ego.planners.offense.missions import main_attack
-from bot.ego.strategy import Objective, StrategyModel
+from bot.ego.strategy import StrategicPosture, StrategyModel
 from bot.logs import Logs
 from bot.main import Layers, play_frame
 
@@ -45,19 +45,19 @@ def held(danger: float = 0.0, *, bases=(MAIN,), planner: MapControlPlanner | Non
 def test_the_main_alone_is_held_at_the_main_ramp() -> None:
     strategy, plan = held()
 
-    assert strategy.objective is Objective.BUILD_ADVANTAGE
+    assert strategy.posture is StrategicPosture.DEVELOP
     assert (plan.source, plan.fallback) == ("legacy", "no_candidates")
     assert plan.anchor == MAP.main_ramp
-    assert plan.reason == "hold_rally_build_advantage"
+    assert plan.reason == "hold_rally_develop"
     assert plan.staging is None
 
 
-def test_a_threatened_base_is_held_while_stabilizing() -> None:
+def test_a_threatened_base_is_held_while_defending() -> None:
     strategy, plan = held(0.7)
 
-    assert strategy.objective is Objective.STABILIZE
+    assert strategy.posture is StrategicPosture.DEFEND
     assert plan.anchor == MAIN.position
-    assert plan.reason == "hold_rally_stabilize"
+    assert plan.reason == "hold_rally_defend"
 
 
 def test_a_forward_base_moves_the_anchor_toward_the_enemy() -> None:
@@ -190,7 +190,7 @@ def test_a_dead_end_behind_our_bases_guards_nothing() -> None:
     assert "natchoke" in candidates.passages
 
 
-def test_a_threatened_base_outranks_staging_while_stabilizing() -> None:
+def test_a_threatened_base_outranks_staging_while_defending() -> None:
     plan = planned("main", "nat", danger=0.7)
 
     assert (plan.source, plan.anchor, plan.fallback) == (
@@ -199,7 +199,7 @@ def test_a_threatened_base_outranks_staging_while_stabilizing() -> None:
         None,
     )
     assert (plan.held_passage, plan.region) == (None, None)
-    assert plan.reason == "hold_rally_stabilize"
+    assert plan.reason == "hold_rally_defend"
     # Staging is still evaluated, and logged.
     assert plan.staging is not None and plan.staging.advance == 0.0
 
@@ -220,7 +220,7 @@ def test_without_a_place_to_stage_the_legacy_anchor_is_held(map_view, fallback) 
     plan = planned("main", map_view=map_view)
 
     assert (plan.source, plan.anchor, plan.fallback) == ("legacy", map_view.main_ramp, fallback)
-    assert plan.reason == "hold_rally_build_advantage"
+    assert plan.reason == "hold_rally_develop"
     (proposal,) = plan.proposals
     assert proposal.target == map_view.main_ramp
 
@@ -383,7 +383,7 @@ def staged(
     *,
     map_view: MapView = WIDE,
     influence: InfluenceField | None = None,
-    objective: Objective | None = None,
+    posture: StrategicPosture | None = None,
     planner: MapControlPlanner | None = None,
     time: float = 0.0,
 ):
@@ -394,8 +394,8 @@ def staged(
     frame = attention(bases=bases, map_view=map_view, time=time)
     believed = replace(awareness(0.0, bases=bases), influence=influence or field(map_view))
     strategy = StrategyModel().decide(frame, believed)
-    if objective is not None:
-        strategy = replace(strategy, objective=objective)
+    if posture is not None:
+        strategy = replace(strategy, posture=posture)
     plan = (planner or MapControlPlanner()).plan(frame, believed, strategy)
     assert plan.source == "staging" and plan.staging is not None
     return plan
@@ -410,7 +410,7 @@ def test_case_a_the_natural_choke_still_holds_two_bases() -> None:
     assert (point.region_id, point.passage_id) == ("nat", "natchoke")
     assert two.anchor == point.position
     assert (two.reason, two.held_passage, two.region) == (
-        "hold_staging_build_advantage",
+        "hold_staging_develop",
         "natchoke",
         "nat",
     )
@@ -590,13 +590,24 @@ def test_the_anchor_moves_out_a_base_at_a_time() -> None:
     )
 
 
-def test_stabilizing_only_covers() -> None:
+@pytest.mark.parametrize("posture", [StrategicPosture.DEFEND, StrategicPosture.RECOVER])
+def test_defending_and_recovering_only_cover(posture: StrategicPosture) -> None:
     advancing = staged(THREE).staging
-    stabilizing = staged(THREE, objective=Objective.STABILIZE).staging
+    covering = staged(THREE, posture=posture)
 
-    assert (advancing.advance, stabilizing.advance) == (MapControlConfig().advance, 0.0)
-    assert stabilizing.selected.front < advancing.selected.front
-    assert stabilizing.selected.mean <= advancing.selected.mean
+    assert (advancing.advance, covering.staging.advance) == (MapControlConfig().advance, 0.0)
+    assert covering.reason == f"hold_staging_{posture.value.lower()}"
+    assert covering.staging.selected.front < advancing.selected.front
+    assert covering.staging.selected.mean <= advancing.selected.mean
+
+
+@pytest.mark.parametrize("posture", [StrategicPosture.PRESSURE, StrategicPosture.COMMIT])
+def test_an_offensive_posture_stages_further_out(posture: StrategicPosture) -> None:
+    developing = staged(FOUR).staging
+    pressing = staged(FOUR, posture=posture)
+
+    assert (pressing.posture, pressing.advance) == (posture, MapControlConfig().pressure_advance)
+    assert pressing.staging.selected.front >= developing.selected.front
 
 
 def test_case_h_a_small_change_in_the_field_does_not_move_the_army() -> None:
@@ -633,10 +644,15 @@ def test_every_switch_says_why() -> None:
     expanded = staged(THREE, planner=planner, time=5.0).staging
     assert (expanded.switch, expanded.previous) == ("bases_changed", first.selected.position)
     assert expanded.selected.region_id == "front"
-    stabilizing = staged(THREE, planner=planner, objective=Objective.STABILIZE, time=6.0)
-    assert stabilizing.staging.switch == "posture_changed"
+    defending = staged(THREE, planner=planner, posture=StrategicPosture.DEFEND, time=6.0)
+    assert defending.staging.switch == "posture_changed"
     advancing = staged(THREE, planner=planner, time=7.0).staging
     assert (advancing.switch, advancing.selected) == ("posture_changed", expanded.selected)
+    # A posture that stages as far forward as the last one chooses nothing again.
+    pressing = staged(THREE, planner=planner, posture=StrategicPosture.PRESSURE, time=8.0)
+    assert pressing.staging.switch == "posture_changed"
+    committing = staged(THREE, planner=planner, posture=StrategicPosture.COMMIT, time=9.0)
+    assert committing.staging.switch == "kept"
     # Back to the main alone: the front is no ground of ours any more.
     lost = staged(("main",), planner=planner, time=8.0).staging
     assert lost.switch == "held_invalid"
@@ -727,7 +743,8 @@ def test_the_frame_holds_the_army_at_the_anchor_and_logs_why() -> None:
     assert data["anchor"] == [plan.anchor.x, plan.anchor.y]
     logged_staging = data["staging"]
     assert (logged_staging["switch"], logged_staging["previous"]) == ("initial", None)
-    assert logged_staging["objective"] == "BUILD_ADVANTAGE"
+    assert (data["posture"], data["advance"]) == (plan.posture.value, plan.advance)
+    assert logged_staging["advance"] == plan.advance
     assert logged_staging["candidate_count"] == plan.staging.candidate_count
     selected = logged_staging["selected"]
     assert selected == logged_staging["top"][0]
