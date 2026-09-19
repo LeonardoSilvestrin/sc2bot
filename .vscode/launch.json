@@ -125,7 +125,10 @@
       "options": [
         "PersephoneAIE_v4",
         "TorchesAIE_v4",
-        "IncorporealAIE_v4"
+        "IncorporealAIE_v4",
+        "PylonAIE_v4",
+        "MagannathaAIE_v2",
+        "UltraloveAIE_v2"
       ],
       "default": "PersephoneAIE_v4"
     },

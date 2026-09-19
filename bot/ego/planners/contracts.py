@@ -185,13 +185,14 @@ class DetectionPlan:
 
 @dataclass(frozen=True, slots=True)
 class SensorTowerSite:
-    """A Sensor Tower wanted for one owned base.
+    """A Sensor Tower wanted in the barrier: at a flank base or midway.
 
-    ``base`` selects that base's Ares placement set; ``target`` biases the
-    placement toward the exposed side of the base.
+    ``site_id`` is the flank base's id, or ``"middle"``. ``base`` selects the
+    expansion whose Ares placement set holds the tower; ``target`` is where
+    within that set it should stand.
     """
 
-    base_id: str
+    site_id: str
     base: Point2
     target: Point2
 

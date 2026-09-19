@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 import numpy as np
+import pytest
 from ares.behaviors.combat.individual import PathUnitToTarget
 from ares.consts import UnitRole
 from sc2.ids.unit_typeid import UnitTypeId
@@ -17,6 +18,7 @@ from bot.body.engine import Engine
 from bot.ego.planners import Command, EconomyPlan, Proposal, StructurePlan, intel
 from bot.ego.planners.intel import IntelPlanner, scouting_route
 from bot.ego.planners.intel.sensor_towers import (
+    MIDDLE_SITE,
     MIN_BASES,
     SITE_COVER_RADIUS,
 )
@@ -229,17 +231,16 @@ def test_the_scout_leaves_mining_and_goes_back_when_no_one_holds_it() -> None:
 
 
 def four_bases() -> tuple[BaseView, ...]:
+    # Across the start-to-start diagonal: the natural near it, one base per flank.
     return (
         BaseView("main", Point2((10.5, 10.5)), True),
-        BaseView("natural", Point2((22.5, 12.5)), False),
-        BaseView("third", Point2((34.5, 20.5)), False),
-        BaseView("outer", Point2((48.5, 36.5)), False),
+        BaseView("natural", Point2((24.5, 14.5)), False),
+        BaseView("left", Point2((12.5, 34.5)), False),
+        BaseView("right", Point2((38.5, 16.5)), False),
     )
 
 
-def test_sensor_coverage_activates_at_four_bases_and_selects_main_and_outermost() -> (
-    None
-):
+def test_sensor_coverage_activates_at_four_bases_as_a_flank_to_flank_barrier() -> None:
     planner = IntelPlanner()
 
     before = intel_step(
@@ -251,11 +252,19 @@ def test_sensor_coverage_activates_at_four_bases_and_selects_main_and_outermost(
     plan = intel_step(planner, attention(time=301.0, bases=four_bases())).sensor_towers
 
     assert planner.sensor_coverage_enabled
-    assert [site.base_id for site in plan.sites] == ["main", "outer"]
+    assert [site.site_id for site in plan.sites] == [MIDDLE_SITE, "left", "right"]
     assert plan.engineering_bay
-    assert plan.sites[0].target.distance_to(MAP.enemy_start) < plan.sites[
-        0
-    ].base.distance_to(MAP.enemy_start)
+    middle, left, right = plan.sites
+    for flank in (left, right):
+        assert flank.target.distance_to(MAP.own_start) > flank.base.distance_to(
+            MAP.own_start
+        )
+    assert middle.target.distance_to(left.target) == pytest.approx(
+        middle.target.distance_to(right.target)
+    )
+    assert middle.target.distance_to(MAP.own_start) > 20.0
+    # Placed from the expansion nearest the middle, never from the main's.
+    assert middle.base == MAP.expansions[1]
     assert planner.views() == ()
 
 
@@ -271,12 +280,12 @@ def test_sensor_coverage_maintains_missing_sites_without_using_awareness() -> No
     initial = intel_step(
         planner, attention(time=300.0, bases=four_bases(), own_structures=(ebay,))
     ).sensor_towers
-    main_site, outer_site = initial.sites
-    main_tower = unit(
+    middle, *flanks = initial.sites
+    middle_tower = unit(
         21,
         UnitTypeId.SENSORTOWER,
-        main_site.target.x + SITE_COVER_RADIUS,
-        main_site.target.y,
+        middle.target.x + SITE_COVER_RADIUS,
+        middle.target.y,
         structure=True,
         power=0.0,
         ready=False,
@@ -287,12 +296,12 @@ def test_sensor_coverage_maintains_missing_sites_without_using_awareness() -> No
         attention(
             time=301.0,
             bases=four_bases(),
-            own_structures=(ebay, main_tower),
+            own_structures=(ebay, middle_tower),
         ),
     )
 
     plan = result.sensor_towers
-    assert plan.sites == (outer_site,)
+    assert plan.sites == tuple(flanks)
     assert not plan.engineering_bay
     assert plan.reason == "sensor_tower_needed"
 
@@ -321,6 +330,7 @@ def test_sensor_tower_behavior_builds_prerequisite_then_the_first_site() -> None
     first = second_plan.sensor_towers.sites[0]
     assert tower.structure_id is UnitTypeId.SENSORTOWER
     assert tower.closest_to == first.target
+    assert tower.base_location == first.base
     assert tower.sensor_tower and not tower.production and not tower.find_alternative
     assert report.building == ("SENSORTOWER",)
 
@@ -348,8 +358,13 @@ def test_sensor_coverage_rebuilds_without_a_mission_even_after_losing_bases() ->
     assert covered.sensor_towers.reason == "sensor_network_covered"
     rebuilt = intel_step(planner, replace(state, time=302.0))
     assert rebuilt.sensor_towers.sites == initial.sites
-    fewer = intel_step(planner, replace(state, time=303.0, bases=four_bases()[:1]))
-    assert [site.base_id for site in fewer.sensor_towers.sites] == ["main"]
+    fewer = intel_step(planner, replace(state, time=303.0, bases=four_bases()[:2]))
+    assert [site.site_id for site in fewer.sensor_towers.sites] == ["natural"]
+    main_only = intel_step(
+        planner, replace(state, time=304.0, bases=four_bases()[:1])
+    ).sensor_towers
+    assert main_only.sites == ()
+    assert main_only.reason == "no_barrier_bases"
     assert planner.views() == ()
 
 

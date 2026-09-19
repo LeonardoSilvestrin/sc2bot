@@ -1,4 +1,9 @@
-"""A persistent late-game sensor network, independent of Awareness."""
+"""A persistent late-game sensor barrier, independent of Awareness.
+
+The towers stand across the enemy's approach: one at each laterally outermost
+base -- lateral to the line from our start to the enemy's -- and one midway
+between those two. The main keeps none.
+"""
 
 from __future__ import annotations
 
@@ -11,6 +16,7 @@ from bot.ego.planners import SensorTowerPlan, SensorTowerSite
 MIN_BASES = 4
 TOWER_OFFSET = 9.0
 SITE_COVER_RADIUS = 12.0
+MIDDLE_SITE = "middle"
 SENSOR_TOWERS = frozenset({UnitTypeId.SENSORTOWER})
 ENGINEERING_BAYS = frozenset({UnitTypeId.ENGINEERINGBAY})
 
@@ -32,59 +38,68 @@ def plan(attention: AttentionState) -> SensorTowerPlan:
     engineering_bay = bool(missing) and not any(
         structure.type_id in ENGINEERING_BAYS for structure in attention.own_structures
     )
-    reason = (
-        "sensor_network_covered"
-        if not missing
-        else ("engineering_bay_needed" if engineering_bay else "sensor_tower_needed")
-    )
+    if not sites:
+        reason = "no_barrier_bases"
+    elif not missing:
+        reason = "sensor_network_covered"
+    else:
+        reason = "engineering_bay_needed" if engineering_bay else "sensor_tower_needed"
     return SensorTowerPlan(
         sites=missing,
         engineering_bay=engineering_bay,
         reason=reason,
         inputs=(
             ("bases", float(len(attention.bases))),
-            ("protected_bases", float(len(sites))),
+            ("sites", float(len(sites))),
             ("missing_towers", float(len(missing))),
         ),
     )
 
 
 def sensor_tower_sites(attention: AttentionState) -> tuple[SensorTowerSite, ...]:
-    bases = attention.bases
-    if not bases:
+    """The middle site first, then the flank sites by id."""
+
+    map_view = attention.map
+    own, enemy = map_view.own_start, map_view.enemy_start
+    candidates = [base for base in attention.bases if not base.is_main]
+    if not candidates:
         return ()
-    main = min(
-        bases,
-        key=lambda base: (
-            not base.is_main,
-            base.position.distance_to(attention.map.own_start),
-            base.base_id,
-        ),
+
+    def lateral(base: BaseView) -> float:
+        dx, dy = base.position.x - own.x, base.position.y - own.y
+        return (enemy.x - own.x) * dy - (enemy.y - own.y) * dx
+
+    ordered = sorted(candidates, key=lambda base: (lateral(base), base.base_id))
+    ends = {base.base_id: base for base in (ordered[0], ordered[-1])}
+    flanks = [_flank(ends[base_id], attention) for base_id in sorted(ends)]
+    if len(flanks) < 2:
+        return tuple(flanks)
+    first, second = flanks
+    middle = Point2(
+        (
+            (first.target.x + second.target.x) / 2,
+            (first.target.y + second.target.y) / 2,
+        )
     )
-    others = [base for base in bases if base.base_id != main.base_id]
-    outer: list[BaseView] = []
-    if others:
-        distances = {
-            base.base_id: base.position.distance_to(main.position) for base in others
-        }
-        farthest = max(distances.values())
-        tolerance = max(1.0, attention.map.lattice_spacing)
-        outer = [
-            base for base in others if distances[base.base_id] >= farthest - tolerance
-        ]
-    selected = [main, *sorted(outer, key=lambda base: base.base_id)]
-    return tuple(_site(base, main, attention) for base in selected)
+    main_anchor = min(
+        map_view.expansions,
+        key=lambda point: (point.distance_to(own), point.x, point.y),
+        default=None,
+    )
+    anchor = min(
+        (point for point in map_view.expansions if point != main_anchor),
+        key=lambda point: (point.distance_to(middle), point.x, point.y),
+        default=middle,
+    )
+    return (SensorTowerSite(MIDDLE_SITE, anchor, middle), first, second)
 
 
-def _site(base: BaseView, main: BaseView, attention: AttentionState) -> SensorTowerSite:
-    outward = (
-        attention.map.enemy_start
-        if base.base_id == main.base_id
-        else Point2(
-            (
-                base.position.x + (base.position.x - main.position.x),
-                base.position.y + (base.position.y - main.position.y),
-            )
+def _flank(base: BaseView, attention: AttentionState) -> SensorTowerSite:
+    own = attention.map.own_start
+    outward = Point2(
+        (
+            base.position.x + (base.position.x - own.x),
+            base.position.y + (base.position.y - own.y),
         )
     )
     target = base.position.towards(outward, TOWER_OFFSET)

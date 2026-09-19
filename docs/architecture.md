@@ -157,8 +157,10 @@ MULE no mesmo frame; a reserva de energia é intenção do Intel, não política
   para a mineração. Antes de o scout sair, o planner pede o cancelamento imediato em 240 s
   (`too_late`) ou se os workers caem abaixo de 16 (`workers_below_threshold`, a única razão que
   deixa abrir outra missão depois). Um scout que saiu nunca é reposto. Ao alcançar quatro bases,
-  ativa o desired state de sensor coverage: uma torre na main e uma em cada base do
-  anel externo, reconstruídas quando faltarem. Detection pertence ao mesmo planner: decide scans
+  ativa o desired state de sensor coverage: uma barreira atravessando o caminho do inimigo, com
+  uma torre em cada base mais externa na lateral (medida contra a linha entre os dois starts) e
+  uma no ponto médio entre essas duas, posta pelo placement do Ares da expansão mais próxima
+  desse ponto (nunca a main). A main não tem torre. Reconstruídas quando faltarem. Detection pertence ao mesmo planner: decide scans
   contra unidades escondidas, reserva de energia, Missile Turrets e Engineering Bay. A rede de
   Sensor Towers ainda não alimenta Awareness. O desbloqueio persiste se o número de bases cair.
   `intel/sensor_towers.py` calcula locais sem cobertura; torres inacabadas já contam. Não há
@@ -482,7 +484,7 @@ behaviors e logs. O viewer normaliza nomes de eventos anteriores ao schema 5 ao 
 | `behavior.spawn_executed` | behaviors | `freeflow` ou razão do spawn mudam | `freeflow`, `reason` (`plan_inactive`, `plan_freeflow`, `composition_met`, `composition_short`), `counts` {tipo: contagem do Ares} |
 | `behavior.micro_executed` | behaviors | alguma unidade usou Stim (em `ATTACK` ou `HOLD`), ou os Medivacs que escoltam mudam | `stimmed[]`, `escorts[]` |
 | `planner.detection_planned` | planners | todo scan; turrets, Engineering Bay, reserva, razão mudam | `scan`, `turrets[]`, `engineering_bay`, `energy_reserve`, `reason`, `inputs` {`hidden_enemies`, `cloak_seen_at` (−1 antes), `army_near_hidden`, `orbitals_with_scan`, `active_scans`} |
-| `planner.sensor_towers_planned` | planners | pontos sem cobertura, requisito ou razão mudam | `sites[]` {`base_id`, `base`, `target`}, `engineering_bay`, `reason`, `inputs` |
+| `planner.sensor_towers_planned` | planners | pontos sem cobertura, requisito ou razão mudam | `sites[]` {`site_id`, `base`, `target`}, `engineering_bay`, `reason`, `inputs` |
 | `planner.structures_planned` | planners | depots a abaixar/levantar ou razão mudam | `lower`, `raise`, `reason` (`no_depots`, `enemy_near`, `enemy_recently_near`, `no_enemy_near`), `inputs` {`depots`, `lowered`, `enemy_near`, `recently_near`, `ground_enemies`, `friendly_on_raising`, `nearest_ground_enemy` (só com depot e inimigo terrestre)} |
 | `planner.structure_relocation` | planners | cada passo de uma relocation | `transition` (`tank_stuck`, `blocker_selected`, `lifting`, `tank_moving`, `tank_gone`, `tank_still_stuck`, `relocating`, `no_landing_site` — uma vez por relocation —, `landing`, `relocation_complete`, `relocation_aborted`), `reason` (em `tank_stuck`: `blocker_selected`, `no_blocker`, `cooldown`, `relocation_active`; em `blocker_selected`: `no_add_on`, `with_add_on`; em `relocating`: `site_found`, `retry`; em `relocation_aborted`: `structure_lost`, `lift_failed`), `tank`, `structure`, `site` (origem do bloqueador, site de pouso ou onde pousou), `inputs` {`stuck_for`, `moved`, `destination_distance`, `gap`, `candidates`, `has_add_on`, `waited`, `free_sites`, `flight`, `sites`, `took`, conforme o passo} |
 | `engine.granted` | engine | alguma concessão muda | `grants[]` {`proposal_id`, `owner`, `mission_id`, `priority`, `requested`, `minimum_power`, `granted`, `granted_power`, `status`, `reason`, `tags`, `types`}, `transfers[]` {`tag`, `type`, `from`, `to`}, `unassigned` |

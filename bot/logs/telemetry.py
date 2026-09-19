@@ -248,7 +248,7 @@ class Telemetry:
             {
                 "sites": [
                     {
-                        "base_id": site.base_id,
+                        "site_id": site.site_id,
                         "base": _xy(site.base),
                         "target": _xy(site.target),
                     }
