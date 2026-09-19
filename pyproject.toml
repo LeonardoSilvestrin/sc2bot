@@ -31,6 +31,9 @@ skip_glob = ["ares-sc2/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# ares-sc2 packages itself as `src/ares` and vendors `sc2_helper` at its root, so a
+# non-editable install (CI) imports neither; run.py adds the same paths at runtime.
+pythonpath = ["ares-sc2/src", "ares-sc2"]
 
 [tool.ruff]
 line-length = 100
