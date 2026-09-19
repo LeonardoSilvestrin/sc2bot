@@ -7,8 +7,9 @@ from sc2.position import Point2
 from bot.attention import BaseView
 from bot.awareness import AwarenessModel
 from bot.body.engine import Engine, GrantStatus
-from bot.ego.planners import Command, Domain, core_army, defense
-from bot.ego.planners.defense import DefensePlanner
+from bot.ego.planners import Command, Domain
+from bot.ego.planners.military import army_fallback, defense
+from bot.ego.planners.military.defense import DefensePlanner
 from bot.ego.strategy import StrategyModel
 
 from .fakes import MAIN, NATURAL, attention, unit
@@ -42,7 +43,7 @@ def plan(frame, *, strategy_model=None, awareness_model=None, defense_planner=No
         awareness,
         strategy,
         (defense_planner or DefensePlanner()).plan(frame, awareness, strategy)
-        + core_army.plan(frame, awareness, strategy),
+        + army_fallback.ArmyFallbackPlanner().plan(frame, awareness, strategy),
     )
 
 
@@ -53,7 +54,7 @@ def defenses(proposals):
 def test_no_pressure_proposes_no_defense() -> None:
     _, _, proposals = plan(attention(own_units=ARMY))
 
-    assert [item.owner for item in proposals] == [core_army.OWNER]
+    assert [item.owner for item in proposals] == [army_fallback.OWNER]
 
 
 def test_one_scv_in_reach_of_three_bases_is_one_incident_answered_once() -> None:
@@ -86,7 +87,11 @@ def test_one_scv_in_reach_of_three_bases_is_one_incident_answered_once() -> None
     # The Marine on the spot covers it; nothing is pulled from the other bases.
     grant = next(item for item in result.grants if item.proposal is answer)
     assert (grant.tags, grant.status, grant.reason) == ((1,), GrantStatus.FULL, "minimum_power_met")
-    assert dict(result.owners) == {1: answer.proposal_id, 2: core_army.OWNER, 3: core_army.OWNER}
+    assert dict(result.owners) == {
+        1: answer.proposal_id,
+        2: army_fallback.OWNER,
+        3: army_fallback.OWNER,
+    }
 
 
 def test_an_air_attack_is_answered_only_by_units_that_shoot_up() -> None:
@@ -104,7 +109,7 @@ def test_an_air_attack_is_answered_only_by_units_that_shoot_up() -> None:
     # The Marauder beside the Mutalisk is no cover against it.
     assert result.grants[0].proposal is air
     assert result.grants[0].tags == (4, 5)
-    assert result.owner_of(3) == core_army.OWNER
+    assert result.owner_of(3) == army_fallback.OWNER
 
 
 def test_a_mixed_attack_splits_one_budget_between_air_and_ground() -> None:
@@ -150,7 +155,7 @@ def test_an_attack_beyond_the_army_is_partial_and_one_nobody_can_shoot_is_reject
     air = result.grants[0]
     assert air.proposal.owner == defense.OWNER
     assert (air.tags, air.status, air.reason) == ((), GrantStatus.REJECTED, "no_eligible_units")
-    assert result.owner_of(3) == core_army.OWNER
+    assert result.owner_of(3) == army_fallback.OWNER
 
 
 def test_defense_outranks_the_core_army_and_hands_units_back_when_the_attack_ends() -> None:
@@ -167,7 +172,7 @@ def test_defense_outranks_the_core_army_and_hands_units_back_when_the_attack_end
     _, _, proposals = plan(over, awareness_model=awareness_model, strategy_model=strategy_model)
     after = engine.allocate(over, proposals)
 
-    assert set(dict(after.owners).values()) == {core_army.OWNER}
+    assert set(dict(after.owners).values()) == {army_fallback.OWNER}
     assert set(dict(after.owners)) == {1, 2, 3, 4}
     assert after.released == ()
 
@@ -212,4 +217,4 @@ def test_the_units_defending_stay_on_the_attack_when_its_lowest_tag_dies() -> No
     assert answer.proposal_id == "defense:incident:90:ground"
     held = {tag for tag, owner in second.owners if owner == answer.proposal_id}
     assert len(held) == 2 and held <= defenders
-    assert second.owner_of(4) == core_army.OWNER
+    assert second.owner_of(4) == army_fallback.OWNER

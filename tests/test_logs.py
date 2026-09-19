@@ -10,8 +10,8 @@ from sc2.position import Point2
 
 from bot.awareness import AwarenessModel
 from bot.body.engine import Engine
-from bot.ego.planners import core_army
-from bot.ego.planners.defense import DefensePlanner
+from bot.ego.planners.military import army_fallback
+from bot.ego.planners.military.defense import DefensePlanner
 from bot.ego.strategy import StrategyModel
 from bot.logs import (
     ChangeGate,
@@ -43,9 +43,9 @@ def frame_layers(time: float = 0.0):
     )
     awareness = AwarenessModel().infer(frame)
     strategy = StrategyModel().decide(frame, awareness)
-    proposals = DefensePlanner().plan(frame, awareness, strategy) + core_army.plan(
+    proposals = DefensePlanner().plan(
         frame, awareness, strategy
-    )
+    ) + army_fallback.ArmyFallbackPlanner().plan(frame, awareness, strategy)
     return frame, awareness, strategy, Engine().allocate(frame, proposals)
 
 

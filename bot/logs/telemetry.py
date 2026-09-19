@@ -20,9 +20,9 @@ from bot.body.behaviors.attack import MicroReport
 from bot.body.behaviors.detection import DetectionReport
 from bot.body.behaviors.economy import SpawnMode
 from bot.body.engine import EngineResult, rank
+from bot.ego.core import MissionView
 from bot.ego.planners import DetectionPlan, EconomyPlan, Proposal, StructurePlan
-from bot.ego.planners.missions import MissionView
-from bot.ego.planners.offense import LocalFight, OffensePlan
+from bot.ego.planners.military.offense import LocalFight, OffensePlan
 from bot.ego.strategy import StrategyState
 
 from .identity import describe_build, fingerprint

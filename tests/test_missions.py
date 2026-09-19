@@ -13,17 +13,18 @@ from sc2.position import Point2
 
 from bot.awareness import AwarenessModel
 from bot.body.engine import Engine, GrantStatus
-from bot.ego.planners import Command, Proposal, defense
-from bot.ego.planners.defense import DefensePlanner
-from bot.ego.planners.intel import SCOUT_AT_WORKERS, START_BY, IntelPlanner, ScoutMission
-from bot.ego.planners.missions import (
+from bot.ego.core import (
     CancelMode,
     Lifecycle,
     MissionFeedback,
     MissionStatus,
 )
-from bot.ego.planners.offense import OWNER, MainAttackMission, Stage
-from bot.ego.planners.offense.missions.main_attack import OffenseContext
+from bot.ego.planners import Command, Proposal
+from bot.ego.planners.military import defense
+from bot.ego.planners.military.defense import DefensePlanner
+from bot.ego.planners.military.intel import SCOUT_AT_WORKERS, START_BY, IntelPlanner, ScoutMission
+from bot.ego.planners.military.offense import OWNER, MainAttackMission, Stage
+from bot.ego.planners.military.offense.missions.main_attack import OffenseContext
 from bot.ego.strategy import Objective, Posture, StrategyModel
 from bot.logs import Logs
 from bot.main import Layers, play_frame
@@ -191,7 +192,7 @@ def test_strategy_withdrawing_the_offense_blocks_admission_and_cancels_at_once()
         MissionStatus.CANCELLED,
     )
     assert game.offense.mission is None
-    # The same allocation hands every unit to Defense and CoreArmy.
+    # The same allocation hands every unit to Defense and ArmyFallback.
     owners = {grant.proposal.owner for grant in game.feedback.grants if grant.tags}
     assert OWNER not in owners
     assert set(dict(game.feedback.owners)) == {marine.tag for marine in army}
@@ -443,7 +444,7 @@ def test_a_cancelled_attack_commands_nothing_in_the_frame_its_units_move_on() ->
         if isinstance(maneuver, CombatManeuver)
         for micro in maneuver.micros[-1:]
     }
-    # Every army unit was commanded for Defense or CoreArmy, none toward the hatchery.
+    # Every army unit was commanded for Defense or ArmyFallback, none toward the hatchery.
     assert hatchery.position not in set(commanded.values())
     granted = {tag for grant in cancelled.result.grants for tag in grant.tags}
     assert set(commanded) <= granted

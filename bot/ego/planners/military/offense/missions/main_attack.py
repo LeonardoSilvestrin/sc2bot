@@ -3,7 +3,7 @@
 The offense planner opens it and may ask it to end; the mission carries the
 attack through its phases, with at most one transition per frame:
 
-- ASSEMBLE: no proposal, while CoreArmy gathers the army at the rally -- until
+- ASSEMBLE: no proposal, while ArmyFallback gathers the army at the rally -- until
   `assemble_share` of the army's power stands within `assemble_radius` of it,
   or `assemble_timeout` after the attack opened.
 - ADVANCE: one ATTACK proposal for every free army unit, at the target.
@@ -11,7 +11,7 @@ attack through its phases, with at most one transition per frame:
 - ENGAGE: the same ATTACK proposal, at the enemies near the squad.
 - RETREAT: one RETREAT proposal: the squad walks back to the rally without
   fighting.
-- REGROUP: no proposal again, while CoreArmy holds the army at the rally.
+- REGROUP: no proposal again, while ArmyFallback holds the army at the rally.
 - WITHDRAW: only after a graceful cancel request: the RETREAT proposal until
   the army is assembled at the rally or `retreat_timeout` passed, then the
   mission is CANCELLED.
@@ -74,14 +74,14 @@ from sc2.position import Point2
 
 from bot.attention import AttentionState, MapView, UnitView
 from bot.awareness import AwarenessState, Contact
-from bot.ego.planners import Command, Domain, Proposal
-from bot.ego.planners.missions import (
+from bot.ego.core import (
     CancelMode,
     Lifecycle,
     MissionFeedback,
     MissionStatus,
     MissionView,
 )
+from bot.ego.planners import Command, Domain, Proposal
 from bot.ego.strategy import StrategyState
 
 OWNER = "offense"

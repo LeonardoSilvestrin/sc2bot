@@ -15,7 +15,8 @@ from sc2.position import Point2
 
 from bot.attention import observe, read_map
 from bot.awareness import AwarenessConfig
-from bot.ego.planners import core_army, defense, economy, offense
+from bot.ego.planners import economy
+from bot.ego.planners.military import army_fallback, defense, offense
 from bot.ego.strategy import StrategyConfig
 from bot.logs import Logs, OverlayConfig, SnapshotConfig
 from bot.main import Layers, play_frame
@@ -62,7 +63,7 @@ def test_a_frame_flows_from_attention_to_logs() -> None:
 
     granted = grants(frame)
     (defended,) = [grant.tags for grant in frame.result.grants if grant.proposal.owner == "defense"]
-    held = granted[core_army.OWNER]
+    held = granted[army_fallback.OWNER]
     assert defended and held
     assert set(defended).isdisjoint(held)
     assert set(defended) | set(held) == ARMY_TAGS
@@ -206,7 +207,7 @@ def test_defenders_stim_against_the_attack_and_the_log_says_who() -> None:
     held = {
         tag
         for grant in frame.result.grants
-        if grant.proposal.owner == core_army.OWNER
+        if grant.proposal.owner == army_fallback.OWNER
         for tag in grant.tags
         if 200 <= tag < 206
     }
@@ -332,8 +333,8 @@ def test_a_maxed_army_attacks_the_known_enemy_base_and_the_log_says_why() -> Non
     bot.registered = []
     second = play_frame(bot, 1, layers)
 
-    assert grants(first)[core_army.OWNER] == army
-    assert grants(second) == {core_army.OWNER: (), offense.OWNER: army}
+    assert grants(first)[army_fallback.OWNER] == army
+    assert grants(second) == {army_fallback.OWNER: (), offense.OWNER: army}
     maneuvers = [item for item in bot.registered if isinstance(item, CombatManeuver)]
     assert sorted(maneuver.micros[-1].unit.tag for maneuver in maneuvers) == list(army)
     assert {maneuver.micros[-1].target for maneuver in maneuvers} == {hatchery.position}
@@ -354,7 +355,7 @@ def test_a_maxed_army_attacks_the_known_enemy_base_and_the_log_says_why() -> Non
     proposed = {
         item["owner"]: item for item in logger.named("behavior.proposed")[-1]["data"]["proposals"]
     }
-    assert (proposed[offense.OWNER]["priority"], proposed[core_army.OWNER]["priority"]) == (
+    assert (proposed[offense.OWNER]["priority"], proposed[army_fallback.OWNER]["priority"]) == (
         0.0,
         -1.0,
     )
@@ -365,7 +366,7 @@ def test_a_maxed_army_attacks_the_known_enemy_base_and_the_log_says_why() -> Non
         "FULL",
         "every_free_unit",
     )
-    assert (granted[core_army.OWNER]["status"], granted[core_army.OWNER]["reason"]) == (
+    assert (granted[army_fallback.OWNER]["status"], granted[army_fallback.OWNER]["reason"]) == (
         "REJECTED",
         "eligible_units_taken",
     )
@@ -421,7 +422,7 @@ def test_units_return_to_the_core_army_when_the_attack_dies() -> None:
     bot.registered = []
     frame = play_frame(bot, 1, layers)
 
-    assert grants(frame) == {core_army.OWNER: tuple(sorted(ARMY_TAGS))}
+    assert grants(frame) == {army_fallback.OWNER: tuple(sorted(ARMY_TAGS))}
 
 
 def test_the_same_game_replays_to_the_same_decisions() -> None:

@@ -7,7 +7,7 @@ as camadas sempre na mesma ordem, em `play_frame` ([bot/main.py](../bot/main.py)
 attention = observe(bot, iteration, map_view)                  ATTENTION
 awareness = awareness_model.infer(attention)                    AWARENESS
 strategy  = strategy_model.decide(attention, awareness)         EGO / strategy (política)
-proposals = defense.plan(..., feedback) + core_army.plan(...)   EGO / planners → missões
+proposals = defense.plan(..., feedback) + army_fallback.plan(...)   EGO / planners → missões
 offense   = offense.plan(..., feedback)                         EGO / planner → missão
 proposals += offense.proposals + intel.plan(attention, feedback)
 missions  = defense.views() + offense.views() + intel.views()
@@ -36,7 +36,8 @@ Todo o resto lê estados imutáveis e é testável sem `AresBot`.
 | ATTENTION | [bot/attention/](../bot/attention/) | `MapView`, `AttentionState` | Percepção. `map.py`/`topology.py`: no `on_start`, `read_map` congela lattice, expansões e `MapTopology` (regiões, passagens/chokes, adjacência, regiões dos starts) — "o mapa físico é assim". `frame.py`: `observe` lê o frame (recursos, workers pela contagem do jogo, unidades próprias e inimigas visíveis neste frame ordenadas por tag — sem os snapshots de até 30 s que o Ares mistura em `enemy_units` para inimigos fora de visão, porque lembrar é papel da Awareness —, bases, mortes, visibilidade, upgrades concluídos; por unidade, energia e se está camuflada/enterrada e se nada a detecta) e classifica unidades (`is_army`). Não interpreta valor, ameaça ou controle. |
 | AWARENESS | [bot/awareness/](../bot/awareness/) | `AwarenessState` | Pinta o mapa ao longo da partida. Memória de contatos com confiança `exp(-idade/τ)` e incerteza `min(cap, v·idade)`; esquece por morte confirmada, posição vista vazia (após carência) ou confiança < piso. Pressão por base com a ameaça lembrada (`recent_threat`, τ = `threat_memory`), incidentes de ameaça (`ThreatIncident`), estimativa do exército inimigo (conhecido, visto vivo, esperado sem avistamento, incerteza e cobertura), contatos escondidos (camuflados sem detecção, à vista) e quando um exército camuflado foi visto pela primeira vez, e campo de influência. Descreve; não escolhe margem nem prioridade. |
 | EGO / strategy | [bot/ego/strategy.py](../bot/ego/strategy.py) | `StrategyState`, `DomainPolicy` | `STABILIZE` vs `BUILD_ADVANTAGE` com margem, permanência mínima e emergência; preferências contínuas `defense`, `army`, `economy`, `risk`, com o inimigo planejado como estimativa mais `commit_margin` da incerteza; ponto de rally; a política da ofensiva (`offense`: `PURSUE` ou `WITHDRAW`, com a razão). Não conhece missão nenhuma. |
-| EGO / planners | [bot/ego/planners/](../bot/ego/planners/) | `Proposal`, `Command`, `EconomyPlan`, `StructurePlan`, `DetectionPlan`, `MissionView` | Decidem o que deve ser feito (tarefa, alvo, prioridade, requisitos) sem nomear unidades. `missions`: o contrato das operações persistentes (status, pedido de cancelamento, feedback, resumo). `defense/`: o `DefensePlanner` abre uma `DefendAreaMission` por incidente, que pede `ATTACK` com um orçamento de poder repartido entre a parte aérea e a terrestre. `offense/`: `OffensePlanner` (`planner.py`) abre e encerra a `MainAttackMission` (`missions/main_attack.py`) (ASSEMBLE → ADVANCE ⇄ SEARCH, ENGAGE/RETREAT → REGROUP, e WITHDRAW só num cancelamento gracioso); `ATTACK` no alvo ou `RETREAT` ao rally, com todas as unidades livres, lendo a concessão anterior da missão. `core_army/`: `HOLD` no rally, fallback com todas as unidades livres, sem missão. `intel/`: `IntelPlanner` (`planner.py`) abre uma `ScoutMission` (`missions/scout.py`), `SCOUT` de um SCV pela main inimiga no early game. `economy` (pasta, um módulo por pergunta): `investment` diz quanto investir (workers, bases, gás, teto de produção, quando o plano assume do opening ou o interrompe numa emergência); `styles` diz qual exército (o estilo sorteado na partida: abertura, composição, upgrades e onde vão os Reactors); `composition` diz o que construir agora (a composição do estilo repesada pela matriz de counters contra o exército inimigo acreditado); `plan` junta tudo num `EconomyPlan` para os macro behaviors do Ares (inclusive upgrades, Orbital e MULE). `detection`: onde escanear, quais bases precisam de Missile Turret, Engineering Bay e a energia que cada Orbital guarda. `structure_control`: quais depots levantar e quais abaixar. |
+| EGO / core | [bot/ego/core/](../bot/ego/core/) | `MissionStatus`, `CancelMode`, `Lifecycle`, `MissionFeedback`, `MissionView` | O que todas as missões compartilham: `lifecycle` (status terminal, pedido de cancelamento e modos) e `contracts` (o feedback que a missão lê e o resumo que ela reporta). Nenhuma missão concreta mora aqui. |
+| EGO / planners | [bot/ego/planners/](../bot/ego/planners/) | `Proposal`, `Command`, `EconomyPlan`, `StructurePlan`, `DetectionPlan` | Decidem o que deve ser feito (tarefa, alvo, prioridade, requisitos) sem nomear unidades, em três grupos: `military/` pede unidades ao Engine, `economy/` diz o que comprar, `control/` diz qual estrutura ou habilidade age. `military/defense/`: o `DefensePlanner` abre uma `DefendAreaMission` por incidente, que pede `ATTACK` com um orçamento de poder repartido entre a parte aérea e a terrestre. `military/offense/`: `OffensePlanner` (`planner.py`) abre e encerra a `MainAttackMission` (`missions/main_attack.py`) (ASSEMBLE → ADVANCE ⇄ SEARCH, ENGAGE/RETREAT → REGROUP, e WITHDRAW só num cancelamento gracioso); `ATTACK` no alvo ou `RETREAT` ao rally, com todas as unidades livres, lendo a concessão anterior da missão. `military/army_fallback/`: `ArmyFallbackPlanner`, `HOLD` no rally com todas as unidades livres, sem missão (a proposta mantém o id `core_army`, nome anterior, por compatibilidade com logs, viewer e benches). `military/intel/`: `IntelPlanner` (`planner.py`) abre uma `ScoutMission` (`missions/scout.py`), `SCOUT` de um SCV pela main inimiga no early game. `economy/` (`planner.py` junta um módulo por pergunta): `investment` diz quanto investir (workers, bases, gás, teto de produção, quando o plano assume do opening ou o interrompe numa emergência); `styles` diz qual exército (o estilo sorteado na partida: abertura, composição, upgrades e onde vão os Reactors); `composition` diz o que construir agora (a composição do estilo repesada pela matriz de counters contra o exército inimigo acreditado); `planner.plan` junta tudo num `EconomyPlan` para os macro behaviors do Ares (inclusive upgrades, Orbital e MULE). `control/detection`: onde escanear, quais bases precisam de Missile Turret, Engineering Bay e a energia que cada Orbital guarda. `control/structure_control`: quais depots levantar e quais abaixar. |
 | BODY / engine | [bot/body/engine.py](../bot/body/engine.py) | `EngineResult` | Só alocação. Ordena por `(-priority, owner, proposal_id)` e concede cada unidade de exército a no máximo uma proposta. Restrições duras vêm antes de qualquer ordem: `unit_types`, `must_attack` (`GROUND`/`AIR`) e, num pedido de poder, `power > 0`. Entre as elegíveis livres, as que já eram da proposta primeiro, depois as mais próximas. Pede-se `minimum_power` (unidades até atingir o poder), `count` ou todas as livres; cada `Grant` traz `power`, `status` (`FULL`/`PARTIAL`/`REJECTED`) e `reason`. Um pedido de todas as livres que não recebe nenhuma fica `REJECTED` (`eligible_units_taken`/`no_eligible_units`). Workers só são elegíveis para propostas que pedem um tipo de worker, só saindo da mineração (role `GATHERING`) ou já sendo da proposta. `released` lista quem perdeu o dono. O `EngineResult` é o feedback que as missões leem no frame seguinte, sem nomear unidades; o Engine é o único registro de posse e nunca lê nem muda o lifecycle de uma missão. Não comanda nada. |
 | BODY / behaviors | [bot/body/behaviors/](../bot/body/behaviors/) | — | Executam os grants, despachados por `Command`. `attack` (`ATTACK`, de Defense ou da ofensiva): `AMove`, Siege Tank decide o siege sem ficar preso ao ponto; Marine/Marauder usam Stim com inimigo a ≤ 10 e ≥ 50 % de vida; Medivac vai ao centro do próprio grupo. `retreat` (`RETREAT`): path ao ponto sem lutar, Siege Tank sai do siege. `hold` (`HOLD`): `PathUnitToTarget` até o ponto, `AMove` com inimigo a ≤ 10 (bio usa Stim pela mesma regra do `attack`), Siege Tank fica sieged perto do ponto. `scout` (`SCOUT`): tira o worker da mineral, role `SCOUTING`, path sem evitar perigo. `economy`: para o build runner do Ares quando o plano interrompe o opening; workers liberados voltam a `GATHERING`, `Mining`, `MacroPlan` (Orbital antes de `BuildWorkers`, upgrades antes do `SpawnController`, depois `ProductionController` e `AddReactors`, nesta ordem, com o teto de produção e a reserva de Tech Lab do plano) e MULEs, sem gastar a reserva de scan nem usar o Orbital que escaneou; devolve o `SpawnMode` (com a composição inteira exatamente na proporção, o `SpawnController` roda em `freeflow` naquele frame). `detection`: scan com o Orbital pronto de mais energia; Engineering Bay e depois uma Missile Turret por vez, pelo `BuildStructure` do Ares na expansão mais próxima da base. `execute` devolve `BodyReport` (`spawn`, `micro`, `detection`). `structure_control`: abaixa e levanta os depots do plano. `combat` guarda o que `attack` e `hold` compartilham: decisão de siege, `AMove` e a regra do Stim. O Siege Tank decide o siege também contra os inimigos que o Ares lembra fora de visão; o Stim e a saída do path no HOLD só contam inimigos à vista neste frame. |
 | LOGS | [bot/logs/](../bot/logs/) | — | Log JSONL, snapshots SVG do campo e overlay in-game. Nenhum deles muda decisão nem derruba partida. |
@@ -91,7 +92,7 @@ Todo o resto lê estados imutáveis e é testável sem `AresBot`.
   depois é uma missão nova), `orçamento = 1.5 · poder`, repartido em `defense:<incidente>:air`
   (`minimum_power = 1.5 · poder aéreo`, `must_attack = AIR`) e `…:ground` (idem, terrestre); as
   partes somam o orçamento e compartilham `demand_id`. `priority = threat · (0.5 + 0.5·strategy.defense)`
-  (> 0 exatamente enquanto há atacante ao alcance, logo acima do CoreArmy, que é 0); no empate a
+  (> 0 exatamente enquanto há atacante ao alcance, logo acima do ArmyFallback, que é −1); no empate a
   parte aérea vem antes (id). A cobertura já no local é usada porque o Engine concede as unidades
   compatíveis mais próximas primeiro; uma incompatível não conta.
 - Intel: com `workers ≥ 16` e antes de 240 s, o `IntelPlanner` abre uma `ScoutMission`
@@ -183,7 +184,7 @@ Todo o resto lê estados imutáveis e é testável sem `AresBot`.
   - SEARCH: expansões e start inimigo, menos as nossas (≤ 6); primeiro as fora de visão há mais de 60 s, a mais
     próxima do grupo (ou do rally); depois a fora de visão há mais tempo; empate por posição; alvo mantido até entrar
     na visão. SEARCH → ADVANCE ao lembrar uma estrutura (`structure_found`).
-  - Prioridade 0: Defense (> 0) passa na frente, CoreArmy (−1) fica com o resto.
+  - Prioridade 0: Defense (> 0) passa na frente, ArmyFallback (−1) fica com o resto.
 - Economy (Orbital, MULE e upgrades): depois do opening, `orbitals` e `mules`; `upgrades = UPGRADES` (Stim, Combat
   Shield, Infantry Weapons 1, Concussive, Infantry Armor 1, W2, A2, Vehicle Weapons 1, W3, A3, VW2, VW3) fora de
   STABILIZE, senão nenhum. O `MacroPlan` do Ares para no primeiro behavior que age e o `SpawnController` age sempre
@@ -203,30 +204,36 @@ Dentro do Ego, três papéis, cada um com uma pergunta:
 | Papel | Onde | Decide | Não decide |
 | --- | --- | --- | --- |
 | Strategy | [strategy.py](../bot/ego/strategy.py) | A política global: o que cada domínio pode fazer e o que tem precedência. Hoje, `StrategyState.offense`: `PURSUE` fora de STABILIZE, `WITHDRAW` (`home_threatened`) em STABILIZE. | Qual missão existe, qual termina e como. Não conhece `mission_id` nem chama `cancel`. |
-| Planner | `offense/planner.py`, `defense/planner.py`, `intel/planner.py` | Quais missões abrir, manter ou pedir para encerrar, interpretando a política e o próprio domínio; o modo do pedido (imediato ou gracioso). Guarda só a memória que sobrevive a uma operação: cooldown, lugares vistos, rota do scout, contadores de id. | Tags de unidades, comandos ao jogo, a fase de uma operação. |
-| Mission | `offense/missions/main_attack.py`, `defense/missions/defend_area.py`, `intel/missions/scout.py` | Identidade, fase e memória de uma operação; progride lendo observação e feedback; emite propostas; conclui (`COMPLETED`), falha (`FAILED`) ou, depois de um pedido, cancela (`CANCELLED`). | Posse de unidades, registro de behaviors, política global. |
+| Planner | `military/{offense,defense,intel}/planner.py` | Quais missões abrir, manter ou pedir para encerrar, interpretando a política e o próprio domínio; o modo do pedido (imediato ou gracioso). Guarda só a memória que sobrevive a uma operação: cooldown, lugares vistos, rota do scout, contadores de id. | Tags de unidades, comandos ao jogo, a fase de uma operação. |
+| Mission | `military/offense/missions/main_attack.py`, `military/defense/missions/defend_area.py`, `military/intel/missions/scout.py`; o que todas compartilham em `bot/ego/core/` | Identidade, fase e memória de uma operação; progride lendo observação e feedback; emite propostas; conclui (`COMPLETED`), falha (`FAILED`) ou, depois de um pedido, cancela (`CANCELLED`). | Posse de unidades, registro de behaviors, política global. |
 
-**Onde fica cada coisa.** Cada planner de unidades é uma pasta com `planner.py`, e as operações que ele
-governa ficam em `missions/`, um módulo por tipo de missão. O `__init__.py` da pasta só reexporta os
-nomes públicos (`from bot.ego.planners.offense import OffensePlanner`). O contrato comum a todas as
-missões fica em [missions.py](../bot/ego/planners/missions.py). No Body, cada behavior tem o nome do
-`Command` que executa.
+**Onde fica cada coisa.** O Ego separa a coordenação global, a infraestrutura comum das missões e os
+planners, e os planners se agrupam pelo que pedem:
 
 ```text
-bot/ego/planners/
-  missions.py                   contrato: status, pedido de cancelamento, feedback, MissionView
-  offense/
-    planner.py                  OffensePlanner
-    missions/main_attack.py     MainAttackMission
-  defense/
-    planner.py                  DefensePlanner
-    missions/defend_area.py     DefendAreaMission (uma por incidente)
-  intel/
-    planner.py                  IntelPlanner
-    missions/scout.py           ScoutMission
-  core_army/
-    planner.py                  fallback sem missão
-  economy/, detection.py, structure_control.py    planos de recurso, fora do Engine
+bot/ego/
+  strategy.py                       coordenação global: objetivo, preferências, política por domínio
+  core/                             o que todas as missões compartilham
+    lifecycle.py                    MissionStatus, CancelMode, CancelRequest, Lifecycle
+    contracts.py                    MissionFeedback, MissionView
+  planners/
+    __init__.py                     contratos com o Body: Proposal, Command, Domain, os planos
+    military/                       pedem unidades ao Engine
+      offense/
+        planner.py                  OffensePlanner
+        missions/main_attack.py     MainAttackMission
+      defense/
+        planner.py                  DefensePlanner
+        missions/defend_area.py     DefendAreaMission (uma por incidente)
+      intel/
+        planner.py                  IntelPlanner
+        missions/scout.py           ScoutMission
+      army_fallback/
+        planner.py                  ArmyFallbackPlanner: o que ninguém pediu, no rally; sem missão
+    economy/                        o que comprar
+      planner.py, investment.py, styles.py, composition.py
+    control/                        qual estrutura ou habilidade age; sem missões
+      detection.py, structure_control.py
 
 bot/body/behaviors/
   attack.py    ATTACK        hold.py      HOLD
@@ -235,8 +242,14 @@ bot/body/behaviors/
   economy.py, detection.py, structure_control.py  planos de recurso
 ```
 
+`bot/ego/core/` é a infraestrutura comum; `planners/<grupo>/<domínio>/missions/` são as missões concretas
+daquele domínio. Cada pasta de planner tem `planner.py`, e o `__init__.py` só reexporta os nomes públicos
+(`from bot.ego.planners.military.offense import OffensePlanner`). Um planner de `control/` ou de
+`economy/` que crescer vira pasta do mesmo jeito. No Body, cada behavior tem o nome do `Command` que
+executa.
+
 Um tipo de missão novo entra como um módulo em `missions/` do planner que o governa, e um comando novo
-como um behavior com o nome dele. O próximo previsto é `harass/` (N7.3 em
+como um behavior com o nome dele. O próximo previsto é `military/harass/` (N7.3 em
 [novas_propostas.md](novas_propostas.md)): `harass/planner.py` com `missions/drop.py` e
 `missions/banshee_raid.py`, e os behaviors `move.py`, `load.py` e `unload.py` para os comandos que o drop
 pedir. Nenhum deles existe ainda: entram com o gameplay, gatilho e teste próprios.
@@ -275,7 +288,7 @@ do próximo frame. Nada é replanejado nem realocado duas vezes no mesmo frame.
 
 **Liberação de unidades.** Quando uma missão para de emitir uma proposta (terminal, ou numa fase sem
 proposta), o Engine deixa de conceder aquelas unidades na mesma alocação: vão para quem as pede (Defense,
-CoreArmy), e um worker liberado volta à mineração (`released`). Não existe liberação pela missão: ela só
+ArmyFallback), e um worker liberado volta à mineração (`released`). Não existe liberação pela missão: ela só
 deixa de pedir.
 
 **Resumo para quem está acima.** `planner.views()` devolve um `MissionView` imutável por missão governada no
@@ -295,18 +308,19 @@ nenhuma decisão dela depende disso, então não recebe.
   uma fase só (`DEFENDING`) e termina quando o incidente some; o que ela acrescenta é identidade e
   lifecycle nos logs. O planner nunca pede para encerrar uma. As propostas (ids, `demand_id`, orçamento,
   prioridade) são as de antes.
-- **CoreArmy:** fallback sem estado, pasta só com `planner.py`.
+- **ArmyFallback** (era CoreArmy): fallback sem estado, só `planner.py`. Não é uma reserva estratégica:
+  recebe o que os planners acima deixaram.
 - **Economy, Detection, StructureControl:** planos de recurso, não pedem unidades ao Engine; mantêm seus
   contratos.
 
 **Orçamentos.** Não há orçamento de poder por domínio nesta versão: a precedência entre domínios é a
-prioridade das propostas (Defense > 0, ofensiva 0, CoreArmy −1) e a política da Strategy. Se um orçamento
+prioridade das propostas (Defense > 0, ofensiva 0, ArmyFallback −1) e a política da Strategy. Se um orçamento
 vier, ele precisa separar a meta desejada, o limite de admissão de novas operações, as unidades ainda
 comprometidas numa retirada e a precedência para preempção: uma meta reduzida a zero pode coexistir com
 uma operação em WITHDRAW.
 
 **Diferença de gameplay.** Nenhuma nos gatilhos existentes. A Strategy em `WITHDRAW` leva o planner a pedir
-o cancelamento **imediato**, como o call-off de antes (Defense precisa das unidades já, e o CoreArmy as segura
+o cancelamento **imediato**, como o call-off de antes (Defense precisa das unidades já, e o ArmyFallback as segura
 na base ameaçada, que é o rally em STABILIZE). O cancelamento gracioso (fase WITHDRAW) existe no contrato e
 na `MainAttackMission`, testado, mas nenhum gatilho de produção o usa. Verificado fora da suíte, rodando o
 Offense, o Intel e o Defense anteriores ao lado dos novos em sequências aleatórias de frames (48 mil, 800 mil

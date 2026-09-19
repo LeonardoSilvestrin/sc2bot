@@ -10,65 +10,12 @@ should buy. Three questions, one module each:
 - `composition`: what now -- the style's composition reweighted by what each
   unit is worth against the enemy army Awareness believes in.
 
-`plan` joins them into the `EconomyPlan` the Body's economy behavior runs.
-After the opening, Command Centers become Orbital Commands and every Orbital's
-energy goes to MULEs. While stabilizing, every resource goes to the army: no
-upgrade and no add-on for throughput.
+`planner.plan` joins them into the `EconomyPlan` the Body's economy behavior
+runs.
 """
 
-from __future__ import annotations
-
-from collections.abc import Iterable
-
-from sc2.ids.unit_typeid import UnitTypeId
-
-from bot.attention import AttentionState
-from bot.ego.planners import EconomyPlan
-from bot.ego.strategy import StrategyState
-
 from . import composition, investment, styles
-from .styles import BIO, ArmyStyle
-
-
-def plan(
-    attention: AttentionState,
-    strategy: StrategyState,
-    army: ArmyStyle = BIO,
-    enemy: Iterable[tuple[UnitTypeId, float]] = (),
-) -> EconomyPlan:
-    """`enemy` is the enemy army believed in, as power by unit type."""
-
-    spend = investment.plan(attention, strategy)
-    enemy = tuple(enemy)
-    mix = composition.mix(army, enemy)
-    upgrades_done = sum(item in attention.upgrades for item in army.upgrades)
-    invests = spend.active and not spend.stabilizing
-    return EconomyPlan(
-        active=spend.active,
-        workers=spend.workers,
-        gas=spend.gas,
-        bases=spend.bases,
-        expand=spend.expand,
-        freeflow=spend.stabilizing,
-        composition=mix,
-        reason=spend.reason,
-        inputs=(
-            *spend.inputs,
-            ("upgrades_done", float(upgrades_done)),
-            ("enemy_seen_power", sum(power for _, power in enemy)),
-        ),
-        upgrades=army.upgrades if invests else (),
-        orbitals=spend.active,
-        mules=spend.active,
-        interrupt_opening=spend.interrupt_opening,
-        max_production=spend.max_production,
-        # An add-on stops its structure for half a minute: while stabilizing,
-        # every resource goes to the army instead, as with the upgrades.
-        addons=invests,
-        addons_on=army.addons_on,
-        reactor_share=composition.reactor_share(mix, army.addons_on),
-        army=army.name,
-    )
-
+from .planner import plan
+from .styles import ArmyStyle
 
 __all__ = ["ArmyStyle", "composition", "investment", "plan", "styles"]

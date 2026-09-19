@@ -2,26 +2,23 @@
 
 Each planner reads Attention, Awareness and Strategy, computes its own
 priority from its local signals, modulated directly by `StrategyState`, and
-hands complete plans to the Body. There are two kinds:
+hands complete plans to the Body. Three groups, one package each:
 
-- Unit planners (`defense`, `offense`, `core_army`, `intel`) ask for units: a
-  `Proposal` with a task, a target, a priority and the units it requires. They
-  never name a unit -- the Engine decides who gets each proposal, and the
-  Body's behaviors how it is carried out.
-- Resource planners (`economy`, `detection`, `structure_control`) ask for no
-  unit: a plan of what to buy or which structure acts, which the Body runs
-  directly.
+- `military` asks the Engine for units: a `Proposal` with a task, a target, a
+  priority and the units it requires, never naming a unit -- the Engine
+  decides who gets each proposal, and the Body's behaviors how it is carried
+  out. `offense` (the main attack), `defense` (one area defense per threat
+  incident) and `intel` (the scout) govern missions: the planner decides which
+  operations to open and when to ask one to end, as Strategy's policy allows,
+  and each mission carries one operation and makes its proposals.
+  `army_fallback` takes what no one else needs and proposes directly.
+- `economy` asks for no unit: what Ares' macro behaviors should buy.
+- `control` asks for no unit either: which structure or ability acts
+  (`detection`, `structure_control`).
 
-A unit planner whose work persists over frames governs missions (`missions`):
-the planner decides which operations to open and when to ask one to end, as
-Strategy's policy allows; each mission carries one operation through its
-phases and makes its proposals. `offense` (the main attack), `defense` (one
-area defense per threat incident) and `intel` (the scout) do; `core_army`, the
-fallback, proposes directly.
-
-Every unit planner is a package: the planner in `planner.py`, the kinds of
-mission it governs in `missions/`, one module each, and an `__init__` that
-only re-exports. The contract every mission shares is `missions.py`, here.
+A planner with missions is a package with `planner.py` and one module per kind
+of mission in `missions/`; what every mission shares is `bot.ego.core`. This
+module holds the contracts between the planners and the Body.
 """
 
 from __future__ import annotations
@@ -75,7 +72,7 @@ class Proposal:
     # The coordinated demand this proposal is one part of; its parts share one
     # budget. None for a proposal that stands alone.
     demand_id: str | None = None
-    # The mission (`missions`) that made it; None for a planner without
+    # The mission (`bot.ego.core`) that made it; None for a planner without
     # missions. A mission may make several proposals, and keeps a proposal's
     # id across its phases so the Engine keeps the same units.
     mission_id: str | None = None

@@ -24,22 +24,22 @@ from bot.body.behaviors.attack import MicroReport
 from bot.body.behaviors.detection import DetectionReport
 from bot.body.behaviors.economy import SpawnMode
 from bot.body.engine import Engine, EngineResult
+from bot.ego.core import MissionView
 from bot.ego.planners import (
     DetectionPlan,
     EconomyPlan,
     Proposal,
     StructurePlan,
-    core_army,
     economy,
 )
-from bot.ego.planners.defense import DefensePlanner
-from bot.ego.planners.detection import Detection
+from bot.ego.planners.control.detection import Detection
+from bot.ego.planners.control.structure_control import StructureControl
 from bot.ego.planners.economy import styles
 from bot.ego.planners.economy.styles import BIO, ArmyStyle
-from bot.ego.planners.intel import IntelPlanner
-from bot.ego.planners.missions import MissionView
-from bot.ego.planners.offense import OffensePlan, OffensePlanner
-from bot.ego.planners.structure_control import StructureControl
+from bot.ego.planners.military.army_fallback import ArmyFallbackPlanner
+from bot.ego.planners.military.defense import DefensePlanner
+from bot.ego.planners.military.intel import IntelPlanner
+from bot.ego.planners.military.offense import OffensePlan, OffensePlanner
 from bot.ego.strategy import StrategyModel, StrategyState
 from bot.logs import Logs
 
@@ -57,6 +57,7 @@ class Layers:
     awareness: AwarenessModel = field(default_factory=AwarenessModel)
     strategy: StrategyModel = field(default_factory=StrategyModel)
     defense: DefensePlanner = field(default_factory=DefensePlanner)
+    army_fallback: ArmyFallbackPlanner = field(default_factory=ArmyFallbackPlanner)
     offense: OffensePlanner = field(default_factory=OffensePlanner)
     intel: IntelPlanner = field(default_factory=IntelPlanner)
     structure_control: StructureControl = field(default_factory=StructureControl)
@@ -103,7 +104,7 @@ def play_frame(bot, iteration: int, layers: Layers) -> Frame:
     strategy = layers.strategy.decide(attention, awareness)
     laps.mark("strategy")
     proposals = layers.defense.plan(attention, awareness, strategy, layers.feedback)
-    proposals += core_army.plan(attention, awareness, strategy)
+    proposals += layers.army_fallback.plan(attention, awareness, strategy)
     offense = layers.offense.plan(attention, awareness, strategy, layers.feedback)
     proposals += offense.proposals
     proposals += layers.intel.plan(attention, layers.feedback)

@@ -11,9 +11,10 @@ from sc2.position import Point2
 from bot.attention import unit_power, unit_view
 from bot.awareness import AwarenessModel
 from bot.body.engine import Engine, GrantStatus
-from bot.ego.planners import Command, Domain, core_army, defense
-from bot.ego.planners.defense import DefensePlanner
-from bot.ego.planners.offense import (
+from bot.ego.planners import Command, Domain
+from bot.ego.planners.military import army_fallback, defense
+from bot.ego.planners.military.defense import DefensePlanner
+from bot.ego.planners.military.offense import (
     ENEMY_START,
     FLYING_STRUCTURE,
     KNOWN_BASE,
@@ -92,7 +93,7 @@ class Game:
         self.feedback = self.engine.allocate(
             frame,
             self.defense.plan(frame, awareness, strategy, self.feedback)
-            + core_army.plan(frame, awareness, strategy)
+            + army_fallback.ArmyFallbackPlanner().plan(frame, awareness, strategy)
             + plan.proposals,
         )
         return frame, awareness, strategy, plan
@@ -281,7 +282,7 @@ def test_defense_takes_what_an_incident_needs_and_the_offense_the_rest() -> None
     )
     proposals = (
         DefensePlanner().plan(frame, awareness, strategy)
-        + core_army.plan(frame, awareness, strategy)
+        + army_fallback.ArmyFallbackPlanner().plan(frame, awareness, strategy)
         + plan.proposals
     )
 
@@ -292,7 +293,7 @@ def test_defense_takes_what_an_incident_needs_and_the_offense_the_rest() -> None
     assert [grant.proposal.owner for grant in result.grants] == [
         defense.OWNER,
         OWNER,
-        core_army.OWNER,
+        army_fallback.OWNER,
     ]
     assert (guard.status, guard.tags) == (GrantStatus.FULL, (100, 101))
     assert guard.power >= guard.proposal.minimum_power

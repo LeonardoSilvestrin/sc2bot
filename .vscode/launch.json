@@ -65,6 +65,167 @@
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
       "justMyCode": false
+    },
+    {
+      "name": "bench: matriz padrão",
+      "type": "debugpy",
+      "request": "launch",
+      "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "program": "${workspaceFolder}\\bench.py",
+      "cwd": "${workspaceFolder}",
+      "args": [
+        "run",
+        "--out",
+        "${workspaceFolder}\\bench\\${input:benchLabel}"
+      ],
+      "console": "integratedTerminal",
+      "justMyCode": false
+    },
+    {
+      "name": "bench: cenário único",
+      "type": "debugpy",
+      "request": "launch",
+      "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "program": "${workspaceFolder}\\bench.py",
+      "cwd": "${workspaceFolder}",
+      "args": [
+        "run",
+        "--out",
+        "${workspaceFolder}\\bench\\${input:benchLabel}",
+        "--maps",
+        "${input:benchMap}",
+        "--races",
+        "${input:benchRace}",
+        "--difficulties",
+        "${input:benchDifficulty}",
+        "--ai-builds",
+        "${input:benchAiBuild}",
+        "--armies",
+        "${input:benchArmy}",
+        "--games",
+        "${input:benchGames}",
+        "--time-limit",
+        "${input:benchTimeLimit}"
+      ],
+      "console": "integratedTerminal",
+      "justMyCode": false
+    },
+    {
+      "name": "bench: resumir",
+      "type": "debugpy",
+      "request": "launch",
+      "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "program": "${workspaceFolder}\\bench.py",
+      "cwd": "${workspaceFolder}",
+      "args": [
+        "summarize",
+        "${workspaceFolder}\\bench\\${input:benchSummary}"
+      ],
+      "console": "integratedTerminal",
+      "justMyCode": false
+    },
+    {
+      "name": "bench: comparar",
+      "type": "debugpy",
+      "request": "launch",
+      "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "program": "${workspaceFolder}\\bench.py",
+      "cwd": "${workspaceFolder}",
+      "args": [
+        "compare",
+        "${workspaceFolder}\\bench\\${input:benchBaseline}",
+        "${workspaceFolder}\\bench\\${input:benchChallenger}"
+      ],
+      "console": "integratedTerminal",
+      "justMyCode": false
+    }
+  ],
+  "inputs": [
+    {
+      "id": "benchLabel",
+      "type": "promptString",
+      "description": "Nome da execução dentro de bench/",
+      "default": "local"
+    },
+    {
+      "id": "benchMap",
+      "type": "pickString",
+      "description": "Mapa",
+      "options": [
+        "PersephoneAIE_v4",
+        "TorchesAIE_v4",
+        "IncorporealAIE_v4"
+      ],
+      "default": "PersephoneAIE_v4"
+    },
+    {
+      "id": "benchRace",
+      "type": "pickString",
+      "description": "Raça da IA",
+      "options": ["Zerg", "Terran", "Protoss"],
+      "default": "Zerg"
+    },
+    {
+      "id": "benchDifficulty",
+      "type": "pickString",
+      "description": "Dificuldade da IA",
+      "options": [
+        "VeryEasy",
+        "Easy",
+        "Medium",
+        "MediumHard",
+        "Hard",
+        "Harder",
+        "VeryHard",
+        "CheatVision",
+        "CheatMoney",
+        "CheatInsane"
+      ],
+      "default": "VeryHard"
+    },
+    {
+      "id": "benchAiBuild",
+      "type": "pickString",
+      "description": "Build da IA",
+      "options": ["RandomBuild", "Rush", "Timing", "Power", "Macro", "Air"],
+      "default": "Macro"
+    },
+    {
+      "id": "benchArmy",
+      "type": "pickString",
+      "description": "Estilo do exército do bot",
+      "options": ["bio", "mech"],
+      "default": "bio"
+    },
+    {
+      "id": "benchGames",
+      "type": "promptString",
+      "description": "Quantidade de partidas",
+      "default": "1"
+    },
+    {
+      "id": "benchTimeLimit",
+      "type": "promptString",
+      "description": "Limite de tempo da partida, em segundos",
+      "default": "1200"
+    },
+    {
+      "id": "benchSummary",
+      "type": "promptString",
+      "description": "Execução a resumir dentro de bench/",
+      "default": "local"
+    },
+    {
+      "id": "benchBaseline",
+      "type": "promptString",
+      "description": "Baseline dentro de bench/",
+      "default": "base"
+    },
+    {
+      "id": "benchChallenger",
+      "type": "promptString",
+      "description": "Desafiante dentro de bench/",
+      "default": "local"
     }
   ]
 }

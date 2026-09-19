@@ -20,14 +20,14 @@ from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
 from bot.attention import AttentionState
-from bot.ego.planners import Command, Proposal
-from bot.ego.planners.missions import (
+from bot.ego.core import (
     CancelMode,
     Lifecycle,
     MissionFeedback,
     MissionStatus,
     MissionView,
 )
+from bot.ego.planners import Command, Proposal
 
 OWNER = "intel"
 KIND = "scout"

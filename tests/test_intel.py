@@ -10,8 +10,9 @@ from sc2.position import Point2
 
 from bot.body import behaviors
 from bot.body.engine import Engine
-from bot.ego.planners import Command, EconomyPlan, Proposal, StructurePlan, intel
-from bot.ego.planners.intel import IntelPlanner, scouting_route
+from bot.ego.planners import Command, EconomyPlan, Proposal, StructurePlan
+from bot.ego.planners.military import intel
+from bot.ego.planners.military.intel import IntelPlanner, scouting_route
 
 from .fakes import LATTICE, MAP, SIZE, TOPOLOGY, FakeBot, FakeUnit, attention, seen_everywhere, unit
 

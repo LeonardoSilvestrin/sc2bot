@@ -19,11 +19,11 @@ least `minimum_power` of army, once either
 
 When Strategy's policy turns to WITHDRAW (home is threatened), the planner
 asks the running mission to cancel IMMEDIATELY: its units are free for
-Defense and CoreArmy in the same allocation, as they always were. The mission
+Defense and ArmyFallback in the same allocation, as they always were. The mission
 also ends by itself (`main_attack`); every end starts the cooldown.
 
 Priority: Defense (positive exactly while an attacker is in reach) outranks the
-offense (0), which outranks the CoreArmy fallback (-1). Defense takes the power
+offense (0), which outranks the ArmyFallback fallback (-1). Defense takes the power
 an incident needs and the offense the rest of the army.
 """
 
@@ -37,13 +37,13 @@ from sc2.position import Point2
 
 from bot.attention import AttentionState
 from bot.awareness import AwarenessState
-from bot.ego.planners import Proposal
-from bot.ego.planners.missions import (
+from bot.ego.core import (
     CancelMode,
     MissionFeedback,
     MissionStatus,
     MissionView,
 )
+from bot.ego.planners import Proposal
 from bot.ego.strategy import Posture, StrategyState
 
 from .missions.main_attack import (
@@ -183,7 +183,7 @@ class OffensePlanner:
         now = ctx.now
         policy = ctx.strategy.offense
         if policy.posture is Posture.WITHDRAW:
-            # Defense needs the units now, and CoreArmy holds the rest at the
+            # Defense needs the units now, and ArmyFallback holds the rest at the
             # threatened base: no walk back first.
             mission.request_cancel(CancelMode.IMMEDIATE, policy.reason, now)
         granted = MissionFeedback.of(feedback, mission.mission_id)

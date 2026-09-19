@@ -16,7 +16,7 @@ from sc2.ids.ability_id import AbilityId
 from sc2.ids.unit_typeid import UnitTypeId
 
 from bot.ego.planners import DetectionPlan
-from bot.ego.planners.detection import SCAN_ENERGY
+from bot.ego.planners.control.detection import SCAN_ENERGY
 
 TURRET_COST = 100
 ENGINEERING_BAY_COST = 125
