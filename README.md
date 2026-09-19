@@ -171,7 +171,9 @@ não tem matriz própria.
   então o zip precisa ser gerado em Linux (`scripts/create_ladder_zip.py`,
   Docker ou WSL). O workflow `ladder_zip.yml` faz isso a cada push na `main`
   ou na `botbandido`, depois de `pytest` e `ruff`, e publica o artefato
-  `ladder-zip.zip` na aba Actions. O upload automático fica desligado; para ligar, defina
+  `ladder-zip.zip` na aba Actions. Só uma tag de versão (`git tag v2`,
+  `git push origin v2`) publica na AI Arena; push em branch só gera o zip. O
+  upload automático fica desligado; para ligar, defina
   `AutoUploadToAiarena: True` em `config.yml` e crie os secrets
   `UPLOAD_API_TOKEN` e `UPLOAD_BOT_ID` no repositório.
 - **Executável para jogar contra humanos (SC2AIApp):** no Windows,

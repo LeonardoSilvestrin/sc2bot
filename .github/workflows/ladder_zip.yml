@@ -1,6 +1,8 @@
 on:
   push:
     branches: [ main, botbandido ]
+    # only a version tag (v1, v2, ...) publishes to AI Arena; branch pushes just build the zip
+    tags: [ 'v*' ]
   workflow_dispatch:
 
 jobs:
@@ -42,6 +44,7 @@ jobs:
           name: ladder-zip
           path: out
       - name: Upload to AIArena
+        if: startsWith(github.ref, 'refs/tags/v')
         env:
           UPLOAD_API_TOKEN: ${{ secrets.UPLOAD_API_TOKEN }}
           UPLOAD_BOT_ID: ${{ secrets.UPLOAD_BOT_ID }}
