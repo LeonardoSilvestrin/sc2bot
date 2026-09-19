@@ -28,14 +28,9 @@ def execute(bot, plan: SensorTowerPlan) -> SensorTowerReport:
         and bot.vespene >= SENSOR_TOWER_VESPENE_COST
     ):
         site = plan.sites[0]
-        location = min(
-            bot.expansion_locations_list,
-            key=lambda point: (point.distance_to(site.base), point.x, point.y),
-            default=site.base,
-        )
         bot.register_behavior(
             BuildStructure(
-                location,
+                site.base,
                 UnitTypeId.SENSORTOWER,
                 closest_to=site.target,
                 sensor_tower=True,

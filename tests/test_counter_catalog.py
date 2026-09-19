@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from sc2.ids.unit_typeid import UnitTypeId
 
-from bot.ego.planners.economy.counter_catalog import (
+from bot.ego.planners.economy.knowledge.counter_catalog import (
     CounterCatalog,
     canonical_unit,
     target_layers,

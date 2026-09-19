@@ -72,7 +72,13 @@ def execute(
         infrastructure = intel.execute(bot, intel_plan)
         towers = sensor_towers.execute(bot, intel_plan.sensor_towers)
     busy = frozenset(() if detected.scanned_by is None else (detected.scanned_by,))
-    spawn = economy.execute(bot, economy_plan, energy_reserve=reserve, busy=busy)
+    spawn = economy.execute(
+        bot,
+        economy_plan,
+        energy_reserve=reserve,
+        busy=busy,
+        lifting=frozenset(structures.lift),
+    )
     structure_control.execute(bot, structures)
     return BodyReport(spawn, micro, detected, towers, infrastructure)
 

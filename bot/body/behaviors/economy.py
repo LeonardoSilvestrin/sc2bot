@@ -82,17 +82,26 @@ ADD_ONS = {
 }
 
 
-def add_add_on(bot, structure: UnitTypeId, reactor_share: float) -> int | None:
-    """An add-on on the ready, idle `structure` with no add-on of lowest tag:
-    a Reactor while one more keeps the Reactors within `reactor_share` of every
-    `structure`, a Tech Lab otherwise. Returns the tag ordered, if any."""
+def add_add_on(
+    bot,
+    structure: UnitTypeId,
+    reactor_share: float,
+    lifting: frozenset[int] = frozenset(),
+) -> int | None:
+    """An add-on on the ready, idle `structure` with no add-on of lowest tag,
+    not `lifting`: a Reactor while one more keeps the Reactors within
+    `reactor_share` of every `structure`, a Tech Lab otherwise. Returns the tag
+    ordered, if any."""
 
     reactor, techlab = ADD_ONS[structure]
     structures = bot.mediator.get_own_structures_dict
     free = [
         building
         for building in structures[structure]
-        if building.is_ready and building.is_idle and not building.has_add_on
+        if building.is_ready
+        and building.is_idle
+        and not building.has_add_on
+        and building.tag not in lifting
     ]
     if not free:
         return None
@@ -165,9 +174,11 @@ def execute(
     *,
     energy_reserve: float = 0.0,
     busy: frozenset[int] = frozenset(),
+    lifting: frozenset[int] = frozenset(),
 ) -> SpawnMode:
     """`energy_reserve` is what each Orbital keeps; `busy` Orbitals already
-    used their energy this frame."""
+    used their energy this frame. Nothing is trained or built on the `lifting`
+    production structures: the game refuses a lift queued behind it."""
 
     if plan.interrupt_opening:
         runner = getattr(bot, "build_order_runner", None)
@@ -181,7 +192,7 @@ def execute(
         unit_type: {"proportion": proportion, "priority": priority}
         for unit_type, proportion, priority in plan.composition
     }
-    add_on = add_add_on(bot, plan.addons_on, plan.reactor_share) if plan.addons else None
+    add_on = add_add_on(bot, plan.addons_on, plan.reactor_share, lifting) if plan.addons else None
     # Ares' MacroPlan stops at the first behavior that acts, and the
     # SpawnController acts whenever production is idle: whatever should not
     # wait for the army to stop growing goes before it.
@@ -201,7 +212,7 @@ def execute(
         SpawnController(
             composition,
             freeflow_mode=spawn.freeflow,
-            ignored_build_from_tags=set() if add_on is None else {add_on},
+            ignored_build_from_tags=set(lifting) | (set() if add_on is None else {add_on}),
         )
     )
     # Only in a frame the SpawnController did not act: on its own it would add

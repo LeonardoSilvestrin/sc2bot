@@ -20,7 +20,7 @@ from bot.ego.planners import (
 )
 from bot.ego.strategy import EconomyPosture, StrategyState
 
-from .counter_catalog import (
+from ..knowledge.counter_catalog import (
     REACH,
     CounterCatalog,
     can_reach,
@@ -28,7 +28,7 @@ from .counter_catalog import (
     physics_digest,
     target_layers,
 )
-from .styles import ArmyStyle
+from ..knowledge.styles import ArmyStyle
 
 TECHLAB_OF = {
     UnitTypeId.BARRACKS: UnitTypeId.BARRACKSTECHLAB,
@@ -57,7 +57,7 @@ def default_catalog() -> CounterCatalog:
     return CounterCatalog.load()
 
 
-class CompositionPlanner:
+class CompositionPolicy:
     def __init__(
         self,
         style: ArmyStyle,
@@ -322,7 +322,7 @@ def _strongest(incidents: tuple[ThreatIncident, ...]) -> ThreatIncident | None:
 
 __all__ = [
     "CompositionConfig",
-    "CompositionPlanner",
+    "CompositionPolicy",
     "REACH",
     "reactor_share",
     "target_layers",

@@ -1,6 +1,10 @@
-"""Desired state of controllable structures; see docs/architecture.md."""
+"""Desired state of controllable structures; see docs/architecture.md.
 
-from .planner import StructureConfig, StructureControl
-from .relocation import RelocationConfig
+`planner.StructureControlPlanner` raises and lowers the depots and joins
+`policies.relocation`, which lifts a structure out of a stuck Siege Tank's way.
+"""
 
-__all__ = ["RelocationConfig", "StructureControl", "StructureConfig"]
+from .planner import StructureConfig, StructureControlPlanner
+from .policies.relocation import RelocationConfig
+
+__all__ = ["RelocationConfig", "StructureConfig", "StructureControlPlanner"]

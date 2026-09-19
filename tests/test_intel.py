@@ -3,13 +3,14 @@ from __future__ import annotations
 from dataclasses import replace
 
 import numpy as np
-import pytest
 from ares.behaviors.combat.individual import PathUnitToTarget
-from ares.consts import UnitRole
+from ares.consts import BuildingSize, UnitRole
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
+from scipy.ndimage import label
 
 from bot.attention import BaseView
+from bot.attention.map import read_map
 from bot.awareness import AwarenessModel
 from bot.body import behaviors
 from bot.body.behaviors import intel as intel_behavior
@@ -17,11 +18,7 @@ from bot.body.behaviors import sensor_towers as sensor_tower_behavior
 from bot.body.engine import Engine
 from bot.ego.planners import Command, EconomyPlan, Proposal, StructurePlan, intel
 from bot.ego.planners.intel import IntelPlanner, scouting_route
-from bot.ego.planners.intel.sensor_towers import (
-    MIDDLE_SITE,
-    MIN_BASES,
-    SITE_COVER_RADIUS,
-)
+from bot.ego.planners.intel.policies.sensor_towers import MIN_BASES, RADAR_RADIUS
 
 from .fakes import (
     LATTICE,
@@ -230,85 +227,132 @@ def test_the_scout_leaves_mining_and_goes_back_when_no_one_holds_it() -> None:
     assert bot.mediator.role_of(100) == GATHERING
 
 
+# A corner main whose other bases stand clear of the map's edges: only a tower
+# in the main closes the air lane along the top edge.
+MAIN_BASE = BaseView("main", Point2((20.5, 139.5)), True)
+NATURAL_BASE = BaseView("natural", Point2((50.5, 119.5)), False)
+THIRD_BASE = BaseView("third", Point2((28.5, 94.5)), False)
+FOURTH_BASE = BaseView("fourth", Point2((62.5, 92.5)), False)
+SENSOR_BASES = (MAIN_BASE, NATURAL_BASE, THIRD_BASE, FOURTH_BASE)
+RING = ((10, 0), (-10, 0), (0, 10), (0, -10), (7, 7), (7, -7), (-7, 7), (-7, -7))
+SENSOR_MAP = replace(
+    MAP,
+    bounds=(0.0, 0.0, 160.0, 160.0),
+    own_start=MAIN_BASE.position,
+    enemy_start=Point2((139.5, 20.5)),
+    tower_sites=tuple(
+        (
+            base.position,
+            tuple(
+                sorted(
+                    (base.position.offset(Point2(step)) for step in RING),
+                    key=lambda point: (point.x, point.y),
+                )
+            ),
+        )
+        for base in sorted(SENSOR_BASES, key=lambda base: tuple(base.position))
+    ),
+)
+
+
 def four_bases() -> tuple[BaseView, ...]:
-    # Across the start-to-start diagonal: the natural near it, one base per flank.
-    return (
-        BaseView("main", Point2((10.5, 10.5)), True),
-        BaseView("natural", Point2((24.5, 14.5)), False),
-        BaseView("left", Point2((12.5, 34.5)), False),
-        BaseView("right", Point2((38.5, 16.5)), False),
+    return SENSOR_BASES
+
+
+def sensor_state(**kwargs):
+    return attention(**{"map_view": SENSOR_MAP, "bases": four_bases(), **kwargs})
+
+
+def tower(tag: int, position: Point2, *, ready: bool = True):
+    return unit(
+        tag,
+        UnitTypeId.SENSORTOWER,
+        position.x,
+        position.y,
+        structure=True,
+        power=0.0,
+        ready=ready,
     )
 
 
-def test_sensor_coverage_activates_at_four_bases_as_a_flank_to_flank_barrier() -> None:
+def open_bases(bases, towers) -> list[str]:
+    """Bases an air unit reaches from the enemy start without entering radar."""
+
+    min_x, min_y, max_x, max_y = (int(value) for value in SENSOR_MAP.bounds)
+    ys, xs = np.mgrid[min_y:max_y, min_x:max_x] + 0.5
+    free = np.ones(xs.shape, dtype=bool)
+    for position in towers:
+        free &= (xs - position.x) ** 2 + (ys - position.y) ** 2 > RADAR_RADIUS**2
+    regions, _ = label(free)
+    enemy = SENSOR_MAP.enemy_start
+    reached = regions[int(enemy.y) - min_y, int(enemy.x) - min_x]
+    return [
+        base.base_id
+        for base in bases
+        if reached
+        and regions[int(base.position.y) - min_y, int(base.position.x) - min_x] == reached
+    ]
+
+
+def test_sensor_coverage_activates_at_four_bases_and_seals_every_base() -> None:
     planner = IntelPlanner()
 
     before = intel_step(
-        planner, attention(time=300.0, bases=four_bases()[: MIN_BASES - 1])
+        planner, sensor_state(time=300.0, bases=four_bases()[: MIN_BASES - 1])
     )
     assert not planner.sensor_coverage_enabled
     assert before.sensor_towers.sites == ()
 
-    plan = intel_step(planner, attention(time=301.0, bases=four_bases())).sensor_towers
+    plan = intel_step(planner, sensor_state(time=301.0)).sensor_towers
 
     assert planner.sensor_coverage_enabled
-    assert [site.site_id for site in plan.sites] == [MIDDLE_SITE, "left", "right"]
     assert plan.engineering_bay
-    middle, left, right = plan.sites
-    for flank in (left, right):
-        assert flank.target.distance_to(MAP.own_start) > flank.base.distance_to(
-            MAP.own_start
-        )
-    assert middle.target.distance_to(left.target) == pytest.approx(
-        middle.target.distance_to(right.target)
-    )
-    assert middle.target.distance_to(MAP.own_start) > 20.0
-    # Placed from the expansion nearest the middle, never from the main's.
-    assert middle.base == MAP.expansions[1]
+    assert open_bases(four_bases(), ()) == [base.base_id for base in four_bases()]
+    assert open_bases(four_bases(), [site.target for site in plan.sites]) == []
+    spots = dict(SENSOR_MAP.tower_sites)
+    for site in plan.sites:
+        assert site.target in spots[site.base]
     assert planner.views() == ()
 
 
-def test_sensor_coverage_maintains_missing_sites_without_using_awareness() -> None:
+def test_sensor_barrier_puts_a_tower_in_the_main_when_only_it_reaches_the_edge() -> None:
+    plan = intel_step(IntelPlanner(), sensor_state(time=300.0)).sensor_towers
+
+    # The sites nearest our start come first.
+    assert plan.sites[0].site_id == "main"
+    assert plan.sites[0].base == MAIN_BASE.position
+
+
+def test_sensor_barrier_has_no_tower_it_could_do_without() -> None:
+    plan = intel_step(IntelPlanner(), sensor_state(time=300.0)).sensor_towers
+    targets = [site.target for site in plan.sites]
+
+    for index in range(len(targets)):
+        rest = targets[:index] + targets[index + 1 :]
+        assert open_bases(four_bases(), rest) != []
+
+
+def test_sensor_coverage_builds_on_standing_towers_without_using_awareness() -> None:
     planner = IntelPlanner()
-    ebay = unit(
-        20,
-        UnitTypeId.ENGINEERINGBAY,
-        structure=True,
-        power=0.0,
-        ready=False,
-    )
+    ebay = unit(20, UnitTypeId.ENGINEERINGBAY, structure=True, power=0.0, ready=False)
     initial = intel_step(
-        planner, attention(time=300.0, bases=four_bases(), own_structures=(ebay,))
+        planner, sensor_state(time=300.0, own_structures=(ebay,))
     ).sensor_towers
-    middle, *flanks = initial.sites
-    middle_tower = unit(
-        21,
-        UnitTypeId.SENSORTOWER,
-        middle.target.x + SITE_COVER_RADIUS,
-        middle.target.y,
-        structure=True,
-        power=0.0,
-        ready=False,
-    )
+    first, *rest = initial.sites
+    unfinished = tower(21, first.target, ready=False)
 
-    result = intel_step(
-        planner,
-        attention(
-            time=301.0,
-            bases=four_bases(),
-            own_structures=(ebay, middle_tower),
-        ),
-    )
+    plan = intel_step(
+        planner, sensor_state(time=301.0, own_structures=(ebay, unfinished))
+    ).sensor_towers
 
-    plan = result.sensor_towers
-    assert plan.sites == tuple(flanks)
+    assert plan.sites == tuple(rest)
     assert not plan.engineering_bay
     assert plan.reason == "sensor_tower_needed"
 
 
 def test_sensor_tower_behavior_builds_prerequisite_then_the_first_site() -> None:
     planner = IntelPlanner()
-    first_plan = intel_step(planner, attention(time=300.0, bases=four_bases()))
+    first_plan = intel_step(planner, sensor_state(time=300.0))
     bot = FakeBot()
 
     building = intel_behavior.execute(bot, first_plan)
@@ -320,37 +364,26 @@ def test_sensor_tower_behavior_builds_prerequisite_then_the_first_site() -> None
 
     existing_ebay = unit(20, UnitTypeId.ENGINEERINGBAY, structure=True, power=0.0)
     second_plan = intel_step(
-        planner,
-        attention(time=301.0, bases=four_bases(), own_structures=(existing_ebay,)),
+        planner, sensor_state(time=301.0, own_structures=(existing_ebay,))
     )
     bot.registered = []
     report = sensor_tower_behavior.execute(bot, second_plan.sensor_towers)
 
-    (tower,) = bot.registered
+    (built,) = bot.registered
     first = second_plan.sensor_towers.sites[0]
-    assert tower.structure_id is UnitTypeId.SENSORTOWER
-    assert tower.closest_to == first.target
-    assert tower.base_location == first.base
-    assert tower.sensor_tower and not tower.production and not tower.find_alternative
+    assert built.structure_id is UnitTypeId.SENSORTOWER
+    assert built.closest_to == first.target
+    assert built.base_location == first.base
+    assert built.sensor_tower and not built.production and not built.find_alternative
     assert report.building == ("SENSORTOWER",)
 
 
 def test_sensor_coverage_rebuilds_without_a_mission_even_after_losing_bases() -> None:
     planner = IntelPlanner()
     ebay = unit(20, UnitTypeId.ENGINEERINGBAY, structure=True, power=0.0)
-    state = attention(time=300.0, bases=four_bases(), own_structures=(ebay,))
+    state = sensor_state(time=300.0, own_structures=(ebay,))
     initial = intel_step(planner, state).sensor_towers
-    towers = tuple(
-        unit(
-            30 + i,
-            UnitTypeId.SENSORTOWER,
-            site.target.x,
-            site.target.y,
-            structure=True,
-            power=0.0,
-        )
-        for i, site in enumerate(initial.sites)
-    )
+    towers = tuple(tower(30 + i, site.target) for i, site in enumerate(initial.sites))
     covered = intel_step(
         planner, replace(state, time=301.0, own_structures=(ebay, *towers))
     )
@@ -358,21 +391,39 @@ def test_sensor_coverage_rebuilds_without_a_mission_even_after_losing_bases() ->
     assert covered.sensor_towers.reason == "sensor_network_covered"
     rebuilt = intel_step(planner, replace(state, time=302.0))
     assert rebuilt.sensor_towers.sites == initial.sites
-    fewer = intel_step(planner, replace(state, time=303.0, bases=four_bases()[:2]))
-    assert [site.site_id for site in fewer.sensor_towers.sites] == ["natural"]
     main_only = intel_step(
-        planner, replace(state, time=304.0, bases=four_bases()[:1])
+        planner, replace(state, time=303.0, bases=four_bases()[:1])
     ).sensor_towers
-    assert main_only.sites == ()
-    assert main_only.reason == "no_barrier_bases"
+    assert [site.base for site in main_only.sites] == [MAIN_BASE.position]
+    no_bases = intel_step(planner, replace(state, time=304.0, bases=())).sensor_towers
+    assert no_bases.sites == ()
+    assert no_bases.reason == "no_bases"
     assert planner.views() == ()
+
+
+def test_read_map_keeps_ares_tower_spots_per_expansion_without_the_wall() -> None:
+    bot = FakeBot()
+    wall = Point2((17.0, 17.0))
+    spots = (Point2((14.0, 6.0)), Point2((6.0, 14.0)))
+    bot.mediator.get_placements_dict = {
+        MAP.own_start: {
+            BuildingSize.TWO_BY_TWO: {
+                site: {"available": True, "is_wall": site == wall}
+                for site in (*spots, wall)
+            }
+        }
+    }
+
+    map_view = read_map(bot, lattice_spacing=4)
+
+    assert map_view.tower_sites == ((MAP.own_start, (spots[1], spots[0])),)
 
 
 def test_intel_consolidates_shared_engineering_bay_before_execution() -> None:
     from ares.behaviors.macro import BuildStructure
 
     planner = IntelPlanner()
-    state = attention(time=300.0, bases=four_bases())
+    state = sensor_state(time=300.0)
     awareness = replace(AwarenessModel().infer(state), cloak_seen_at=299.0)
     plan = planner.plan(state, awareness)
     assert plan.detection.engineering_bay and plan.sensor_towers.engineering_bay

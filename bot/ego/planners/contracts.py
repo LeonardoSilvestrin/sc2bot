@@ -151,6 +151,8 @@ class RelocationEvent:
     # The landing site, or where the structure landed.
     site: Point2 | None = None
     inputs: tuple[tuple[str, float], ...] = ()
+    # Where the Tank stood, when it was found stuck and its blocker chosen.
+    at: Point2 | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -185,11 +187,11 @@ class DetectionPlan:
 
 @dataclass(frozen=True, slots=True)
 class SensorTowerSite:
-    """A Sensor Tower wanted in the barrier: at a flank base or midway.
+    """A Sensor Tower wanted in the barrier, on a 2x2 spot Ares solved.
 
-    ``site_id`` is the flank base's id, or ``"middle"``. ``base`` selects the
-    expansion whose Ares placement set holds the tower; ``target`` is where
-    within that set it should stand.
+    ``site_id`` is the id of the base the spot belongs to. ``base`` is the
+    expansion keying Ares' placement set that holds the spot; ``target`` is
+    the spot.
     """
 
     site_id: str

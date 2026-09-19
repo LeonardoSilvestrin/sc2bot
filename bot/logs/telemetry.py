@@ -287,6 +287,7 @@ class Telemetry:
                     "tank": event.tank,
                     "structure": event.structure,
                     "site": None if event.site is None else _xy(event.site),
+                    "at": None if event.at is None else _xy(event.at),
                     "inputs": dict(event.inputs),
                 },
             )
@@ -311,6 +312,7 @@ class Telemetry:
             len(attention.bases),
             attention.opening_done,
             bool(attention.enemy_units),
+            bool(attention.radar_blips),
             len(attention.upgrades),
         )
         if not self._attention.admit(signature, now=attention.time):
@@ -330,6 +332,7 @@ class Telemetry:
                 "army_power": sum(unit.power for unit in army),
                 "visible_enemy_units": len(attention.enemy_units),
                 "visible_enemy_structures": len(attention.enemy_structures),
+                "radar_blips": len(attention.radar_blips),
                 "bases": [base.base_id for base in attention.bases],
                 "opening": attention.opening,
                 "opening_done": attention.opening_done,

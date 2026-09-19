@@ -11,6 +11,7 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 
 import numpy as np
+from sc2.data import Alliance
 from sc2.dicts.unit_trained_from import UNIT_TRAINED_FROM
 from sc2.ids.ability_id import AbilityId
 from sc2.ids.unit_typeid import UnitTypeId
@@ -134,6 +135,9 @@ class AttentionState:
     upgrades: frozenset[UpgradeId] = frozenset()
     # Unit types whose complete Ares tech requirement is ready this frame.
     tech_ready: frozenset[UnitTypeId] = frozenset()
+    # Enemy contacts our Sensor Towers pick up outside vision, by position:
+    # the game says nothing more about them. In vision they are enemy units.
+    radar_blips: tuple[Point2, ...] = ()
 
     def is_visible(self, point: Point2) -> bool:
         grid = self.visibility
@@ -188,6 +192,23 @@ def observe(bot, iteration: int, map_view: MapView) -> AttentionState:
         visibility=getattr(getattr(state, "visibility", None), "data_numpy", None),
         upgrades=frozenset(getattr(state, "upgrades", ())),
         tech_ready=_ready_tech(bot),
+        radar_blips=_radar_blips(bot),
+    )
+
+
+def _radar_blips(bot) -> tuple[Point2, ...]:
+    # Read raw: Ares' unit loop leaves python-sc2's `blips` empty and files each
+    # one as a NOTAUNIT enemy with tag 0, which its memory then keeps.
+    raw = getattr(getattr(bot.state, "observation_raw", None), "units", ())
+    return tuple(
+        sorted(
+            (
+                Point2((float(unit.pos.x), float(unit.pos.y)))
+                for unit in raw
+                if unit.is_blip and unit.alliance == Alliance.Enemy.value
+            ),
+            key=lambda point: (point.x, point.y),
+        )
     )
 
 

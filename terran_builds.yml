@@ -6,7 +6,7 @@
 UseData: false
 BuildSelection: Cycle
 # The bot, not Ares, picks the opening: in `on_start` it draws an army style
-# (bot/ego/planners/economy/styles.py) and switches to that style's build. The
+# (bot/ego/planners/economy/knowledge/styles.py) and switches to that style's build. The
 # cycles below only list which builds exist for each race.
 
 BuildChoices:

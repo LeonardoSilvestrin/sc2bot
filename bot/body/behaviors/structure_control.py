@@ -2,7 +2,10 @@
 names, and lifts and lands the production structures it relocates.
 
 A lift cancels what the structure is training first, as Ares' own flying
-structures do: a busy structure cannot lift. A landing goes to Ares'
+structures do: a busy structure cannot lift. The game refuses the queued lift
+while anything is left to train (a Reactor trains two), so the plan names the
+structure every frame until it flies, one cancel a frame; one already lifting is
+left alone. The Economy trains nothing on it meanwhile. A landing goes to Ares'
 `move_structure`, which flies the structure to its site and lands it there.
 
 `keep_clear` runs once, at the start: it takes the sites the planner wants
@@ -31,12 +34,18 @@ def execute(bot, plan: StructurePlan) -> None:
         elif structure.tag in raise_:
             structure(AbilityId.MORPH_SUPPLYDEPOT_RAISE)
         elif structure.tag in lift:
-            structure(AbilityId.CANCEL_QUEUE5)
-            structure(AbilityId.LIFT, queue=True)
+            if not _lifting(structure):
+                structure(AbilityId.CANCEL_QUEUE5)
+                structure(AbilityId.LIFT, queue=True)
         elif structure.tag in land:
             bot.mediator.move_structure(
                 structure=structure, target=land[structure.tag], should_land=True
             )
+
+
+def _lifting(structure) -> bool:
+    # The generic id: LIFT_BARRACKS and the like remap to LIFT.
+    return any(order.ability.id is AbilityId.LIFT for order in getattr(structure, "orders", ()))
 
 
 def keep_clear(bot, sites: Iterable[Point2]) -> int:

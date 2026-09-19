@@ -2,7 +2,7 @@
 
 `read_map` reads what the physical map is -- playable area, starts, main ramp,
 expansions, a pathable lattice and its `MapTopology` (regions, passages,
-adjacency), and where a production structure fits in our main. It says nothing
+adjacency), and where a production structure fits at each base. It says nothing
 about who holds a place: Awareness paints that over this map during the game.
 """
 
@@ -34,6 +34,11 @@ class MapView:
     # placement solved them at the start (the ramp wall's left out); a site
     # may be taken by now.
     production_sites: tuple[Point2, ...] = ()
+    # Per expansion, the 2x2 centres Ares solved around it at the start (the
+    # ramp wall's left out), both as Ares' own keys; a spot may be taken by now.
+    tower_sites: tuple[tuple[Point2, tuple[Point2, ...]], ...] = ()
+    # Per expansion, the same for a 3x3 structure and its add-on.
+    base_production_sites: tuple[tuple[Point2, tuple[Point2, ...]], ...] = ()
 
 
 def read_map(bot, *, lattice_spacing: int = 4) -> MapView:
@@ -81,6 +86,8 @@ def read_map(bot, *, lattice_spacing: int = 4) -> MapView:
         lattice_spacing=float(lattice_spacing),
         topology=topology,
         production_sites=_production_sites(bot),
+        tower_sites=_tower_sites(bot),
+        base_production_sites=_base_production_sites(bot),
     )
 
 
@@ -109,14 +116,46 @@ def _production_sites(bot) -> tuple[Point2, ...]:
     """Kept as Ares' own keys: its bookkeeping and its landing test compare
     positions exactly."""
 
-    try:
-        placements = bot.mediator.get_placements_dict
-    except (AttributeError, KeyError, RuntimeError, TypeError):
-        return ()
+    placements = _placements(bot)
     main = placements.get(bot.start_location, {}).get(BuildingSize.THREE_BY_THREE, {})
+    return _off_the_wall(main)
+
+
+def _tower_sites(bot) -> tuple[tuple[Point2, tuple[Point2, ...]], ...]:
     return tuple(
         sorted(
-            (site for site, info in main.items() if not info.get("is_wall", False)),
+            (
+                (base, _off_the_wall(sizes.get(BuildingSize.TWO_BY_TWO, {})))
+                for base, sizes in _placements(bot).items()
+            ),
+            key=lambda item: (item[0].x, item[0].y),
+        )
+    )
+
+
+def _base_production_sites(bot) -> tuple[tuple[Point2, tuple[Point2, ...]], ...]:
+    return tuple(
+        sorted(
+            (
+                (base, _off_the_wall(sizes.get(BuildingSize.THREE_BY_THREE, {})))
+                for base, sizes in _placements(bot).items()
+            ),
+            key=lambda item: (item[0].x, item[0].y),
+        )
+    )
+
+
+def _placements(bot) -> dict:
+    try:
+        return bot.mediator.get_placements_dict
+    except (AttributeError, KeyError, RuntimeError, TypeError):
+        return {}
+
+
+def _off_the_wall(sites: dict) -> tuple[Point2, ...]:
+    return tuple(
+        sorted(
+            (site for site, info in sites.items() if not info.get("is_wall", False)),
             key=lambda point: (point.x, point.y),
         )
     )

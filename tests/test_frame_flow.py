@@ -16,7 +16,8 @@ from sc2.position import Point2
 
 from bot.attention import observe, read_map
 from bot.awareness import AwarenessConfig
-from bot.ego.planners import defense, economy, map_control, offense
+from bot.ego.planners import defense, map_control, offense
+from bot.ego.planners.economy.policies import investment
 from bot.ego.strategy import StrategyConfig
 from bot.logs import Logs, OverlayConfig, SnapshotConfig
 from bot.main import Layers, play_frame
@@ -187,6 +188,8 @@ def test_a_tank_walled_in_by_a_barracks_lifts_it_and_the_log_says_why() -> None:
         ("blocker_selected", 300, 10),
         ("lifting", 300, 10),
     ]
+    stuck = logger.named("planner.structure_relocation")[0]
+    assert stuck["data"]["at"] == [30.5, 35.5]
 
 
 def test_a_worker_inside_a_gas_building_does_not_flip_the_economy_plan() -> None:
@@ -241,7 +244,7 @@ def test_a_worker_inside_a_gas_building_does_not_flip_the_economy_plan() -> None
             "upgrades_done": 0.0,
             "danger": dangers[0],
             "production_per_base": 4.0,
-            "gas_worker_share": economy.investment.GAS_WORKER_SHARE,
+            "gas_worker_share": investment.GAS_WORKER_SHARE,
             "enemy_seen_power": 0.0,
         }
     )
@@ -526,6 +529,31 @@ def test_read_map_and_observe_read_what_the_layers_need() -> None:
     assert [base.base_id for base in frame.bases] == [MAIN.base_id]
     assert 999 not in {unit.tag for unit in frame.enemy_units}
     assert frame.opening == "BioThreeOneOne" and frame.opening_done
+    assert frame.radar_blips == ()
+
+
+def test_observe_reads_enemy_radar_blips_in_a_stable_order() -> None:
+    def raw(x: float, y: float, *, blip: bool = True, alliance: int = 4):
+        # What the game sends for one: no tag, no type, only where it is.
+        return SimpleNamespace(
+            is_blip=blip, alliance=alliance, pos=SimpleNamespace(x=x, y=y, z=14.5)
+        )
+
+    bot = build_bot()
+    units = [
+        raw(40.0, 12.0),
+        raw(8.0, 30.0),
+        raw(20.0, 20.0, blip=False),
+        raw(5.0, 5.0, alliance=1),
+    ]
+    bot.state.observation_raw = SimpleNamespace(units=units)
+    map_view = read_map(bot, lattice_spacing=4)
+
+    frame = observe(bot, 3, map_view)
+    units.reverse()
+
+    assert frame.radar_blips == (Point2((8.0, 30.0)), Point2((40.0, 12.0)))
+    assert observe(bot, 3, map_view) == frame
 
 
 def test_debug_observers_draw_and_write_without_changing_decisions(tmp_path) -> None:

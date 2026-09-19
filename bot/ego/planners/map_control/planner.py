@@ -37,7 +37,7 @@ from bot.awareness import AwarenessState
 from bot.ego.planners import Command, Proposal
 from bot.ego.strategy import Objective, StrategyState
 
-from .staging import StagingPlan, StagingPolicy
+from .policies.staging import StagingPlan, StagingPolicy
 
 OWNER = "core_army"
 MAP_CONTROL_PRIORITY = -1.0

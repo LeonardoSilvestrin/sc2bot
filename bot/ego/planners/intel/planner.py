@@ -12,10 +12,10 @@ from bot.awareness import AwarenessState
 from bot.ego.missions import CancelMode, MissionFeedback, MissionView
 from bot.ego.planners import IntelPlan, Proposal, SensorTowerPlan
 
-from . import sensor_towers
-from .detection import Detection, DetectionConfig
 from .missions.scout import KIND, OWNER, ScoutMission
-from .sensor_towers import MIN_BASES
+from .policies import sensor_towers
+from .policies.detection import Detection, DetectionConfig
+from .policies.sensor_towers import MIN_BASES
 
 if TYPE_CHECKING:
     from bot.body.engine import EngineResult

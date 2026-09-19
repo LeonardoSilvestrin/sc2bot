@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -13,10 +14,10 @@ from bot.attention import read_map, unit_view
 from bot.body.behaviors import structure_control as structure_behavior
 from bot.ego.planners import StructurePlan
 from bot.ego.planners.structure_control import RelocationConfig
-from bot.ego.planners.structure_control.planner import StructureConfig, StructureControl
+from bot.ego.planners.structure_control.planner import StructureConfig, StructureControlPlanner
 from bot.logs import Logs
 
-from .fakes import MAP, FakeBot, FakeLogger, FakeUnit, attention, unit
+from .fakes import MAIN, MAP, NATURAL, FakeBot, FakeLogger, FakeUnit, attention, unit
 
 REACH = StructureConfig().raise_reach
 LOWER_AFTER = StructureConfig().lower_after
@@ -32,7 +33,7 @@ def zergling(tag: int, x: float, y: float):
 
 
 def test_a_raised_depot_goes_down_with_no_enemy_near() -> None:
-    plan = StructureControl().plan(attention(own_structures=(depot(1),)))
+    plan = StructureControlPlanner().plan(attention(own_structures=(depot(1),)))
 
     assert (plan.lower, plan.raise_, plan.reason) == ((1,), (), "no_enemy_near")
 
@@ -44,7 +45,7 @@ def test_a_lowered_depot_rises_when_a_ground_enemy_comes_within_reach() -> None:
         enemy_units=(zergling(90, 20 + REACH, 20),),
     )
 
-    plan = StructureControl().plan(frame)
+    plan = StructureControlPlanner().plan(frame)
 
     assert (plan.lower, plan.raise_, plan.reason) == ((), (1,), "enemy_near")
     inputs = dict(plan.inputs)
@@ -55,7 +56,7 @@ def test_a_lowered_depot_rises_when_a_ground_enemy_comes_within_reach() -> None:
 def test_a_raised_depot_near_a_ground_enemy_stays_up() -> None:
     frame = attention(own_structures=(depot(1),), enemy_units=(zergling(90, 24, 20),))
 
-    plan = StructureControl().plan(frame)
+    plan = StructureControlPlanner().plan(frame)
 
     assert (plan.lower, plan.raise_, plan.reason) == ((), (), "enemy_near")
 
@@ -69,13 +70,13 @@ def test_flying_and_distant_enemies_do_not_raise_a_depot() -> None:
         ),
     )
 
-    plan = StructureControl().plan(frame)
+    plan = StructureControlPlanner().plan(frame)
 
     assert (plan.lower, plan.raise_, plan.reason) == ((), (), "no_enemy_near")
 
 
 def test_a_depot_goes_down_lower_after_seconds_after_the_enemy_left() -> None:
-    control = StructureControl()
+    control = StructureControlPlanner()
     near = attention(
         time=10.0, own_structures=(depot(1, lowered=True),), enemy_units=(zergling(90, 22, 20),)
     )
@@ -90,7 +91,7 @@ def test_a_depot_goes_down_lower_after_seconds_after_the_enemy_left() -> None:
 
 
 def test_an_enemy_pacing_across_the_edge_of_reach_does_not_toggle_the_depot() -> None:
-    control = StructureControl()
+    control = StructureControlPlanner()
     lowered = True
     orders: list[tuple[float, str]] = []
     # Frames every 0.25 s for 20 s. Until 10 s the Zergling is inside reach for
@@ -127,7 +128,7 @@ def test_raising_counts_our_ground_units_it_pushes_off_the_depot() -> None:
         enemy_units=(zergling(90, 25, 20),),
     )
 
-    plan = StructureControl().plan(frame)
+    plan = StructureControlPlanner().plan(frame)
 
     assert plan.raise_ == (1,)
     assert dict(plan.inputs)["friendly_on_raising"] == 1.0
@@ -138,7 +139,7 @@ def test_unfinished_depots_are_left_alone() -> None:
         own_structures=(depot(1, ready=False),), enemy_units=(zergling(90, 21, 20),)
     )
 
-    plan = StructureControl().plan(frame)
+    plan = StructureControlPlanner().plan(frame)
 
     assert (plan.lower, plan.raise_, plan.reason) == ((), (), "no_depots")
 
@@ -183,6 +184,16 @@ FARTHER = Point2((40.5, 30.5))
 IN_THE_CORRIDOR = Point2((14.5, 14.5))
 SITES = (IN_THE_CORRIDOR, UNDER_FACTORY, FREE, ON_THE_WAY, FARTHER)
 SITE_MAP = replace(MAP, production_sites=SITES)
+# A site at the natural, and a nearer one at a base we never hold.
+NATURAL_SITE = Point2((40.5, 14.5))
+ENEMY_SITE = Point2((50.5, 50.5))
+BASES_MAP = replace(
+    SITE_MAP,
+    base_production_sites=(
+        (NATURAL.position, (NATURAL_SITE,)),
+        (MAP.enemy_start, (ENEMY_SITE,)),
+    ),
+)
 FLYING = {
     UnitTypeId.BARRACKS: UnitTypeId.BARRACKSFLYING,
     UnitTypeId.FACTORY: UnitTypeId.FACTORYFLYING,
@@ -228,12 +239,14 @@ RIGHT = production(11, 32.5, 38.5)
 FACTORY = production(12, *UNDER_FACTORY, UnitTypeId.FACTORY)
 
 
-def walled(time: float, *units, structures=(LEFT, RIGHT, FACTORY), **values):
+def walled(
+    time: float, *units, structures=(LEFT, RIGHT, FACTORY), map_view=SITE_MAP, **values
+):
     return attention(
         time=time,
         own_units=units or (tank(),),
         own_structures=structures,
-        map_view=SITE_MAP,
+        map_view=map_view,
         **values,
     )
 
@@ -242,7 +255,7 @@ def transitions(plan) -> list[tuple[str, str]]:
     return [(event.transition, event.reason) for event in plan.relocation]
 
 
-def stuck_at(control: StructureControl, **values):
+def stuck_at(control: StructureControlPlanner, **values):
     """The walled Tank from 0 s, a frame a second, to the frame it is stuck."""
 
     frames = [float(second) for second in range(int(RELOCATION.stuck_after) + 1)]
@@ -252,7 +265,7 @@ def stuck_at(control: StructureControl, **values):
 
 
 def test_a_tank_ordered_away_that_does_not_move_is_stuck_after_stuck_after() -> None:
-    control = StructureControl()
+    control = StructureControlPlanner()
     before = [control.plan(walled(now)) for now in (0.0, 1.0, 2.0, 3.0, 3.9)]
 
     stuck = control.plan(walled(RELOCATION.stuck_after))
@@ -280,7 +293,7 @@ def test_a_tank_ordered_away_that_does_not_move_is_stuck_after_stuck_after() -> 
     ids=["walking", "idle", "at_its_point", "sieged"],
 )
 def test_a_tank_walking_parked_waiting_or_sieged_is_never_stuck(tank_at) -> None:
-    control = StructureControl()
+    control = StructureControlPlanner()
 
     plans = [control.plan(walled(float(now), tank_at(now))) for now in range(12)]
 
@@ -288,7 +301,7 @@ def test_a_tank_walking_parked_waiting_or_sieged_is_never_stuck(tank_at) -> None
 
 
 def test_a_tank_with_an_enemy_near_is_fighting_not_stuck() -> None:
-    control = StructureControl()
+    control = StructureControlPlanner()
 
     plans = [
         control.plan(walled(float(now), enemy_units=(zergling(90, 30.5, 45.0),)))
@@ -300,7 +313,7 @@ def test_a_tank_with_an_enemy_near_is_fighting_not_stuck() -> None:
 
 def test_a_tank_that_loses_its_order_for_a_moment_is_still_stuck() -> None:
     # The game drops an order it cannot path; the behavior orders it again.
-    control = StructureControl()
+    control = StructureControlPlanner()
     for now in (0.0, 1.0, 2.0):
         control.plan(walled(now))
     control.plan(walled(2.5, tank(to=None)))
@@ -311,7 +324,7 @@ def test_a_tank_that_loses_its_order_for_a_moment_is_still_stuck() -> None:
 
 
 def test_the_tank_moving_again_clears_its_track() -> None:
-    control = StructureControl()
+    control = StructureControlPlanner()
     for now in (0.0, 1.0, 2.0, 3.0):
         control.plan(walled(now))
     # It gets through, then is held again further on: the clock starts over.
@@ -325,7 +338,7 @@ def test_the_tank_moving_again_clears_its_track() -> None:
 
 
 def test_the_blocker_is_one_production_structure_ahead_of_the_tank() -> None:
-    plan = stuck_at(StructureControl())
+    plan = stuck_at(StructureControlPlanner())
 
     # Both Barracks are in the way; exactly one lifts, the lower tag on a tie.
     assert plan.lift == (10,)
@@ -337,20 +350,64 @@ def test_the_blocker_is_one_production_structure_ahead_of_the_tank() -> None:
     selected = plan.relocation[1]
     assert (selected.tank, selected.structure) == (300, 10)
     assert dict(selected.inputs)["candidates"] == 2.0
+    assert dict(selected.inputs)["ahead"] == 1.0
+
+
+def test_the_stuck_tank_says_where_it_stands_and_how_near_production_is() -> None:
+    plan = stuck_at(StructureControlPlanner())
+
+    stuck, selected = plan.relocation[:2]
+    assert stuck.at == selected.at == Point2(TANK_AT)
+    # Both Barracks, a cell and a half ahead and half a cell aside.
+    assert dict(stuck.inputs)["nearest_production"] == pytest.approx(math.hypot(0.5, 1.5))
+
+
+@pytest.mark.parametrize(
+    "blocker",
+    [
+        # The Factory that made it, right behind it.
+        production(12, 30.5, 33.0, UnitTypeId.FACTORY),
+        # Only the Tech Lab of that Factory touches it.
+        production(12, 27.5, 34.0, UnitTypeId.FACTORY, add_on=True),
+    ],
+    ids=["factory", "its_add_on"],
+)
+def test_a_tank_hemmed_in_with_nothing_ahead_lifts_the_structure_it_touches(blocker) -> None:
+    # Born beside its Factory and facing a cliff, the way toward its point is
+    # not the way out: nothing is ahead of it, and it waited 13 minutes for a
+    # blocker in `game-20260919T164509532567Z`.
+    plan = stuck_at(StructureControlPlanner(), structures=(blocker,))
+
+    assert plan.lift == (12,)
+    assert transitions(plan)[0] == ("tank_stuck", "blocker_selected")
+    inputs = dict(plan.relocation[1].inputs)
+    assert (inputs["ahead"], inputs["gap"]) == (0.0, pytest.approx(1.0))
+
+
+def test_a_structure_on_the_way_goes_before_one_that_hems_the_tank_in() -> None:
+    on_the_way = production(10, 28.5, 38.5, add_on=True)
+    behind = production(12, 30.5, 33.0)
+
+    plan = stuck_at(StructureControlPlanner(), structures=(on_the_way, behind))
+
+    assert plan.lift == (10,)
+    assert dict(plan.relocation[1].inputs)["ahead"] == 1.0
 
 
 def test_the_blocker_without_an_add_on_goes_first_even_if_farther() -> None:
     near_with_reactor = production(10, 28.5, 38.5, add_on=True)
     farther_without = production(11, 33.0, 38.5)
 
-    plan = stuck_at(StructureControl(), structures=(near_with_reactor, farther_without))
+    plan = stuck_at(StructureControlPlanner(), structures=(near_with_reactor, farther_without))
 
     assert plan.lift == (11,)
     assert plan.relocation[1].reason == "no_add_on"
 
 
 def test_a_structure_with_an_add_on_lifts_when_it_is_the_only_blocker() -> None:
-    plan = stuck_at(StructureControl(), structures=(production(10, 28.5, 38.5, add_on=True),))
+    plan = stuck_at(
+        StructureControlPlanner(), structures=(production(10, 28.5, 38.5, add_on=True),)
+    )
 
     assert plan.lift == (10,)
     assert plan.relocation[1].reason == "with_add_on"
@@ -359,6 +416,7 @@ def test_a_structure_with_an_add_on_lifts_when_it_is_the_only_blocker() -> None:
 @pytest.mark.parametrize(
     "structures",
     [
+        # A cell and a half behind: not touching it.
         (production(10, 30.5, 32.5),),
         (production(10, 35.5, 38.5),),
         (production(10, 30.5, 45.5),),
@@ -371,13 +429,13 @@ def test_a_structure_with_an_add_on_lifts_when_it_is_the_only_blocker() -> None:
     ids=["behind", "aside", "far_ahead", "command_center", "depot_and_unfinished"],
 )
 def test_nothing_else_is_a_blocker(structures) -> None:
-    plan = stuck_at(StructureControl(), structures=structures)
+    plan = stuck_at(StructureControlPlanner(), structures=structures)
 
     assert plan.lift == ()
     assert transitions(plan) == [("tank_stuck", "no_blocker")]
 
 
-def run_relocation(control: StructureControl) -> dict:
+def run_relocation(control: StructureControlPlanner) -> dict:
     """From the lift at 4 s to the landing at 12 s: the plan of every step."""
 
     plans = {"lift": stuck_at(control)}
@@ -394,7 +452,7 @@ def run_relocation(control: StructureControl) -> dict:
 
 
 def test_the_lifted_structure_lands_only_once_the_tank_moves_off_its_way() -> None:
-    plans = run_relocation(StructureControl())
+    plans = run_relocation(StructureControlPlanner())
 
     assert [transitions(plans[step]) for step in ("lifted", "waiting")] == [[], []]
     assert all(not plans[step].land for step in ("lift", "lifted", "waiting"))
@@ -415,7 +473,7 @@ def test_the_lifted_structure_lands_only_once_the_tank_moves_off_its_way() -> No
 
 
 def test_a_tank_that_stays_stuck_lets_the_structure_land_after_wait_timeout() -> None:
-    control = StructureControl()
+    control = StructureControlPlanner()
     stuck_at(control)
     walled_in = (LEFT_FLYING, RIGHT, FACTORY)
     control.plan(walled(5.0, structures=walled_in))
@@ -429,7 +487,7 @@ def test_a_tank_that_stays_stuck_lets_the_structure_land_after_wait_timeout() ->
 
 
 def test_a_tank_that_sieges_or_dies_meanwhile_lets_the_structure_land() -> None:
-    control = StructureControl()
+    control = StructureControlPlanner()
     stuck_at(control)
     walled_in = (LEFT_FLYING, RIGHT, FACTORY)
     control.plan(walled(5.0, structures=walled_in))
@@ -442,7 +500,7 @@ def test_a_tank_that_sieges_or_dies_meanwhile_lets_the_structure_land() -> None:
 
 
 def test_with_no_free_site_the_structure_keeps_flying_and_looks_again_later() -> None:
-    control = StructureControl()
+    control = StructureControlPlanner()
     stuck_at(control)
     on_free = production(13, *FREE, UnitTypeId.STARPORT)
     on_farther = production(14, *FARTHER, UnitTypeId.STARPORT)
@@ -469,7 +527,7 @@ def test_with_no_free_site_the_structure_keeps_flying_and_looks_again_later() ->
 
 
 def test_a_site_it_cannot_land_on_in_land_timeout_is_dropped_for_the_next() -> None:
-    control = StructureControl()
+    control = StructureControlPlanner()
     stuck_at(control)
     walled_in = (LEFT_FLYING, RIGHT, FACTORY)
     control.plan(walled(5.0, structures=walled_in))
@@ -485,18 +543,85 @@ def test_a_site_it_cannot_land_on_in_land_timeout_is_dropped_for_the_next() -> N
 
 
 def test_a_structure_that_does_not_lift_is_given_up_after_lift_timeout() -> None:
-    control = StructureControl()
+    control = StructureControlPlanner()
     stuck_at(control)
 
     held = control.plan(walled(RELOCATION.stuck_after + RELOCATION.lift_timeout))
     given_up = control.plan(walled(RELOCATION.stuck_after + RELOCATION.lift_timeout + 0.1))
 
     assert not held.relocation
+    assert held.lift == (10,)
     assert transitions(given_up) == [("relocation_aborted", "lift_failed")]
+    assert given_up.lift == ()
+
+
+def test_the_lift_is_ordered_every_frame_until_the_structure_flies() -> None:
+    # The game refuses a lift queued behind what the structure still trains:
+    # ordered once, three lifts failed in `game-20260919T164509532567Z`.
+    control = StructureControlPlanner()
+    stuck_at(control)
+
+    grounded = [control.plan(walled(now)) for now in (4.5, 5.0, 6.0)]
+    flying = control.plan(walled(7.0, structures=(LEFT_FLYING, RIGHT, FACTORY)))
+
+    assert [plan.lift for plan in grounded] == [(10,), (10,), (10,)]
+    assert all(not plan.relocation for plan in grounded)
+    assert flying.lift == ()
+
+
+FULL_MAIN = (
+    LEFT_FLYING,
+    RIGHT,
+    FACTORY,
+    production(13, *FREE, UnitTypeId.STARPORT),
+    production(14, *FARTHER, UnitTypeId.STARPORT),
+)
+
+
+def test_with_the_main_full_it_lands_at_another_base_we_hold() -> None:
+    def landing(bases):
+        control = StructureControlPlanner()
+        stuck_at(control, map_view=BASES_MAP)
+        control.plan(walled(5.0, structures=FULL_MAIN, map_view=BASES_MAP, bases=bases))
+        return control.plan(
+            walled(6.0, through(), structures=FULL_MAIN, map_view=BASES_MAP, bases=bases)
+        )
+
+    held = landing((MAIN, NATURAL))
+    main_only = landing((MAIN,))
+
+    # Never at the enemy's, though nearer.
+    assert held.land == ((10, NATURAL_SITE),)
+    assert transitions(held)[-1] == ("relocating", "site_found")
+    assert main_only.land == ()
+    assert transitions(main_only)[-1] == ("no_landing_site", "keep_flying")
+
+
+def test_with_nowhere_to_land_for_return_after_it_lands_back_where_it_was() -> None:
+    # A Factory lifted with no site left flew 744 s until it died, and held
+    # every other relocation back (`game-20260919T164509532567Z`).
+    def flown(structures):
+        control = StructureControlPlanner()
+        stuck_at(control)
+        control.plan(walled(5.0, structures=structures))
+        return [
+            (now, control.plan(walled(now, through(), structures=structures)))
+            for now in (6.0 + second for second in range(41))
+        ]
+
+    plans = flown(FULL_MAIN)
+    on_its_place = flown((*FULL_MAIN, production(15, *LEFT.position, UnitTypeId.STARPORT)))
+
+    landed = [(now, plan) for now, plan in plans if plan.land]
+    assert [(now, plan.land) for now, plan in landed] == [
+        (6.0 + RELOCATION.return_after, ((10, LEFT.position),))
+    ]
+    assert transitions(landed[0][1]) == [("relocating", "back_to_origin")]
+    assert not any(plan.land for _, plan in on_its_place)
 
 
 def test_a_structure_lost_on_the_way_ends_the_relocation() -> None:
-    control = StructureControl()
+    control = StructureControlPlanner()
     stuck_at(control)
 
     plan = control.plan(walled(5.0, structures=(RIGHT, FACTORY)))
@@ -505,7 +630,7 @@ def test_a_structure_lost_on_the_way_ends_the_relocation() -> None:
 
 
 def test_a_relocation_starts_only_after_the_global_cooldown() -> None:
-    control = StructureControl()
+    control = StructureControlPlanner()
     run_relocation(control)
     done = 12.0
     # Another Tank, walled in between the Barracks 11 and 15.
@@ -522,7 +647,7 @@ def test_a_relocation_starts_only_after_the_global_cooldown() -> None:
 
 
 def test_a_relocated_structure_is_not_lifted_again_before_its_cooldown() -> None:
-    control = StructureControl()
+    control = StructureControlPlanner()
     run_relocation(control)
     # Somehow back in the way of a Tank, alone.
     back = (LEFT,)
@@ -538,7 +663,7 @@ def test_a_relocated_structure_is_not_lifted_again_before_its_cooldown() -> None
 
 
 def test_one_relocation_at_a_time() -> None:
-    control = StructureControl()
+    control = StructureControlPlanner()
     # A second Tank, walled in elsewhere by a Barracks of its own.
     second = tank(301, at=(50.5, 35.5), to=(50.5, 50.5))
     elsewhere = production(13, 48.5, 38.5)
@@ -564,7 +689,7 @@ def test_one_relocation_at_a_time() -> None:
 
 
 def test_the_ramp_corridor_is_the_sites_along_the_way_from_the_start_to_the_ramp() -> None:
-    assert StructureControl().corridor(SITE_MAP) == (IN_THE_CORRIDOR,)
+    assert StructureControlPlanner().corridor(SITE_MAP) == (IN_THE_CORRIDOR,)
 
 
 @pytest.mark.parametrize(
@@ -580,7 +705,7 @@ def test_the_relocation_config_rejects_impossible_values(values) -> None:
 
 def test_the_depots_plan_the_same_with_a_relocation_running() -> None:
     def run(*, relocating: bool) -> list[StructurePlan]:
-        control = StructureControl()
+        control = StructureControlPlanner()
         plans = []
         for index in range(40):
             now = index * 0.5
@@ -633,6 +758,24 @@ def test_the_behavior_lifts_and_lands_beside_the_depots() -> None:
     assert bot.mediator.moved_structures == [(11, FREE, True)]
 
 
+def test_the_behavior_orders_no_lift_to_a_structure_already_lifting() -> None:
+    def ordered(ability: AbilityId):
+        return SimpleNamespace(ability=SimpleNamespace(id=ability))
+
+    bot = FakeBot()
+    lifting = FakeUnit(10, UnitTypeId.BARRACKS, 28.5, 38.5, dps=0.0, structure=True)
+    lifting.orders = [ordered(AbilityId.LIFT)]
+    training = FakeUnit(11, UnitTypeId.BARRACKS, 32.5, 38.5, dps=0.0, structure=True)
+    training.orders = [ordered(AbilityId.BARRACKSTRAIN_MARINE)] * 2
+    bot.structures = [lifting, training]
+
+    structure_behavior.execute(bot, StructurePlan(lower=(), lift=(10, 11), reason="test"))
+
+    assert lifting.commands == []
+    # A Reactor trains two: one cancel a frame, until the lift is taken.
+    assert training.commands == [AbilityId.CANCEL_QUEUE5, ("queue", AbilityId.LIFT)]
+
+
 # --- What Attention and Ares' placement give it ------------------------------
 
 
@@ -676,11 +819,28 @@ def test_read_map_reads_the_main_production_sites_without_the_wall() -> None:
     assert map_view.production_sites == (FREE, FARTHER)
 
 
+def test_read_map_reads_the_production_sites_of_every_base() -> None:
+    bot = FakeBot()
+    bot.mediator.get_placements_dict = {
+        **placements(FARTHER, FREE, wall=(Point2((17.5, 15.5)),)),
+        NATURAL.position: {
+            BuildingSize.THREE_BY_THREE: {NATURAL_SITE: {"available": True, "is_wall": False}}
+        },
+    }
+
+    map_view = read_map(bot, lattice_spacing=4)
+
+    assert map_view.base_production_sites == (
+        (MAP.own_start, (FREE, FARTHER)),
+        (NATURAL.position, (NATURAL_SITE,)),
+    )
+
+
 def test_keep_clear_takes_the_corridor_out_of_ares_placement() -> None:
     bot = FakeBot()
     bot.mediator.get_placements_dict = placements(*SITES)
 
-    cleared = structure_behavior.keep_clear(bot, StructureControl().corridor(SITE_MAP))
+    cleared = structure_behavior.keep_clear(bot, StructureControlPlanner().corridor(SITE_MAP))
 
     main = bot.mediator.get_placements_dict[MAP.own_start][BuildingSize.THREE_BY_THREE]
     assert cleared == 1

@@ -17,9 +17,9 @@ from bot.ego.planners.map_control import (
     MAP_CONTROL_PRIORITY,
     MapControlConfig,
     MapControlPlanner,
-    staging,
 )
 from bot.ego.planners.map_control import planner as map_control_planner
+from bot.ego.planners.map_control.policies import staging
 from bot.ego.planners.offense import planner as offense_planner
 from bot.ego.planners.offense.missions import main_attack
 from bot.ego.strategy import Objective, StrategyModel

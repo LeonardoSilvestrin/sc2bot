@@ -68,7 +68,7 @@ from bot.awareness import InfluenceField
 from bot.ego.strategy import Objective
 
 if TYPE_CHECKING:
-    from .planner import MapControlConfig
+    from ..planner import MapControlConfig
 
 NO_CANDIDATES = "no_candidates"
 NO_ENEMY_ROUTE = "no_enemy_route"

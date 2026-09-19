@@ -15,7 +15,7 @@ from sc2.ids.unit_typeid import UnitTypeId
 
 from bot.attention import TERRAN_PRODUCTION
 
-# What every unit the composition planner may ask Ares to train can hit:
+# What every unit the composition policy may ask Ares to train can hit:
 # (ground targets, air targets).
 REACH: dict[UnitTypeId, tuple[bool, bool]] = {
     UnitTypeId.MARINE: (True, True),

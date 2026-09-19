@@ -13,7 +13,7 @@ from sc2.ids.upgrade_id import UpgradeId
 from bot.awareness import AwarenessModel
 from bot.body.behaviors import economy as economy_behavior
 from bot.ego.planners import economy
-from bot.ego.planners.economy import styles
+from bot.ego.planners.economy.knowledge import styles
 from bot.ego.strategy import Objective, StrategyModel
 
 from .fakes import FakeBot, attention

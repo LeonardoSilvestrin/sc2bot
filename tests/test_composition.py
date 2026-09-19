@@ -6,7 +6,8 @@ import pytest
 from sc2.ids.unit_typeid import UnitTypeId
 
 from bot.awareness import AwarenessModel
-from bot.ego.planners.economy import composition, styles
+from bot.ego.planners.economy.knowledge import styles
+from bot.ego.planners.economy.policies import composition
 from bot.ego.strategy import EconomyPolicy, EconomyPosture, StrategyModel
 
 from .fakes import attention, unit
@@ -27,7 +28,7 @@ def test_with_nothing_seen_the_mix_is_the_style(style) -> None:
     frame = attention(tech_ready={unit_type for unit_type, _, _ in style.composition})
     _, strategy = state(frame)
 
-    plan = composition.CompositionPlanner(style).plan(frame, strategy)
+    plan = composition.CompositionPolicy(style).plan(frame, strategy)
 
     assert plan.units == style.composition
     assert plan.reason == "style_baseline"
@@ -43,7 +44,7 @@ def test_the_first_producible_counter_is_selected_and_skipped_tech_is_explained(
     frame = attention(tech_ready={UnitTypeId.MARINE, UnitTypeId.CYCLONE})
     _, strategy = state(frame)
 
-    plan = composition.CompositionPlanner(styles.MECH).plan(
+    plan = composition.CompositionPolicy(styles.MECH).plan(
         frame, strategy, ((UnitTypeId.MUTALISK, 40.0),)
     )
 
@@ -58,7 +59,7 @@ def test_new_tech_moves_the_same_threat_to_the_preferred_counter() -> None:
     frame = attention(tech_ready={UnitTypeId.MARINE, UnitTypeId.THOR})
     _, strategy = state(frame)
 
-    plan = composition.CompositionPlanner(styles.MECH).plan(
+    plan = composition.CompositionPolicy(styles.MECH).plan(
         frame, strategy, ((UnitTypeId.MUTALISK, 40.0),)
     )
 
@@ -72,7 +73,7 @@ def test_no_producible_counter_keeps_a_normalized_baseline() -> None:
     frame = attention()
     _, strategy = state(frame)
 
-    plan = composition.CompositionPlanner(styles.BIO).plan(
+    plan = composition.CompositionPolicy(styles.BIO).plan(
         frame, strategy, ((UnitTypeId.MUTALISK, 40.0),)
     )
 
@@ -87,7 +88,7 @@ def test_modes_are_canonicalized_but_preserved_in_the_explanation() -> None:
     frame = attention(tech_ready={UnitTypeId.MARAUDER})
     _, strategy = state(frame)
 
-    plan = composition.CompositionPlanner(styles.BIO).plan(
+    plan = composition.CompositionPolicy(styles.BIO).plan(
         frame, strategy, ((UnitTypeId.SIEGETANKSIEGED, 10.0),)
     )
 
@@ -99,7 +100,7 @@ def test_a_mode_keeps_its_physical_layer_after_catalog_canonicalization() -> Non
     frame = attention(tech_ready={UnitTypeId.HELLION, UnitTypeId.MARINE})
     _, strategy = state(frame)
 
-    plan = composition.CompositionPlanner(styles.MECH).plan(
+    plan = composition.CompositionPolicy(styles.MECH).plan(
         frame, strategy, ((UnitTypeId.LOCUSTMPFLYING, 10.0),)
     )
 
@@ -127,16 +128,16 @@ def test_survive_uses_ready_barracks_and_the_fallback_leaves_with_the_policy() -
         tech_ready={UnitTypeId.MARINE, UnitTypeId.HELLION},
     )
     believed, survive = state(frame, EconomyPosture.SURVIVE)
-    planner = composition.CompositionPlanner(styles.MECH)
+    policy = composition.CompositionPolicy(styles.MECH)
 
-    emergency = planner.plan(
+    emergency = policy.plan(
         frame,
         survive,
         believed.seen_enemy_types,
         contacts=believed.contacts,
         incidents=believed.incidents,
     )
-    normal = planner.plan(
+    normal = policy.plan(
         frame,
         replace(survive, economy_policy=EconomyPolicy(EconomyPosture.INVEST, "safe")),
         believed.seen_enemy_types,

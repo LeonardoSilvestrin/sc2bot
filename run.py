@@ -17,7 +17,7 @@ sys.path.append("ares-sc2")
 
 import yaml
 
-from bot.ego.planners.economy.styles import STYLES
+from bot.ego.planners.economy.knowledge.styles import STYLES
 from bot.logs import JsonlLogger, Logs, OverlayConfig, SnapshotConfig
 from bot.main import MyBot
 from ladder import run_ladder_game
@@ -39,7 +39,7 @@ else:
 
 CONFIG_FILE: str = "config.yml"
 MAP_FILE_EXT: str = "SC2Map"
-MY_BOT_NAME: str = "MyBotName"
+MY_BOT_NAME: str = "BotBandido"
 MY_BOT_RACE: str = "MyBotRace"
 # Gap between markers drawn by --spatial-view; presentation only.
 DEFAULT_SPATIAL_VIEW_SPACING = 4

@@ -1,11 +1,11 @@
-"""StructureControl: what our own structures do by themselves.
+"""StructureControlPlanner: what our own structures do by themselves.
 
 Supply depots go up and down, and a Barracks, Factory or Starport that walls a
-Siege Tank in flies out of its way (`relocation`). A finished depot goes up the
-frame a ground enemy comes within `raise_reach` of it, and down again once no
-ground enemy has been that close for `lower_after` seconds, so an enemy pacing
-at the edge of reach cannot toggle it faster than that. Flying enemies do not
-count: a depot does not stop them.
+Siege Tank in flies out of its way (`policies.relocation`). A finished depot
+goes up the frame a ground enemy comes within `raise_reach` of it, and down
+again once no ground enemy has been that close for `lower_after` seconds, so an
+enemy pacing at the edge of reach cannot toggle it faster than that. Flying
+enemies do not count: a depot does not stop them.
 
 Raising a depot pushes our own units on top of it to its nearest edge, and an
 enemy on top keeps it from rising until it steps off (the Body simply orders
@@ -26,7 +26,7 @@ from sc2.position import Point2
 from bot.attention import AttentionState, MapView
 from bot.ego.planners import StructurePlan
 
-from .relocation import RelocationConfig, Relocator
+from .policies.relocation import RelocationConfig, Relocator
 
 DEPOT_TYPES = frozenset({UnitTypeId.SUPPLYDEPOT, UnitTypeId.SUPPLYDEPOTLOWERED})
 # A 2x2 depot's half side plus a small unit's radius: a unit this close to the
@@ -49,7 +49,7 @@ class StructureConfig:
             raise ValueError("lower_after must not be negative")
 
 
-class StructureControl:
+class StructureControlPlanner:
     def __init__(self, config: StructureConfig | None = None) -> None:
         self.config = config or StructureConfig()
         # When a ground enemy was last within reach, by depot tag.

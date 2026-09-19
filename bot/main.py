@@ -29,12 +29,13 @@ from bot.body.engine import Engine, EngineResult
 from bot.ego.missions import MissionView
 from bot.ego.planners import EconomyPlan, IntelPlan, Proposal, StructurePlan, economy
 from bot.ego.planners.defense import DefensePlanner
-from bot.ego.planners.economy import CompositionPlanner, InvestmentConfig, styles
-from bot.ego.planners.economy.styles import BIO, ArmyStyle
+from bot.ego.planners.economy import CompositionPolicy, InvestmentConfig
+from bot.ego.planners.economy.knowledge import styles
+from bot.ego.planners.economy.knowledge.styles import BIO, ArmyStyle
 from bot.ego.planners.intel import IntelPlanner
 from bot.ego.planners.map_control import MapControlPlan, MapControlPlanner
 from bot.ego.planners.offense import OffensePlan, OffensePlanner
-from bot.ego.planners.structure_control.planner import StructureControl
+from bot.ego.planners.structure_control import StructureControlPlanner
 from bot.ego.strategy import StrategyModel, StrategyState
 from bot.logs import Logs
 
@@ -49,7 +50,7 @@ class Layers:
     logs: Logs
     # Chosen once, in `on_start`.
     army: ArmyStyle = BIO
-    composition: CompositionPlanner = field(init=False)
+    composition: CompositionPolicy = field(init=False)
     investment: InvestmentConfig = field(default_factory=InvestmentConfig)
     awareness: AwarenessModel = field(default_factory=AwarenessModel)
     strategy: StrategyModel = field(default_factory=StrategyModel)
@@ -57,13 +58,13 @@ class Layers:
     map_control: MapControlPlanner = field(default_factory=MapControlPlanner)
     offense: OffensePlanner = field(default_factory=OffensePlanner)
     intel: IntelPlanner = field(default_factory=IntelPlanner)
-    structure_control: StructureControl = field(default_factory=StructureControl)
+    structure_control: StructureControlPlanner = field(default_factory=StructureControlPlanner)
     engine: Engine = field(default_factory=Engine)
     # The last allocation, read by the missions on the next frame.
     feedback: EngineResult | None = None
 
     def __post_init__(self) -> None:
-        self.composition = CompositionPlanner(self.army)
+        self.composition = CompositionPolicy(self.army)
 
     def configs(self) -> dict[str, object]:
         return {
@@ -134,7 +135,7 @@ def play_frame(bot, iteration: int, layers: Layers) -> Frame:
         attention,
         strategy,
         layers.army,
-        composition_planner=layers.composition,
+        composition_policy=layers.composition,
         investment_config=layers.investment,
         awareness=awareness,
     )

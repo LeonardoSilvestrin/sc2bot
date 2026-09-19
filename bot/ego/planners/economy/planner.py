@@ -1,8 +1,8 @@
-"""The economy planner: `plan` joins investment, style and composition into
-the `EconomyPlan` the Body's economy behavior runs. After the opening,
-Command Centers become Orbital Commands and every Orbital's energy goes to
-MULEs. While stabilizing, every resource goes to the army: no upgrade and no
-add-on for throughput.
+"""The economy planner: `plan` joins the investment and composition policies
+and the chosen style into the `EconomyPlan` the Body's economy behavior runs.
+After the opening, Command Centers become Orbital Commands and every Orbital's
+energy goes to MULEs. While stabilizing, every resource goes to the army: no
+upgrade and no add-on for throughput.
 """
 
 from __future__ import annotations
@@ -16,10 +16,10 @@ from bot.awareness import AwarenessState
 from bot.ego.planners import EconomyPlan
 from bot.ego.strategy import StrategyState
 
-from . import composition, investment
-from .composition import CompositionPlanner
-from .investment import InvestmentConfig
-from .styles import BIO, ArmyStyle
+from .knowledge.styles import BIO, ArmyStyle
+from .policies import composition, investment
+from .policies.composition import CompositionPolicy
+from .policies.investment import InvestmentConfig
 
 
 def plan(
@@ -28,7 +28,7 @@ def plan(
     army: ArmyStyle = BIO,
     enemy: Iterable[tuple[UnitTypeId, float]] = (),
     *,
-    composition_planner: CompositionPlanner | None = None,
+    composition_policy: CompositionPolicy | None = None,
     investment_config: InvestmentConfig | None = None,
     awareness: AwarenessState | None = None,
 ) -> EconomyPlan:
@@ -36,7 +36,7 @@ def plan(
 
     spend = investment.plan(attention, strategy, investment_config)
     enemy = tuple(enemy)
-    planner = composition_planner or CompositionPlanner(army)
+    policy = composition_policy or CompositionPolicy(army)
     if awareness is not None:
         enemy = awareness.seen_enemy_types
         contacts = awareness.contacts
@@ -44,7 +44,7 @@ def plan(
     else:
         contacts = ()
         incidents = ()
-    composition_plan = planner.plan(
+    composition_plan = policy.plan(
         attention, strategy, enemy, contacts=contacts, incidents=incidents
     )
     mix = composition_plan.units
