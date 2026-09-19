@@ -30,13 +30,13 @@ from bot.ego.planners import (
     SensorTowerPlan,
     StructurePlan,
 )
-from bot.ego.planners.military.map_control import (
+from bot.ego.planners.map_control import (
     MapControlPlan,
     PassageCandidate,
     StagingPlan,
     StagingPoint,
 )
-from bot.ego.planners.military.offense import LocalFight, OffensePlan
+from bot.ego.planners.offense import LocalFight, OffensePlan
 from bot.ego.strategy import StrategyState
 
 from .identity import describe_build, fingerprint

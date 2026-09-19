@@ -19,12 +19,11 @@ from bot.ego.missions import (
     MissionFeedback,
     MissionStatus,
 )
-from bot.ego.planners import Command, Proposal
+from bot.ego.planners import Command, Proposal, defense
+from bot.ego.planners.defense import DefensePlanner
 from bot.ego.planners.intel import SCOUT_AT_WORKERS, START_BY, IntelPlanner, ScoutMission
-from bot.ego.planners.military import defense
-from bot.ego.planners.military.defense import DefensePlanner
-from bot.ego.planners.military.offense import OWNER, MainAttackMission, Stage
-from bot.ego.planners.military.offense.missions.main_attack import OffenseContext
+from bot.ego.planners.offense import OWNER, MainAttackMission, Stage
+from bot.ego.planners.offense.missions.main_attack import OffenseContext
 from bot.ego.strategy import Objective, Posture, StrategyModel
 from bot.logs import Logs
 from bot.main import Layers, play_frame

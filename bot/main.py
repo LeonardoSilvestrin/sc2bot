@@ -28,12 +28,12 @@ from bot.body.behaviors.sensor_towers import SensorTowerReport
 from bot.body.engine import Engine, EngineResult
 from bot.ego.missions import MissionView
 from bot.ego.planners import EconomyPlan, IntelPlan, Proposal, StructurePlan, economy
+from bot.ego.planners.defense import DefensePlanner
 from bot.ego.planners.economy import CompositionPlanner, InvestmentConfig, styles
 from bot.ego.planners.economy.styles import BIO, ArmyStyle
 from bot.ego.planners.intel import IntelPlanner
-from bot.ego.planners.military.defense import DefensePlanner
-from bot.ego.planners.military.map_control import MapControlPlan, MapControlPlanner
-from bot.ego.planners.military.offense import OffensePlan, OffensePlanner
+from bot.ego.planners.map_control import MapControlPlan, MapControlPlanner
+from bot.ego.planners.offense import OffensePlan, OffensePlanner
 from bot.ego.planners.structure_control.planner import StructureControl
 from bot.ego.strategy import StrategyModel, StrategyState
 from bot.logs import Logs

@@ -50,7 +50,7 @@ das propostas, `SpawnMode`, `MicroReport` e `DetectionReport` existem para o log
 `threat`, `support` e `enemy` (e `control`) são recalculados todo frame: três matrizes de pontos do lattice ×
 fontes (contatos com poder, nosso exército, nossas estruturas). Leem: [overlay.py](../bot/logs/overlay.py),
 [snapshot.py](../bot/logs/snapshot.py) e o `field` de `awareness.updated`. Desde o staging do MapControl
-([staging.py](../bot/ego/planners/military/map_control/staging.py)) há um planner que lê `threat`,
+([staging.py](../bot/ego/planners/map_control/staging.py)) há um planner que lê `threat`,
 `support` e `control` nos seus candidatos (a `exposure`), então o campo decide; mas só nesses pontos, e o
 campo inteiro continua calculado todo frame. É o A5 de novas_propostas.
 
@@ -76,12 +76,12 @@ são "debug only" por contrato).
 [strategy.py:119-129](../bot/ego/strategy.py#L119-L129). `army` não tem leitor. `economy = 1 − army` é o
 mesmo número, lido só em `economy ≥ 0,5` ([investment.py:99](../bot/ego/planners/economy/investment.py#L99)),
 que só fecha com `0,5·danger + 0,4·(0,5 − army_share) > 0,2`. `risk` só entra nos `inputs` do MapControl
-([planner.py:130](../bot/ego/planners/military/map_control/planner.py#L130)) e em `engine.commanded`.
+([planner.py:130](../bot/ego/planners/map_control/planner.py#L130)) e em `engine.commanded`.
 `defense` é `danger` com outro nome. `scores` é log. É o A4/N3 de novas_propostas, sem mudança desde então.
 
 <a id="c6"></a>**C6 · Feedback que só vira log** (média) —
 `DefendAreaMission.step` recebe o `MissionFeedback` e não o usa
-([defend_area.py:69](../bot/ego/planners/military/defense/missions/defend_area.py#L69)); a `ScoutMission`
+([defend_area.py:69](../bot/ego/planners/defense/missions/defend_area.py#L69)); a `ScoutMission`
 também não ([I12](#i12)). `GrantStatus` (`FULL`/`PARTIAL`/`REJECTED`) e a `reason` do Engine
 ([engine.py:33](../bot/body/engine.py#L33)) não são lidos por missão nenhuma; a ofensiva lê só as `tags`.
 Uma defesa que recebeu metade do orçamento segue igual: não escala, não chama reforço, não muda de alvo.
@@ -94,7 +94,7 @@ architecture.md diz que a Strategy "pode recebê-lo quando precisar"; hoje ningu
 
 <a id="c8"></a>**C8 · `Proposal.demand_id`** (baixa) —
 [contracts.py:59](../bot/ego/planners/contracts.py#L59),
-[defend_area.py:106](../bot/ego/planners/military/defense/missions/defend_area.py#L106). O Engine não o
+[defend_area.py:106](../bot/ego/planners/defense/missions/defend_area.py#L106). O Engine não o
 lê: as partes de um incidente "compartilham um orçamento" só no log. Ver [I14](#i14).
 
 <a id="c9"></a>**C9 · Prioridade do scout** (baixa) —
@@ -127,7 +127,7 @@ máscara `np.where` a cada chamada. `EngineResult.unassigned` só vai para log e
 ## F — Fallbacks
 
 <a id="f1"></a>**F1 · Anchor `legacy` do MapControl** (média) —
-[planner.py:285](../bot/ego/planners/military/map_control/planner.py#L285). O antigo `Strategy._rally`
+[planner.py:285](../bot/ego/planners/map_control/planner.py#L285). O antigo `Strategy._rally`
 continua como terceira fonte do anchor quando a política que controla não põe anchor: no `staging`, sem base
 localizada ou ponto do lattice nas regiões (`no_candidates`) ou sem caminho até o start inimigo
 (`no_enemy_route`); no `passage`, sem passagem que separe (`no_separating_passage`) ou sem ponto do lattice
@@ -175,7 +175,7 @@ em `REACH`; um tipo novo sem entrada entraria calado, com o alcance errado.
 
 <a id="f7"></a>**F7 · `army_share = 0,5` sem poder algum** (baixa) —
 [strategy.py:114](../bot/ego/strategy.py#L114). O valor neutro cai exatamente em `EVEN_SHARE`
-([offense/planner.py:67](../bot/ego/planners/military/offense/planner.py#L67)): sem informação nenhuma,
+([offense/planner.py:67](../bot/ego/planners/offense/planner.py#L67)): sem informação nenhuma,
 `advantage` é verdadeiro. Hoje quem segura a ofensiva é o `minimum_power` (20).
 
 <a id="f8"></a>**F8 · Defaults duplicados nos contratos** (baixa) —
@@ -197,7 +197,7 @@ recalcula a expansão mais próxima de uma posição que já é uma expansão: a
 ## L — Legado
 
 <a id="l1"></a>**L1 · `core_army`** (baixa) — o id e o owner da proposta do MapControl
-([planner.py:41](../bot/ego/planners/military/map_control/planner.py#L41)) são o nome de duas versões atrás
+([planner.py:41](../bot/ego/planners/map_control/planner.py#L41)) são o nome de duas versões atrás
 (CoreArmy → ArmyFallback → MapControl). Quem os mantém: o viewer
 ([viewer.html:613](../logs/viewer.html#L613), [timeline_model.js:10](../logs/viewer/timeline_model.js#L10),
 com o rótulo "Core army", e [decision_view.js:189](../logs/viewer/decision_view.js#L189)), as cores do
@@ -215,11 +215,11 @@ harness dá o default a um campo que um `result.json` antigo não tinha
 
 <a id="l3"></a>**L3 · Cancelamento gracioso sem gatilho** (baixa) — `CancelMode.GRACEFUL`
 ([lifecycle.py:33](../bot/ego/missions/lifecycle.py#L33)), a fase `WITHDRAW` e as razões `withdrawn` e
-`withdraw_timed_out` ([main_attack.py:422-430](../bot/ego/planners/military/offense/missions/main_attack.py#L422-L430))
+`withdraw_timed_out` ([main_attack.py:422-430](../bot/ego/planners/offense/missions/main_attack.py#L422-L430))
 só rodam nos testes: o único pedido feito em produção é `IMMEDIATE`
-([offense/planner.py:192](../bot/ego/planners/military/offense/planner.py#L192)). O
+([offense/planner.py:192](../bot/ego/planners/offense/planner.py#L192)). O
 `DefendAreaMission.request_cancel` e o ramo `CANCELLED`
-([defend_area.py:83](../bot/ego/planners/military/defense/missions/defend_area.py#L83)) são inalcançáveis:
+([defend_area.py:83](../bot/ego/planners/defense/missions/defend_area.py#L83)) são inalcançáveis:
 o planner nunca pede. O architecture.md já diz que "nenhum gatilho de produção o usa"; o custo é manter e
 testar um caminho que nenhuma partida exercita.
 
@@ -259,10 +259,10 @@ comentários do código.
 ## I — Inconsistências lógicas
 
 <a id="i1"></a>**I1 · A ofensiva mede o compromisso no exército inteiro** (alta) —
-[offense/planner.py:167](../bot/ego/planners/military/offense/planner.py#L167),
-[offense/planner.py:258](../bot/ego/planners/military/offense/planner.py#L258),
-[main_attack.py:431](../bot/ego/planners/military/offense/missions/main_attack.py#L431),
-[main_attack.py:481](../bot/ego/planners/military/offense/missions/main_attack.py#L481).
+[offense/planner.py:167](../bot/ego/planners/offense/planner.py#L167),
+[offense/planner.py:258](../bot/ego/planners/offense/planner.py#L258),
+[main_attack.py:431](../bot/ego/planners/offense/missions/main_attack.py#L431),
+[main_attack.py:481](../bot/ego/planners/offense/missions/main_attack.py#L481).
 `committed = awareness.own_power` é o exército inteiro na hora da abertura, inclusive o que a Defense segura
 e o que acabou de sair da fábrica. `army_depleted` compara de novo o exército inteiro com metade disso. Um
 squad destruído do outro lado do mapa, enquanto a produção repõe em casa, não dispara `army_depleted`; uma
@@ -297,7 +297,7 @@ e isso inclui workers e estruturas armadas.
   passa de 0,55), mantém também o STABILIZE, que põe a ofensiva em WITHDRAW enquanto a estrutura existir.
 
 As outras camadas definem "lutador" de outro jeito: a luta local da ofensiva exclui workers
-([main_attack.py:614](../bot/ego/planners/military/offense/missions/main_attack.py#L614)), o Stim também
+([main_attack.py:614](../bot/ego/planners/offense/missions/main_attack.py#L614)), o Stim também
 ([attack.py:60](../bot/body/behaviors/attack.py#L60)), e o HOLD sai do path com qualquer inimigo à vista,
 worker incluído ([hold.py:36](../bot/body/behaviors/hold.py#L36)). "Distinguir scout, worker rush e ataque"
 está em "Ainda não implementado"; a estrutura estática não está.
@@ -376,8 +376,8 @@ então puxa Tanks e Marauders de mais longe, embora o Marine que já está no lo
 
 <a id="i15"></a>**I15 · Admissão e expansão por corte** (baixa) — o objetivo lê só `danger`. `army_share`
 decide a ofensiva por um corte (`≥ 0,5`), escrito duas vezes
-([offense/planner.py:171](../bot/ego/planners/military/offense/planner.py#L171) e
-[:234](../bot/ego/planners/military/offense/planner.py#L234)), e `economy ≥ 0,5` decide a expansão. É o
+([offense/planner.py:171](../bot/ego/planners/offense/planner.py#L171) e
+[:234](../bot/ego/planners/offense/planner.py#L234)), e `economy ≥ 0,5` decide a expansão. É o
 A4/A7/N3 de novas_propostas.
 
 <a id="i16"></a>**I16 · Lugar para expandir** (baixa) — `room = bases < len(map.expansions)`
@@ -386,7 +386,7 @@ ocupa. Com todas as restantes tomadas, `expand` continua verdadeiro, a razão di
 o `ExpansionController` não tem onde pôr o CC.
 
 <a id="i17"></a>**I17 · Em STABILIZE, o MapControl espera no CC** (baixa) —
-[planner.py:123](../bot/ego/planners/military/map_control/planner.py#L123). Com uma base ameaçada, o anchor é
+[planner.py:123](../bot/ego/planners/map_control/planner.py#L123). Com uma base ameaçada, o anchor é
 a posição do townhall mais ameaçado, enquanto a Defense manda `ATTACK` no centro do incidente. As unidades que
 a Defense não pegou esperam no CC (lutam só com inimigo a ≤ 10) em vez de juntar-se à luta. A alternância
 entre bases de ameaça parecida já está em "Ainda não implementado".

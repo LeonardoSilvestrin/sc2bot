@@ -25,8 +25,8 @@ from bot.ego.planners import (
     Proposal,
     StructurePlan,
 )
-from bot.ego.planners.military.map_control import MapControlPlan
-from bot.ego.planners.military.offense import OffensePlan
+from bot.ego.planners.map_control import MapControlPlan
+from bot.ego.planners.offense import OffensePlan
 from bot.ego.strategy import StrategyState
 
 from .jsonl import BotLogger, ChangeGate, JsonlLogger, NullLogger

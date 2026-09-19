@@ -14,7 +14,7 @@ from sc2.position import Point2, Point3
 from bot.attention import AttentionState
 from bot.awareness import AwarenessState
 from bot.body.engine import EngineResult
-from bot.ego.planners.military.map_control import MapControlPlan
+from bot.ego.planners.map_control import MapControlPlan
 from bot.ego.strategy import StrategyState
 
 Color = tuple[int, int, int]

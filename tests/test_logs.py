@@ -10,8 +10,8 @@ from sc2.position import Point2
 
 from bot.awareness import AwarenessModel
 from bot.body.engine import Engine
-from bot.ego.planners.military import map_control
-from bot.ego.planners.military.defense import DefensePlanner
+from bot.ego.planners import map_control
+from bot.ego.planners.defense import DefensePlanner
 from bot.ego.strategy import StrategyModel
 from bot.logs import (
     ChangeGate,

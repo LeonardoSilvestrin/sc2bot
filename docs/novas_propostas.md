@@ -10,8 +10,8 @@
 > jeito concreto de atacá-la. Os ids são `N1`…`N8` para não colidir com `P0`…`P2`.
 
 > **Estado em 19 de setembro de 2026 (`5f12156`).** Os caminhos citados são os de `f910e1a`: `economy.py`,
-> `offense.py` e `intel.py` viraram pacotes em `bot/ego/planners/` (`economy/`, `military/offense/`,
-> `military/intel/`), e o CoreArmy virou o MapControl. Desde então: N1 em parte (matriz Zerg CheatInsane ×
+> `offense.py` e `intel.py` viraram pacotes em `bot/ego/planners/` (`economy/`, `offense/`,
+> `intel/`), e o CoreArmy virou o MapControl. Desde então: N1 em parte (matriz Zerg CheatInsane ×
 > Macro/Timing/Rush/Air/Power, sem métricas no `summary.json`); N2.1 em parte (a economia virou pacote com
 > `composition` e dois estilos, sem planner nem contrato próprios). O N2.1/N2.2 é o próximo refactor, em
 > [staging/economia-e-builds.md](staging/economia-e-builds.md).

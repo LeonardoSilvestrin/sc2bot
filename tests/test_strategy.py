@@ -14,7 +14,7 @@ from bot.awareness import (
     BaseThreat,
     InfluenceField,
 )
-from bot.ego.planners.military.map_control import MapControlPlanner
+from bot.ego.planners.map_control import MapControlPlanner
 from bot.ego.strategy import EconomyPosture, Objective, StrategyConfig, StrategyModel
 
 from .fakes import MAIN, attention, unit

@@ -15,8 +15,7 @@ from sc2.position import Point2
 
 from bot.attention import observe, read_map
 from bot.awareness import AwarenessConfig
-from bot.ego.planners import economy
-from bot.ego.planners.military import defense, map_control, offense
+from bot.ego.planners import defense, economy, map_control, offense
 from bot.ego.strategy import StrategyConfig
 from bot.logs import Logs, OverlayConfig, SnapshotConfig
 from bot.main import Layers, play_frame

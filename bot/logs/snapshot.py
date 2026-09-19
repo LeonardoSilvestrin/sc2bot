@@ -17,7 +17,7 @@ from bot.attention import AttentionState, is_army
 from bot.awareness import AwarenessState
 from bot.awareness.field import PRESENCE_FLOOR
 from bot.body.engine import EngineResult
-from bot.ego.planners.military.map_control import MapControlPlan
+from bot.ego.planners.map_control import MapControlPlan
 from bot.ego.strategy import StrategyState
 
 from .jsonl import BotLogger, NullLogger

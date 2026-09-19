@@ -12,18 +12,17 @@ from bot.attention import BaseView, MapView
 from bot.attention.topology import MapPassage, MapRegion, MapTopology
 from bot.awareness import InfluenceField
 from bot.body.engine import Engine
-from bot.ego.planners import Command
-from bot.ego.planners.military import map_control
-from bot.ego.planners.military.map_control import (
+from bot.ego.planners import Command, map_control
+from bot.ego.planners.map_control import (
     MAP_CONTROL_PRIORITY,
     MapControlConfig,
     MapControlPlanner,
     anchor,
     staging,
 )
-from bot.ego.planners.military.map_control import planner as map_control_planner
-from bot.ego.planners.military.offense import planner as offense_planner
-from bot.ego.planners.military.offense.missions import main_attack
+from bot.ego.planners.map_control import planner as map_control_planner
+from bot.ego.planners.offense import planner as offense_planner
+from bot.ego.planners.offense.missions import main_attack
 from bot.ego.strategy import Objective, StrategyModel
 from bot.logs import Logs
 from bot.main import Layers, play_frame
@@ -781,7 +780,7 @@ def _imported(module) -> set[str]:
 def test_no_planner_reaches_into_another() -> None:
     # MapControl hands its anchor to the offense through the frame, never by import.
     assert not any(
-        name.startswith("bot.ego.planners.military.")
+        name.startswith("bot.ego.planners.")
         for name in _imported(map_control_planner) | _imported(anchor) | _imported(staging)
     )
     assert not any(
