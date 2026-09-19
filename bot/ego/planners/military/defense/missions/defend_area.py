@@ -25,7 +25,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from bot.awareness import ThreatIncident
-from bot.ego.core import (
+from bot.ego.missions import (
     CancelMode,
     Lifecycle,
     MissionFeedback,

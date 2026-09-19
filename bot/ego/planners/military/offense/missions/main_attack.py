@@ -74,7 +74,7 @@ from sc2.position import Point2
 
 from bot.attention import AttentionState, MapView, UnitView
 from bot.awareness import AwarenessState, Contact
-from bot.ego.core import (
+from bot.ego.missions import (
     CancelMode,
     Lifecycle,
     MissionFeedback,

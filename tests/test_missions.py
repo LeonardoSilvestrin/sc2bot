@@ -13,7 +13,7 @@ from sc2.position import Point2
 
 from bot.awareness import AwarenessModel
 from bot.body.engine import Engine, GrantStatus
-from bot.ego.core import (
+from bot.ego.missions import (
     CancelMode,
     Lifecycle,
     MissionFeedback,

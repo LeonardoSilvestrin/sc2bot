@@ -17,7 +17,7 @@ from bot.body.behaviors.attack import MicroReport
 from bot.body.behaviors.detection import DetectionReport
 from bot.body.behaviors.economy import SpawnMode
 from bot.body.engine import EngineResult
-from bot.ego.core import MissionView
+from bot.ego.missions import MissionView
 from bot.ego.planners import DetectionPlan, EconomyPlan, Proposal, StructurePlan
 from bot.ego.planners.military.offense import OffensePlan
 from bot.ego.strategy import StrategyState

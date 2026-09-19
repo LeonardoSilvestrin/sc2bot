@@ -20,7 +20,7 @@ from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
 from bot.attention import AttentionState
-from bot.ego.core import (
+from bot.ego.missions import (
     CancelMode,
     Lifecycle,
     MissionFeedback,

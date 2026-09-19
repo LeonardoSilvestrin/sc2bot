@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 from sc2.position import Point2
 
 from bot.attention import AttentionState, MapView
-from bot.ego.core import (
+from bot.ego.missions import (
     CancelMode,
     MissionFeedback,
     MissionView,
