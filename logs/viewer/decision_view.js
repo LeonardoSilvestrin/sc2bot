@@ -33,7 +33,7 @@
   function tone(value) {
     const head = String(value ?? "").split(" ")[0];
     for (const [name, values] of Object.entries(TONES)) if (values.has(head)) return name;
-    if (head.startsWith("hold_rally") || head.startsWith("hold_passage")) return "ok";
+    if (head.startsWith("hold_rally") || head.startsWith("hold_passage") || head.startsWith("hold_staging")) return "ok";
     return "neutral";
   }
 

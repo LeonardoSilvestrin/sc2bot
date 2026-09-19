@@ -27,6 +27,7 @@ OWNER_COLORS: dict[str, Color] = {
 }
 OTHER_OWNER_COLOR: Color = (195, 166, 255)
 TEXT_COLOR: Color = (255, 255, 255)
+SHADOW_COLOR: Color = (154, 165, 177)
 CONTACT_COLOR: Color = (255, 70, 70)
 REMEMBERED_COLOR: Color = (170, 95, 95)
 UNCERTAINTY_COLOR: Color = (242, 153, 74)
@@ -145,9 +146,22 @@ class Overlay:
             )
         anchor = map_control.anchor
         client.debug_sphere_out(at(anchor, 0.3), 1.2, TEXT_COLOR)
+        staging = map_control.staging
+        switch = "" if staging is None else f" {staging.switch}"
         client.debug_text_world(
-            f"ANCHOR {map_control.reason}", at(anchor, 1.0), TEXT_COLOR, 12
+            f"ANCHOR {map_control.reason}{switch}", at(anchor, 1.0), TEXT_COLOR, 12
         )
+        # The policy that does not place the anchor, for comparison.
+        shadow = (
+            map_control.passage.anchor
+            if map_control.policy == "staging"
+            else None
+            if staging is None
+            else staging.selected.position
+        )
+        if shadow is not None and shadow != anchor:
+            client.debug_sphere_out(at(shadow, 0.3), 0.8, SHADOW_COLOR)
+            client.debug_text_world("SHADOW", at(shadow, 1.0), SHADOW_COLOR, 10)
         if config.show_owners:
             owner_of = {grant.proposal.proposal_id: grant.proposal.owner for grant in result.grants}
             positions = {unit.tag: unit.position for unit in attention.own_units}

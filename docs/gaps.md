@@ -44,11 +44,10 @@ das propostas, `SpawnMode`, `MicroReport` e `DetectionReport` existem para o log
 [model.py:298](../bot/awareness/model.py#L298), [field.py](../bot/awareness/field.py).
 `threat`, `support` e `enemy` (e `control`) são recalculados todo frame: três matrizes de pontos do lattice ×
 fontes (contatos com poder, nosso exército, nossas estruturas). Leem: [overlay.py](../bot/logs/overlay.py),
-[snapshot.py](../bot/logs/snapshot.py) e o `field` de `awareness.updated`. Nenhum planner. No ladder, com
-overlay e SVG desligados, o custo continua. O consumidor natural, o MapControl, declara que ainda não lê a
-Awareness ([anchor.py:31](../bot/ego/planners/military/map_control/anchor.py#L31)). É o A5 de
-novas_propostas; a metade de A5 sobre a topologia mudou, porque Intel e MapControl a consomem agora.
-Direção: um termo de risco no score da passagem, ou calcular o campo só com algum observador ligado.
+[snapshot.py](../bot/logs/snapshot.py) e o `field` de `awareness.updated`. Desde o staging do MapControl
+([staging.py](../bot/ego/planners/military/map_control/staging.py)) há um planner que lê `threat`,
+`support` e `control` nos seus candidatos (a `exposure`), então o campo decide; mas só nesses pontos, e o
+campo inteiro continua calculado todo frame. É o A5 de novas_propostas.
 
 <a id="c2"></a>**C2 · Leituras por base sem leitor** (baixa) —
 [model.py:115](../bot/awareness/model.py#L115). `BaseThreat.cover`, `balance`, `air_share` e `center` só
@@ -123,13 +122,13 @@ máscara `np.where` a cada chamada. `EngineResult.unassigned` só vai para log e
 ## F — Fallbacks
 
 <a id="f1"></a>**F1 · Anchor `legacy` do MapControl** (média) —
-[planner.py:186](../bot/ego/planners/military/map_control/planner.py#L186). O antigo `Strategy._rally`
-continua como terceira fonte do anchor quando nenhuma passagem separa uma base nossa do start inimigo
-(`no_separating_passage`) ou quando a região não tem ponto do lattice (`anchor_unresolved`). Se a topologia
-degrada ([F2](#f2)), o bot joga com a heurística antiga e só o campo `fallback` de
-`behavior.map_control_planned` conta. Todas as medições registradas até hoje usaram o rally antigo, então
-ele é o comportamento de referência; depois que o anchor por passagem for medido, sai ou vira um caso raro
-com alerta.
+[planner.py:285](../bot/ego/planners/military/map_control/planner.py#L285). O antigo `Strategy._rally`
+continua como terceira fonte do anchor quando a política que controla não põe anchor: no `staging`, sem base
+localizada ou ponto do lattice nas regiões (`no_candidates`) ou sem caminho até o start inimigo
+(`no_enemy_route`); no `passage`, sem passagem que separe (`no_separating_passage`) ou sem ponto do lattice
+(`anchor_unresolved`). Se a topologia degrada ([F2](#f2)), o bot joga com a heurística antiga e só o campo
+`fallback` de `behavior.map_control_planned` conta. As medições até o `bench/ci-*` usaram o rally antigo ou a
+passagem; depois que o `staging` for medido num bench, o `legacy` sai ou vira um caso raro com alerta.
 
 <a id="f2"></a>**F2 · Topologia que degrada em silêncio** (média) —
 [map.py:102](../bot/attention/map.py#L102), [topology.py:971-984](../bot/attention/topology.py#L971-L984).
@@ -408,7 +407,7 @@ ficar.
    estruturas à parte). Mexe em Defense e Strategy ao mesmo tempo, então precisa de bench.
 3. **C6:** a Defense lê `GrantStatus`, e um déficit vira sinal (para a Strategy ou para a própria missão).
 4. **I9, I10:** MULE na abertura e o latch de cloak, cada um com a sua medição de economia.
-5. **C1 + F1 + F2:** o campo entra no score da passagem, ou deixa de ser calculado sem observador; a
-   degradação da topologia vira razão explícita.
+5. **C1 + F1 + F2:** o campo já entra no score do anchor (`staging`); falta calculá-lo só onde é lido, ou
+   sem observador; a degradação da topologia vira razão explícita.
 6. **Limpeza de uma vez:** C13, L1–L7, I6, I7 e I8. Não mudam decisão, exceto I8, que muda o que um bench
    mede.

@@ -486,6 +486,19 @@ function grantText(g) {
   return `${g.proposal_id} ${asked}${g.status && g.status !== "FULL" ? ` ${g.status} (${g.reason})` : ""}`;
 }
 
+function mapControlText(d) {
+  // Why the free army stands here: the choice, its terms and the runner-up.
+  const head = `source=${d.source} anchor=${xy(d.anchor)} region=${d.region ?? "—"} passage=${d.passage ?? "—"}${d.fallback ? ` fallback=${d.fallback}` : ""}`;
+  const staging = d.staging;
+  const shadow = d.shadow;
+  const beside = shadow ? `  ${shadow.policy} ${xy(shadow.anchor)}${shadow.passage ? ` ${shadow.passage}` : ""} at ${fmt(shadow.distance, 1)}` : "";
+  if (!staging) return head + beside;
+  const s = staging.selected;
+  const next = (staging.top || []).find((point) => point.region !== s.region);
+  const runnerUp = next ? `  next ${next.region} ${fmt(next.score, 3)} (Δ${fmt(s.score - next.score, 3)})` : "";
+  return `${head}  ${staging.switch} since ${formatTime(staging.since)}  score=${fmt(s.score, 3)} = −reaction ${fmt(s.reaction, 3)} + choke ${fmt(s.choke, 3)} − exposure ${fmt(s.exposure, 3)}  worst=${s.worst_base} ${fmt(s.worst, 0)} mean=${fmt(s.mean, 0)} front=${fmt(s.front, 0)}  threat=${fmt(s.threat)} support=${fmt(s.support)} control=${fmt(s.control)}${runnerUp}${beside}`;
+}
+
 function fieldsFor(record) {
   const d = record.data || {};
   switch (record.event) {
@@ -502,7 +515,7 @@ function fieldsFor(record) {
     case "behavior.proposed":
       return (d.proposals || []).map((p) => `${p.proposal_id} p=${fmt(p.priority)} n=${p.minimum_power != null ? `≥${fmt(p.minimum_power, 1)}pw` : p.count ?? "all"}`).join("  ");
     case "behavior.map_control_planned":
-      return `source=${d.source} anchor=${xy(d.anchor)} passage=${d.passage ?? "—"} region=${d.region ?? "—"}${d.fallback ? ` fallback=${d.fallback}` : ""} candidates=${d.candidate_count}`;
+      return mapControlText(d);
     case "behavior.offense_planned":
       return `stage=${d.stage} previous=${d.previous} blocked_by=${d.blocked_by ?? "—"} target=${d.target_kind ?? "—"} ${xy(d.target)} committed=${fmt(d.committed_power, 1)}${d.mission_id ? ` mission=${d.mission_id} ${d.mission_status}` : ""}`;
     case "behavior.missions_updated":

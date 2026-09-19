@@ -22,7 +22,12 @@ from bot.body.behaviors.economy import SpawnMode
 from bot.body.engine import EngineResult, rank
 from bot.ego.missions import MissionView
 from bot.ego.planners import DetectionPlan, EconomyPlan, Proposal, StructurePlan
-from bot.ego.planners.military.map_control import MapControlPlan, PassageCandidate
+from bot.ego.planners.military.map_control import (
+    MapControlPlan,
+    PassageCandidate,
+    StagingPlan,
+    StagingPoint,
+)
 from bot.ego.planners.military.offense import LocalFight, OffensePlan
 from bot.ego.strategy import StrategyState
 
@@ -35,6 +40,8 @@ ATTENTION_HEARTBEAT = 5.0
 COMMAND_TARGET_CELL = 3.0
 TOP_CONTACTS = 8
 TOP_PASSAGES = 8
+# The staging terms move with the field every frame: sampled, not change-logged.
+MAP_CONTROL_HEARTBEAT = 30.0
 
 
 class Telemetry:
@@ -44,7 +51,7 @@ class Telemetry:
         self._attention = ChangeGate(heartbeat=ATTENTION_HEARTBEAT)
         self._awareness = ChangeGate(heartbeat=heartbeat)
         self._strategy = ChangeGate(heartbeat=heartbeat)
-        self._map_control = ChangeGate()
+        self._map_control = ChangeGate(heartbeat=MAP_CONTROL_HEARTBEAT)
         self._offense = ChangeGate()
         self._missions = ChangeGate()
         self._economy = ChangeGate()
@@ -81,9 +88,7 @@ class Telemetry:
                 "opening": opening,
                 "build": describe_build(),
                 "config_fingerprint": fingerprint(dict(configs)),
-                "configs": {
-                    name: fingerprint(config) for name, config in configs.items()
-                },
+                "configs": {name: fingerprint(config) for name, config in configs.items()},
                 "lattice": {
                     "samples": len(map_view.lattice),
                     "spacing": map_view.lattice_spacing,
@@ -113,8 +118,7 @@ class Telemetry:
                     reason: rejected.count(reason) for reason in sorted(set(rejected))
                 },
                 "region_splits": {
-                    split.region_id: list(split.into)
-                    for split in topology.region_splits
+                    split.region_id: list(split.into) for split in topology.region_splits
                 },
                 "candidates": [
                     {
@@ -252,9 +256,7 @@ class Telemetry:
                 "upgrades": sorted(upgrade.name for upgrade in attention.upgrades),
                 # Own structures by type, finished or not.
                 "structures": dict(
-                    sorted(
-                        Counter(s.type_id.name for s in attention.own_structures).items()
-                    )
+                    sorted(Counter(s.type_id.name for s in attention.own_structures).items())
                 ),
             },
         )
@@ -282,9 +284,7 @@ class Telemetry:
             now,
             {
                 "contacts": len(awareness.contacts),
-                "visible_contacts": sum(
-                    contact.visible for contact in awareness.contacts
-                ),
+                "visible_contacts": sum(contact.visible for contact in awareness.contacts),
                 "enemy_power": awareness.enemy_power,
                 "seen_enemy_power": awareness.seen_enemy_power,
                 "expected_enemy_power": awareness.expected_enemy_power,
@@ -343,9 +343,7 @@ class Telemetry:
         )
 
     def _record_strategy(self, strategy: StrategyState) -> None:
-        if not self._strategy.admit(
-            (strategy.objective, strategy.since), now=strategy.time
-        ):
+        if not self._strategy.admit((strategy.objective, strategy.since), now=strategy.time):
             return
         self._event(
             "strategy.decided",
@@ -353,9 +351,7 @@ class Telemetry:
             strategy.time,
             {
                 "objective": strategy.objective.value,
-                "previous": None
-                if strategy.previous is None
-                else strategy.previous.value,
+                "previous": None if strategy.previous is None else strategy.previous.value,
                 "since": strategy.since,
                 "reason": strategy.reason,
                 "defense": strategy.defense,
@@ -374,15 +370,17 @@ class Telemetry:
         )
 
     def _record_map_control(self, now: float, plan: MapControlPlan) -> None:
-        # The candidates only change with our bases: logged with the choice.
-        passage = plan.passage
+        # Every choice and every switch, and a heartbeat for the field's terms;
+        # the candidates only change with our bases.
+        staging = plan.staging
         signature = (
             plan.source,
             plan.reason,
-            None if passage is None else passage.passage_id,
             _cell(plan.anchor),
             plan.fallback,
-            tuple(candidate.passage_id for candidate in plan.candidates),
+            None if staging is None else (_cell(staging.selected.position), staging.since),
+            None if plan.passage.anchor is None else _cell(plan.passage.anchor),
+            tuple(candidate.passage_id for candidate in plan.passage.candidates),
         )
         if not self._map_control.admit(signature, now=now):
             return
@@ -394,13 +392,12 @@ class Telemetry:
                 "anchor": _xy(plan.anchor),
                 "source": plan.source,
                 "reason": plan.reason,
-                "passage": None if passage is None else passage.passage_id,
-                "region": None if passage is None else passage.region_id,
+                "policy": plan.policy,
                 "fallback": plan.fallback,
-                "candidates": [
-                    _passage(candidate) for candidate in plan.candidates[:TOP_PASSAGES]
-                ],
-                "candidate_count": len(plan.candidates),
+                "passage": plan.held_passage,
+                "region": plan.region,
+                "staging": None if staging is None else _staging(staging),
+                "shadow": _shadow(plan),
             },
         )
 
@@ -524,9 +521,7 @@ class Telemetry:
                         "unit_types": (
                             None
                             if proposal.unit_types is None
-                            else sorted(
-                                unit_type.name for unit_type in proposal.unit_types
-                            )
+                            else sorted(unit_type.name for unit_type in proposal.unit_types)
                         ),
                         "reason": proposal.reason,
                         "inputs": dict(proposal.inputs),
@@ -662,11 +657,7 @@ class Telemetry:
                         "reason": grant.reason,
                         "tags": list(grant.tags),
                         "types": dict(
-                            sorted(
-                                Counter(
-                                    types.get(tag, "?") for tag in grant.tags
-                                ).items()
-                            )
+                            sorted(Counter(types.get(tag, "?") for tag in grant.tags).items())
                         ),
                     }
                     for grant in result.grants
@@ -713,9 +704,7 @@ class Telemetry:
                     "target": _xy(proposal.target),
                     "tags": list(grant.tags),
                     "types": dict(
-                        sorted(
-                            Counter(types.get(tag, "?") for tag in grant.tags).items()
-                        )
+                        sorted(Counter(types.get(tag, "?") for tag in grant.tags).items())
                     ),
                     "priority": proposal.priority,
                     "reason": proposal.reason,
@@ -734,9 +723,7 @@ class Telemetry:
                         "enemy_power": awareness.enemy_power,
                     },
                     "attention": {
-                        "army_units": sum(
-                            1 for unit in attention.own_units if is_army(unit)
-                        ),
+                        "army_units": sum(1 for unit in attention.own_units if is_army(unit)),
                         "visible_enemy_units": len(attention.enemy_units),
                     },
                 },
@@ -770,20 +757,14 @@ class Telemetry:
             now,
             {
                 "frames": self._perf_frames,
-                "last_ms": {
-                    name: round(float(value), 3) for name, value in timings.items()
-                },
-                "max_ms": {
-                    name: round(value, 3) for name, value in self._perf_max.items()
-                },
+                "last_ms": {name: round(float(value), 3) for name, value in timings.items()},
+                "max_ms": {name: round(value, 3) for name, value in self._perf_max.items()},
             },
         )
         self._perf_frames = 0
         self._perf_max = {}
 
-    def _event(
-        self, name: str, component: str, time: float, data: dict[str, Any]
-    ) -> None:
+    def _event(self, name: str, component: str, time: float, data: dict[str, Any]) -> None:
         self.logger.event(name, component=component, game_time=time, data=data)
 
 
@@ -809,6 +790,68 @@ def _passage(candidate: PassageCandidate) -> dict[str, Any]:
         "quality": candidate.quality,
         "overextension": candidate.overextension,
         "score": candidate.score,
+    }
+
+
+def _staging(plan: StagingPlan) -> dict[str, Any]:
+    return {
+        "anchor": _xy(plan.selected.position),
+        "switch": plan.switch,
+        "since": plan.since,
+        "previous": None if plan.previous is None else _xy(plan.previous),
+        "objective": plan.objective.value,
+        "advance": plan.advance,
+        "scale": plan.scale,
+        "bases": plan.bases,
+        "candidate_count": plan.candidate_count,
+        "selected": _staging_point(plan.selected),
+        "top": [_staging_point(point) for point in plan.top],
+    }
+
+
+def _staging_point(point: StagingPoint) -> dict[str, Any]:
+    return {
+        "anchor": _xy(point.position),
+        "region": point.region_id,
+        "passage": point.passage_id,
+        "reaction": round(point.reaction, 4),
+        "worst": round(point.worst, 1),
+        "worst_base": point.worst_base,
+        "mean": round(point.mean, 1),
+        "front": round(point.front, 1),
+        "choke": round(point.choke, 4),
+        "threat": round(point.threat, 3),
+        "support": round(point.support, 3),
+        "control": round(point.control, 3),
+        "exposure": round(point.exposure, 4),
+        "score": round(point.score, 4),
+    }
+
+
+def _shadow(plan: MapControlPlan) -> dict[str, Any]:
+    """The policy that does not place the anchor, and how far its choice is
+    from the anchor."""
+
+    if plan.policy == "staging":
+        passage = plan.passage
+        held, anchor = passage.held, passage.anchor
+        return {
+            "policy": "passage",
+            "anchor": None if anchor is None else _xy(anchor),
+            "passage": None if held is None else held.passage_id,
+            "region": None if held is None else held.region_id,
+            "fallback": passage.fallback,
+            "distance": None if anchor is None else round(anchor.distance_to(plan.anchor), 2),
+            "candidates": [_passage(candidate) for candidate in passage.candidates[:TOP_PASSAGES]],
+            "candidate_count": len(passage.candidates),
+        }
+    point = None if plan.staging is None else plan.staging.selected
+    return {
+        "policy": "staging",
+        "anchor": None if point is None else _xy(point.position),
+        "passage": None if point is None else point.passage_id,
+        "region": None if point is None else point.region_id,
+        "distance": None if point is None else round(point.position.distance_to(plan.anchor), 2),
     }
 
 

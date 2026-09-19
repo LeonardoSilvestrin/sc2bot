@@ -1,6 +1,7 @@
 """MapControl: every army unit no one else needs, held at the anchor it
 chooses. No operation of its own, so no missions: `planner.MapControlPlanner`
-proposes directly, and `anchor` scores the passages it may hold."""
+proposes directly; `staging` scores where the free army reacts from, and
+`anchor` the single passage it held before, now kept beside it for comparison."""
 
 from .anchor import PassageCandidate
 from .planner import (
@@ -9,7 +10,9 @@ from .planner import (
     MapControlConfig,
     MapControlPlan,
     MapControlPlanner,
+    PassagePlan,
 )
+from .staging import StagingPlan, StagingPoint
 
 __all__ = [
     "MAP_CONTROL_PRIORITY",
@@ -18,4 +21,7 @@ __all__ = [
     "MapControlPlan",
     "MapControlPlanner",
     "PassageCandidate",
+    "PassagePlan",
+    "StagingPlan",
+    "StagingPoint",
 ]

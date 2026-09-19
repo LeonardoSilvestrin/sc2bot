@@ -287,7 +287,14 @@ def render_svg(
         )
     # Base labels sit right of their square and grant labels right of their
     # cross, so the anchor label goes left: the anchor is often on a base.
-    held = map_control.passage
+    held = next(
+        (
+            passage
+            for passage in attention.map.topology.passages
+            if passage.passage_id == map_control.held_passage
+        ),
+        None,
+    )
     if held is not None:
         px, py = projection.point(held.position)
         parts.append(
@@ -301,6 +308,18 @@ def render_svg(
                 extra=f'data-held-passage="{escape(held.passage_id)}"',
             )
         )
+    # The policy that does not place the anchor, hollow, for comparison.
+    shadow = (
+        map_control.passage.anchor
+        if map_control.policy == "staging"
+        else None
+        if map_control.staging is None
+        else map_control.staging.selected.position
+    )
+    if shadow is not None:
+        sx, sy = projection.point(shadow)
+        parts.append(_diamond(sx, sy, 6.0, fill="none", stroke="#9aa5b1"))
+        parts.append(_text(sx - 52, sy + 16, "SHADOW", "tiny"))
     x, y = projection.point(map_control.anchor)
     parts.append(_diamond(x, y, 7.0, fill="#ffffff"))
     parts.append(_text(x - 52, y - 10, "ANCHOR", "label"))
@@ -530,7 +549,7 @@ def _text(x, y, value: str, css_class: str) -> str:
     return f'<text x="{_number(x)}" y="{_number(y)}" class="{css_class}">{escape(value)}</text>'
 
 
-def _diamond(x, y, radius, *, fill) -> str:
+def _diamond(x, y, radius, *, fill, stroke="#11161d") -> str:
     points = " ".join(
         f"{_number(px)},{_number(py)}"
         for px, py in (
@@ -540,4 +559,4 @@ def _diamond(x, y, radius, *, fill) -> str:
             (x - radius, y),
         )
     )
-    return f'<polygon points="{points}" fill="{fill}" stroke="#11161d"/>'
+    return f'<polygon points="{points}" fill="{fill}" stroke="{stroke}"/>'

@@ -1,4 +1,7 @@
-"""Which passage the free army holds, read from the static topology alone.
+"""Which single passage the free army would hold, read from the static
+topology alone: the policy before `staging`, kept beside it for comparison
+(`MapControlConfig.policy` picks which one places the anchor). `reached` is
+shared: `staging` asks it which bases a passage guards.
 
 A passage is a candidate when it separates: with it closed, some of our bases
 the enemy start reaches today can no longer be reached. Its score is
@@ -28,8 +31,7 @@ The anchor is where the army stands to hold the passage: `setback` cells from
 it toward the center of the region on our side, snapped to the nearest lattice
 point of that region, so it is pathable and on our side.
 
-Nothing here reads Awareness: whether holding a passage is safe right now is a
-later term of the score.
+Nothing here reads Awareness.
 """
 
 from __future__ import annotations
@@ -83,16 +85,16 @@ def candidates(
     ]
     links: Mapping[str, tuple[tuple[str, str], ...]] = dict(topology.adjacency)
     # A base the enemy cannot reach by ground today is shut off by no passage.
-    open_map = _reached(links, enemy, closed=None)
+    open_map = reached(links, enemy)
     owned = [(base, region) for base, region in owned if region in open_map]
     if not owned:
         return ()
     reach = config.reach_share * max(1.0, map_view.own_start.distance_to(map_view.enemy_start))
     found: list[PassageCandidate] = []
     for passage in topology.passages:
-        reached = _reached(links, enemy, closed=passage.passage_id)
-        protected = [base for base, region in owned if region not in reached]
-        side = next((region for region in passage.regions if region not in reached), None)
+        cut = reached(links, enemy, closed=passage.passage_id)
+        protected = [base for base, region in owned if region not in cut]
+        side = next((region for region in passage.regions if region not in cut), None)
         if not protected or side is None:
             continue
         found.append(
@@ -133,16 +135,16 @@ def anchor_of(map_view: MapView, candidate: PassageCandidate, setback: float) ->
     return min(points, key=lambda point: (point.distance_to(goal), point.x, point.y))
 
 
-def _reached(
-    links: Mapping[str, tuple[tuple[str, str], ...]], start: str, *, closed: str | None
+def reached(
+    links: Mapping[str, tuple[tuple[str, str], ...]], start: str, *, closed: str | None = None
 ) -> frozenset[str]:
     """The regions reached from `start` without crossing the passage `closed`."""
 
-    reached = {start}
+    found = {start}
     frontier = deque([start])
     while frontier:
         for neighbour, passage_id in links.get(frontier.popleft(), ()):
-            if passage_id != closed and neighbour not in reached:
-                reached.add(neighbour)
+            if passage_id != closed and neighbour not in found:
+                found.add(neighbour)
                 frontier.append(neighbour)
-    return frozenset(reached)
+    return frozenset(found)
