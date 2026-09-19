@@ -16,11 +16,18 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from sc2.ids.unit_typeid import UnitTypeId
+
 from bot.attention import AttentionState
 from bot.body.engine import EngineResult
-from bot.ego.planners import Command, DetectionPlan, EconomyPlan, StructurePlan
+from bot.ego.planners import (
+    Command,
+    EconomyPlan,
+    IntelPlan,
+    StructurePlan,
+)
 
-from . import attack, detection, economy, hold, retreat, scout, structure_control
+from . import attack, detection, economy, hold, retreat, scout, sensor_towers, structure_control
 
 # The behavior that carries out each command with the units granted to it,
 # whichever planner proposed it.
@@ -38,6 +45,7 @@ class BodyReport:
     spawn: economy.SpawnMode
     micro: attack.MicroReport
     detection: detection.DetectionReport = detection.DetectionReport()
+    sensor_towers: sensor_towers.SensorTowerReport = sensor_towers.SensorTowerReport()
 
 
 def execute(
@@ -46,19 +54,26 @@ def execute(
     result: EngineResult,
     economy_plan: EconomyPlan,
     structures: StructurePlan,
-    detection_plan: DetectionPlan | None = None,
+    intel_plan: IntelPlan | None = None,
 ) -> BodyReport:
     economy.release_workers(bot, attention, result)
     micro = command_units(bot, result)
     detected = detection.DetectionReport()
     reserve = 0.0
-    if detection_plan is not None:
-        detected = detection.execute(bot, detection_plan)
-        reserve = detection_plan.energy_reserve
+    if intel_plan is not None:
+        detected = detection.execute(bot, intel_plan.detection)
+        reserve = intel_plan.detection.energy_reserve
+    towers = sensor_towers.SensorTowerReport()
+    if intel_plan is not None:
+        towers = sensor_towers.execute(
+            bot,
+            intel_plan.sensor_towers,
+            engineering_bay_busy=UnitTypeId.ENGINEERINGBAY.name in detected.building,
+        )
     busy = frozenset(() if detected.scanned_by is None else (detected.scanned_by,))
     spawn = economy.execute(bot, economy_plan, energy_reserve=reserve, busy=busy)
     structure_control.execute(bot, structures)
-    return BodyReport(spawn=spawn, micro=micro, detection=detected)
+    return BodyReport(spawn=spawn, micro=micro, detection=detected, sensor_towers=towers)
 
 
 def command_units(bot, result: EngineResult) -> attack.MicroReport:

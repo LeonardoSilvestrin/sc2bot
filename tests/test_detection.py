@@ -20,7 +20,7 @@ from bot.awareness import AwarenessModel
 from bot.body.behaviors import detection as detection_behavior
 from bot.body.behaviors import economy as economy_behavior
 from bot.ego.planners import DetectionPlan
-from bot.ego.planners.control.detection import Detection, DetectionConfig
+from bot.ego.planners.intel.detection import Detection, DetectionConfig
 from bot.logs import Logs
 from bot.main import Layers, play_frame
 

@@ -19,9 +19,17 @@ from bot.awareness import AwarenessState
 from bot.body.behaviors.attack import MicroReport
 from bot.body.behaviors.detection import DetectionReport
 from bot.body.behaviors.economy import SpawnMode
+from bot.body.behaviors.sensor_towers import SensorTowerReport
 from bot.body.engine import EngineResult, rank
 from bot.ego.missions import MissionView
-from bot.ego.planners import DetectionPlan, EconomyPlan, Proposal, StructurePlan
+from bot.ego.planners import (
+    DetectionPlan,
+    EconomyPlan,
+    IntelPlan,
+    Proposal,
+    SensorTowerPlan,
+    StructurePlan,
+)
 from bot.ego.planners.military.map_control import (
     MapControlPlan,
     PassageCandidate,
@@ -59,6 +67,7 @@ class Telemetry:
         self._escorts = ChangeGate()
         self._structures = ChangeGate()
         self._detection = ChangeGate()
+        self._sensor_towers = ChangeGate()
         self._perf = ChangeGate(heartbeat=heartbeat)
         self._proposals = ChangeGate()
         self._grants = ChangeGate()
@@ -155,8 +164,9 @@ class Telemetry:
         micro: MicroReport,
         timings: Mapping[str, float],
         *,
-        detection: DetectionPlan | None = None,
+        intel: IntelPlan | None = None,
         detected: DetectionReport | None = None,
+        tower_building: SensorTowerReport | None = None,
         missions: Sequence[MissionView] = (),
     ) -> None:
         self._record_attention(attention)
@@ -170,8 +180,15 @@ class Telemetry:
         self._record_spawn(attention.time, spawn)
         self._record_micro(attention.time, micro)
         self._record_structures(attention.time, structures)
-        if detection is not None:
-            self._record_detection(attention.time, detection, detected or DetectionReport())
+        if intel is not None:
+            self._record_detection(
+                attention.time, intel.detection, detected or DetectionReport()
+            )
+            self._record_sensor_towers(
+                attention.time,
+                intel.sensor_towers,
+                tower_building or SensorTowerReport(),
+            )
         self._record_grants(attention, result)
         self._record_commands(attention, awareness, strategy, result)
         self._record_perf(attention.time, timings)
@@ -206,6 +223,32 @@ class Telemetry:
                 "inputs": dict(detection.inputs),
                 "scanned_by": detected.scanned_by,
                 "building": list(detected.building),
+            },
+        )
+
+    def _record_sensor_towers(
+        self, now: float, plan: SensorTowerPlan, report: SensorTowerReport
+    ) -> None:
+        signature = (plan.sites, plan.engineering_bay, plan.reason, report.building)
+        if not self._sensor_towers.admit(signature, now=now):
+            return
+        self._event(
+            "behavior.sensor_towers_planned",
+            "behaviors",
+            now,
+            {
+                "sites": [
+                    {
+                        "base_id": site.base_id,
+                        "base": _xy(site.base),
+                        "target": _xy(site.target),
+                    }
+                    for site in plan.sites
+                ],
+                "engineering_bay": plan.engineering_bay,
+                "reason": plan.reason,
+                "inputs": dict(plan.inputs),
+                "building": list(report.building),
             },
         )
 

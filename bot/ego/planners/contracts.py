@@ -3,7 +3,8 @@
 - `Proposal`, with its `Command` and `Domain`: what a military planner asks
   the Engine for.
 - `EconomyPlan`: what Ares' macro behaviors should buy.
-- `StructurePlan` and `DetectionPlan`: which structure or ability acts.
+- `StructurePlan`: which existing structure acts.
+- `IntelPlan`: scouting proposals, detection and information infrastructure.
 """
 
 from __future__ import annotations
@@ -158,3 +159,35 @@ class DetectionPlan:
     energy_reserve: float
     reason: str
     inputs: tuple[tuple[str, float], ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class SensorTowerSite:
+    """A Sensor Tower wanted for one owned base.
+
+    ``base`` selects that base's Ares placement set; ``target`` biases the
+    placement toward the exposed side of the base.
+    """
+
+    base_id: str
+    base: Point2
+    target: Point2
+
+
+@dataclass(frozen=True, slots=True)
+class SensorTowerPlan:
+    # Sites which do not have a Sensor Tower yet (unfinished towers count).
+    sites: tuple[SensorTowerSite, ...]
+    # Sensor Towers require an Engineering Bay.
+    engineering_bay: bool
+    reason: str
+    inputs: tuple[tuple[str, float], ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class IntelPlan:
+    """Everything the Intel domain asks the Body to do this frame."""
+
+    proposals: tuple[Proposal, ...]
+    detection: DetectionPlan
+    sensor_towers: SensorTowerPlan

@@ -16,9 +16,15 @@ from bot.awareness import AwarenessState
 from bot.body.behaviors.attack import MicroReport
 from bot.body.behaviors.detection import DetectionReport
 from bot.body.behaviors.economy import SpawnMode
+from bot.body.behaviors.sensor_towers import SensorTowerReport
 from bot.body.engine import EngineResult
 from bot.ego.missions import MissionView
-from bot.ego.planners import DetectionPlan, EconomyPlan, Proposal, StructurePlan
+from bot.ego.planners import (
+    EconomyPlan,
+    IntelPlan,
+    Proposal,
+    StructurePlan,
+)
 from bot.ego.planners.military.map_control import MapControlPlan
 from bot.ego.planners.military.offense import OffensePlan
 from bot.ego.strategy import StrategyState
@@ -87,8 +93,9 @@ class Logs:
         micro: MicroReport,
         timings: Mapping[str, float],
         *,
-        detection: DetectionPlan | None = None,
+        intel: IntelPlan | None = None,
         detected: DetectionReport | None = None,
+        tower_building: SensorTowerReport | None = None,
         missions: Sequence[MissionView] = (),
     ) -> None:
         started = perf_counter()
@@ -107,8 +114,9 @@ class Logs:
                 spawn,
                 micro,
                 {**timings, "logs": self._last_ms},
-                detection=detection,
+                intel=intel,
                 detected=detected,
+                tower_building=tower_building,
                 missions=missions,
             )
             self.snapshots.capture(attention, awareness, strategy, map_control, result)

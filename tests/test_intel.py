@@ -8,11 +8,17 @@ from ares.consts import UnitRole
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
+from bot.attention import BaseView
+from bot.awareness import AwarenessModel
 from bot.body import behaviors
+from bot.body.behaviors import sensor_towers as sensor_tower_behavior
 from bot.body.engine import Engine
-from bot.ego.planners import Command, EconomyPlan, Proposal, StructurePlan
-from bot.ego.planners.military import intel
-from bot.ego.planners.military.intel import IntelPlanner, scouting_route
+from bot.ego.planners import Command, EconomyPlan, Proposal, StructurePlan, intel
+from bot.ego.planners.intel import IntelPlanner, scouting_route
+from bot.ego.planners.intel.missions.sensor_towers import (
+    MIN_BASES,
+    SITE_COVER_RADIUS,
+)
 
 from .fakes import LATTICE, MAP, SIZE, TOPOLOGY, FakeBot, FakeUnit, attention, seen_everywhere, unit
 
@@ -53,12 +59,17 @@ def frame(time: float, *, own_units=(), visible=(), workers=16, visibility=None)
     )
 
 
+def intel_step(planner: IntelPlanner, state):
+    return planner.plan(state, AwarenessModel().infer(state))
+
+
 def test_no_scout_before_the_mineral_line_grows() -> None:
-    assert IntelPlanner().plan(frame(30.0, workers=intel.SCOUT_AT_WORKERS - 1)) == ()
+    state = frame(30.0, workers=intel.SCOUT_AT_WORKERS - 1)
+    assert intel_step(IntelPlanner(), state).proposals == ()
 
 
 def test_the_scout_asks_for_one_scv_and_goes_to_the_enemy_start_first() -> None:
-    (proposal,) = IntelPlanner().plan(frame(50.0))
+    (proposal,) = intel_step(IntelPlanner(), frame(50.0)).proposals
 
     assert proposal.owner == intel.OWNER
     assert proposal.command is Command.SCOUT
@@ -86,39 +97,43 @@ def test_the_scout_follows_the_route_as_it_comes_into_vision_then_goes_home() ->
     route = scouting_route(MAIN_MAP)
     scout = scv(100, 50, 50, role=SCOUTING)
 
-    model.plan(frame(50.0))
-    (proposal,) = model.plan(frame(60.0, own_units=(scout,), visible=route[:2]))
+    intel_step(model, frame(50.0))
+    (proposal,) = intel_step(model, frame(60.0, own_units=(scout,), visible=route[:2])).proposals
     assert proposal.target == route[2]
     assert proposal.reason == "lap_enemy_main"
     assert proposal.priority == (len(route) - 2) / len(route)
 
-    assert model.plan(frame(70.0, own_units=(scout,), visibility=seen_everywhere())) == ()
+    assert not intel_step(
+        model, frame(70.0, own_units=(scout,), visibility=seen_everywhere())
+    ).proposals
     assert model.finished == "route_seen"
 
 
 def test_a_lost_scout_is_not_replaced() -> None:
     model = IntelPlanner()
-    model.plan(frame(50.0))
-    model.plan(frame(51.0, own_units=(scv(100, role=SCOUTING),)))
+    intel_step(model, frame(50.0))
+    intel_step(model, frame(51.0, own_units=(scv(100, role=SCOUTING),)))
 
-    assert model.plan(frame(60.0, own_units=(scv(101),))) == ()
+    assert not intel_step(model, frame(60.0, own_units=(scv(101),))).proposals
     assert model.finished == "scout_lost"
-    assert model.plan(frame(61.0, own_units=(scv(101),))) == ()
+    assert not intel_step(model, frame(61.0, own_units=(scv(101),))).proposals
 
 
 def test_a_scout_that_cannot_finish_the_lap_goes_home() -> None:
     model = IntelPlanner()
     scout = scv(100, role=SCOUTING)
-    model.plan(frame(50.0, own_units=(scout,)))
+    intel_step(model, frame(50.0, own_units=(scout,)))
 
-    assert model.plan(frame(50.0 + intel.LAP_TIMEOUT, own_units=(scout,))) == ()
+    assert not intel_step(
+        model, frame(50.0 + intel.LAP_TIMEOUT, own_units=(scout,))
+    ).proposals
     assert model.finished == "lap_timed_out"
 
 
 def test_no_scout_once_the_early_game_is_over() -> None:
     model = IntelPlanner()
 
-    assert model.plan(frame(intel.START_BY)) == ()
+    assert intel_step(model, frame(intel.START_BY)).proposals == ()
     assert model.finished == "too_late"
 
 
@@ -192,3 +207,94 @@ def test_the_scout_leaves_mining_and_goes_back_when_no_one_holds_it() -> None:
     behaviors.execute(bot, scouting, engine.allocate(scouting, ()), economy, structures)
 
     assert bot.mediator.role_of(100) == GATHERING
+
+
+def four_bases() -> tuple[BaseView, ...]:
+    return (
+        BaseView("main", Point2((10.5, 10.5)), True),
+        BaseView("natural", Point2((22.5, 12.5)), False),
+        BaseView("third", Point2((34.5, 20.5)), False),
+        BaseView("outer", Point2((48.5, 36.5)), False),
+    )
+
+
+def test_sensor_tower_mission_opens_at_four_bases_and_selects_main_and_outermost() -> None:
+    planner = IntelPlanner()
+
+    before = intel_step(planner, attention(time=300.0, bases=four_bases()[: MIN_BASES - 1]))
+    assert planner.sensor_mission is None
+    assert before.sensor_towers.sites == ()
+
+    plan = intel_step(planner, attention(time=301.0, bases=four_bases())).sensor_towers
+
+    assert planner.sensor_mission is not None
+    assert [site.base_id for site in plan.sites] == ["main", "outer"]
+    assert plan.engineering_bay
+    assert plan.sites[0].target.distance_to(MAP.enemy_start) < plan.sites[0].base.distance_to(
+        MAP.enemy_start
+    )
+    assert {view.kind for view in planner.views()} == {"sensor_towers"}
+
+
+def test_sensor_tower_mission_maintains_missing_sites_without_using_awareness() -> None:
+    planner = IntelPlanner()
+    ebay = unit(
+        20,
+        UnitTypeId.ENGINEERINGBAY,
+        structure=True,
+        power=0.0,
+        ready=False,
+    )
+    initial = intel_step(
+        planner, attention(time=300.0, bases=four_bases(), own_structures=(ebay,))
+    ).sensor_towers
+    main_site, outer_site = initial.sites
+    main_tower = unit(
+        21,
+        UnitTypeId.SENSORTOWER,
+        main_site.target.x + SITE_COVER_RADIUS,
+        main_site.target.y,
+        structure=True,
+        power=0.0,
+        ready=False,
+    )
+
+    result = intel_step(
+        planner,
+        attention(
+            time=301.0,
+            bases=four_bases(),
+            own_structures=(ebay, main_tower),
+        )
+    )
+
+    plan = result.sensor_towers
+    assert plan.sites == (outer_site,)
+    assert not plan.engineering_bay
+    assert plan.reason == "sensor_tower_needed"
+
+
+def test_sensor_tower_behavior_builds_prerequisite_then_the_first_site() -> None:
+    planner = IntelPlanner()
+    first_plan = intel_step(planner, attention(time=300.0, bases=four_bases()))
+    bot = FakeBot()
+
+    report = sensor_tower_behavior.execute(bot, first_plan.sensor_towers)
+    (ebay,) = bot.registered
+    assert ebay.structure_id is UnitTypeId.ENGINEERINGBAY
+    assert report.building == ("ENGINEERINGBAY",)
+
+    existing_ebay = unit(20, UnitTypeId.ENGINEERINGBAY, structure=True, power=0.0)
+    second_plan = intel_step(
+        planner,
+        attention(time=301.0, bases=four_bases(), own_structures=(existing_ebay,)),
+    )
+    bot.registered = []
+    report = sensor_tower_behavior.execute(bot, second_plan.sensor_towers)
+
+    (tower,) = bot.registered
+    first = second_plan.sensor_towers.sites[0]
+    assert tower.structure_id is UnitTypeId.SENSORTOWER
+    assert tower.closest_to == first.target
+    assert tower.sensor_tower and not tower.production and not tower.find_alternative
+    assert report.building == ("SENSORTOWER",)

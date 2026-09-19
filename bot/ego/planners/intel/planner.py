@@ -1,15 +1,4 @@
-"""IntelPlanner: whether to scout. How the scout goes is
-`missions.scout.ScoutMission`.
-
-A scouting operation opens once the mineral line reaches `SCOUT_AT_WORKERS`
-and before `START_BY`. The planner asks a scout that has not set out yet to
-cancel if the mineral line falls back below the mark (a new one opens once it
-is back) or once `START_BY` passes. A scout that set out is never replaced:
-whatever ends it, scouting is over.
-
-A waypoint counts as seen the first time it is in vision, whether a scout is
-out or not: the planner keeps the route and that memory from the first frame.
-"""
+"""Intel: scouting, detection and persistent information infrastructure."""
 
 from __future__ import annotations
 
@@ -19,50 +8,75 @@ from typing import TYPE_CHECKING
 from sc2.position import Point2
 
 from bot.attention import AttentionState, MapView
-from bot.ego.missions import (
-    CancelMode,
-    MissionFeedback,
-    MissionView,
-)
-from bot.ego.planners import Proposal
+from bot.awareness import AwarenessState
+from bot.ego.missions import CancelMode, MissionFeedback, MissionView
+from bot.ego.planners import IntelPlan, Proposal, SensorTowerPlan
 
+from .detection import Detection, DetectionConfig
 from .missions.scout import KIND, OWNER, ScoutMission
+from .missions.sensor_towers import MIN_BASES, SensorTowerMission
 
 if TYPE_CHECKING:
     from bot.body.engine import EngineResult
 
-
-# Right after the opening's first Barracks.
 SCOUT_AT_WORKERS = 16
-# Past this, a first look at the main is no longer early-game information.
 START_BY = 240.0
 LAP_SECTORS = 8
-# A scout cancelled for this before setting out leaves scouting open.
 _REOPENS = "workers_below_threshold"
 
 
 class IntelPlanner:
-    def __init__(self) -> None:
+    def __init__(self, detection_config: DetectionConfig | None = None) -> None:
+        self.detection = Detection(detection_config)
         self.route: tuple[Point2, ...] = ()
-        # The route's waypoints seen so far, by index.
         self.seen: set[int] = set()
         self.mission: ScoutMission | None = None
-        # Why scouting is over; None while it is not.
         self.finished: str | None = None
         self._opened = 0
         self._views: tuple[MissionView, ...] = ()
+        self.sensor_mission: SensorTowerMission | None = None
 
     def views(self) -> tuple[MissionView, ...]:
-        """The missions this frame's `plan` governed, as they left it."""
-
         return self._views
 
     def plan(
-        self, attention: AttentionState, feedback: EngineResult | None = None
-    ) -> tuple[Proposal, ...]:
-        """`feedback`: the last `EngineResult`, or None before the first."""
+        self,
+        attention: AttentionState,
+        awareness: AwarenessState,
+        feedback: EngineResult | None = None,
+    ) -> IntelPlan:
+        views: list[MissionView] = []
+        proposals = self._plan_scout(attention, feedback, views)
+        sensor_towers = self._plan_sensor_towers(attention, views)
+        self._views = tuple(views)
+        return IntelPlan(
+            proposals=proposals,
+            detection=self.detection.plan(attention, awareness),
+            sensor_towers=sensor_towers,
+        )
 
-        self._views = ()
+    def _plan_sensor_towers(
+        self, attention: AttentionState, views: list[MissionView]
+    ) -> SensorTowerPlan:
+        if self.sensor_mission is None and len(attention.bases) >= MIN_BASES:
+            self.sensor_mission = SensorTowerMission(f"{OWNER}:sensor_towers:1", attention.time)
+        if self.sensor_mission is None:
+            return SensorTowerPlan(
+                (),
+                False,
+                "fewer_than_four_bases",
+                (("bases", float(len(attention.bases))), ("required_bases", float(MIN_BASES))),
+            )
+        plan = self.sensor_mission.step(attention)
+        views.append(self.sensor_mission.view())
+        return plan
+
+    def _plan_scout(
+        self,
+        attention: AttentionState,
+        feedback: EngineResult | None,
+        views: list[MissionView],
+    ) -> tuple[Proposal, ...]:
         if self.finished is not None:
             return ()
         if not self.route:
@@ -93,7 +107,7 @@ class IntelPlanner:
                     mission.request_cancel(CancelMode.IMMEDIATE, _REOPENS, now)
         granted = MissionFeedback.of(feedback, mission.mission_id)
         proposals = mission.step(attention, frozenset(self.seen), granted)
-        self._views = (mission.view(granted, proposals),)
+        views.append(mission.view(granted, proposals))
         if not mission.active:
             self.mission = None
             if mission.reason != _REOPENS:
@@ -101,11 +115,7 @@ class IntelPlanner:
         return proposals
 
 
-
 def scouting_route(map_view: MapView) -> tuple[Point2, ...]:
-    """The enemy start, then the farthest sample of its region per sector,
-    counter-clockwise from the direction of our own start."""
-
     start = map_view.enemy_start
     topology = map_view.topology
     region = (

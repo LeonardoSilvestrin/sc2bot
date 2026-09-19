@@ -93,7 +93,7 @@ architecture.md diz que a Strategy "pode recebê-lo quando precisar"; hoje ningu
 lê: as partes de um incidente "compartilham um orçamento" só no log. Ver [I14](#i14).
 
 <a id="c9"></a>**C9 · Prioridade do scout** (baixa) —
-[scout.py:106](../bot/ego/planners/military/intel/missions/scout.py#L106). Workers são um pool à parte no
+[scout.py:106](../bot/ego/planners/intel/missions/scout.py#L106). Workers são um pool à parte no
 Engine; o próprio docstring da missão diz que a prioridade "só ordena o log".
 
 <a id="c10"></a>**C10 · `MapControlPlan` além do anchor** (baixa) — `candidates`, `source`, `fallback`, os
@@ -140,7 +140,7 @@ MapAnalyzer, cada componente caminhável vira uma região `transit:N`
 níveis: região direta, expansão a ≤ max(3, espaçamento), BFS no grid, centro mais próximo
 ([topology.py:286](../bot/attention/topology.py#L286)). A jusante, o MapControl fica sem candidatas e cai no
 `legacy`, e a rota do scout vira só o start
-([intel/planner.py:117](../bot/ego/planners/military/intel/planner.py#L117)). Nada falha; só as contagens de
+([intel/planner.py:117](../bot/ego/planners/intel/planner.py#L117)). Nada falha; só as contagens de
 `map.topology_built` mostram. Direção: uma razão de degradação no evento e um teste que falhe quando o
 MapAnalyzer não responde num mapa do pool.
 
@@ -344,17 +344,17 @@ propósito, mas nenhuma medição sustenta segurar o MULE nesse intervalo.
 [model.py:280-282](../bot/awareness/model.py#L280-L282). `cloak_seen_at` é gravado com qualquer unidade de
 exército inimiga camuflada **ou enterrada**, detectada ou não, e nunca volta a `None`. Daí em diante toda base
 pede Missile Turret, pede-se uma Engineering Bay, e cada Orbital guarda 50 de energia
-([detection.py:105](../bot/ego/planners/control/detection.py#L105)), um MULE a menos por Orbital. Isso dura
+([detection.py:105](../bot/ego/planners/intel/detection.py#L105)), um MULE a menos por Orbital. Isso dura
 até o fim do jogo, disparado por uma única unidade vista enterrada (uma Widow Mine de um Terran basta). É um
 latch, não uma crença que decai ou que separa um exército camuflado de uma unidade que se enterrou uma vez.
 
 <a id="i11"></a>**I11 · Scan contado antes de acontecer** (baixa) —
-[detection.py:86](../bot/ego/planners/control/detection.py#L86). O planner registra o scan em `_scans` ao
+[detection.py:86](../bot/ego/planners/intel/detection.py#L86). O planner registra o scan em `_scans` ao
 planejá-lo; se o Body não escanear, a área conta como coberta por 12,3 s. Hoje os dois filtros de Orbital
 são iguais e o caso não acontece. `DetectionReport.scanned_by` existe, e o planner não o lê.
 
 <a id="i12"></a>**I12 · Scout reconhecido pelo role** (baixa) — `_scouting`
-([scout.py:145](../bot/ego/planners/military/intel/missions/scout.py#L145)) aceita qualquer SCV com role
+([scout.py:145](../bot/ego/planners/intel/missions/scout.py#L145)) aceita qualquer SCV com role
 `SCOUTING`, não a tag que o Engine concedeu à missão (o `MissionFeedback` é ignorado, [C6](#c6)). Hoje nada
 mais dá esse role; um segundo uso de `SCOUTING` faria a missão acreditar no scout errado. `observe` roda duas
 vezes por frame, uma no planner e outra em `step`.

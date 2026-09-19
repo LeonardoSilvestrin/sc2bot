@@ -20,9 +20,9 @@ from bot.ego.missions import (
     MissionStatus,
 )
 from bot.ego.planners import Command, Proposal
+from bot.ego.planners.intel import SCOUT_AT_WORKERS, START_BY, IntelPlanner, ScoutMission
 from bot.ego.planners.military import defense
 from bot.ego.planners.military.defense import DefensePlanner
-from bot.ego.planners.military.intel import SCOUT_AT_WORKERS, START_BY, IntelPlanner, ScoutMission
 from bot.ego.planners.military.offense import OWNER, MainAttackMission, Stage
 from bot.ego.planners.military.offense.missions.main_attack import OffenseContext
 from bot.ego.strategy import Objective, Posture, StrategyModel
@@ -31,7 +31,7 @@ from bot.main import Layers, play_frame
 
 from .fakes import MAIN, MAP, FakeLogger, FakeUnit, attention, unit
 from .test_frame_flow import build_bot
-from .test_intel import SCOUTING, frame, scv
+from .test_intel import SCOUTING, frame, intel_step, scv
 from .test_offense import (
     CONFIG,
     MAXED,
@@ -501,23 +501,23 @@ def test_the_whole_frame_flow_replays_to_the_same_missions() -> None:
 def test_the_intel_planner_opens_one_scout_and_the_mission_carries_it() -> None:
     planner = IntelPlanner()
 
-    assert planner.plan(frame(30.0, workers=SCOUT_AT_WORKERS - 1)) == ()
+    assert intel_step(planner, frame(30.0, workers=SCOUT_AT_WORKERS - 1)).proposals == ()
     assert planner.mission is None
 
-    (asked,) = planner.plan(frame(50.0))
+    (asked,) = intel_step(planner, frame(50.0)).proposals
     mission = planner.mission
     assert (asked.proposal_id, asked.mission_id) == ("intel", "intel:scout:1")
     assert (mission.phase, mission.status) == (ScoutMission.REQUESTING, MissionStatus.ACTIVE)
 
     scout = scv(100, 50, 50, role=SCOUTING)
-    (lapping,) = planner.plan(frame(51.0, own_units=(scout,)))
+    (lapping,) = intel_step(planner, frame(51.0, own_units=(scout,))).proposals
     assert (mission.phase, mission.set_out, lapping.mission_id) == (
         ScoutMission.LAPPING,
         51.0,
         "intel:scout:1",
     )
 
-    assert planner.plan(frame(52.0, own_units=(scv(100),))) == ()
+    assert intel_step(planner, frame(52.0, own_units=(scv(100),))).proposals == ()
     (view,) = planner.views()
     assert (view.status, view.reason) == (MissionStatus.FAILED, "scout_lost")
     assert (planner.finished, planner.mission) == ("scout_lost", None)
@@ -525,23 +525,23 @@ def test_the_intel_planner_opens_one_scout_and_the_mission_carries_it() -> None:
 
 def test_a_scout_not_yet_out_is_cancelled_when_the_mineral_line_shrinks_and_reopens() -> None:
     planner = IntelPlanner()
-    planner.plan(frame(50.0))
+    intel_step(planner, frame(50.0))
     first = planner.mission
 
-    assert planner.plan(frame(51.0, workers=SCOUT_AT_WORKERS - 1)) == ()
+    assert intel_step(planner, frame(51.0, workers=SCOUT_AT_WORKERS - 1)).proposals == ()
     assert (first.status, first.reason) == (MissionStatus.CANCELLED, "workers_below_threshold")
     assert planner.finished is None
 
-    (proposal,) = planner.plan(frame(52.0))
+    (proposal,) = intel_step(planner, frame(52.0)).proposals
     assert proposal.mission_id == "intel:scout:2"
 
 
 def test_a_scout_not_yet_out_is_cancelled_once_the_early_game_is_over() -> None:
     planner = IntelPlanner()
-    planner.plan(frame(START_BY - 1.0))
+    intel_step(planner, frame(START_BY - 1.0))
     mission = planner.mission
 
-    assert planner.plan(frame(START_BY)) == ()
+    assert intel_step(planner, frame(START_BY)).proposals == ()
     assert (mission.status, mission.lifecycle.cancel.reason) == (
         MissionStatus.CANCELLED,
         "too_late",
@@ -552,10 +552,10 @@ def test_a_scout_not_yet_out_is_cancelled_once_the_early_game_is_over() -> None:
 def test_a_scout_that_set_out_is_never_cancelled_for_the_early_game_mark() -> None:
     planner = IntelPlanner()
     scout = scv(100, 50, 50, role=SCOUTING)
-    planner.plan(frame(START_BY - 1.0))
-    planner.plan(frame(START_BY - 0.5, own_units=(scout,)))
+    intel_step(planner, frame(START_BY - 1.0))
+    intel_step(planner, frame(START_BY - 0.5, own_units=(scout,)))
 
-    (proposal,) = planner.plan(frame(START_BY + 1.0, own_units=(scout,)))
+    (proposal,) = intel_step(planner, frame(START_BY + 1.0, own_units=(scout,))).proposals
 
     assert planner.mission.lifecycle.cancel is None
     assert proposal.command is Command.SCOUT

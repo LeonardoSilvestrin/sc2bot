@@ -24,21 +24,15 @@ from bot.body import behaviors
 from bot.body.behaviors.attack import MicroReport
 from bot.body.behaviors.detection import DetectionReport
 from bot.body.behaviors.economy import SpawnMode
+from bot.body.behaviors.sensor_towers import SensorTowerReport
 from bot.body.engine import Engine, EngineResult
 from bot.ego.missions import MissionView
-from bot.ego.planners import (
-    DetectionPlan,
-    EconomyPlan,
-    Proposal,
-    StructurePlan,
-    economy,
-)
-from bot.ego.planners.control.detection import Detection
+from bot.ego.planners import EconomyPlan, IntelPlan, Proposal, StructurePlan, economy
 from bot.ego.planners.control.structure_control import StructureControl
 from bot.ego.planners.economy import CompositionPlanner, InvestmentConfig, styles
 from bot.ego.planners.economy.styles import BIO, ArmyStyle
+from bot.ego.planners.intel import IntelPlanner
 from bot.ego.planners.military.defense import DefensePlanner
-from bot.ego.planners.military.intel import IntelPlanner
 from bot.ego.planners.military.map_control import MapControlPlan, MapControlPlanner
 from bot.ego.planners.military.offense import OffensePlan, OffensePlanner
 from bot.ego.strategy import StrategyModel, StrategyState
@@ -64,7 +58,6 @@ class Layers:
     offense: OffensePlanner = field(default_factory=OffensePlanner)
     intel: IntelPlanner = field(default_factory=IntelPlanner)
     structure_control: StructureControl = field(default_factory=StructureControl)
-    detection: Detection = field(default_factory=Detection)
     engine: Engine = field(default_factory=Engine)
     # The last allocation, read by the missions on the next frame.
     feedback: EngineResult | None = None
@@ -79,7 +72,7 @@ class Layers:
             "map_control": self.map_control.config,
             "offense": self.offense.config,
             "structure_control": self.structure_control.config,
-            "detection": self.detection.config,
+            "detection": self.intel.detection.config,
             "army": self.army,
             "composition": self.composition.config,
             "investment": self.investment,
@@ -99,10 +92,23 @@ class Frame:
     result: EngineResult
     spawn: SpawnMode
     micro: MicroReport
-    detection: DetectionPlan
+    intel: IntelPlan
     detected: DetectionReport
+    tower_building: SensorTowerReport
     # Every mission a planner governed this frame, as it left the frame.
     missions: tuple[MissionView, ...] = ()
+
+    @property
+    def detection(self):
+        """Compatibility view of Intel's detection decision."""
+
+        return self.intel.detection
+
+    @property
+    def sensor_towers(self):
+        """Compatibility view of Intel's infrastructure decision."""
+
+        return self.intel.sensor_towers
 
 
 def play_frame(bot, iteration: int, layers: Layers) -> Frame:
@@ -121,7 +127,8 @@ def play_frame(bot, iteration: int, layers: Layers) -> Frame:
         attention, awareness, strategy, map_control.anchor, layers.feedback
     )
     proposals += offense.proposals
-    proposals += layers.intel.plan(attention, layers.feedback)
+    intel = layers.intel.plan(attention, awareness, layers.feedback)
+    proposals += intel.proposals
     missions = layers.defense.views() + layers.offense.views() + layers.intel.views()
     economy_plan = economy.plan(
         attention,
@@ -132,12 +139,18 @@ def play_frame(bot, iteration: int, layers: Layers) -> Frame:
         awareness=awareness,
     )
     structures = layers.structure_control.plan(attention)
-    detection = layers.detection.plan(attention, awareness)
     laps.mark("planners")
     result = layers.engine.allocate(attention, proposals)
     layers.feedback = result
     laps.mark("engine")
-    body = behaviors.execute(bot, attention, result, economy_plan, structures, detection)
+    body = behaviors.execute(
+        bot,
+        attention,
+        result,
+        economy_plan,
+        structures,
+        intel,
+    )
     laps.mark("behaviors")
     layers.logs.record(
         bot,
@@ -153,8 +166,9 @@ def play_frame(bot, iteration: int, layers: Layers) -> Frame:
         body.spawn,
         body.micro,
         laps.times,
-        detection=detection,
+        intel=intel,
         detected=body.detection,
+        tower_building=body.sensor_towers,
         missions=missions,
     )
     return Frame(
@@ -169,8 +183,9 @@ def play_frame(bot, iteration: int, layers: Layers) -> Frame:
         result,
         body.spawn,
         body.micro,
-        detection,
+        intel,
         body.detection,
+        body.sensor_towers,
         missions,
     )
 

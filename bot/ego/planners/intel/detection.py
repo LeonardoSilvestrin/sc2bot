@@ -1,21 +1,8 @@
-"""Detection: how the bot sees what nothing of ours can shoot.
+"""Detection policy owned by Intel.
 
-A cloaked or burrowed enemy nothing detects cannot be attacked; the army walks
-over it and dies (in `bench/all4/000` a burrowed Lurker sat on the army's path
-from 771 s on). Once an enemy army unit was seen cloaked:
-
-- every Orbital Command keeps `scan_reserve` energy instead of spending it all
-  on MULEs;
-- every base gets a Missile Turret within `turret_cover`, and an Engineering
-  Bay is built if there is none;
-- a hidden enemy in sight with at least `scan_min_power` of our army within
-  `scan_reach` of it is scanned, unless a scan of the last `scan_duration`
-  seconds already covers it (`scan_radius`). With several, the one with the
-  most of our army near goes first, then the most hidden power a scan there
-  reveals, then the lowest tag.
-
-The plan says where to scan and which bases need a turret; the Body picks the
-Orbital (the one with the most energy) and the builder.
+A cloaked or burrowed enemy nothing detects is scanned where the army can
+shoot it. Once army cloak has been seen, Orbitals reserve scan energy and
+every base is kept covered by a Missile Turret.
 """
 
 from __future__ import annotations
@@ -29,7 +16,6 @@ from bot.attention import AttentionState
 from bot.awareness import AwarenessState
 from bot.ego.planners import DetectionPlan
 
-# Energy a scan costs.
 SCAN_ENERGY = 50.0
 ORBITALS = frozenset({UnitTypeId.ORBITALCOMMAND})
 TURRETS = frozenset({UnitTypeId.MISSILETURRET})
@@ -38,16 +24,11 @@ ENGINEERING_BAYS = frozenset({UnitTypeId.ENGINEERINGBAY})
 
 @dataclass(frozen=True, slots=True)
 class DetectionConfig:
-    # A hidden enemy with at least `scan_min_power` of our army, in Marines,
-    # within `scan_reach` of it is worth a scan: something will shoot it.
     scan_reach: float = 10.0
     scan_min_power: float = 2.0
-    # What a scan reveals, and for how long, in cells and seconds.
     scan_radius: float = 13.0
     scan_duration: float = 12.3
-    # Energy each Orbital keeps for a scan once a cloaked enemy was seen.
     scan_reserve: float = 50.0
-    # A Missile Turret this close to a base covers it.
     turret_cover: float = 15.0
 
     def __post_init__(self) -> None:
@@ -62,7 +43,6 @@ class DetectionConfig:
 class Detection:
     def __init__(self, config: DetectionConfig | None = None) -> None:
         self.config = config or DetectionConfig()
-        # (time, position) of the scans ordered.
         self._scans: list[tuple[float, Point2]] = []
 
     def plan(self, attention: AttentionState, awareness: AwarenessState) -> DetectionPlan:
@@ -91,10 +71,14 @@ class Detection:
             turrets = tuple(
                 base.position
                 for base in attention.bases
-                if not any(base.position.distance_to(p) <= config.turret_cover for p in placed)
+                if not any(
+                    base.position.distance_to(point) <= config.turret_cover
+                    for point in placed
+                )
             )
             engineering_bay = not any(
-                s.type_id in ENGINEERING_BAYS for s in attention.own_structures
+                structure.type_id in ENGINEERING_BAYS
+                for structure in attention.own_structures
             )
         elif reason == "no_hidden_enemy":
             reason = "no_cloak_seen"
@@ -117,8 +101,6 @@ class Detection:
         )
 
     def _scan(self, hidden, army, orbitals: int) -> tuple[Point2 | None, str, float]:
-        """Where to scan, why, and the most of our army near a hidden enemy."""
-
         config = self.config
         if not hidden:
             return None, "no_hidden_enemy", 0.0
