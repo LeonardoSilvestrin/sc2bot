@@ -19,6 +19,7 @@ from bot.body.behaviors.economy import SpawnMode
 from bot.body.engine import EngineResult
 from bot.ego.missions import MissionView
 from bot.ego.planners import DetectionPlan, EconomyPlan, Proposal, StructurePlan
+from bot.ego.planners.military.map_control import MapControlPlan
 from bot.ego.planners.military.offense import OffensePlan
 from bot.ego.strategy import StrategyState
 
@@ -76,6 +77,7 @@ class Logs:
         attention: AttentionState,
         awareness: AwarenessState,
         strategy: StrategyState,
+        map_control: MapControlPlan,
         offense: OffensePlan,
         proposals: Sequence[Proposal],
         economy: EconomyPlan,
@@ -96,6 +98,7 @@ class Logs:
                 attention,
                 awareness,
                 strategy,
+                map_control,
                 offense,
                 proposals,
                 economy,
@@ -108,8 +111,8 @@ class Logs:
                 detected=detected,
                 missions=missions,
             )
-            self.snapshots.capture(attention, awareness, strategy, result)
-            self.overlay.render(bot, attention, awareness, strategy, result)
+            self.snapshots.capture(attention, awareness, strategy, map_control, result)
+            self.overlay.render(bot, attention, awareness, strategy, map_control, result)
         finally:
             self.logger.end_frame()
             self._last_ms = (perf_counter() - started) * 1000.0

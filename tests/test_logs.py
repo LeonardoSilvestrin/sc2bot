@@ -10,7 +10,7 @@ from sc2.position import Point2
 
 from bot.awareness import AwarenessModel
 from bot.body.engine import Engine
-from bot.ego.planners.military import army_fallback
+from bot.ego.planners.military import map_control
 from bot.ego.planners.military.defense import DefensePlanner
 from bot.ego.strategy import StrategyModel
 from bot.logs import (
@@ -43,10 +43,9 @@ def frame_layers(time: float = 0.0):
     )
     awareness = AwarenessModel().infer(frame)
     strategy = StrategyModel().decide(frame, awareness)
-    proposals = DefensePlanner().plan(
-        frame, awareness, strategy
-    ) + army_fallback.ArmyFallbackPlanner().plan(frame, awareness, strategy)
-    return frame, awareness, strategy, Engine().allocate(frame, proposals)
+    held = map_control.MapControlPlanner().plan(frame, awareness, strategy)
+    proposals = DefensePlanner().plan(frame, awareness, strategy) + held.proposals
+    return frame, awareness, strategy, held, Engine().allocate(frame, proposals)
 
 
 def test_the_jsonl_logger_writes_the_envelope_and_rejects_non_json(tmp_path) -> None:
@@ -110,11 +109,11 @@ def test_snapshots_follow_the_interval_and_objective_changes(tmp_path) -> None:
         directory=tmp_path,
         logger=logger,
     )
-    frame, awareness, strategy, result = frame_layers()
+    frame, awareness, strategy, held, result = frame_layers()
 
-    assert not exporter.capture(frame, awareness, strategy, result)
+    assert not exporter.capture(frame, awareness, strategy, held, result)
     later = attention(time=31.0)
-    assert exporter.capture(later, awareness, strategy, result)
+    assert exporter.capture(later, awareness, strategy, held, result)
     assert (tmp_path / "field-0031.svg").is_file()
     assert logger.named("logs.snapshot_written")[0]["data"]["trigger"] == "interval"
     assert snapshot_filename(12.25) == "field-0012-250.svg"
@@ -125,24 +124,24 @@ def test_a_failing_snapshot_is_logged_not_raised() -> None:
     exporter = SnapshotExporter(
         config=SnapshotConfig(enabled=True, interval_seconds=1.0), logger=logger
     )
-    _, awareness, strategy, result = frame_layers()
+    _, awareness, strategy, held, result = frame_layers()
 
-    assert not exporter.capture(attention(time=2.0), awareness, strategy, result)
+    assert not exporter.capture(attention(time=2.0), awareness, strategy, held, result)
     assert logger.named("logs.snapshot_failed")
 
 
 def test_the_overlay_draws_only_when_enabled_and_thins_the_field() -> None:
-    frame, awareness, strategy, result = frame_layers()
+    frame, awareness, strategy, held, result = frame_layers()
     bot = FakeBot()
 
-    assert Overlay().render(bot, frame, awareness, strategy, result) == 0
+    assert Overlay().render(bot, frame, awareness, strategy, held, result) == 0
     assert bot.client.spheres == []
 
     every = Overlay(OverlayConfig(enabled=True, draw_spacing=None)).render(
-        bot, frame, awareness, strategy, result
+        bot, frame, awareness, strategy, held, result
     )
     thinned = Overlay(OverlayConfig(enabled=True, draw_spacing=8.0)).render(
-        FakeBot(), frame, awareness, strategy, result
+        FakeBot(), frame, awareness, strategy, held, result
     )
     assert every == len(MAP.lattice)
     assert 0 < thinned < every

@@ -17,6 +17,7 @@ from bot.attention import AttentionState, is_army
 from bot.awareness import AwarenessState
 from bot.awareness.field import PRESENCE_FLOOR
 from bot.body.engine import EngineResult
+from bot.ego.planners.military.map_control import MapControlPlan
 from bot.ego.strategy import StrategyState
 
 from .jsonl import BotLogger, NullLogger
@@ -84,6 +85,7 @@ def render_svg(
     attention: AttentionState,
     awareness: AwarenessState,
     strategy: StrategyState,
+    map_control: MapControlPlan,
     result: EngineResult,
 ) -> str:
     projection = Projection.fit(attention.map.bounds)
@@ -284,10 +286,24 @@ def render_svg(
             )
         )
     # Base labels sit right of their square and grant labels right of their
-    # cross, so the rally label goes left: the rally is often on a base.
-    x, y = projection.point(strategy.rally)
+    # cross, so the anchor label goes left: the anchor is often on a base.
+    held = map_control.passage
+    if held is not None:
+        px, py = projection.point(held.position)
+        parts.append(
+            _circle(
+                px,
+                py,
+                8.0,
+                fill="none",
+                stroke="#ffffff",
+                width=1.5,
+                extra=f'data-held-passage="{escape(held.passage_id)}"',
+            )
+        )
+    x, y = projection.point(map_control.anchor)
     parts.append(_diamond(x, y, 7.0, fill="#ffffff"))
-    parts.append(_text(x - 46, y - 10, "RALLY", "label"))
+    parts.append(_text(x - 52, y - 10, "ANCHOR", "label"))
     parts.append("</g>")
     parts.extend(_panel(attention, awareness, strategy, result))
     parts.append("</svg>")
@@ -331,6 +347,7 @@ class SnapshotExporter:
         attention: AttentionState,
         awareness: AwarenessState,
         strategy: StrategyState,
+        map_control: MapControlPlan,
         result: EngineResult,
     ) -> bool:
         if not self.enabled:
@@ -351,7 +368,7 @@ class SnapshotExporter:
         try:
             if self.directory is None:
                 raise OSError("snapshot directory is not configured")
-            svg = render_svg(attention, awareness, strategy, result)
+            svg = render_svg(attention, awareness, strategy, map_control, result)
             self.directory.mkdir(parents=True, exist_ok=True)
             path = self.directory / snapshot_filename(now)
             self._writer.write(path, svg)

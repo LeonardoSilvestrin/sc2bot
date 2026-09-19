@@ -36,9 +36,9 @@ from bot.ego.planners.control.detection import Detection
 from bot.ego.planners.control.structure_control import StructureControl
 from bot.ego.planners.economy import styles
 from bot.ego.planners.economy.styles import BIO, ArmyStyle
-from bot.ego.planners.military.army_fallback import ArmyFallbackPlanner
 from bot.ego.planners.military.defense import DefensePlanner
 from bot.ego.planners.military.intel import IntelPlanner
+from bot.ego.planners.military.map_control import MapControlPlan, MapControlPlanner
 from bot.ego.planners.military.offense import OffensePlan, OffensePlanner
 from bot.ego.strategy import StrategyModel, StrategyState
 from bot.logs import Logs
@@ -57,7 +57,7 @@ class Layers:
     awareness: AwarenessModel = field(default_factory=AwarenessModel)
     strategy: StrategyModel = field(default_factory=StrategyModel)
     defense: DefensePlanner = field(default_factory=DefensePlanner)
-    army_fallback: ArmyFallbackPlanner = field(default_factory=ArmyFallbackPlanner)
+    map_control: MapControlPlanner = field(default_factory=MapControlPlanner)
     offense: OffensePlanner = field(default_factory=OffensePlanner)
     intel: IntelPlanner = field(default_factory=IntelPlanner)
     structure_control: StructureControl = field(default_factory=StructureControl)
@@ -70,6 +70,7 @@ class Layers:
         return {
             "awareness": self.awareness.config,
             "strategy": self.strategy.config,
+            "map_control": self.map_control.config,
             "offense": self.offense.config,
             "structure_control": self.structure_control.config,
             "detection": self.detection.config,
@@ -82,6 +83,7 @@ class Frame:
     attention: AttentionState
     awareness: AwarenessState
     strategy: StrategyState
+    map_control: MapControlPlan
     offense: OffensePlan
     proposals: tuple[Proposal, ...]
     economy: EconomyPlan
@@ -104,8 +106,12 @@ def play_frame(bot, iteration: int, layers: Layers) -> Frame:
     strategy = layers.strategy.decide(attention, awareness)
     laps.mark("strategy")
     proposals = layers.defense.plan(attention, awareness, strategy, layers.feedback)
-    proposals += layers.army_fallback.plan(attention, awareness, strategy)
-    offense = layers.offense.plan(attention, awareness, strategy, layers.feedback)
+    map_control = layers.map_control.plan(attention, awareness, strategy)
+    proposals += map_control.proposals
+    # The offense assembles and falls back where MapControl holds the army.
+    offense = layers.offense.plan(
+        attention, awareness, strategy, map_control.anchor, layers.feedback
+    )
     proposals += offense.proposals
     proposals += layers.intel.plan(attention, layers.feedback)
     missions = layers.defense.views() + layers.offense.views() + layers.intel.views()
@@ -125,6 +131,7 @@ def play_frame(bot, iteration: int, layers: Layers) -> Frame:
         attention,
         awareness,
         strategy,
+        map_control,
         offense,
         proposals,
         economy_plan,
@@ -141,6 +148,7 @@ def play_frame(bot, iteration: int, layers: Layers) -> Frame:
         attention,
         awareness,
         strategy,
+        map_control,
         offense,
         proposals,
         economy_plan,

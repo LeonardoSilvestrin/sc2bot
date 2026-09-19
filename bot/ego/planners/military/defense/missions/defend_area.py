@@ -14,7 +14,7 @@ the incident's attackers come and go.
 
 Priority is the incident's threat on the base it presses hardest, raised by
 how much Strategy wants defense, so it is positive exactly while an attacker
-is in reach -- always above the offense (0) and the ArmyFallback fallback (-1).
+is in reach -- always above the offense (0) and MapControl (-1).
 
 The mission is sized again every frame from the incident Awareness reports;
 it completes once Awareness reports the incident no more.

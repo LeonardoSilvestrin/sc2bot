@@ -11,7 +11,8 @@ hands complete plans to the Body. Three groups, one package each:
   incident) and `intel` (the scout) govern missions: the planner decides which
   operations to open and when to ask one to end, as Strategy's policy allows,
   and each mission carries one operation and makes its proposals.
-  `army_fallback` takes what no one else needs and proposes directly.
+  `map_control` takes what no one else needs, chooses where it stands and
+  proposes directly.
 - `economy` asks for no unit: what Ares' macro behaviors should buy.
 - `control` asks for no unit either: which structure or ability acts
   (`detection`, `structure_control`).

@@ -22,6 +22,7 @@ from bot.body.behaviors.economy import SpawnMode
 from bot.body.engine import EngineResult, rank
 from bot.ego.missions import MissionView
 from bot.ego.planners import DetectionPlan, EconomyPlan, Proposal, StructurePlan
+from bot.ego.planners.military.map_control import MapControlPlan, PassageCandidate
 from bot.ego.planners.military.offense import LocalFight, OffensePlan
 from bot.ego.strategy import StrategyState
 
@@ -33,6 +34,7 @@ ATTENTION_HEARTBEAT = 5.0
 # Coarse grid a moving target is compared on, so a drifting point is one command.
 COMMAND_TARGET_CELL = 3.0
 TOP_CONTACTS = 8
+TOP_PASSAGES = 8
 
 
 class Telemetry:
@@ -42,6 +44,7 @@ class Telemetry:
         self._attention = ChangeGate(heartbeat=ATTENTION_HEARTBEAT)
         self._awareness = ChangeGate(heartbeat=heartbeat)
         self._strategy = ChangeGate(heartbeat=heartbeat)
+        self._map_control = ChangeGate()
         self._offense = ChangeGate()
         self._missions = ChangeGate()
         self._economy = ChangeGate()
@@ -138,6 +141,7 @@ class Telemetry:
         attention: AttentionState,
         awareness: AwarenessState,
         strategy: StrategyState,
+        map_control: MapControlPlan,
         offense: OffensePlan,
         proposals: Sequence[Proposal],
         economy: EconomyPlan,
@@ -154,6 +158,7 @@ class Telemetry:
         self._record_attention(attention)
         self._record_awareness(attention.time, awareness)
         self._record_strategy(strategy)
+        self._record_map_control(attention.time, map_control)
         self._record_offense(attention.time, offense)
         self._record_missions(attention.time, missions)
         self._record_proposals(attention.time, proposals)
@@ -357,7 +362,6 @@ class Telemetry:
                 "army": strategy.army,
                 "economy": strategy.economy,
                 "risk": strategy.risk,
-                "rally": _xy(strategy.rally),
                 "inputs": dict(strategy.inputs),
                 "scores": dict(strategy.scores),
                 "policy": {
@@ -366,6 +370,37 @@ class Telemetry:
                         "reason": strategy.offense.reason,
                     },
                 },
+            },
+        )
+
+    def _record_map_control(self, now: float, plan: MapControlPlan) -> None:
+        # The candidates only change with our bases: logged with the choice.
+        passage = plan.passage
+        signature = (
+            plan.source,
+            plan.reason,
+            None if passage is None else passage.passage_id,
+            _cell(plan.anchor),
+            plan.fallback,
+            tuple(candidate.passage_id for candidate in plan.candidates),
+        )
+        if not self._map_control.admit(signature, now=now):
+            return
+        self._event(
+            "behavior.map_control_planned",
+            "behaviors",
+            now,
+            {
+                "anchor": _xy(plan.anchor),
+                "source": plan.source,
+                "reason": plan.reason,
+                "passage": None if passage is None else passage.passage_id,
+                "region": None if passage is None else passage.region_id,
+                "fallback": plan.fallback,
+                "candidates": [
+                    _passage(candidate) for candidate in plan.candidates[:TOP_PASSAGES]
+                ],
+                "candidate_count": len(plan.candidates),
             },
         )
 
@@ -761,6 +796,20 @@ def _cell(point: Point2) -> tuple[int, int]:
         int(float(point.x) // COMMAND_TARGET_CELL),
         int(float(point.y) // COMMAND_TARGET_CELL),
     )
+
+
+def _passage(candidate: PassageCandidate) -> dict[str, Any]:
+    return {
+        "passage": candidate.passage_id,
+        "kind": candidate.kind,
+        "position": _xy(candidate.position),
+        "region": candidate.region_id,
+        "protected_bases": list(candidate.protected_bases),
+        "protected": candidate.protected,
+        "quality": candidate.quality,
+        "overextension": candidate.overextension,
+        "score": candidate.score,
+    }
 
 
 def _fight(fight: LocalFight) -> dict[str, Any]:

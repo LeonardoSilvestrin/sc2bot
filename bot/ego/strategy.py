@@ -6,15 +6,13 @@ and the policy each domain with operations of its own must follow -- whether
 it may pursue them, or must withdraw so defending comes first. Strategy
 publishes that policy and nothing more: it knows no mission, and the planner
 of the domain decides which of its operations end and how. Strategy commands
-no unit.
+no unit and names no place on the map: where the army stands is MapControl's.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-
-from sc2.position import Point2
 
 from bot.attention import AttentionState
 from bot.awareness import AwarenessState
@@ -64,8 +62,6 @@ class StrategyConfig:
     # ... after it was held this long; STABILIZE skips the dwell at this danger.
     minimum_dwell: float = 8.0
     emergency_danger: float = 0.6
-    # How far in front of the forward base the army holds.
-    rally_forward: float = 6.0
     # The enemy army planned against is its estimate plus this share of the
     # part no contact places.
     commit_margin: float = 0.5
@@ -73,8 +69,8 @@ class StrategyConfig:
     def __post_init__(self) -> None:
         if not 0.0 <= self.switch_margin < 1.0:
             raise ValueError("switch_margin must be in [0, 1)")
-        if min(self.minimum_dwell, self.rally_forward, self.commit_margin) < 0.0:
-            raise ValueError("minimum_dwell, rally_forward and commit_margin must not be negative")
+        if min(self.minimum_dwell, self.commit_margin) < 0.0:
+            raise ValueError("minimum_dwell and commit_margin must not be negative")
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,7 +88,6 @@ class StrategyState:
     risk: float
     # Our army's share of it and the enemy army planned against: 1/2 when even.
     army_share: float
-    rally: Point2
     inputs: tuple[tuple[str, float], ...]
     scores: tuple[tuple[str, float], ...]
     # The policy of the offense's operations.
@@ -133,7 +128,6 @@ class StrategyModel:
             economy=1.0 - army,
             risk=army_share * (1.0 - danger),
             army_share=army_share,
-            rally=self._rally(attention, awareness, objective),
             inputs=(
                 ("danger", danger),
                 ("danger_now", awareness.danger_now),
@@ -167,24 +161,6 @@ class StrategyModel:
             return
         self._previous, self._objective, self._since = current, challenger, now
         self._reason = "emergency_threat" if not dwelled else _REASONS[challenger]
-
-    def _rally(
-        self, attention: AttentionState, awareness: AwarenessState, objective: Objective
-    ) -> Point2:
-        threatened = awareness.most_threatened
-        if objective is Objective.STABILIZE and threatened is not None:
-            return threatened.position
-        map_view = attention.map
-        front = max(
-            attention.bases,
-            key=lambda base: (base.position.distance_to(map_view.own_start), base.base_id),
-            default=None,
-        )
-        if front is None or front.is_main:
-            return map_view.main_ramp
-        if front.position.distance_to(map_view.enemy_start) <= self.config.rally_forward:
-            return front.position
-        return front.position.towards(map_view.enemy_start, self.config.rally_forward)
 
 
 def _unit(value: float) -> float:

@@ -3,7 +3,7 @@
 The offense planner opens it and may ask it to end; the mission carries the
 attack through its phases, with at most one transition per frame:
 
-- ASSEMBLE: no proposal, while ArmyFallback gathers the army at the rally -- until
+- ASSEMBLE: no proposal, while MapControl gathers the army at the rally -- until
   `assemble_share` of the army's power stands within `assemble_radius` of it,
   or `assemble_timeout` after the attack opened.
 - ADVANCE: one ATTACK proposal for every free army unit, at the target.
@@ -11,7 +11,7 @@ attack through its phases, with at most one transition per frame:
 - ENGAGE: the same ATTACK proposal, at the enemies near the squad.
 - RETREAT: one RETREAT proposal: the squad walks back to the rally without
   fighting.
-- REGROUP: no proposal again, while ArmyFallback holds the army at the rally.
+- REGROUP: no proposal again, while MapControl holds the army at the rally.
 - WITHDRAW: only after a graceful cancel request: the RETREAT proposal until
   the army is assembled at the rally or `retreat_timeout` passed, then the
   mission is CANCELLED.
@@ -210,6 +210,8 @@ class OffenseContext:
     attention: AttentionState
     awareness: AwarenessState
     strategy: StrategyState
+    # Where the army assembles and falls back to: MapControl's anchor.
+    rally: Point2
     # The searchable places, and when each was last in vision (the planner's
     # memory, read only).
     places: tuple[Point2, ...]
@@ -340,7 +342,7 @@ class MainAttackMission:
             clear_for=clear_for,
         )
         phase = self._phase if self.active else None
-        rally = ctx.strategy.rally
+        rally = ctx.rally
         target: Point2 | None = None
         kind: str | None = None
         proposals: tuple[Proposal, ...] = ()

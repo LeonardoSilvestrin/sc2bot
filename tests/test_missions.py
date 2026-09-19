@@ -192,7 +192,7 @@ def test_strategy_withdrawing_the_offense_blocks_admission_and_cancels_at_once()
         MissionStatus.CANCELLED,
     )
     assert game.offense.mission is None
-    # The same allocation hands every unit to Defense and ArmyFallback.
+    # The same allocation hands every unit to Defense and MapControl.
     owners = {grant.proposal.owner for grant in game.feedback.grants if grant.tags}
     assert OWNER not in owners
     assert set(dict(game.feedback.owners)) == {marine.tag for marine in army}
@@ -444,7 +444,7 @@ def test_a_cancelled_attack_commands_nothing_in_the_frame_its_units_move_on() ->
         if isinstance(maneuver, CombatManeuver)
         for micro in maneuver.micros[-1:]
     }
-    # Every army unit was commanded for Defense or ArmyFallback, none toward the hatchery.
+    # Every army unit was commanded for Defense or MapControl, none toward the hatchery.
     assert hatchery.position not in set(commanded.values())
     granted = {tag for grant in cancelled.result.grants for tag in grant.tags}
     assert set(commanded) <= granted
@@ -566,6 +566,7 @@ def _context(game: Game, frame_, awareness, strategy):
         attention=frame_,
         awareness=awareness,
         strategy=strategy,
+        rally=game.map_control.plan(frame_, awareness, strategy).anchor,
         places=(),
         seen_at=MappingProxyType({}),
         own_power=awareness.own_power,

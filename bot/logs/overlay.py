@@ -14,6 +14,7 @@ from sc2.position import Point2, Point3
 from bot.attention import AttentionState
 from bot.awareness import AwarenessState
 from bot.body.engine import EngineResult
+from bot.ego.planners.military.map_control import MapControlPlan
 from bot.ego.strategy import StrategyState
 
 Color = tuple[int, int, int]
@@ -95,6 +96,7 @@ class Overlay:
         attention: AttentionState,
         awareness: AwarenessState,
         strategy: StrategyState,
+        map_control: MapControlPlan,
         result: EngineResult,
     ) -> int:
         """Queue this frame's drawing; returns how many samples were drawn."""
@@ -141,9 +143,10 @@ class Overlay:
                 TEXT_COLOR,
                 12,
             )
-        client.debug_sphere_out(at(strategy.rally, 0.3), 1.2, TEXT_COLOR)
+        anchor = map_control.anchor
+        client.debug_sphere_out(at(anchor, 0.3), 1.2, TEXT_COLOR)
         client.debug_text_world(
-            f"RALLY {strategy.objective.value}", at(strategy.rally, 1.0), TEXT_COLOR, 12
+            f"ANCHOR {map_control.reason}", at(anchor, 1.0), TEXT_COLOR, 12
         )
         if config.show_owners:
             owner_of = {grant.proposal.proposal_id: grant.proposal.owner for grant in result.grants}

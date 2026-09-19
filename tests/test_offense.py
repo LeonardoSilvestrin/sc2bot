@@ -12,7 +12,7 @@ from bot.attention import unit_power, unit_view
 from bot.awareness import AwarenessModel
 from bot.body.engine import Engine, GrantStatus
 from bot.ego.planners import Command, Domain
-from bot.ego.planners.military import army_fallback, defense
+from bot.ego.planners.military import defense, map_control
 from bot.ego.planners.military.defense import DefensePlanner
 from bot.ego.planners.military.offense import (
     ENEMY_START,
@@ -30,7 +30,7 @@ from bot.ego.strategy import Objective, StrategyModel
 from .fakes import MAIN, MAP, FakeUnit, attention, unit
 
 CONFIG = OffenseConfig()
-# With only the main and no threat, Strategy rallies at the main ramp.
+# With only the main and no threat, MapControl holds the main ramp.
 RALLY = MAP.main_ramp
 MAXED = CONFIG.maxed_supply
 
@@ -58,6 +58,7 @@ class Game:
         self.awareness = AwarenessModel()
         self.strategy = StrategyModel()
         self.defense = DefensePlanner()
+        self.map_control = map_control.MapControlPlanner()
         self.offense = OffensePlanner(config)
         # With an Engine, the offense is told what it was granted last frame.
         self.engine = Engine() if engine else None
@@ -87,13 +88,16 @@ class Game:
         )
         awareness = self.awareness.infer(frame)
         strategy = self.strategy.decide(frame, awareness)
+        held = self.map_control.plan(frame, awareness, strategy)
         if self.engine is None:
-            return frame, awareness, strategy, self.offense.plan(frame, awareness, strategy)
-        plan = self.offense.plan(frame, awareness, strategy, self.feedback)
+            return frame, awareness, strategy, self.offense.plan(
+                frame, awareness, strategy, held.anchor
+            )
+        plan = self.offense.plan(frame, awareness, strategy, held.anchor, self.feedback)
         self.feedback = self.engine.allocate(
             frame,
             self.defense.plan(frame, awareness, strategy, self.feedback)
-            + army_fallback.ArmyFallbackPlanner().plan(frame, awareness, strategy)
+            + held.proposals
             + plan.proposals,
         )
         return frame, awareness, strategy, plan
@@ -282,7 +286,7 @@ def test_defense_takes_what_an_incident_needs_and_the_offense_the_rest() -> None
     )
     proposals = (
         DefensePlanner().plan(frame, awareness, strategy)
-        + army_fallback.ArmyFallbackPlanner().plan(frame, awareness, strategy)
+        + map_control.MapControlPlanner().plan(frame, awareness, strategy).proposals
         + plan.proposals
     )
 
@@ -293,7 +297,7 @@ def test_defense_takes_what_an_incident_needs_and_the_offense_the_rest() -> None
     assert [grant.proposal.owner for grant in result.grants] == [
         defense.OWNER,
         OWNER,
-        army_fallback.OWNER,
+        map_control.OWNER,
     ]
     assert (guard.status, guard.tags) == (GrantStatus.FULL, (100, 101))
     assert guard.power >= guard.proposal.minimum_power

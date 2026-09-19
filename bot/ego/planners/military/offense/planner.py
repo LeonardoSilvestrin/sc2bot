@@ -19,11 +19,11 @@ least `minimum_power` of army, once either
 
 When Strategy's policy turns to WITHDRAW (home is threatened), the planner
 asks the running mission to cancel IMMEDIATELY: its units are free for
-Defense and ArmyFallback in the same allocation, as they always were. The mission
+Defense and MapControl in the same allocation, as they always were. The mission
 also ends by itself (`main_attack`); every end starts the cooldown.
 
 Priority: Defense (positive exactly while an attacker is in reach) outranks the
-offense (0), which outranks the ArmyFallback fallback (-1). Defense takes the power
+offense (0), which outranks MapControl (-1). Defense takes the power
 an incident needs and the offense the rest of the army.
 """
 
@@ -134,9 +134,12 @@ class OffensePlanner:
         attention: AttentionState,
         awareness: AwarenessState,
         strategy: StrategyState,
+        rally: Point2,
         feedback: EngineResult | None = None,
     ) -> OffensePlan:
-        """`feedback`: the last `EngineResult`, or None before the first."""
+        """`rally`: where the army assembles and falls back to, MapControl's
+        anchor this frame. `feedback`: the last `EngineResult`, or None before
+        the first."""
 
         config = self.config
         now = attention.time
@@ -149,7 +152,7 @@ class OffensePlanner:
             for unit in attention.own_units
             if not unit.is_worker
             and unit.power > 0.0
-            and unit.position.distance_to(strategy.rally) <= config.assemble_radius
+            and unit.position.distance_to(rally) <= config.assemble_radius
         )
         known = targets(awareness)
         places = self._look(attention)
@@ -157,6 +160,7 @@ class OffensePlanner:
             attention=attention,
             awareness=awareness,
             strategy=strategy,
+            rally=rally,
             places=places,
             seen_at=MappingProxyType(self._seen_at),
             own_power=own,
@@ -183,7 +187,7 @@ class OffensePlanner:
         now = ctx.now
         policy = ctx.strategy.offense
         if policy.posture is Posture.WITHDRAW:
-            # Defense needs the units now, and ArmyFallback holds the rest at the
+            # Defense needs the units now, and MapControl holds the rest at the
             # threatened base: no walk back first.
             mission.request_cancel(CancelMode.IMMEDIATE, policy.reason, now)
         granted = MissionFeedback.of(feedback, mission.mission_id)

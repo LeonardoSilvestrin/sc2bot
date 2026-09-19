@@ -14,9 +14,10 @@ from bot.awareness import (
     BaseThreat,
     InfluenceField,
 )
+from bot.ego.planners.military.map_control import MapControlPlanner
 from bot.ego.strategy import Objective, StrategyConfig, StrategyModel
 
-from .fakes import MAIN, MAP, NATURAL, attention, unit
+from .fakes import MAIN, attention, unit
 
 EMPTY_FIELD = InfluenceField((), 4.0, np.zeros(0), np.zeros(0), np.zeros(0))
 
@@ -55,16 +56,15 @@ def decide(model: StrategyModel, time: float, danger: float, **kwargs):
     return model.decide(attention(time=time, bases=bases), awareness(danger, bases=bases, **kwargs))
 
 
-def test_no_threat_builds_an_advantage_holding_the_main_ramp() -> None:
+def test_no_threat_builds_an_advantage() -> None:
     state = decide(StrategyModel(), 0.0, 0.0)
 
     assert state.objective is Objective.BUILD_ADVANTAGE
     assert state.reason == "no_immediate_threat"
     assert state.previous is None
-    assert state.rally == MAP.main_ramp
 
 
-def test_an_emergency_stabilizes_at_once_and_rallies_at_the_threatened_base() -> None:
+def test_an_emergency_stabilizes_at_once() -> None:
     model = StrategyModel()
     decide(model, 0.0, 0.0)
 
@@ -73,7 +73,6 @@ def test_an_emergency_stabilizes_at_once_and_rallies_at_the_threatened_base() ->
     assert state.objective is Objective.STABILIZE
     assert state.reason == "emergency_threat"
     assert state.previous is Objective.BUILD_ADVANTAGE
-    assert state.rally == MAIN.position
 
 
 def test_a_moderate_threat_waits_for_the_minimum_dwell() -> None:
@@ -108,12 +107,6 @@ def test_a_first_tie_is_conservative() -> None:
     assert decide(StrategyModel(), 0.0, 0.5).objective is Objective.STABILIZE
 
 
-def test_a_forward_base_moves_the_rally_toward_the_enemy() -> None:
-    state = decide(StrategyModel(), 0.0, 0.0, bases=(MAIN, NATURAL))
-
-    assert state.rally == NATURAL.position.towards(MAP.enemy_start, 6.0)
-
-
 @pytest.mark.parametrize("danger", [0.0, 0.3, 1.0])
 @pytest.mark.parametrize("own, enemy", [(0.0, 0.0), (10.0, 0.0), (0.0, 10.0), (4.0, 6.0)])
 def test_preferences_stay_in_the_unit_interval(danger: float, own: float, enemy: float) -> None:
@@ -128,7 +121,7 @@ def test_a_lull_in_an_attack_does_not_send_the_army_away() -> None:
     # Trace 483722e, 1318.7 s: after 44 s of STABILIZE danger fell from 0.63 to
     # 0.33 in one step as attackers died, the rally went ~90 cells to the front,
     # and an emergency brought it back 2.1 s later as 26 more arrived.
-    awareness, strategy = AwarenessModel(), StrategyModel()
+    awareness, strategy, map_control = AwarenessModel(), StrategyModel(), MapControlPlanner()
     x, y = MAIN.position
     first_wave = tuple(unit(tag, x=x, y=y) for tag in range(1, 5))
     straggler = first_wave[-1:]
@@ -145,9 +138,11 @@ def test_a_lull_in_an_attack_does_not_send_the_army_away() -> None:
         else:
             enemies, dead = (), (4, 10, 11, 12, 13, 14)
         frame = attention(time=now, enemy_units=enemies, dead_tags=dead)
-        decided.append(strategy.decide(frame, awareness.infer(frame)))
+        believed = awareness.infer(frame)
+        state = strategy.decide(frame, believed)
+        decided.append((state, map_control.plan(frame, believed, state).anchor))
 
-    left = [state.time for state in decided if state.objective is Objective.BUILD_ADVANTAGE]
+    left = [state.time for state, _ in decided if state.objective is Objective.BUILD_ADVANTAGE]
     assert left and left[0] > 60.0
     # Once the attack is over, the army goes back when the remembered threat of
     # the second wave has faded to the switch point, on the first frame after.
@@ -155,11 +150,11 @@ def test_a_lull_in_an_attack_does_not_send_the_army_away() -> None:
     switch_point = (1.0 - StrategyConfig().switch_margin) / 2.0
     calm_at = 60.0 + AwarenessConfig().threat_memory * math.log(peak / switch_point)
     assert calm_at <= left[0] < calm_at + 0.5
-    lull = decided[89]
+    lull = decided[89][0]
     assert lull.time == 44.5
     assert dict(lull.inputs)["danger_now"] == pytest.approx(1.0 - math.exp(-0.25))
     assert lull.defense == pytest.approx((1.0 - math.exp(-1.0)) * math.exp(-0.5 / 20.0))
-    assert all(state.rally == MAIN.position for state in decided if state.time < left[0])
+    assert all(anchor == MAIN.position for state, anchor in decided if state.time < left[0])
 
 
 def test_the_fog_is_no_advantage_but_a_fresh_look_at_the_whole_army_is() -> None:
