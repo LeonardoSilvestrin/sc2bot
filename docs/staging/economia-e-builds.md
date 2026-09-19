@@ -1,11 +1,12 @@
 # Refactor: economia (composição) e ordem de builds
 
-> Design consolidado em 19 de setembro de 2026 sobre `5f12156` (`botbandido`). Nada implementado, nenhuma
-> partida jogada. Junta a proposta STYLE / COUNTER ADAPTATION / SURVIVAL (conversa de 19/09 com outro agente)
+> Design consolidado em 19 de setembro de 2026 sobre `5f12156` (`botbandido`). O núcleo foi implementado
+> no working tree em 19 de setembro de 2026, ainda sem partidas de validação. Junta a proposta
+> STYLE / COUNTER ADAPTATION / SURVIVAL (conversa de 19/09 com outro agente)
 > ao que já estava escrito: E1–E9 de [melhorias_propostas_eco.md](../melhorias_propostas_eco.md), N2 de
 > [novas_propostas.md](../novas_propostas.md), P0.4 e P1.5 de [propostas.md](../propostas.md) e os achados
 > F5, F6, F8, I6, I7, I8, I9, L5 e L6 de [gaps.md](../gaps.md). Onde a proposta nova e os documentos antigos
-> discordam, o texto diz, e a decisão está em [Em aberto](#em-aberto).
+> discordam, o texto diz, e a decisão está em [Decisões adotadas](#decisões-adotadas-na-implementação).
 
 ## Objetivo
 
@@ -20,7 +21,7 @@ Separar três perguntas que hoje estão misturadas numa fórmula só:
 A composição normal é `baseline + adaptação = target`. O SURVIVE quebra as restrições do estilo por um tempo, sem
 mudar o estilo. A execução continua do Body e do Ares (`SpawnController`, `ProductionController`).
 
-## Como é hoje
+## Como era antes deste refactor
 
 O pacote [economy/](../../bot/ego/planners/economy/) tem quatro módulos de funções soltas: `investment` (quanto
 investir), `styles` (BIO e MECH como dado), `composition` (o mix) e `planner.plan`, que junta tudo num
@@ -134,11 +135,17 @@ Para cada tipo inimigo acreditado `e` com poder `p_e` (`seen_enemy_types`):
 ```text
 c        = alias(e)                                      tipo canônico
 resp(e)  = primeiro u de catálogo[c] com u ∈ tech_ready   nenhum → 'no_producible_counter', fica com o baseline
-target(u) = (W · baseline(u) + Σ_e p_e · [u = resp(e)]) / (W + Σ_e p_e)
+R         = ameaças com resposta produzível
+U         = poder das ameaças sem resposta (vazia, ausente ou sem tech)
+target(u) = ((W + U) · baseline(u) + Σ_{e ∈ R} p_e · [u = resp(e)])
+            / (W + U + Σ_{e ∈ R} p_e)
 ```
 
-- **A mistura é aditiva, não multiplicativa.** Corrige o 2.2: com muita evidência o target é a resposta às ameaças,
-  e o estilo pesa `W / (W + Σ p_e)`, que nunca chega a zero enquanto `W > 0`.
+- **A mistura é aditiva, não multiplicativa.** Corrige o 2.2: o baseline pesa
+  `(W + U) / (W + U + Σ_{e ∈ R} p_e)`; quando todas as ameaças têm resposta, muita evidência faz o target tender
+  às respostas.
+- **Uma ameaça sem resposta volta ao baseline.** Seu poder entra em `U`; portanto o target continua normalizado
+  e, se nenhuma ameaça tiver resposta produzível, sai exatamente o baseline.
 - **Intensidade sem limiar.** Poucos lings mexem pouco; um exército inteiro mexe muito. `W` v1 = `PRIOR_POWER`
   (20 Marines, o de hoje); o E6.1 propõe `W = max(0, estimado − visto)` da Awareness (o estilo responde ao
   desconhecido). A estabilidade vem da crença (τ = 180 s), não de histerese.
@@ -288,27 +295,25 @@ Cada fatia é comparada com a execução medida mais recente da mesma matriz (ho
   não entra; SURVIVE antes do fim da abertura a interrompe.
 - **Strategy:** a política sai de SURVIVE só quando o objetivo sai de STABILIZE.
 
-## Em aberto
+## Decisões adotadas na implementação
 
-Decisões do usuário, com a recomendação de quem consolidou:
+Decisões usadas no código:
 
-1. **Onde mora o catálogo.** `bot/knowledge/counters/` (a proposta) ou `bot/ego/planners/economy/composition/`.
-   Recomendação: dentro da composição enquanto ela for o único leitor; vira `bot/knowledge/` quando a Defense ou a
-   luta local lerem a mesma tabela.
-2. **A unidade da mistura.** Cabeças (a do Ares hoje), supply (`UNIT_DATA` do Ares) ou gasto (E5). Com Thor como
-   resposta, "40 de poder de Mutalisk" em cabeças vira dois terços do exército em Thors. Recomendação: supply,
-   convertido em cabeças só na fronteira com o Ares, com o baseline convertido uma vez (com nada visto, o dict sai
-   igual ao de hoje).
-3. **O peso do baseline `W`.** `PRIOR_POWER` constante (v1, continuidade) ou a parte desconhecida da Awareness
-   (E6.1, com a qual o estilo some quando tudo é visto). A proposta diz que o estilo "permanece como referência de
-   longo prazo", o que favorece um `W` que não zera.
-4. **Primeira produzível ou peso pela posição.** A proposta usa a posição só como prioridade (primeira
-   produzível). A alternativa contínua é repartir `p_e` entre as produzíveis com peso decrescente pela posição.
-   Recomendação: a primeira produzível na v1.
-5. **SURVIVE: política da economia ou terceiro objetivo.** Recomendação: política (o padrão `DomainPolicy` que a
-   ofensiva já usa, com um enum próprio de três níveis); um terceiro objetivo mexe na histerese dos dois que existem.
-   Nomes a decidir.
-6. **Entrada do SURVIVE.** v1 = a emergência de hoje; v2 = emergência + déficit por camada. Recomendação: v1 e
-   medir quantas vezes dispara no meio do jogo.
-7. **O que "ordem de builds" cobre.** As aberturas (YAML, uma por raça, ramo seguro), a ordem do gasto depois da
-   abertura (E9), ou as duas. Cada uma é uma fatia própria depois da composição.
+1. **Onde mora o catálogo.** `bot/ego/planners/economy/counters/`, com loader em `counter_catalog.py`.
+2. **A unidade da mistura.** Supply, convertido em cabeças na fronteira com o Ares; sem adaptação o dict sai
+   exatamente igual ao baseline.
+3. **O peso do baseline `W`.** Constante em 20 na v1.
+4. **Escolha do counter.** Primeira resposta produzível que também atinge o modo observado.
+5. **SURVIVE.** Política da economia com `INVEST`, `ARMY_FIRST` e `SURVIVE`; fica latched até sair de
+   `STABILIZE`.
+6. **Entrada do SURVIVE.** v1, pelo limiar de emergência da Strategy.
+7. **Ordem de builds.** Aberturas adaptativas, investimento proativo em tech e E9 continuam como fatias próprias,
+   depois dos benches deste refactor.
+
+## Estado da implementação
+
+- Implementado: catálogo YAML por raça, validação forte e fingerprint; aliases e camada física; mistura em supply;
+  primeira resposta produzível; `CompositionPlan`; política latched de SURVIVE; fallback por capacidade pronta;
+  MECH sem Marine; interrupção da abertura pela política; seed reproduzível no bench; telemetria detalhada.
+- Pendente: partidas/benches, `blocked_by`/`short_of` do E2, investimento proativo na infraestrutura de um
+  counter bloqueado, upgrades/add-ons para respostas fora do estilo e a ordem de gasto E9.

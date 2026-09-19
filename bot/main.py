@@ -11,6 +11,7 @@ twice in a frame.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from hashlib import sha256
 from random import Random
 from time import perf_counter
 
@@ -34,7 +35,7 @@ from bot.ego.planners import (
 )
 from bot.ego.planners.control.detection import Detection
 from bot.ego.planners.control.structure_control import StructureControl
-from bot.ego.planners.economy import styles
+from bot.ego.planners.economy import CompositionPlanner, InvestmentConfig, styles
 from bot.ego.planners.economy.styles import BIO, ArmyStyle
 from bot.ego.planners.military.defense import DefensePlanner
 from bot.ego.planners.military.intel import IntelPlanner
@@ -54,6 +55,8 @@ class Layers:
     logs: Logs
     # Chosen once, in `on_start`.
     army: ArmyStyle = BIO
+    composition: CompositionPlanner = field(init=False)
+    investment: InvestmentConfig = field(default_factory=InvestmentConfig)
     awareness: AwarenessModel = field(default_factory=AwarenessModel)
     strategy: StrategyModel = field(default_factory=StrategyModel)
     defense: DefensePlanner = field(default_factory=DefensePlanner)
@@ -66,6 +69,9 @@ class Layers:
     # The last allocation, read by the missions on the next frame.
     feedback: EngineResult | None = None
 
+    def __post_init__(self) -> None:
+        self.composition = CompositionPlanner(self.army)
+
     def configs(self) -> dict[str, object]:
         return {
             "awareness": self.awareness.config,
@@ -75,6 +81,8 @@ class Layers:
             "structure_control": self.structure_control.config,
             "detection": self.detection.config,
             "army": self.army,
+            "composition": self.composition.config,
+            "investment": self.investment,
         }
 
 
@@ -116,7 +124,12 @@ def play_frame(bot, iteration: int, layers: Layers) -> Frame:
     proposals += layers.intel.plan(attention, layers.feedback)
     missions = layers.defense.views() + layers.offense.views() + layers.intel.views()
     economy_plan = economy.plan(
-        attention, strategy, layers.army, awareness.seen_enemy_types
+        attention,
+        strategy,
+        layers.army,
+        composition_planner=layers.composition,
+        investment_config=layers.investment,
+        awareness=awareness,
     )
     structures = layers.structure_control.plan(attention)
     detection = layers.detection.plan(attention, awareness)
@@ -170,6 +183,7 @@ class MyBot(AresBot):
         logs: Logs | None = None,
         lattice_spacing: int = DEFAULT_LATTICE_SPACING,
         army: str | None = None,
+        style_seed: int | None = None,
     ):
         """
         Parameters
@@ -183,17 +197,25 @@ class MyBot(AresBot):
             Map cells between the points Awareness reasons over.
         army :
             The army style to play, by name; None draws one for the enemy's race.
+        style_seed :
+            Reproducible style draw. When omitted, a stable opponent-id seed is
+            used (zero outside a ladder match).
         """
         super().__init__(game_step_override)
         self.bot_logs = logs or Logs()
         self.lattice_spacing = lattice_spacing
         self.army = army
+        self.style_seed = style_seed
         self.layers: Layers | None = None
 
     async def on_start(self) -> None:
         await super().on_start()
         map_view = read_map(self, lattice_spacing=self.lattice_spacing)
-        army = styles.choose(self.enemy_race, Random(), forced=self.army)
+        seed = self.style_seed
+        if seed is None:
+            opponent = str(getattr(self, "opponent_id", "") or "")
+            seed = int.from_bytes(sha256(opponent.encode("utf-8")).digest()[:8], "big")
+        army = styles.choose(self.enemy_race, Random(seed), forced=self.army)
         # Nothing of the opening has been played yet.
         self.build_order_runner.switch_opening(army.opening, remove_completed=False)
         self.layers = Layers(map_view=map_view, logs=self.bot_logs, army=army)

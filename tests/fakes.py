@@ -17,9 +17,7 @@ from bot.ego.planners import Command, Proposal
 
 SIZE = 64
 EXPANSIONS = (Point2((10.5, 10.5)), Point2((30.5, 12.5)), Point2((53.5, 53.5)))
-LATTICE = tuple(
-    Point2((x + 0.5, y + 0.5)) for y in range(2, SIZE, 4) for x in range(2, SIZE, 4)
-)
+LATTICE = tuple(Point2((x + 0.5, y + 0.5)) for y in range(2, SIZE, 4) for x in range(2, SIZE, 4))
 TOPOLOGY = MapTopology(
     regions=(
         MapRegion("region:0", Point2((10.5, 10.5)), expansions=(EXPANSIONS[0],)),
@@ -27,21 +25,15 @@ TOPOLOGY = MapTopology(
         MapRegion("region:2", Point2((53.5, 53.5)), expansions=(EXPANSIONS[2],)),
     ),
     passages=(
-        MapPassage(
-            "choke:0", Point2((20.5, 11.5)), 4.0, ("region:0", "region:1"), "choke"
-        ),
-        MapPassage(
-            "choke:1", Point2((42.5, 32.5)), 6.0, ("region:1", "region:2"), "choke"
-        ),
+        MapPassage("choke:0", Point2((20.5, 11.5)), 4.0, ("region:0", "region:1"), "choke"),
+        MapPassage("choke:1", Point2((42.5, 32.5)), 6.0, ("region:1", "region:2"), "choke"),
     ),
     adjacency=(
         ("region:0", (("region:1", "choke:0"),)),
         ("region:1", (("region:0", "choke:0"), ("region:2", "choke:1"))),
         ("region:2", (("region:1", "choke:1"),)),
     ),
-    expansion_to_region=tuple(
-        zip(EXPANSIONS, ("region:0", "region:1", "region:2"), strict=True)
-    ),
+    expansion_to_region=tuple(zip(EXPANSIONS, ("region:0", "region:1", "region:2"), strict=True)),
     own_start_region="region:0",
     enemy_start_region="region:2",
 )
@@ -112,6 +104,7 @@ def attention(
     workers: int = 12,
     opening_done: bool = True,
     map_view: MapView = MAP,
+    tech_ready=(),
 ) -> AttentionState:
     def by_tag(items) -> tuple:
         return tuple(sorted(items, key=lambda item: item.tag))
@@ -134,6 +127,7 @@ def attention(
         dead_tags=frozenset(dead_tags),
         map=map_view,
         visibility=visibility,
+        tech_ready=frozenset(tech_ready),
     )
 
 
@@ -294,7 +288,8 @@ class FakeMediator:
 
     def role_of(self, tag: int) -> str | None:
         return next(
-            (role for role, tags in self.get_unit_role_dict.items() if tag in tags), None
+            (role for role, tags in self.get_unit_role_dict.items() if tag in tags),
+            None,
         )
 
 
@@ -351,9 +346,7 @@ class FakeBot:
         self.mineral_field: list[FakeUnit] = []
         self.state = SimpleNamespace(
             dead_units=set(),
-            visibility=SimpleNamespace(
-                data_numpy=np.zeros((SIZE, SIZE), dtype=np.uint8)
-            ),
+            visibility=SimpleNamespace(data_numpy=np.zeros((SIZE, SIZE), dtype=np.uint8)),
         )
         self.build_order_runner = SimpleNamespace(
             chosen_opening="BioThreeOneOne", build_completed=True

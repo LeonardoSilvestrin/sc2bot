@@ -39,11 +39,25 @@ class Posture(str, Enum):
     WITHDRAW = "WITHDRAW"
 
 
+class EconomyPosture(str, Enum):
+    """How aggressively the economy may invest beyond immediate army."""
+
+    INVEST = "INVEST"
+    ARMY_FIRST = "ARMY_FIRST"
+    SURVIVE = "SURVIVE"
+
+
 @dataclass(frozen=True, slots=True)
 class DomainPolicy:
     """What Strategy allows one domain's operations."""
 
     posture: Posture
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class EconomyPolicy:
+    posture: EconomyPosture
     reason: str
 
 
@@ -92,6 +106,9 @@ class StrategyState:
     scores: tuple[tuple[str, float], ...]
     # The policy of the offense's operations.
     offense: DomainPolicy
+    # Investment, army first, or the emergency fallback. SURVIVE is latched
+    # until the objective leaves STABILIZE.
+    economy_policy: EconomyPolicy
 
 
 class StrategyModel:
@@ -101,6 +118,7 @@ class StrategyModel:
         self._previous: Objective | None = None
         self._since = 0.0
         self._reason = ""
+        self._survival = False
 
     def decide(self, attention: AttentionState, awareness: AwarenessState) -> StrategyState:
         now = attention.time
@@ -116,6 +134,16 @@ class StrategyModel:
         self._select(scores, danger, now)
         objective = self._objective
         assert objective is not None
+        if objective is not Objective.STABILIZE:
+            self._survival = False
+        elif danger >= self.config.emergency_danger:
+            self._survival = True
+        if self._survival:
+            economy_policy = EconomyPolicy(EconomyPosture.SURVIVE, "emergency_threat")
+        elif objective is Objective.STABILIZE:
+            economy_policy = EconomyPolicy(EconomyPosture.ARMY_FIRST, "home_threatened")
+        else:
+            economy_policy = EconomyPolicy(EconomyPosture.INVEST, "home_secure")
         army = _unit(0.3 + 0.5 * danger + 0.4 * (0.5 - army_share))
         return StrategyState(
             time=now,
@@ -140,6 +168,7 @@ class StrategyModel:
             ),
             scores=tuple((item.value, scores[item]) for item in Objective),
             offense=_OFFENSE[objective],
+            economy_policy=economy_policy,
         )
 
     def _select(self, scores: dict[Objective, float], danger: float, now: float) -> None:

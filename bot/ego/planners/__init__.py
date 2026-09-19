@@ -22,13 +22,26 @@ of mission in `missions/`; what every mission shares is `bot.ego.missions`.
 The contracts between the planners and the Body are in `contracts`.
 """
 
-from .contracts import Command, DetectionPlan, Domain, EconomyPlan, Proposal, StructurePlan
+from .contracts import (
+    Command,
+    CompositionPlan,
+    CounterAdaptation,
+    DetectionPlan,
+    Domain,
+    EconomyPlan,
+    Proposal,
+    StructurePlan,
+    SurvivalComposition,
+)
 
 __all__ = [
     "Command",
+    "CompositionPlan",
+    "CounterAdaptation",
     "DetectionPlan",
     "Domain",
     "EconomyPlan",
     "Proposal",
     "StructurePlan",
+    "SurvivalComposition",
 ]

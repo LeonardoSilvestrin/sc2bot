@@ -93,10 +93,14 @@ def main(argv: list[str] | None = None) -> int:
 
 def _add_debug_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
-        "--spatial-view", action="store_true", help="draw the influence field in the game"
+        "--spatial-view",
+        action="store_true",
+        help="draw the influence field in the game",
     )
     parser.add_argument(
-        "--spatial-snapshot", action="store_true", help="write SVG field snapshots to log/spatial"
+        "--spatial-snapshot",
+        action="store_true",
+        help="write SVG field snapshots to log/spatial",
     )
 
 
@@ -198,7 +202,7 @@ def _play(spec_path: Path, directory: Path, *, spatial_view: bool, spatial_snaps
         snapshots=SnapshotConfig(enabled=spatial_snapshot),
         snapshot_directory=logger.session_directory / "spatial",
     )
-    bot = MyBot(logs=logs, army=spec.army)
+    bot = MyBot(logs=logs, army=spec.army, style_seed=spec.seed)
     exit_code = 0
     try:
         result = run_game(

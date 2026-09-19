@@ -10,11 +10,13 @@ até o que foi observado, o que se inferiu e por que se decidiu.
 
 Um estilo de exército sorteado por partida entre os feitos para a raça
 inimiga, anunciado no chat: BIO (Marine, Marauder, Siege Tank, Medivac) contra
-todas, MECH (Hellion, Cyclone, Siege Tank e Marines) só contra Zerg. Cada
-estilo tem a sua abertura (as duas com Reaper expand); depois dela:
+todas, MECH (Hellion, Cyclone e Siege Tank) só contra Zerg. A composição adapta
+o baseline por um catálogo validado de counters e pode usar produção fora do
+estilo durante uma emergência. Cada estilo tem a sua abertura (as duas com
+Reaper expand); depois dela:
 
-- **Economia:** workers, gás e expansões pelos macro behaviors do Ares, com a
-  composição do estilo repesada pelo exército inimigo visto, os upgrades do
+- **Economia:** workers, gás e expansões pelos macro behaviors do Ares, com o
+  baseline do estilo adaptado pelo exército inimigo visto, os upgrades do
   estilo, Orbital Command e MULE. O gás cobre os geysers das bases que o bot
   segura, a expansão continua enquanto houver lugar no mapa, o teto de
   produção cresce com as bases e a estrutura de produção do estilo recebe

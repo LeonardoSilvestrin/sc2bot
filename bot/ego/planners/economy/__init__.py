@@ -15,7 +15,20 @@ runs.
 """
 
 from . import composition, investment, styles
+from .composition import CompositionConfig, CompositionPlanner
+from .counter_catalog import CounterCatalog
+from .investment import InvestmentConfig
 from .planner import plan
 from .styles import ArmyStyle
 
-__all__ = ["ArmyStyle", "composition", "investment", "plan", "styles"]
+__all__ = [
+    "ArmyStyle",
+    "CompositionConfig",
+    "CompositionPlanner",
+    "CounterCatalog",
+    "InvestmentConfig",
+    "composition",
+    "investment",
+    "plan",
+    "styles",
+]

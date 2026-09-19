@@ -15,7 +15,7 @@ from bot.awareness import (
     InfluenceField,
 )
 from bot.ego.planners.military.map_control import MapControlPlanner
-from bot.ego.strategy import Objective, StrategyConfig, StrategyModel
+from bot.ego.strategy import EconomyPosture, Objective, StrategyConfig, StrategyModel
 
 from .fakes import MAIN, attention, unit
 
@@ -73,6 +73,22 @@ def test_an_emergency_stabilizes_at_once() -> None:
     assert state.objective is Objective.STABILIZE
     assert state.reason == "emergency_threat"
     assert state.previous is Objective.BUILD_ADVANTAGE
+    assert state.economy_policy.posture is EconomyPosture.SURVIVE
+
+
+def test_survive_latches_inside_stabilize_and_clears_only_after_leaving() -> None:
+    model = StrategyModel()
+    first = decide(model, 0.0, 0.58)
+    emergency = decide(model, 1.0, 0.7)
+    lull = decide(model, 2.0, 0.55)
+    back = decide(model, 20.0, 0.0)
+
+    assert first.economy_policy.posture is EconomyPosture.ARMY_FIRST
+    assert emergency.economy_policy.posture is EconomyPosture.SURVIVE
+    assert lull.objective is Objective.STABILIZE
+    assert lull.economy_policy.posture is EconomyPosture.SURVIVE
+    assert back.objective is Objective.BUILD_ADVANTAGE
+    assert back.economy_policy.posture is EconomyPosture.INVEST
 
 
 def test_a_moderate_threat_waits_for_the_minimum_dwell() -> None:
@@ -121,7 +137,11 @@ def test_a_lull_in_an_attack_does_not_send_the_army_away() -> None:
     # Trace 483722e, 1318.7 s: after 44 s of STABILIZE danger fell from 0.63 to
     # 0.33 in one step as attackers died, the rally went ~90 cells to the front,
     # and an emergency brought it back 2.1 s later as 26 more arrived.
-    awareness, strategy, map_control = AwarenessModel(), StrategyModel(), MapControlPlanner()
+    awareness, strategy, map_control = (
+        AwarenessModel(),
+        StrategyModel(),
+        MapControlPlanner(),
+    )
     x, y = MAIN.position
     first_wave = tuple(unit(tag, x=x, y=y) for tag in range(1, 5))
     straggler = first_wave[-1:]

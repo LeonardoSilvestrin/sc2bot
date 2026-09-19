@@ -81,15 +81,10 @@ BIO = ArmyStyle(
 MECH = ArmyStyle(
     name="mech",
     opening="MechHellionTank",
-    # A few Marines keep the Barracks working: in `bench/ci-mech/002` a ling
-    # rush interrupted the opening at 181 s with one Marine and no Hellion
-    # out, and with no Marine in the mix the Barracks idled while both bases
-    # fell.
     composition=(
-        (UnitTypeId.HELLION, 0.35, 2),
-        (UnitTypeId.CYCLONE, 0.22, 1),
-        (UnitTypeId.SIEGETANK, 0.33, 0),
-        (UnitTypeId.MARINE, 0.1, 2),
+        (UnitTypeId.HELLION, 0.39, 2),
+        (UnitTypeId.CYCLONE, 0.24, 1),
+        (UnitTypeId.SIEGETANK, 0.37, 0),
     ),
     # Weapons first: the Armory it needs is what the armor needs too. Blue
     # flame is researched on a Factory Tech Lab, which the tanks already hold.

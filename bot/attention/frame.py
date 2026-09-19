@@ -11,14 +11,19 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 
 import numpy as np
+from sc2.dicts.unit_trained_from import UNIT_TRAINED_FROM
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.ids.upgrade_id import UpgradeId
 from sc2.position import Point2
 
 from .map import MapView, as_point
 
-WORKER_TYPES = frozenset(
-    {UnitTypeId.SCV, UnitTypeId.PROBE, UnitTypeId.DRONE, UnitTypeId.MULE}
+WORKER_TYPES = frozenset({UnitTypeId.SCV, UnitTypeId.PROBE, UnitTypeId.DRONE, UnitTypeId.MULE})
+TERRAN_PRODUCTION = frozenset({UnitTypeId.BARRACKS, UnitTypeId.FACTORY, UnitTypeId.STARPORT})
+# Every unit Ares can train directly from Terran army production. Keeping this
+# perception-wide avoids making Attention depend on a style or counter catalog.
+TERRAN_TRAINABLE = frozenset(
+    unit_type for unit_type, producers in UNIT_TRAINED_FROM.items() if producers & TERRAN_PRODUCTION
 )
 # Neither workers nor structures, and still not an army.
 _NOT_ARMY = frozenset(
@@ -118,6 +123,8 @@ class AttentionState:
     visibility: np.ndarray | None = field(default=None, compare=False, repr=False)
     # Upgrades researched to completion.
     upgrades: frozenset[UpgradeId] = frozenset()
+    # Unit types whose complete Ares tech requirement is ready this frame.
+    tech_ready: frozenset[UnitTypeId] = frozenset()
 
     def is_visible(self, point: Point2) -> bool:
         grid = self.visibility
@@ -171,7 +178,15 @@ def observe(bot, iteration: int, map_view: MapView) -> AttentionState:
         map=map_view,
         visibility=getattr(getattr(state, "visibility", None), "data_numpy", None),
         upgrades=frozenset(getattr(state, "upgrades", ())),
+        tech_ready=_ready_tech(bot),
     )
+
+
+def _ready_tech(bot) -> frozenset[UnitTypeId]:
+    checker = getattr(bot, "tech_ready_for_unit", None)
+    if checker is None:
+        return frozenset()
+    return frozenset(unit_type for unit_type in TERRAN_TRAINABLE if checker(unit_type))
 
 
 def unit_view(
@@ -211,9 +226,7 @@ def _views(
     supply: Callable[[UnitTypeId], float],
     roles: Mapping[int, str] | None = None,
 ) -> tuple[UnitView, ...]:
-    return tuple(
-        sorted((unit_view(unit, supply, roles) for unit in units), key=lambda v: v.tag)
-    )
+    return tuple(sorted((unit_view(unit, supply, roles) for unit in units), key=lambda v: v.tag))
 
 
 def _roles(bot) -> dict[int, str]:
@@ -224,9 +237,7 @@ def _roles(bot) -> dict[int, str]:
     except (AttributeError, KeyError, RuntimeError, TypeError):
         return {}
     return {
-        int(tag): str(getattr(role, "name", role))
-        for role, tags in by_role.items()
-        for tag in tags
+        int(tag): str(getattr(role, "name", role)) for role, tags in by_role.items() for tag in tags
     }
 
 

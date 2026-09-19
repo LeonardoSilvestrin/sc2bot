@@ -45,9 +45,7 @@ def test_the_draw_covers_every_candidate_and_a_forced_style_wins() -> None:
 
 
 def test_the_announcement_names_the_style_and_its_units() -> None:
-    assert styles.announcement(styles.MECH) == (
-        "Hoje vai de MECH: Hellion, Cyclone, Siege Tank e Marine."
-    )
+    assert styles.announcement(styles.MECH) == "Hoje vai de MECH: Hellion, Cyclone e Siege Tank."
     assert styles.announcement(styles.BIO) == (
         "Hoje vai de BIO: Marine, Marauder, Siege Tank e Medivac."
     )
@@ -114,14 +112,18 @@ def add_on(bot: FakeBot) -> int | None:
 
 
 def test_add_ons_go_on_the_factories_the_plan_names_within_the_share() -> None:
-    # Hellions (0.35) on Reactors, Cyclones and tanks (0.55) on Tech Labs:
+    # Hellions (0.39) on Reactors, Cyclones and tanks (0.61) on Tech Labs:
     # 0.24 of the Factories, so the first Reactor of five fits.
     bot, factories = factories_bot(bare=5, reactors=0)
 
-    assert mech_plan().reactor_share == pytest.approx(0.35 / (0.35 + 2 * 0.55))
+    assert mech_plan().reactor_share == pytest.approx(0.39 / (0.39 + 2 * 0.61))
     assert add_on(bot) == 1
     assert [factory.built for factory in factories] == [
-        [UnitTypeId.FACTORYREACTOR], [], [], [], []
+        [UnitTypeId.FACTORYREACTOR],
+        [],
+        [],
+        [],
+        [],
     ]
 
 
@@ -130,4 +132,8 @@ def test_past_the_share_a_factory_takes_a_tech_lab_for_the_tanks() -> None:
     bot, factories = factories_bot(bare=3, reactors=1)
 
     assert add_on(bot) == 1
-    assert [factory.built for factory in factories] == [[UnitTypeId.FACTORYTECHLAB], [], []]
+    assert [factory.built for factory in factories] == [
+        [UnitTypeId.FACTORYTECHLAB],
+        [],
+        [],
+    ]

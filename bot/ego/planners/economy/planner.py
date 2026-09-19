@@ -12,10 +12,13 @@ from collections.abc import Iterable
 from sc2.ids.unit_typeid import UnitTypeId
 
 from bot.attention import AttentionState
+from bot.awareness import AwarenessState
 from bot.ego.planners import EconomyPlan
 from bot.ego.strategy import StrategyState
 
 from . import composition, investment
+from .composition import CompositionPlanner
+from .investment import InvestmentConfig
 from .styles import BIO, ArmyStyle
 
 
@@ -24,12 +27,27 @@ def plan(
     strategy: StrategyState,
     army: ArmyStyle = BIO,
     enemy: Iterable[tuple[UnitTypeId, float]] = (),
+    *,
+    composition_planner: CompositionPlanner | None = None,
+    investment_config: InvestmentConfig | None = None,
+    awareness: AwarenessState | None = None,
 ) -> EconomyPlan:
     """`enemy` is the enemy army believed in, as power by unit type."""
 
-    spend = investment.plan(attention, strategy)
+    spend = investment.plan(attention, strategy, investment_config)
     enemy = tuple(enemy)
-    mix = composition.mix(army, enemy)
+    planner = composition_planner or CompositionPlanner(army)
+    if awareness is not None:
+        enemy = awareness.seen_enemy_types
+        contacts = awareness.contacts
+        incidents = awareness.incidents
+    else:
+        contacts = ()
+        incidents = ()
+    composition_plan = planner.plan(
+        attention, strategy, enemy, contacts=contacts, incidents=incidents
+    )
+    mix = composition_plan.units
     upgrades_done = sum(item in attention.upgrades for item in army.upgrades)
     invests = spend.active and not spend.stabilizing
     return EconomyPlan(
@@ -57,5 +75,5 @@ def plan(
         addons_on=army.addons_on,
         reactor_share=composition.reactor_share(mix, army.addons_on),
         army=army.name,
+        composition_plan=composition_plan,
     )
-

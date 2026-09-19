@@ -10,6 +10,8 @@ how dangerous it is; that is Awareness.
 from .frame import (
     MARINE_POWER,
     SPLASH_TARGETS,
+    TERRAN_PRODUCTION,
+    TERRAN_TRAINABLE,
     WORKER_TYPES,
     AttentionState,
     BaseView,
@@ -25,6 +27,8 @@ from .topology import MapPassage, MapRegion, MapTopology
 __all__ = [
     "MARINE_POWER",
     "SPLASH_TARGETS",
+    "TERRAN_PRODUCTION",
+    "TERRAN_TRAINABLE",
     "WORKER_TYPES",
     "AttentionState",
     "BaseView",

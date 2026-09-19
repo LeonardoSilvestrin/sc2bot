@@ -64,6 +64,39 @@ class Proposal:
 
 
 @dataclass(frozen=True, slots=True)
+class CounterAdaptation:
+    enemy: UnitTypeId
+    canonical: UnitTypeId
+    power: float
+    response: UnitTypeId | None
+    # Alternatives rejected before the selected response.
+    skipped: tuple[tuple[UnitTypeId, str], ...] = ()
+    # selected, known_no_counter, uncatalogued or no_producible_counter.
+    status: str = "selected"
+
+
+@dataclass(frozen=True, slots=True)
+class SurvivalComposition:
+    incident_id: str
+    # Types added to the normal target so freeflow can use ready capacity.
+    added: tuple[tuple[UnitTypeId, str], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class CompositionPlan:
+    style: str
+    baseline: tuple[tuple[UnitTypeId, float, int], ...]
+    # Observed type, canonical type and remembered power.
+    enemy: tuple[tuple[UnitTypeId, UnitTypeId, float], ...]
+    adaptations: tuple[CounterAdaptation, ...]
+    survival: SurvivalComposition | None
+    # Count proportions consumed by Ares.
+    units: tuple[tuple[UnitTypeId, float, int], ...]
+    tech_ready: tuple[UnitTypeId, ...]
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
 class EconomyPlan:
     # False while Ares' build runner still plays the opening.
     active: bool
@@ -99,6 +132,8 @@ class EconomyPlan:
     reactor_share: float = 1.0
     # The army style the composition and the upgrades come from.
     army: str = "bio"
+    # Explanation of how the final composition was obtained.
+    composition_plan: CompositionPlan | None = None
 
 
 @dataclass(frozen=True, slots=True)

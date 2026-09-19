@@ -343,7 +343,15 @@ class Telemetry:
         )
 
     def _record_strategy(self, strategy: StrategyState) -> None:
-        if not self._strategy.admit((strategy.objective, strategy.since), now=strategy.time):
+        if not self._strategy.admit(
+            (
+                strategy.objective,
+                strategy.since,
+                strategy.economy_policy.posture,
+                strategy.economy_policy.reason,
+            ),
+            now=strategy.time,
+        ):
             return
         self._event(
             "strategy.decided",
@@ -364,6 +372,10 @@ class Telemetry:
                     "offense": {
                         "posture": strategy.offense.posture.value,
                         "reason": strategy.offense.reason,
+                    },
+                    "economy": {
+                        "posture": strategy.economy_policy.posture.value,
+                        "reason": strategy.economy_policy.reason,
                     },
                 },
             },
@@ -532,6 +544,7 @@ class Telemetry:
         )
 
     def _record_economy(self, now: float, economy: EconomyPlan) -> None:
+        composition_plan = economy.composition_plan
         signature = (
             economy.active,
             economy.workers,
@@ -552,6 +565,21 @@ class Telemetry:
             # The mix slides every frame the belief decays: a change of a
             # whole percent is news.
             tuple((unit_type, round(share, 2)) for unit_type, share, _ in economy.composition),
+            None
+            if composition_plan is None
+            else (
+                composition_plan.reason,
+                tuple(
+                    (
+                        item.enemy,
+                        item.response,
+                        item.status,
+                        tuple(item.skipped),
+                    )
+                    for item in composition_plan.adaptations
+                ),
+                composition_plan.survival,
+            ),
         )
         if not self._economy.admit(signature, now=now):
             return
@@ -585,6 +613,56 @@ class Telemetry:
                 "addons_on": economy.addons_on.name,
                 "reactor_share": economy.reactor_share,
                 "army": economy.army,
+                "style": economy.army if composition_plan is None else composition_plan.style,
+                "baseline": []
+                if composition_plan is None
+                else [
+                    {
+                        "type": unit_type.name,
+                        "proportion": proportion,
+                        "priority": priority,
+                    }
+                    for unit_type, proportion, priority in composition_plan.baseline
+                ],
+                "enemy": []
+                if composition_plan is None
+                else [
+                    {
+                        "type": observed.name,
+                        "canonical": canonical.name,
+                        "power": power,
+                    }
+                    for observed, canonical, power in composition_plan.enemy
+                ],
+                "adaptations": []
+                if composition_plan is None
+                else [
+                    {
+                        "enemy": item.enemy.name,
+                        "canonical": item.canonical.name,
+                        "power": item.power,
+                        "response": None if item.response is None else item.response.name,
+                        "status": item.status,
+                        "skipped": [
+                            {"type": unit_type.name, "reason": reason}
+                            for unit_type, reason in item.skipped
+                        ],
+                    }
+                    for item in composition_plan.adaptations
+                ],
+                "survival": None
+                if composition_plan is None or composition_plan.survival is None
+                else {
+                    "incident_id": composition_plan.survival.incident_id,
+                    "added": [
+                        {"type": unit_type.name, "reason": reason}
+                        for unit_type, reason in composition_plan.survival.added
+                    ],
+                },
+                "composition_reason": None if composition_plan is None else composition_plan.reason,
+                "tech_ready": []
+                if composition_plan is None
+                else [unit_type.name for unit_type in composition_plan.tech_ready],
             },
         )
 
@@ -620,7 +698,12 @@ class Telemetry:
     def _record_grants(self, attention: AttentionState, result: EngineResult) -> None:
         owners = dict(result.owners)
         signature = tuple(
-            (grant.proposal.proposal_id, grant.proposal.mission_id, grant.tags, grant.status)
+            (
+                grant.proposal.proposal_id,
+                grant.proposal.mission_id,
+                grant.tags,
+                grant.status,
+            )
             for grant in result.grants
         )
         admitted = self._grants.admit(signature, now=attention.time)

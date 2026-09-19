@@ -40,7 +40,13 @@ def build_bot(*, attackers: int = 3) -> FakeBot:
         FakeUnit(300, UnitTypeId.SIEGETANK, 20, 20, dps=20.0, hit_points=175.0),
     ]
     command_center = FakeUnit(
-        1, UnitTypeId.COMMANDCENTER, 10.5, 10.5, dps=0.0, hit_points=1500.0, structure=True
+        1,
+        UnitTypeId.COMMANDCENTER,
+        10.5,
+        10.5,
+        dps=0.0,
+        hit_points=1500.0,
+        structure=True,
     )
     bot.structures = [command_center]
     bot.townhalls = [command_center]
@@ -96,7 +102,13 @@ def test_a_frame_flows_from_attention_to_logs() -> None:
     assert command["data"]["tags"] == list(defended)
     assert command["data"]["command"] == "ATTACK"
     assert command["data"]["inputs"]["threat"] > 0.0
-    assert set(command["data"]) >= {"attention", "awareness", "strategy", "reason", "priority"}
+    assert set(command["data"]) >= {
+        "attention",
+        "awareness",
+        "strategy",
+        "reason",
+        "priority",
+    }
 
     # The causal trail of the defense: incident -> demand -> grant.
     updated = logger.named("awareness.updated")[0]["data"]
@@ -127,7 +139,13 @@ def test_a_lowered_depot_in_the_attack_path_rises_and_the_log_says_why() -> None
     logger = FakeLogger()
     bot = build_bot()
     depot = FakeUnit(
-        2, UnitTypeId.SUPPLYDEPOTLOWERED, 16, 14, dps=0.0, hit_points=400.0, structure=True
+        2,
+        UnitTypeId.SUPPLYDEPOTLOWERED,
+        16,
+        14,
+        dps=0.0,
+        hit_points=400.0,
+        structure=True,
     )
     bot.structures.append(depot)
 
@@ -148,7 +166,13 @@ def test_a_worker_inside_a_gas_building_does_not_flip_the_economy_plan() -> None
     bot = build_bot(attackers=0)
     bot.townhalls = [
         FakeUnit(
-            1 + index, UnitTypeId.COMMANDCENTER, x, y, dps=0.0, hit_points=1500.0, structure=True
+            1 + index,
+            UnitTypeId.COMMANDCENTER,
+            x,
+            y,
+            dps=0.0,
+            hit_points=1500.0,
+            structure=True,
         )
         for index, (x, y) in enumerate(MAP.expansions)
     ]
@@ -239,7 +263,10 @@ def test_finished_upgrades_reach_the_log_and_the_economy_plan() -> None:
         planned["data"]["inputs"]["production_per_base"] * bases
     )
     # The add-on decision and the share of Barracks that should carry Reactors.
-    assert (planned["data"]["addons"], planned["data"]["addons_on"]) == (True, "BARRACKS")
+    assert (planned["data"]["addons"], planned["data"]["addons_on"]) == (
+        True,
+        "BARRACKS",
+    )
     assert planned["data"]["reactor_share"] == frame.economy.reactor_share
 
 
@@ -254,7 +281,13 @@ def test_the_fog_does_not_let_a_threatened_bot_expand_as_if_the_enemy_had_no_arm
     bot.time = 600.0
     bot.townhalls = [
         FakeUnit(
-            1 + index, UnitTypeId.COMMANDCENTER, x, y, dps=0.0, hit_points=1500.0, structure=True
+            1 + index,
+            UnitTypeId.COMMANDCENTER,
+            x,
+            y,
+            dps=0.0,
+            hit_points=1500.0,
+            structure=True,
         )
         for index, (x, y) in enumerate(MAP.expansions)
     ]
@@ -348,7 +381,11 @@ def test_a_maxed_army_attacks_the_known_enemy_base_and_the_log_says_why() -> Non
     assert planned[0]["committed_power"] == pytest.approx(first.awareness.own_power)
     assert planned[0]["inputs"]["army_share"] < 0.5
     assert planned[0]["inputs"]["supply_used"] == 200.0
-    assert (planned[1]["target"], planned[1]["target_tag"], planned[1]["target_kind"]) == (
+    assert (
+        planned[1]["target"],
+        planned[1]["target_tag"],
+        planned[1]["target_kind"],
+    ) == (
         [53.5, 53.5],
         800,
         "known_base",
@@ -356,18 +393,22 @@ def test_a_maxed_army_attacks_the_known_enemy_base_and_the_log_says_why() -> Non
     proposed = {
         item["owner"]: item for item in logger.named("behavior.proposed")[-1]["data"]["proposals"]
     }
-    assert (proposed[offense.OWNER]["priority"], proposed[map_control.OWNER]["priority"]) == (
+    assert (
+        proposed[offense.OWNER]["priority"],
+        proposed[map_control.OWNER]["priority"],
+    ) == (
         0.0,
         -1.0,
     )
-    granted = {
-        item["owner"]: item for item in logger.named("engine.granted")[-1]["data"]["grants"]
-    }
+    granted = {item["owner"]: item for item in logger.named("engine.granted")[-1]["data"]["grants"]}
     assert (granted[offense.OWNER]["status"], granted[offense.OWNER]["reason"]) == (
         "FULL",
         "every_free_unit",
     )
-    assert (granted[map_control.OWNER]["status"], granted[map_control.OWNER]["reason"]) == (
+    assert (
+        granted[map_control.OWNER]["status"],
+        granted[map_control.OWNER]["reason"],
+    ) == (
         "REJECTED",
         "eligible_units_taken",
     )
@@ -398,9 +439,7 @@ def test_an_enemy_ares_only_remembers_is_not_seen() -> None:
 
     bot.time = 105.0
     bot.registered = []
-    bot.enemy_units = [
-        FakeUnit(900, UnitTypeId.ZERGLING, 50, 50, hit_points=35.0, memory=True)
-    ]
+    bot.enemy_units = [FakeUnit(900, UnitTypeId.ZERGLING, 50, 50, hit_points=35.0, memory=True)]
     later = play_frame(bot, 1, layers)
 
     assert [unit.tag for unit in seen.attention.enemy_units] == [900]
@@ -496,7 +535,7 @@ def test_an_attack_during_the_opening_interrupts_it_and_the_log_says_so() -> Non
     frame = play_frame(bot, 0, layers)
 
     assert frame.attention.opening_done is False
-    assert frame.strategy.defense >= economy.investment.OPENING_ABORT_DANGER
+    assert frame.strategy.defense >= StrategyConfig().emergency_danger
     assert (frame.economy.active, frame.economy.interrupt_opening) == (True, True)
     assert bot.build_order_runner.stopped == 1
     assert any(isinstance(item, MacroPlan) for item in bot.registered)

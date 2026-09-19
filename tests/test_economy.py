@@ -32,7 +32,13 @@ from bot.attention.map import MapView
 from bot.awareness import AwarenessModel
 from bot.body.behaviors import economy as economy_behavior
 from bot.ego.planners import economy
-from bot.ego.strategy import Objective, StrategyModel
+from bot.ego.strategy import (
+    EconomyPolicy,
+    EconomyPosture,
+    Objective,
+    StrategyConfig,
+    StrategyModel,
+)
 
 from .fakes import MAIN, MAP, FakeBot, FakeUnit, attention
 
@@ -65,7 +71,12 @@ def test_stabilizing_spends_on_the_army_not_on_upgrades() -> None:
 def test_the_opening_keeps_every_resource_to_the_build_runner() -> None:
     plan = planned(opening_done=False)
 
-    assert (plan.active, plan.upgrades, plan.orbitals, plan.mules) == (False, (), False, False)
+    assert (plan.active, plan.upgrades, plan.orbitals, plan.mules) == (
+        False,
+        (),
+        False,
+        False,
+    )
 
 
 def test_the_upgrades_the_game_reports_done_are_counted() -> None:
@@ -165,7 +176,14 @@ def mining_bot(*, energy: float) -> tuple[FakeBot, FakeUnit, list[FakeUnit]]:
         1, UnitTypeId.ORBITALCOMMAND, 10.5, 10.5, dps=0.0, structure=True, energy=energy
     )
     unfinished = FakeUnit(
-        2, UnitTypeId.ORBITALCOMMAND, 30.5, 12.5, dps=0.0, structure=True, energy=200, ready=False
+        2,
+        UnitTypeId.ORBITALCOMMAND,
+        30.5,
+        12.5,
+        dps=0.0,
+        structure=True,
+        energy=200,
+        ready=False,
     )
     bot.structures = [orbital, unfinished]
     bot.townhalls = [orbital, unfinished]
@@ -199,7 +217,9 @@ def test_no_mule_below_its_energy_or_when_the_plan_says_no() -> None:
     assert orbital.commands == []
 
 
-def test_production_is_not_added_in_a_frame_the_spawn_controller_acts(monkeypatch) -> None:
+def test_production_is_not_added_in_a_frame_the_spawn_controller_acts(
+    monkeypatch,
+) -> None:
     # Run on its own after the SpawnController (`bench/7/002`), Ares'
     # ProductionController ordered Tech Labs on Barracks the SpawnController
     # had just ordered to train, and the last order wins.
@@ -214,9 +234,7 @@ def test_production_is_not_added_in_a_frame_the_spawn_controller_acts(monkeypatc
 
     for behavior in (AutoSupply, UpgradeCCs, BuildWorkers, GasBuildingController):
         monkeypatch.setattr(behavior, "execute", recorder(behavior.__name__, False))
-    monkeypatch.setattr(
-        economy_behavior.ExactResearch, "execute", recorder("ExactResearch", False)
-    )
+    monkeypatch.setattr(economy_behavior.ExactResearch, "execute", recorder("ExactResearch", False))
     monkeypatch.setattr(UpgradeController, "execute", recorder("UpgradeController", False))
     monkeypatch.setattr(SpawnController, "execute", recorder("SpawnController", True))
     monkeypatch.setattr(ProductionController, "execute", recorder("ProductionController", True))
@@ -256,7 +274,23 @@ def test_the_spawn_controller_leaves_alone_the_structure_that_took_an_add_on() -
 def opening_plan(defense: float, objective: Objective = Objective.STABILIZE):
     frame = attention(time=150.0, opening_done=False)
     strategy = StrategyModel().decide(frame, AwarenessModel().infer(frame))
-    return economy.plan(frame, replace(strategy, objective=objective, defense=defense))
+    posture = (
+        EconomyPosture.SURVIVE
+        if objective is Objective.STABILIZE and defense >= StrategyConfig().emergency_danger
+        else EconomyPosture.ARMY_FIRST
+        if objective is Objective.STABILIZE
+        else EconomyPosture.INVEST
+    )
+    policy = EconomyPolicy(posture, "test")
+    return economy.plan(
+        frame,
+        replace(
+            strategy,
+            objective=objective,
+            defense=defense,
+            economy_policy=policy,
+        ),
+    )
 
 
 @pytest.mark.parametrize("minerals, stalled", [(999, False), (1000, True), (9415, True)])
@@ -275,7 +309,7 @@ def test_a_stalled_opening_is_interrupted_by_its_bank(minerals: int, stalled: bo
 
 
 def test_an_emergency_interrupts_the_opening_and_the_plan_takes_over() -> None:
-    plan = opening_plan(economy.investment.OPENING_ABORT_DANGER)
+    plan = opening_plan(StrategyConfig().emergency_danger)
 
     assert (plan.active, plan.interrupt_opening, plan.reason) == (
         True,
@@ -285,13 +319,13 @@ def test_an_emergency_interrupts_the_opening_and_the_plan_takes_over() -> None:
     # Stabilizing: everything to the army.
     assert plan.freeflow and plan.upgrades == ()
     assert (plan.orbitals, plan.mules) == (True, True)
-    assert dict(plan.inputs)["danger"] == economy.investment.OPENING_ABORT_DANGER
+    assert dict(plan.inputs)["danger"] == StrategyConfig().emergency_danger
 
 
 @pytest.mark.parametrize(
     "defense, objective",
     [
-        (economy.investment.OPENING_ABORT_DANGER - 0.01, Objective.STABILIZE),
+        (StrategyConfig().emergency_danger - 0.01, Objective.STABILIZE),
         # A threat the strategy does not stabilize against yet.
         (0.9, Objective.BUILD_ADVANTAGE),
     ],
@@ -299,7 +333,11 @@ def test_an_emergency_interrupts_the_opening_and_the_plan_takes_over() -> None:
 def test_the_opening_runs_on_below_the_emergency(defense, objective) -> None:
     plan = opening_plan(defense, objective)
 
-    assert (plan.active, plan.interrupt_opening, plan.reason) == (False, False, "opening_runs")
+    assert (plan.active, plan.interrupt_opening, plan.reason) == (
+        False,
+        False,
+        "opening_runs",
+    )
 
 
 class Runner:
@@ -332,7 +370,9 @@ def test_the_body_stops_the_build_runner_once_and_runs_the_plan_that_frame() -> 
 def bases(count: int) -> tuple[BaseView, ...]:
     return (MAIN,) + tuple(
         BaseView(
-            base_id=f"base:{20 + 8 * i}:40", position=Point2((20.5 + 8 * i, 40.5)), is_main=False
+            base_id=f"base:{20 + 8 * i}:40",
+            position=Point2((20.5 + 8 * i, 40.5)),
+            is_main=False,
         )
         for i in range(count - 1)
     )
@@ -545,13 +585,9 @@ def test_past_the_reactor_share_the_add_on_is_a_tech_lab() -> None:
     # Four Barracks, one with a Reactor: a second Reactor would be half.
     barracks = [Barracks(1, add_on=True), Barracks(2), Barracks(3), Barracks(4)]
 
-    assert add_ons_ordered(barracks, share=0.5, reactors=1) == [
-        (2, UnitTypeId.BARRACKSREACTOR)
-    ]
+    assert add_ons_ordered(barracks, share=0.5, reactors=1) == [(2, UnitTypeId.BARRACKSREACTOR)]
     barracks = [Barracks(1, add_on=True), Barracks(2), Barracks(3), Barracks(4)]
-    assert add_ons_ordered(barracks, share=0.4, reactors=1) == [
-        (2, UnitTypeId.BARRACKSTECHLAB)
-    ]
+    assert add_ons_ordered(barracks, share=0.4, reactors=1) == [(2, UnitTypeId.BARRACKSTECHLAB)]
 
 
 def test_no_add_on_the_bot_cannot_pay_for() -> None:
@@ -560,9 +596,7 @@ def test_no_add_on_the_bot_cannot_pay_for() -> None:
 
     assert add_ons_ordered(barracks(), minerals=50, vespene=49) == []
     assert add_ons_ordered(barracks(), minerals=49, vespene=50) == []
-    assert add_ons_ordered(barracks(), minerals=50, vespene=50) == [
-        (0, UnitTypeId.BARRACKSREACTOR)
-    ]
+    assert add_ons_ordered(barracks(), minerals=50, vespene=50) == [(0, UnitTypeId.BARRACKSREACTOR)]
     # A Tech Lab costs 50/25.
     assert add_ons_ordered(barracks(), share=0.0, minerals=50, vespene=25) == [
         (0, UnitTypeId.BARRACKSTECHLAB)
@@ -590,11 +624,12 @@ class GasBot:
         self.vespene = 88
         self.config = {}
         self.start_location = Point2((10.5, 10.5))
-        self.townhalls = [
-            Geyser(tag, Point2((10.5 + 20.0 * tag, 10.5))) for tag in range(6)
-        ]
+        self.townhalls = [Geyser(tag, Point2((10.5 + 20.0 * tag, 10.5))) for tag in range(6)]
         self.vespene_geyser = [
-            Geyser(100 + index, Point2((8.5 + 20.0 * (index // 2), 14.5 + 6.0 * (index % 2))))
+            Geyser(
+                100 + index,
+                Point2((8.5 + 20.0 * (index // 2), 14.5 + 6.0 * (index % 2))),
+            )
             for index in range(12)
         ]
         self.gas_buildings = self.vespene_geyser[:refineries]
@@ -791,7 +826,10 @@ def research_bot(armories: list[Armory], *, game_ability: AbilityId) -> FakeBot:
     return bot
 
 
-PLATING = (UpgradeId.TERRANVEHICLEWEAPONSLEVEL1, UpgradeId.TERRANVEHICLEANDSHIPARMORSLEVEL1)
+PLATING = (
+    UpgradeId.TERRANVEHICLEWEAPONSLEVEL1,
+    UpgradeId.TERRANVEHICLEANDSHIPARMORSLEVEL1,
+)
 
 
 def test_the_plating_is_ordered_by_the_ability_the_armory_offers() -> None:
@@ -815,9 +853,7 @@ def test_exact_research_keeps_the_order_and_yields_to_ares_first() -> None:
     # With the weapons underway on one Armory, the plating takes the other.
     busy = Armory(1, researching=AbilityId.ARMORYRESEARCH_TERRANVEHICLEWEAPONSLEVEL1)
     free = Armory(2)
-    bot = research_bot(
-        [busy, free], game_ability=AbilityId.RESEARCH_TERRANVEHICLEANDSHIPPLATING
-    )
+    bot = research_bot([busy, free], game_ability=AbilityId.RESEARCH_TERRANVEHICLEANDSHIPPLATING)
     assert economy_behavior.ExactResearch(PLATING).execute(bot, {}, bot.mediator)
     assert free.ordered == [AbilityId.ARMORYRESEARCH_TERRANVEHICLEANDSHIPPLATINGLEVEL1]
 
@@ -833,8 +869,6 @@ def test_exact_research_leaves_alone_what_resolves_and_what_is_underway() -> Non
         Armory(1, researching=AbilityId.ARMORYRESEARCH_TERRANVEHICLEANDSHIPPLATINGLEVEL1),
         Armory(2),
     )
-    bot = research_bot(
-        [busy, idle], game_ability=AbilityId.RESEARCH_TERRANVEHICLEANDSHIPPLATING
-    )
+    bot = research_bot([busy, idle], game_ability=AbilityId.RESEARCH_TERRANVEHICLEANDSHIPPLATING)
     assert not economy_behavior.ExactResearch(PLATING).execute(bot, {}, bot.mediator)
     assert idle.ordered == []
