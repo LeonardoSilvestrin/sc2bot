@@ -3,8 +3,8 @@
 The scan comes from the ready Orbital Command with the most energy (lowest tag
 on a tie). Each base that needs a Missile Turret gets one through Ares'
 BuildStructure at the expansion location nearest that base, without looking
-at other bases; Ares sends one builder at a time. An Engineering Bay goes
-first when there is none.
+at other bases; Ares sends one builder at a time. Intel executes the shared
+Engineering Bay request; this executor waits while that prerequisite is absent.
 """
 
 from __future__ import annotations
@@ -19,7 +19,6 @@ from bot.ego.planners import DetectionPlan
 from bot.ego.planners.intel.detection import SCAN_ENERGY
 
 TURRET_COST = 100
-ENGINEERING_BAY_COST = 125
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,12 +44,7 @@ def execute(bot, plan: DetectionPlan) -> DetectionReport:
             orbital(AbilityId.SCANNERSWEEP_SCAN, plan.scan)
             scanned_by = orbital.tag
     building: list[str] = []
-    if plan.engineering_bay and bot.minerals >= ENGINEERING_BAY_COST:
-        bot.register_behavior(
-            BuildStructure(bot.start_location, UnitTypeId.ENGINEERINGBAY, to_count=1)
-        )
-        building.append(UnitTypeId.ENGINEERINGBAY.name)
-    elif plan.turrets and bot.minerals >= TURRET_COST:
+    if plan.turrets and not plan.engineering_bay and bot.minerals >= TURRET_COST:
         base = plan.turrets[0]
         location = min(
             bot.expansion_locations_list,

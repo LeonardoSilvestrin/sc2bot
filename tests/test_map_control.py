@@ -798,7 +798,7 @@ def test_the_frame_holds_the_army_at_the_anchor_and_logs_why() -> None:
     assert plan.source == "staging"
     (hold,) = [grant for grant in frame.result.grants if grant.proposal.owner == map_control.OWNER]
     assert hold.tags and hold.proposal.target == plan.anchor
-    (logged,) = logger.named("behavior.map_control_planned")
+    (logged,) = logger.named("planner.map_control_planned")
     data = logged["data"]
     assert (data["source"], data["policy"], data["passage"], data["region"], data["fallback"]) == (
         "staging",

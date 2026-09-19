@@ -1,22 +1,14 @@
-"""BEHAVIORS: how the Body carries out what the Engine granted.
+"""Local execution of grants and direct plans; see docs/architecture.md.
 
-`execute` runs once per frame, right after the Engine, in this order: workers
-the Engine released go back to mining, each grant is carried out by the
-behavior for its command, then the detection, economy and structure plans
-run -- detection before the economy, so an Orbital that scanned drops no MULE. Ares runs
-a behavior as soon as it is registered, so the order is the order of effects.
-A behavior never picks its units; it commands only the ones it was granted.
-`execute` reports, for the log, how the army composition went to Ares'
-SpawnController, which local reactions the fighting behaviors took and what
-detection did.
+Unit commands use only granted actors. Direct plans may select equivalent
+structures and builders locally. Execution preserves the received intent.
+Scans precede MULEs; their actual actor tags prevent conflicting orders.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-
-from sc2.ids.unit_typeid import UnitTypeId
 
 from bot.attention import AttentionState
 from bot.body.engine import EngineResult
@@ -27,7 +19,17 @@ from bot.ego.planners import (
     StructurePlan,
 )
 
-from . import attack, detection, economy, hold, retreat, scout, sensor_towers, structure_control
+from . import (
+    attack,
+    detection,
+    economy,
+    hold,
+    intel,
+    retreat,
+    scout,
+    sensor_towers,
+    structure_control,
+)
 
 # The behavior that carries out each command with the units granted to it,
 # whichever planner proposed it.
@@ -46,6 +48,7 @@ class BodyReport:
     micro: attack.MicroReport
     detection: detection.DetectionReport = detection.DetectionReport()
     sensor_towers: sensor_towers.SensorTowerReport = sensor_towers.SensorTowerReport()
+    infrastructure: tuple[str, ...] = ()
 
 
 def execute(
@@ -63,17 +66,15 @@ def execute(
     if intel_plan is not None:
         detected = detection.execute(bot, intel_plan.detection)
         reserve = intel_plan.detection.energy_reserve
+    infrastructure: tuple[str, ...] = ()
     towers = sensor_towers.SensorTowerReport()
     if intel_plan is not None:
-        towers = sensor_towers.execute(
-            bot,
-            intel_plan.sensor_towers,
-            engineering_bay_busy=UnitTypeId.ENGINEERINGBAY.name in detected.building,
-        )
+        infrastructure = intel.execute(bot, intel_plan)
+        towers = sensor_towers.execute(bot, intel_plan.sensor_towers)
     busy = frozenset(() if detected.scanned_by is None else (detected.scanned_by,))
     spawn = economy.execute(bot, economy_plan, energy_reserve=reserve, busy=busy)
     structure_control.execute(bot, structures)
-    return BodyReport(spawn=spawn, micro=micro, detection=detected, sensor_towers=towers)
+    return BodyReport(spawn, micro, detected, towers, infrastructure)
 
 
 def command_units(bot, result: EngineResult) -> attack.MicroReport:

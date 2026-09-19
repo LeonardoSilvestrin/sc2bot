@@ -96,6 +96,7 @@ class Logs:
         intel: IntelPlan | None = None,
         detected: DetectionReport | None = None,
         tower_building: SensorTowerReport | None = None,
+        infrastructure: tuple[str, ...] = (),
         missions: Sequence[MissionView] = (),
     ) -> None:
         started = perf_counter()
@@ -117,6 +118,7 @@ class Logs:
                 intel=intel,
                 detected=detected,
                 tower_building=tower_building,
+                infrastructure=infrastructure,
                 missions=missions,
             )
             self.snapshots.capture(attention, awareness, strategy, map_control, result)

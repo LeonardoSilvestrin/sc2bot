@@ -9,7 +9,6 @@ from sc2.ids.unit_typeid import UnitTypeId
 
 from bot.ego.planners import SensorTowerPlan
 
-ENGINEERING_BAY_COST = 125
 SENSOR_TOWER_MINERAL_COST = 125
 SENSOR_TOWER_VESPENE_COST = 100
 
@@ -20,14 +19,9 @@ class SensorTowerReport:
     building: tuple[str, ...] = ()
 
 
-def execute(bot, plan: SensorTowerPlan, *, engineering_bay_busy: bool = False) -> SensorTowerReport:
+def execute(bot, plan: SensorTowerPlan) -> SensorTowerReport:
     building: list[str] = []
-    if plan.engineering_bay and not engineering_bay_busy and bot.minerals >= ENGINEERING_BAY_COST:
-        bot.register_behavior(
-            BuildStructure(bot.start_location, UnitTypeId.ENGINEERINGBAY, to_count=1)
-        )
-        building.append(UnitTypeId.ENGINEERINGBAY.name)
-    elif (
+    if (
         plan.sites
         and not plan.engineering_bay
         and bot.minerals >= SENSOR_TOWER_MINERAL_COST

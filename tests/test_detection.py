@@ -10,7 +10,6 @@ bot could detect it.
 from __future__ import annotations
 
 import pytest
-from ares.behaviors.macro import BuildStructure
 from sc2.ids.ability_id import AbilityId
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
@@ -36,7 +35,9 @@ def lurker(tag=900, x=30.0, y=30.0):
 
 
 def orbital(tag=1, energy=50.0, *, ready=True):
-    return unit(tag, ORBITAL, 10.5, 10.5, power=0.0, structure=True, energy=energy, ready=ready)
+    return unit(
+        tag, ORBITAL, 10.5, 10.5, power=0.0, structure=True, energy=energy, ready=ready
+    )
 
 
 ONE_ORBITAL = (orbital(),)
@@ -107,7 +108,9 @@ def test_a_hidden_enemy_near_the_army_is_scanned_and_the_bases_get_turrets() -> 
 
 
 def test_an_unfinished_turret_covers_and_no_engineering_bay_asks_for_one() -> None:
-    building = unit(6, UnitTypeId.MISSILETURRET, 12, 12, power=0.0, structure=True, ready=False)
+    building = unit(
+        6, UnitTypeId.MISSILETURRET, 12, 12, power=0.0, structure=True, ready=False
+    )
 
     result = plan(Detection(), enemies=(lurker(),), structures=(orbital(), building))
 
@@ -120,7 +123,9 @@ def test_a_scan_is_not_repeated_while_it_lasts() -> None:
     detection = Detection(config)
     model = AwarenessModel()
 
-    first = plan(detection, time=500.0, enemies=(lurker(),), own=marines(), awareness=model)
+    first = plan(
+        detection, time=500.0, enemies=(lurker(),), own=marines(), awareness=model
+    )
     # Another hidden enemy at the edge of the revealed area.
     during = plan(
         detection,
@@ -129,7 +134,9 @@ def test_a_scan_is_not_repeated_while_it_lasts() -> None:
         own=(*marines(), *marines(3, x=43, first=300)),
         awareness=model,
     )
-    after = plan(detection, time=512.5, enemies=(lurker(),), own=marines(), awareness=model)
+    after = plan(
+        detection, time=512.5, enemies=(lurker(),), own=marines(), awareness=model
+    )
 
     assert first.scan == Point2((30.0, 30.0))
     assert (during.scan, during.reason) == (None, "hidden_enemy_scanned")
@@ -158,14 +165,20 @@ def test_a_scan_needs_the_army_that_will_shoot(own, reason) -> None:
     "structures", [(orbital(energy=49.9),), (orbital(ready=False),), ()]
 )
 def test_no_scan_without_an_orbitals_energy(structures) -> None:
-    result = plan(Detection(), enemies=(lurker(),), own=marines(), structures=structures)
+    result = plan(
+        Detection(), enemies=(lurker(),), own=marines(), structures=structures
+    )
 
     assert (result.scan, result.reason) == (None, "no_scan_energy")
 
 
-def test_the_scan_goes_where_most_army_is_then_most_is_revealed_then_lowest_tag() -> None:
+def test_the_scan_goes_where_most_army_is_then_most_is_revealed_then_lowest_tag() -> (
+    None
+):
     army = (*marines(3, x=30), *marines(4, x=50, first=300))
-    result = plan(Detection(), enemies=(lurker(900, 30, 30), lurker(901, 50, 30)), own=army)
+    result = plan(
+        Detection(), enemies=(lurker(900, 30, 30), lurker(901, 50, 30)), own=army
+    )
     assert result.scan == Point2((50.0, 30.0))
 
     # The same army near each; a scan at 901 also reveals 902, which is
@@ -175,16 +188,22 @@ def test_the_scan_goes_where_most_army_is_then_most_is_revealed_then_lowest_tag(
     result = plan(Detection(), enemies=enemies, own=army)
     assert result.scan == Point2((50.0, 30.0))
 
-    result = plan(Detection(), enemies=(lurker(901, 50, 30), lurker(900, 20, 30)), own=army)
+    result = plan(
+        Detection(), enemies=(lurker(901, 50, 30), lurker(900, 20, 30)), own=army
+    )
     assert result.scan == Point2((20.0, 30.0))
 
 
 def test_a_detected_unit_is_no_scan_but_still_says_the_enemy_cloaks() -> None:
-    detected = unit_view(FakeUnit(900, LURKER, 30, 30, burrowed=True, revealed=True), lambda _: 2)
+    detected = unit_view(
+        FakeUnit(900, LURKER, 30, 30, burrowed=True, revealed=True), lambda _: 2
+    )
     assert (detected.is_cloaked, detected.is_hidden) == (True, False)
     model = AwarenessModel()
 
-    seen = model.infer(attention(time=400.0, own_units=marines(), enemy_units=(detected,)))
+    seen = model.infer(
+        attention(time=400.0, own_units=marines(), enemy_units=(detected,))
+    )
     frame = attention(time=401.0, own_units=marines())
     later = model.infer(frame)
 
@@ -227,7 +246,8 @@ def test_a_burrowed_worker_is_no_army_cloak() -> None:
 
 
 @pytest.mark.parametrize(
-    "field", ["scan_reach", "scan_radius", "turret_cover", "scan_min_power", "scan_reserve"]
+    "field",
+    ["scan_reach", "scan_radius", "turret_cover", "scan_min_power", "scan_reserve"],
 )
 def test_invalid_detection_config_is_rejected(field) -> None:
     with pytest.raises(ValueError):
@@ -237,14 +257,18 @@ def test_invalid_detection_config_is_rejected(field) -> None:
 def body_bot(*energies: float) -> FakeBot:
     bot = FakeBot()
     bot.structures = [
-        FakeUnit(10 + index, ORBITAL, 10.5, 10.5, dps=0.0, structure=True, energy=energy)
+        FakeUnit(
+            10 + index, ORBITAL, 10.5, 10.5, dps=0.0, structure=True, energy=energy
+        )
         for index, energy in enumerate(energies)
     ]
     return bot
 
 
 def detection_plan(**kw) -> DetectionPlan:
-    values = dict(scan=None, turrets=(), engineering_bay=False, energy_reserve=0.0, reason="test")
+    values = dict(
+        scan=None, turrets=(), engineering_bay=False, energy_reserve=0.0, reason="test"
+    )
     values.update(kw)
     return DetectionPlan(**values)
 
@@ -260,7 +284,9 @@ def test_the_orbital_with_most_energy_scans() -> None:
     assert bot.structures[0].commands == bot.structures[2].commands == []
 
     bot = body_bot(49.0)
-    assert detection_behavior.execute(bot, detection_plan(scan=target)).scanned_by is None
+    assert (
+        detection_behavior.execute(bot, detection_plan(scan=target)).scanned_by is None
+    )
     assert bot.structures[0].commands == []
 
 
@@ -276,18 +302,14 @@ def test_orbitals_keep_a_scans_energy_and_the_scanning_one_drops_no_mule() -> No
     assert [structure.commands for structure in bot.structures] == [[], [mule], []]
 
 
-def test_an_engineering_bay_goes_before_the_turrets() -> None:
+def test_detection_waits_for_its_shared_prerequisite() -> None:
     bot = FakeBot()
     bot.minerals = 125
-
     report = detection_behavior.execute(
         bot, detection_plan(turrets=(MAIN.position,), engineering_bay=True)
     )
-
-    (ebay,) = bot.registered
-    assert isinstance(ebay, BuildStructure)
-    assert (ebay.structure_id, ebay.to_count) == (UnitTypeId.ENGINEERINGBAY, 1)
-    assert report.building == ("ENGINEERINGBAY",)
+    assert bot.registered == []
+    assert report.building == ()
 
 
 def test_a_turret_goes_to_the_expansion_nearest_the_first_base_that_needs_one() -> None:
@@ -295,7 +317,9 @@ def test_a_turret_goes_to_the_expansion_nearest_the_first_base_that_needs_one() 
     bot.minerals = 100
     near_natural = Point2((31.0, 13.0))
 
-    report = detection_behavior.execute(bot, detection_plan(turrets=(near_natural, MAIN.position)))
+    report = detection_behavior.execute(
+        bot, detection_plan(turrets=(near_natural, MAIN.position))
+    )
 
     (turret,) = bot.registered
     assert turret.structure_id is UnitTypeId.MISSILETURRET
@@ -319,7 +343,9 @@ def test_a_burrowed_lurker_by_the_army_is_scanned_and_the_log_follows() -> None:
     base = FakeUnit(1, ORBITAL, 10.5, 10.5, dps=0.0, structure=True, energy=150.0)
     bot.structures = [base]
     bot.townhalls = [base]
-    bot.mineral_field = [FakeUnit(20, UnitTypeId.MINERALFIELD, 17, 10, dps=0.0, minerals=900)]
+    bot.mineral_field = [
+        FakeUnit(20, UnitTypeId.MINERALFIELD, 17, 10, dps=0.0, minerals=900)
+    ]
     bot.enemy_units = [
         FakeUnit(900, LURKER, 60.0, 90.0, dps=20.0, hit_points=200.0, burrowed=True)
     ]
@@ -331,16 +357,17 @@ def test_a_burrowed_lurker_by_the_army_is_scanned_and_the_log_follows() -> None:
     assert frame.detected.scanned_by == 1
     # With 100 energy left, the scanning Orbital drops no MULE this frame.
     assert base.commands == [(AbilityId.SCANNERSWEEP_SCAN, target)]
-    (planned_event,) = logger.named("behavior.detection_planned")
+    (planned_event,) = logger.named("planner.detection_planned")
     data = planned_event["data"]
-    assert (data["scan"], data["scanned_by"], data["reason"]) == (
+    execution = logger.named("behavior.intel_executed")[0]["data"]
+    assert (data["scan"], execution["scanned_by"], data["reason"]) == (
         [60.0, 90.0],
         1,
         "scan_hidden_enemy",
     )
     assert data["turrets"] == [[10.5, 10.5]]
     assert data["engineering_bay"]
-    assert data["building"] == ["ENGINEERINGBAY"]
+    assert execution["building"] == ["ENGINEERINGBAY"]
     assert data["energy_reserve"] == 50.0
     (updated,) = logger.named("awareness.updated")
     assert updated["data"]["hidden_contacts"] == [900]

@@ -267,7 +267,7 @@
           pushSeries(t.visibleEnemies, time, data.visible_enemy_units);
           attentionRecords.push({ t: time, record });
           break;
-        case "behavior.proposed": {
+        case "planner.proposed": {
           const present = new Set();
           for (const proposal of Array.isArray(data.proposals) ? data.proposals : []) {
             present.add(proposal.proposal_id);
@@ -278,7 +278,7 @@
           }
           break;
         }
-        case "behavior.economy_planned":
+        case "planner.economy_planned":
           pushState(t.economy, time, data.reason, record, data);
           break;
         case "engine.granted": {

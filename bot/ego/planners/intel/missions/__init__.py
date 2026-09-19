@@ -1,6 +1,5 @@
-"""Stateful operations governed by Intel."""
+"""Episodic scouting operations owned by Intel."""
 
 from .scout import ScoutMission
-from .sensor_towers import SensorTowerMission
 
-__all__ = ["ScoutMission", "SensorTowerMission"]
+__all__ = ["ScoutMission"]

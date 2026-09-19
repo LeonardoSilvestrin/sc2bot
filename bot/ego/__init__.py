@@ -1,9 +1,5 @@
-"""EGO: what the bot wants done.
+"""Domain intent and global posture, without game effects.
 
-`strategy` chooses the objective, the preferences and the policy each domain
-follows; the `planners` turn them into what should be done -- proposals (a
-task, a target, a priority and the units it requires) and the economy,
-structure and detection plans. A planner whose work lasts governs missions:
-it opens them and asks them to end, and each mission carries one operation
-and makes its proposals. The Ego names no unit and commands nothing.
+Planners may use episodic missions or express continuous desired state directly.
+The normative roles are defined in docs/architecture.md.
 """

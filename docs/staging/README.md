@@ -17,15 +17,15 @@ revertido também sai daqui e fica registrado em "Medido e revertido".
 
 ## Agora
 
-Estado em 19 de setembro de 2026, sobre `5f12156` (`botbandido`).
+Estado atual: composição por catálogo, política SURVIVE e proteção contra opening parado já
+estão implementadas. [economia-e-builds.md](economia-e-builds.md) é o registro histórico do design.
+Os papéis arquiteturais consolidados, sensor coverage contínuo e o pedido compartilhado de
+Engineering Bay estão descritos em [architecture.md](../architecture.md#papéis-arquiteturais).
 
-| Item | Estado | Próximo passo | Onde |
-| --- | --- | --- | --- |
-| **Economia: composição e ordem de builds** | Próximo refactor. Design consolidado, nada implementado | Fechar as decisões em aberto e começar pela fatia 1 | [economia-e-builds.md](economia-e-builds.md) |
-| MapControl: anchor `staging` | No HEAD (`5f12156`), controlando; a política `passage` roda em shadow no mesmo evento | Medir o `staging` numa matriz (duas partidas até agora, uma por mapa, não separam nada). Depois: tirar o shadow (`anchor.py`, menos o `reached`) e decidir o `legacy` ([F1](../gaps.md#f1)) | [architecture.md](../architecture.md) (MapControl e Medições) |
-| `bench.py --spatial-view --spatial-snapshot` | Na árvore, sem commit | Commitar e pôr em "Comandos" no architecture.md; os SVGs de cada partida vão para `log/spatial/` | `bench.py` |
-| `run.py`: dificuldade padrão `CheatInsane` | Na árvore, sem commit | Se ficar, o README ("contra a IA VeryHard Macro") muda junto | `run.py`, [README](../../README.md) |
-| `.vscode/launch.json` | Na árvore, sem commit | Configurações locais de debug; nada a documentar | — |
+| Item | Estado | Próximo passo |
+| --- | --- | --- |
+| MapControl: anchor staging | Controla o anchor; passage permanece em shadow | Medir matriz antes de remover a política em shadow |
+| Economia e builds | Catálogo, composição, SURVIVE e opening stall no código | Avaliar desempenho em partidas e os limites restantes de macro |
 
 ## Depois
 
@@ -35,7 +35,6 @@ Não decidido. É o que os documentos de backlog já apontam como o próximo lim
   (`assembled_share` 0–0,22) e `home_threatened` o chama de volta. É o [I1](../gaps.md#i1) (compromisso medido no
   exército inteiro, severidade alta) e o N7.1 (reforços agrupados).
 - **Quem conta como atacante** ([I2](../gaps.md#i2), [I3](../gaps.md#i3)): um worker de scout ou uma estrutura
-  estática abre incidente e pode segurar um STABILIZE. O SURVIVE do refactor de economia lê a mesma ameaça, então
-  este item fica mais caro depois dele.
+  estática abre incidente e pode segurar um STABILIZE. A política SURVIVE já lê a mesma ameaça.
 - **Limpeza que não muda decisão**, de uma vez: C13, L1–L7, I6, I7, I8 (a ordem sugerida do gaps.md). O I6, o I7
   e o I8 entram no refactor de economia.

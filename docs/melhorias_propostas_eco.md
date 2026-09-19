@@ -1,5 +1,10 @@
 # Melhorias propostas: economia e composição
 
+> Registro de design/revisão histórico. Composição por catálogo, SURVIVE e fronteiras de Planner,
+> Mission e Behavior já estão implementadas; o estado atual e os nomes de eventos são definidos em
+> [architecture.md](architecture.md).
+
+
 > Revisão feita em 18 de setembro de 2026 sobre `7e5be42` (`botbandido`), com a reorganização
 > dos planners militares (MapControl) ainda na árvore de trabalho. Foram lidos o pacote
 > [economy](../bot/ego/planners/economy/), os planners militares e de controle, a Strategy, o
@@ -55,7 +60,7 @@ O padrão é o que os planners militares e de controle têm em comum depois da r
 | Plano | Um por planner, com `reason` e `inputs` que explicam a decisão | Um `EconomyPlan` de 18 campos para cinco perguntas: investimento, abertura, modo de gasto, composição e add-ons/upgrades. O único `reason` é o do investimento. Da composição, só `enemy_seen_power` é registrado, então ela não diz por que mudou |
 | Um módulo por pergunta | `planner.py` decide e `missions/` executa | `planner.py` só junta as partes. `Investment` repete 10 campos de `EconomyPlan`, copiados um a um (`stabilizing` vira `freeflow`) |
 | Prioridade | Explícita na proposta; o Engine arbitra | Implícita na ordem de registro no Body: o `MacroPlan` ([economy.py:188-217](../bot/body/behaviors/economy.py#L188-L217)), com a detecção e os add-ons registrados antes dele. O Ares para no primeiro que age |
-| Documentação | Catálogo de eventos em dia | O catálogo de `behavior.economy_planned` lista `reactors`, `reactor_on` e `techlab_reserve`, que não existem mais (o código tem `addons`, `addons_on` e `reactor_share`). A descrição do Body ainda fala em `AddReactors` e "reserva de Tech Lab" |
+| Documentação | Catálogo de eventos em dia | O catálogo de `planner.economy_planned` lista `reactors`, `reactor_on` e `techlab_reserve`, que não existem mais (o código tem `addons`, `addons_on` e `reactor_share`). A descrição do Body ainda fala em `AddReactors` e "reserva de Tech Lab" |
 
 No log, o investimento mostra mais dois problemas:
 
@@ -257,9 +262,9 @@ bot/ego/planners/economy/
     `style`, `reason` e `inputs`. É o contrato que o N2.1 já desenhava.
 - **Explicação.** A composição explica a mudança. `inputs` traz o `value` de cada tipo, o poder
   visto e o poder desconhecido. `reason` vale `style_prior` quando nada foi visto e
-  `reweighted_by_seen_army` quando algo foi. O evento `behavior.economy_planned` mantém nome e
+  `reweighted_by_seen_army` quando algo foi. O evento `planner.economy_planned` mantém nome e
   campos, por causa do viewer.
-- **Documentação.** Corrigir no architecture.md o catálogo de `behavior.economy_planned` e a
+- **Documentação.** Corrigir no architecture.md o catálogo de `planner.economy_planned` e a
   descrição do Body.
 
 **Critério:** a suíte passa. Salvo falha do cliente, os benches repetem as partidas de cada seed do

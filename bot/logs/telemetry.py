@@ -68,6 +68,7 @@ class Telemetry:
         self._structures = ChangeGate()
         self._detection = ChangeGate()
         self._sensor_towers = ChangeGate()
+        self._intel_execution = ChangeGate()
         self._perf = ChangeGate(heartbeat=heartbeat)
         self._proposals = ChangeGate()
         self._grants = ChangeGate()
@@ -97,7 +98,9 @@ class Telemetry:
                 "opening": opening,
                 "build": describe_build(),
                 "config_fingerprint": fingerprint(dict(configs)),
-                "configs": {name: fingerprint(config) for name, config in configs.items()},
+                "configs": {
+                    name: fingerprint(config) for name, config in configs.items()
+                },
                 "lattice": {
                     "samples": len(map_view.lattice),
                     "spacing": map_view.lattice_spacing,
@@ -107,7 +110,9 @@ class Telemetry:
         )
         topology = map_view.topology
         candidates = topology.choke_candidates
-        rejected = [candidate.reason for candidate in candidates if not candidate.accepted]
+        rejected = [
+            candidate.reason for candidate in candidates if not candidate.accepted
+        ]
         self._event(
             "map.topology_built",
             "attention",
@@ -127,7 +132,8 @@ class Telemetry:
                     reason: rejected.count(reason) for reason in sorted(set(rejected))
                 },
                 "region_splits": {
-                    split.region_id: list(split.into) for split in topology.region_splits
+                    split.region_id: list(split.into)
+                    for split in topology.region_splits
                 },
                 "candidates": [
                     {
@@ -167,6 +173,7 @@ class Telemetry:
         intel: IntelPlan | None = None,
         detected: DetectionReport | None = None,
         tower_building: SensorTowerReport | None = None,
+        infrastructure: tuple[str, ...] = (),
         missions: Sequence[MissionView] = (),
     ) -> None:
         self._record_attention(attention)
@@ -181,21 +188,34 @@ class Telemetry:
         self._record_micro(attention.time, micro)
         self._record_structures(attention.time, structures)
         if intel is not None:
-            self._record_detection(
-                attention.time, intel.detection, detected or DetectionReport()
-            )
+            self._record_detection(attention.time, intel.detection)
             self._record_sensor_towers(
                 attention.time,
                 intel.sensor_towers,
-                tower_building or SensorTowerReport(),
+            )
+        detected = detected or DetectionReport()
+        towers = tower_building or SensorTowerReport()
+        signature = (infrastructure, detected.building, towers.building)
+        if (
+            self._intel_execution.admit(signature, now=attention.time)
+            or detected.scanned_by is not None
+        ):
+            self._event(
+                "behavior.intel_executed",
+                "behaviors",
+                attention.time,
+                {
+                    "scanned_by": detected.scanned_by,
+                    "building": list(
+                        infrastructure + detected.building + towers.building
+                    ),
+                },
             )
         self._record_grants(attention, result)
         self._record_commands(attention, awareness, strategy, result)
         self._record_perf(attention.time, timings)
 
-    def _record_detection(
-        self, now: float, detection: DetectionPlan, detected: DetectionReport
-    ) -> None:
+    def _record_detection(self, now: float, detection: DetectionPlan) -> None:
         # Every scan is a decision; the rest is state.
         # A build Ares has not started is asked again every frame: it is
         # written when what is asked changes.
@@ -204,15 +224,14 @@ class Telemetry:
             detection.engineering_bay,
             detection.energy_reserve,
             detection.reason,
-            detected.building,
         )
         changed = self._detection.admit(signature, now=now)
         acted = detection.scan is not None
         if not changed and not acted:
             return
         self._event(
-            "behavior.detection_planned",
-            "behaviors",
+            "planner.detection_planned",
+            "planners",
             now,
             {
                 "scan": None if detection.scan is None else _xy(detection.scan),
@@ -221,20 +240,16 @@ class Telemetry:
                 "energy_reserve": detection.energy_reserve,
                 "reason": detection.reason,
                 "inputs": dict(detection.inputs),
-                "scanned_by": detected.scanned_by,
-                "building": list(detected.building),
             },
         )
 
-    def _record_sensor_towers(
-        self, now: float, plan: SensorTowerPlan, report: SensorTowerReport
-    ) -> None:
-        signature = (plan.sites, plan.engineering_bay, plan.reason, report.building)
+    def _record_sensor_towers(self, now: float, plan: SensorTowerPlan) -> None:
+        signature = (plan.sites, plan.engineering_bay, plan.reason)
         if not self._sensor_towers.admit(signature, now=now):
             return
         self._event(
-            "behavior.sensor_towers_planned",
-            "behaviors",
+            "planner.sensor_towers_planned",
+            "planners",
             now,
             {
                 "sites": [
@@ -248,7 +263,6 @@ class Telemetry:
                 "engineering_bay": plan.engineering_bay,
                 "reason": plan.reason,
                 "inputs": dict(plan.inputs),
-                "building": list(report.building),
             },
         )
 
@@ -257,8 +271,8 @@ class Telemetry:
         if not self._structures.admit(signature, now=now):
             return
         self._event(
-            "behavior.structures_planned",
-            "behaviors",
+            "planner.structures_planned",
+            "planners",
             now,
             {
                 "lower": list(structures.lower),
@@ -299,7 +313,11 @@ class Telemetry:
                 "upgrades": sorted(upgrade.name for upgrade in attention.upgrades),
                 # Own structures by type, finished or not.
                 "structures": dict(
-                    sorted(Counter(s.type_id.name for s in attention.own_structures).items())
+                    sorted(
+                        Counter(
+                            s.type_id.name for s in attention.own_structures
+                        ).items()
+                    )
                 ),
             },
         )
@@ -311,7 +329,10 @@ class Telemetry:
             round(awareness.enemy_power),
             tuple((base.base_id, round(base.threat, 1)) for base in awareness.bases),
             # Membership, so every split and merge is written.
-            tuple((incident.incident_id, incident.contacts) for incident in awareness.incidents),
+            tuple(
+                (incident.incident_id, incident.contacts)
+                for incident in awareness.incidents
+            ),
             tuple(contact.tag for contact in awareness.hidden_contacts),
             awareness.cloak_seen_at,
         )
@@ -327,7 +348,9 @@ class Telemetry:
             now,
             {
                 "contacts": len(awareness.contacts),
-                "visible_contacts": sum(contact.visible for contact in awareness.contacts),
+                "visible_contacts": sum(
+                    contact.visible for contact in awareness.contacts
+                ),
                 "enemy_power": awareness.enemy_power,
                 "seen_enemy_power": awareness.seen_enemy_power,
                 "expected_enemy_power": awareness.expected_enemy_power,
@@ -338,7 +361,9 @@ class Telemetry:
                 "danger": awareness.danger,
                 "danger_now": awareness.danger_now,
                 "cloak_seen_at": awareness.cloak_seen_at,
-                "hidden_contacts": [contact.tag for contact in awareness.hidden_contacts],
+                "hidden_contacts": [
+                    contact.tag for contact in awareness.hidden_contacts
+                ],
                 "bases": [
                     {
                         "base_id": base.base_id,
@@ -402,7 +427,9 @@ class Telemetry:
             strategy.time,
             {
                 "objective": strategy.objective.value,
-                "previous": None if strategy.previous is None else strategy.previous.value,
+                "previous": None
+                if strategy.previous is None
+                else strategy.previous.value,
                 "since": strategy.since,
                 "reason": strategy.reason,
                 "defense": strategy.defense,
@@ -433,15 +460,17 @@ class Telemetry:
             plan.reason,
             _cell(plan.anchor),
             plan.fallback,
-            None if staging is None else (_cell(staging.selected.position), staging.since),
+            None
+            if staging is None
+            else (_cell(staging.selected.position), staging.since),
             None if plan.passage.anchor is None else _cell(plan.passage.anchor),
             tuple(candidate.passage_id for candidate in plan.passage.candidates),
         )
         if not self._map_control.admit(signature, now=now):
             return
         self._event(
-            "behavior.map_control_planned",
-            "behaviors",
+            "planner.map_control_planned",
+            "planners",
             now,
             {
                 "anchor": _xy(plan.anchor),
@@ -469,12 +498,14 @@ class Telemetry:
         if not self._offense.admit(signature, now=now):
             return
         self._event(
-            "behavior.offense_planned",
-            "behaviors",
+            "planner.offense_planned",
+            "planners",
             now,
             {
                 "stage": offense.stage.value,
-                "previous": None if offense.previous is None else offense.previous.value,
+                "previous": None
+                if offense.previous is None
+                else offense.previous.value,
                 "since": offense.since,
                 "reason": offense.reason,
                 "blocked_by": offense.blocked_by,
@@ -486,7 +517,9 @@ class Telemetry:
                 "fight": None if offense.fight is None else _fight(offense.fight),
                 "mission_id": offense.mission_id,
                 "mission_status": (
-                    None if offense.mission_status is None else offense.mission_status.value
+                    None
+                    if offense.mission_status is None
+                    else offense.mission_status.value
                 ),
             },
         )
@@ -506,8 +539,8 @@ class Telemetry:
         if not self._missions.admit(signature, now=now):
             return
         self._event(
-            "behavior.missions_updated",
-            "behaviors",
+            "mission.updated",
+            "missions",
             now,
             {
                 "missions": [
@@ -542,7 +575,9 @@ class Telemetry:
                 proposal.proposal_id,
                 round(proposal.priority, 1),
                 proposal.count,
-                None if proposal.minimum_power is None else round(proposal.minimum_power, 1),
+                None
+                if proposal.minimum_power is None
+                else round(proposal.minimum_power, 1),
                 proposal.must_attack,
                 proposal.demand_id,
                 proposal.command,
@@ -555,8 +590,8 @@ class Telemetry:
         if not self._proposals.admit(signature, now=now):
             return
         self._event(
-            "behavior.proposed",
-            "behaviors",
+            "planner.proposed",
+            "planners",
             now,
             {
                 "proposals": [
@@ -569,14 +604,18 @@ class Telemetry:
                         "count": proposal.count,
                         "minimum_power": proposal.minimum_power,
                         "must_attack": (
-                            None if proposal.must_attack is None else proposal.must_attack.value
+                            None
+                            if proposal.must_attack is None
+                            else proposal.must_attack.value
                         ),
                         "demand_id": proposal.demand_id,
                         "mission_id": proposal.mission_id,
                         "unit_types": (
                             None
                             if proposal.unit_types is None
-                            else sorted(unit_type.name for unit_type in proposal.unit_types)
+                            else sorted(
+                                unit_type.name for unit_type in proposal.unit_types
+                            )
                         ),
                         "reason": proposal.reason,
                         "inputs": dict(proposal.inputs),
@@ -607,7 +646,10 @@ class Telemetry:
             economy.army,
             # The mix slides every frame the belief decays: a change of a
             # whole percent is news.
-            tuple((unit_type, round(share, 2)) for unit_type, share, _ in economy.composition),
+            tuple(
+                (unit_type, round(share, 2))
+                for unit_type, share, _ in economy.composition
+            ),
             None
             if composition_plan is None
             else (
@@ -627,8 +669,8 @@ class Telemetry:
         if not self._economy.admit(signature, now=now):
             return
         self._event(
-            "behavior.economy_planned",
-            "behaviors",
+            "planner.economy_planned",
+            "planners",
             now,
             {
                 "active": economy.active,
@@ -656,7 +698,9 @@ class Telemetry:
                 "addons_on": economy.addons_on.name,
                 "reactor_share": economy.reactor_share,
                 "army": economy.army,
-                "style": economy.army if composition_plan is None else composition_plan.style,
+                "style": economy.army
+                if composition_plan is None
+                else composition_plan.style,
                 "baseline": []
                 if composition_plan is None
                 else [
@@ -684,7 +728,9 @@ class Telemetry:
                         "enemy": item.enemy.name,
                         "canonical": item.canonical.name,
                         "power": item.power,
-                        "response": None if item.response is None else item.response.name,
+                        "response": None
+                        if item.response is None
+                        else item.response.name,
                         "status": item.status,
                         "skipped": [
                             {"type": unit_type.name, "reason": reason}
@@ -702,7 +748,9 @@ class Telemetry:
                         for unit_type, reason in composition_plan.survival.added
                     ],
                 },
-                "composition_reason": None if composition_plan is None else composition_plan.reason,
+                "composition_reason": None
+                if composition_plan is None
+                else composition_plan.reason,
                 "tech_ready": []
                 if composition_plan is None
                 else [unit_type.name for unit_type in composition_plan.tech_ready],
@@ -783,7 +831,11 @@ class Telemetry:
                         "reason": grant.reason,
                         "tags": list(grant.tags),
                         "types": dict(
-                            sorted(Counter(types.get(tag, "?") for tag in grant.tags).items())
+                            sorted(
+                                Counter(
+                                    types.get(tag, "?") for tag in grant.tags
+                                ).items()
+                            )
                         ),
                     }
                     for grant in result.grants
@@ -830,7 +882,9 @@ class Telemetry:
                     "target": _xy(proposal.target),
                     "tags": list(grant.tags),
                     "types": dict(
-                        sorted(Counter(types.get(tag, "?") for tag in grant.tags).items())
+                        sorted(
+                            Counter(types.get(tag, "?") for tag in grant.tags).items()
+                        )
                     ),
                     "priority": proposal.priority,
                     "reason": proposal.reason,
@@ -849,7 +903,9 @@ class Telemetry:
                         "enemy_power": awareness.enemy_power,
                     },
                     "attention": {
-                        "army_units": sum(1 for unit in attention.own_units if is_army(unit)),
+                        "army_units": sum(
+                            1 for unit in attention.own_units if is_army(unit)
+                        ),
                         "visible_enemy_units": len(attention.enemy_units),
                     },
                 },
@@ -883,14 +939,20 @@ class Telemetry:
             now,
             {
                 "frames": self._perf_frames,
-                "last_ms": {name: round(float(value), 3) for name, value in timings.items()},
-                "max_ms": {name: round(value, 3) for name, value in self._perf_max.items()},
+                "last_ms": {
+                    name: round(float(value), 3) for name, value in timings.items()
+                },
+                "max_ms": {
+                    name: round(value, 3) for name, value in self._perf_max.items()
+                },
             },
         )
         self._perf_frames = 0
         self._perf_max = {}
 
-    def _event(self, name: str, component: str, time: float, data: dict[str, Any]) -> None:
+    def _event(
+        self, name: str, component: str, time: float, data: dict[str, Any]
+    ) -> None:
         self.logger.event(name, component=component, game_time=time, data=data)
 
 
@@ -967,8 +1029,12 @@ def _shadow(plan: MapControlPlan) -> dict[str, Any]:
             "passage": None if held is None else held.passage_id,
             "region": None if held is None else held.region_id,
             "fallback": passage.fallback,
-            "distance": None if anchor is None else round(anchor.distance_to(plan.anchor), 2),
-            "candidates": [_passage(candidate) for candidate in passage.candidates[:TOP_PASSAGES]],
+            "distance": None
+            if anchor is None
+            else round(anchor.distance_to(plan.anchor), 2),
+            "candidates": [
+                _passage(candidate) for candidate in passage.candidates[:TOP_PASSAGES]
+            ],
             "candidate_count": len(passage.candidates),
         }
     point = None if plan.staging is None else plan.staging.selected
@@ -977,7 +1043,9 @@ def _shadow(plan: MapControlPlan) -> dict[str, Any]:
         "anchor": None if point is None else _xy(point.position),
         "passage": None if point is None else point.passage_id,
         "region": None if point is None else point.region_id,
-        "distance": None if point is None else round(point.position.distance_to(plan.anchor), 2),
+        "distance": None
+        if point is None
+        else round(point.position.distance_to(plan.anchor), 2),
     }
 
 

@@ -10,7 +10,7 @@ from threading import Lock
 from typing import Any, Protocol, TextIO
 
 # Bumped whenever the record envelope or the event catalog changes shape.
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 FAULT_COMPONENT = "logs"
 
 

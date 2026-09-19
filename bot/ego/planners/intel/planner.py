@@ -12,9 +12,10 @@ from bot.awareness import AwarenessState
 from bot.ego.missions import CancelMode, MissionFeedback, MissionView
 from bot.ego.planners import IntelPlan, Proposal, SensorTowerPlan
 
+from . import sensor_towers
 from .detection import Detection, DetectionConfig
 from .missions.scout import KIND, OWNER, ScoutMission
-from .missions.sensor_towers import MIN_BASES, SensorTowerMission
+from .sensor_towers import MIN_BASES
 
 if TYPE_CHECKING:
     from bot.body.engine import EngineResult
@@ -34,7 +35,7 @@ class IntelPlanner:
         self.finished: str | None = None
         self._opened = 0
         self._views: tuple[MissionView, ...] = ()
-        self.sensor_mission: SensorTowerMission | None = None
+        self.sensor_coverage_enabled = False
 
     def views(self) -> tuple[MissionView, ...]:
         return self._views
@@ -47,29 +48,30 @@ class IntelPlanner:
     ) -> IntelPlan:
         views: list[MissionView] = []
         proposals = self._plan_scout(attention, feedback, views)
-        sensor_towers = self._plan_sensor_towers(attention, views)
+        sensor_towers = self._plan_sensor_towers(attention)
         self._views = tuple(views)
+        detection = self.detection.plan(attention, awareness)
         return IntelPlan(
             proposals=proposals,
-            detection=self.detection.plan(attention, awareness),
+            detection=detection,
             sensor_towers=sensor_towers,
+            engineering_bay=detection.engineering_bay or sensor_towers.engineering_bay,
         )
 
-    def _plan_sensor_towers(
-        self, attention: AttentionState, views: list[MissionView]
-    ) -> SensorTowerPlan:
-        if self.sensor_mission is None and len(attention.bases) >= MIN_BASES:
-            self.sensor_mission = SensorTowerMission(f"{OWNER}:sensor_towers:1", attention.time)
-        if self.sensor_mission is None:
+    def _plan_sensor_towers(self, attention: AttentionState) -> SensorTowerPlan:
+        # Once unlocked, coverage remains desired even after losing bases.
+        self.sensor_coverage_enabled |= len(attention.bases) >= MIN_BASES
+        if not self.sensor_coverage_enabled:
             return SensorTowerPlan(
                 (),
                 False,
                 "fewer_than_four_bases",
-                (("bases", float(len(attention.bases))), ("required_bases", float(MIN_BASES))),
+                (
+                    ("bases", float(len(attention.bases))),
+                    ("required_bases", float(MIN_BASES)),
+                ),
             )
-        plan = self.sensor_mission.step(attention)
-        views.append(self.sensor_mission.view())
-        return plan
+        return sensor_towers.plan(attention)
 
     def _plan_scout(
         self,
@@ -83,7 +85,9 @@ class IntelPlanner:
             self.route = scouting_route(attention.map)
         now = attention.time
         self.seen.update(
-            index for index, point in enumerate(self.route) if attention.is_visible(point)
+            index
+            for index, point in enumerate(self.route)
+            if attention.is_visible(point)
         )
         mission = self.mission
         if mission is None:

@@ -1,6 +1,6 @@
 """CONTRACTS: what the planners hand the Body.
 
-- `Proposal`, with its `Command` and `Domain`: what a military planner asks
+- `Proposal`, with its `Command` and `Domain`: what a domain planner asks
   the Engine for.
 - `EconomyPlan`: what Ares' macro behaviors should buy.
 - `StructurePlan`: which existing structure acts.
@@ -153,7 +153,7 @@ class DetectionPlan:
     scan: Point2 | None
     # Positions of our bases that need a Missile Turret, by base id.
     turrets: tuple[Point2, ...]
-    # Build an Engineering Bay: the turrets need one.
+    # Missing prerequisite; Intel consolidates the build request.
     engineering_bay: bool
     # Energy every Orbital Command keeps for a scan instead of a MULE.
     energy_reserve: float
@@ -178,7 +178,7 @@ class SensorTowerSite:
 class SensorTowerPlan:
     # Sites which do not have a Sensor Tower yet (unfinished towers count).
     sites: tuple[SensorTowerSite, ...]
-    # Sensor Towers require an Engineering Bay.
+    # Missing prerequisite; Intel consolidates the build request.
     engineering_bay: bool
     reason: str
     inputs: tuple[tuple[str, float], ...] = ()
@@ -191,3 +191,5 @@ class IntelPlan:
     proposals: tuple[Proposal, ...]
     detection: DetectionPlan
     sensor_towers: SensorTowerPlan
+    # Consolidated infrastructure request; only the Intel executor builds it.
+    engineering_bay: bool

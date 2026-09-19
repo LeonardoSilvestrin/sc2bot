@@ -6,7 +6,7 @@ from sc2.ids.unit_typeid import UnitTypeId
 
 from bot.body.behaviors import structure_control as structure_behavior
 from bot.ego.planners import StructurePlan
-from bot.ego.planners.control.structure_control import StructureConfig, StructureControl
+from bot.ego.planners.structure_control.planner import StructureConfig, StructureControl
 
 from .fakes import FakeBot, FakeUnit, attention, unit
 

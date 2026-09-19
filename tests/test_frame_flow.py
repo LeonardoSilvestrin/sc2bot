@@ -85,11 +85,11 @@ def test_a_frame_flows_from_attention_to_logs() -> None:
         "attention.observed",
         "awareness.updated",
         "strategy.decided",
-        "behavior.map_control_planned",
-        "behavior.proposed",
-        "behavior.economy_planned",
+        "planner.map_control_planned",
+        "planner.proposed",
+        "planner.economy_planned",
         "behavior.spawn_executed",
-        "behavior.structures_planned",
+        "planner.structures_planned",
         "engine.granted",
         "engine.commanded",
         "logs.frame_perf",
@@ -119,7 +119,7 @@ def test_a_frame_flows_from_attention_to_logs() -> None:
     assert decided["inputs"]["danger_now"] == updated["danger_now"]
     (proposed,) = [
         item
-        for item in logger.named("behavior.proposed")[0]["data"]["proposals"]
+        for item in logger.named("planner.proposed")[0]["data"]["proposals"]
         if item["owner"] == defense.OWNER
     ]
     assert proposed["demand_id"] == command["data"]["demand_id"] == incident["incident_id"]
@@ -153,7 +153,7 @@ def test_a_lowered_depot_in_the_attack_path_rises_and_the_log_says_why() -> None
 
     assert frame.structures.raise_ == (2,)
     assert depot.commands == [AbilityId.MORPH_SUPPLYDEPOT_RAISE]
-    (planned,) = logger.named("behavior.structures_planned")
+    (planned,) = logger.named("planner.structures_planned")
     assert (planned["data"]["raise"], planned["data"]["reason"]) == ([2], "enemy_near")
     assert planned["data"]["inputs"]["enemy_near"] == 1.0
 
@@ -199,7 +199,7 @@ def test_a_worker_inside_a_gas_building_does_not_flip_the_economy_plan() -> None
     # Three bases: six geysers, and 48 workers can mine them all.
     assert set(plans) == {(4, True, 6)}
     assert set(workers) == {48}
-    (planned,) = logger.named("behavior.economy_planned")
+    (planned,) = logger.named("planner.economy_planned")
     assert planned["data"]["inputs"] == pytest.approx(
         {
             "workers": 48.0,
@@ -252,7 +252,7 @@ def test_finished_upgrades_reach_the_log_and_the_economy_plan() -> None:
     assert frame.attention.upgrades == {UpgradeId.STIMPACK, UpgradeId.SHIELDWALL}
     (observed,) = logger.named("attention.observed")
     assert observed["data"]["upgrades"] == ["SHIELDWALL", "STIMPACK"]
-    (planned,) = logger.named("behavior.economy_planned")
+    (planned,) = logger.named("planner.economy_planned")
     assert planned["data"]["inputs"]["upgrades_done"] == 2.0
     assert planned["data"]["upgrades"][0] == "STIMPACK"
     assert (planned["data"]["orbitals"], planned["data"]["mules"]) == (True, True)
@@ -314,7 +314,7 @@ def test_the_fog_does_not_let_a_threatened_bot_expand_as_if_the_enemy_had_no_arm
     assert decided["planned_enemy_power"] == pytest.approx(
         expected + StrategyConfig().commit_margin * updated["enemy_uncertainty"]
     )
-    (planned,) = logger.named("behavior.economy_planned")
+    (planned,) = logger.named("planner.economy_planned")
     assert planned["data"]["inputs"]["strategy_economy"] == pytest.approx(frame.strategy.economy)
     assert planned["data"]["expand"] is False
 
@@ -373,7 +373,7 @@ def test_a_maxed_army_attacks_the_known_enemy_base_and_the_log_says_why() -> Non
     assert sorted(maneuver.micros[-1].unit.tag for maneuver in maneuvers) == list(army)
     assert {maneuver.micros[-1].target for maneuver in maneuvers} == {hatchery.position}
 
-    planned = [event["data"] for event in logger.named("behavior.offense_planned")]
+    planned = [event["data"] for event in logger.named("planner.offense_planned")]
     assert [(item["stage"], item["reason"]) for item in planned] == [
         ("ASSEMBLE", "supply_maxed"),
         ("ADVANCE", "army_assembled"),
@@ -391,7 +391,7 @@ def test_a_maxed_army_attacks_the_known_enemy_base_and_the_log_says_why() -> Non
         "known_base",
     )
     proposed = {
-        item["owner"]: item for item in logger.named("behavior.proposed")[-1]["data"]["proposals"]
+        item["owner"]: item for item in logger.named("planner.proposed")[-1]["data"]["proposals"]
     }
     assert (
         proposed[offense.OWNER]["priority"],
@@ -539,7 +539,7 @@ def test_an_attack_during_the_opening_interrupts_it_and_the_log_says_so() -> Non
     assert (frame.economy.active, frame.economy.interrupt_opening) == (True, True)
     assert bot.build_order_runner.stopped == 1
     assert any(isinstance(item, MacroPlan) for item in bot.registered)
-    (planned,) = logger.named("behavior.economy_planned")
+    (planned,) = logger.named("planner.economy_planned")
     assert (planned["data"]["reason"], planned["data"]["interrupt_opening"]) == (
         "opening_interrupted",
         True,

@@ -28,13 +28,13 @@ from bot.body.behaviors.sensor_towers import SensorTowerReport
 from bot.body.engine import Engine, EngineResult
 from bot.ego.missions import MissionView
 from bot.ego.planners import EconomyPlan, IntelPlan, Proposal, StructurePlan, economy
-from bot.ego.planners.control.structure_control import StructureControl
 from bot.ego.planners.economy import CompositionPlanner, InvestmentConfig, styles
 from bot.ego.planners.economy.styles import BIO, ArmyStyle
 from bot.ego.planners.intel import IntelPlanner
 from bot.ego.planners.military.defense import DefensePlanner
 from bot.ego.planners.military.map_control import MapControlPlan, MapControlPlanner
 from bot.ego.planners.military.offense import OffensePlan, OffensePlanner
+from bot.ego.planners.structure_control.planner import StructureControl
 from bot.ego.strategy import StrategyModel, StrategyState
 from bot.logs import Logs
 
@@ -169,6 +169,7 @@ def play_frame(bot, iteration: int, layers: Layers) -> Frame:
         intel=intel,
         detected=body.detection,
         tower_building=body.sensor_towers,
+        infrastructure=body.infrastructure,
         missions=missions,
     )
     return Frame(

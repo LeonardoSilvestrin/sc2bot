@@ -1,12 +1,7 @@
-"""STRATEGY: what the bot is trying to achieve now, and how hard.
+"""Global posture, preferences and domain policies.
 
-`StrategyModel.decide` turns Awareness into one `StrategyState`: an objective
-held with hysteresis, continuous preferences that the planners read directly,
-and the policy each domain with operations of its own must follow -- whether
-it may pursue them, or must withdraw so defending comes first. Strategy
-publishes that policy and nothing more: it knows no mission, and the planner
-of the domain decides which of its operations end and how. Strategy commands
-no unit and names no place on the map: where the army stands is MapControl's.
+Strategy owns no individual operation and issues no game commands.
+See the normative roles in docs/architecture.md.
 """
 
 from __future__ import annotations

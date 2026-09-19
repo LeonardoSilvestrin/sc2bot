@@ -458,7 +458,7 @@ def test_a_cancelled_attack_commands_nothing_in_the_frame_its_units_move_on() ->
     )
     updates = [
         [m for m in event["data"]["missions"] if m["owner"] == OWNER]
-        for event in logger.named("behavior.missions_updated")
+        for event in logger.named("mission.updated")
     ]
     assert [(m[0]["status"], m[0]["phase"]) for m in updates] == [
         ("ACTIVE", "ASSEMBLE"),
@@ -466,7 +466,7 @@ def test_a_cancelled_attack_commands_nothing_in_the_frame_its_units_move_on() ->
         ("CANCELLED", "ADVANCE"),
     ]
     assert updates[-1][0]["cancel"]["mode"] == "IMMEDIATE"
-    planned = logger.named("behavior.offense_planned")[-1]["data"]
+    planned = logger.named("planner.offense_planned")[-1]["data"]
     assert (planned["mission_id"], planned["mission_status"]) == (
         "offense:main_attack:1",
         "CANCELLED",

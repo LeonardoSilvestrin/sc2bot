@@ -15,7 +15,7 @@ proposals += offense.proposals
 intel     = intel.plan(attention, awareness, feedback)          EGO / IntelPlan
 proposals += intel.proposals
 missions  = defense.views() + offense.views() + intel.views()
-economy   = economy.plan(attention, strategy, army, awareness.seen_enemy_types)
+economy   = economy.plan(attention, strategy, army, awareness=awareness, ...)
 structures = structure_control.plan(attention)
 result    = engine.allocate(attention, proposals)               BODY / engine
 feedback  = result                                              (lido no próximo frame)
@@ -25,12 +25,59 @@ logs.record(bot, attention, awareness, strategy, held, offense, ...,  LOGS
             body.spawn, body.micro, intel, body.detection, missions)
 ```
 
-Regra: **a Strategy decide o que é permitido e o que tem precedência, o Planner decide quais
-operações do seu domínio existem, a Mission decide como a operação avança, o Engine decide QUEM
-recebe cada proposta, o Behavior decide COMO.** Detalhes em [Missões](#missões).
+## Papéis arquiteturais
 
-Só `read_map`/`observe`, `behaviors.execute` e os observadores de `logs` tocam o bot.
-Todo o resto lê estados imutáveis e é testável sem `AresBot`.
+Esta seção é a definição normativa dos papéis. Docstrings e exemplos aplicam estas regras.
+
+| Papel | Responsabilidade | Fronteira verificável |
+| --- | --- | --- |
+| Strategy | Define a postura global: objetivo, risco, preferências e políticas de offense e economia. | Não governa operações individuais nem executa micro. |
+| Planner | Decide a intenção de um domínio a partir do estado conhecido, da postura e do feedback relevante. | Produz planos/propostas; não causa efeitos no jogo. Pode ser função, objeto stateless ou stateful. |
+| Desired state | Condição contínua que um Planner tenta manter. | Se deixar de estar satisfeita, volta a ser pedida, sem criar uma operação numerada. |
+| Mission | Conduz uma operação episódica com identidade, estado próprio e término. | É opcional e interna ao Planner; não é uma etapa obrigatória da arquitetura. |
+| Engine | Arbitra quais unidades atendem quais intenções; transforma proposals em grants. | Não arbitra minerais, energia orbital ou toda a produção. Não decide objetivos nem lifecycle. |
+| Behavior | Materializa a intenção em ações do jogo, com decisões locais de execução. | Pode mudar path, siege, stim, ator equivalente ou posição fina; não muda objetivo, alvo estratégico, compromisso ou cancelamento. |
+
+Um Planner pode expressar tanto desired states contínuos quanto operações episódicas.
+Economy, MapControl, controle de depots, detection e sensor coverage são contínuos.
+Ataque principal, scout e defesa de um incidente são episódios. Estado persistente por si só não
+justifica Mission: hysteresis do anchor e cobertura já desbloqueada pertencem aos planners.
+
+```text
+Attention → Awareness → Strategy → Planners
+                                    ├─ desired state contínuo
+                                    └─ Missions opcionais (episódios)
+                                    ↓
+                              Plans / Proposals
+                              ├─ propostas de unidades → Engine → Grants → Behaviors
+                              └─ planos diretos de economia/estrutura/abilities → Behaviors
+                                                                                ↓
+                                                                               Jogo
+```
+
+**Admissão de Mission.** Antes de criar uma, verificar:
+
+1. Existem ocorrências individuais?
+2. Cada ocorrência começa e termina?
+3. Faz sentido distinguir #1 de #2?
+4. Há memória/progresso válido apenas naquela ocorrência?
+5. COMPLETED, FAILED ou CANCELLED representam resultados reais?
+
+Se a maioria não se aplica, usar desired state no Planner. Uma torre destruída restaura uma
+necessidade de cobertura; não abre uma nova missão. Não existe fase genérica de manutenção
+permanente de Mission. As fases concretas pertencem à operação, e o lifecycle permanece terminal.
+
+**Contratos.** Plan é intenção estruturada, com ou sem propostas. Proposal pede atores ao Engine;
+Grant é sua alocação. Command identifica a instrução de unidade consumida pelo Behavior, com alvo
+na proposta. Intent é o conceito de intenção, não outro tipo obrigatório. Mission não é sinônimo
+de nenhum desses contratos. Uma proposta contínua pode ter `mission_id=None`.
+
+**Execução.** Na cadeia decisória, apenas Behaviors causam efeitos deliberados no jogo.
+Attention/Awareness leem e inferem; o bootstrap em `on_start` configura a partida e os logs observam.
+Teste do Behavior: sua implementação pode ser trocada sem mudar o que o bot quer fazer?
+O ajuste `composition_met` traduz a composição para a mecânica do SpawnController; a composição
+continua vindo do Ego. Tags do Orbital que efetivamente escaneou impedem ordens conflitantes de
+MULE no mesmo frame; a reserva de energia é intenção do Intel, não política criada pelo Body.
 
 ## Camadas
 
@@ -40,11 +87,11 @@ Todo o resto lê estados imutáveis e é testável sem `AresBot`.
 | AWARENESS | [bot/awareness/](../bot/awareness/) | `AwarenessState` | Pinta o mapa ao longo da partida. Memória de contatos com confiança `exp(-idade/τ)` e incerteza `min(cap, v·idade)`; esquece por morte confirmada, posição vista vazia (após carência) ou confiança < piso. Pressão por base com a ameaça lembrada (`recent_threat`, τ = `threat_memory`), incidentes de ameaça (`ThreatIncident`), estimativa do exército inimigo (conhecido, visto vivo, esperado sem avistamento, incerteza e cobertura), contatos escondidos (camuflados sem detecção, à vista) e quando um exército camuflado foi visto pela primeira vez, e campo de influência. Descreve; não escolhe margem nem prioridade. |
 | EGO / strategy | [bot/ego/strategy.py](../bot/ego/strategy.py) | `StrategyState`, `DomainPolicy` | `STABILIZE` vs `BUILD_ADVANTAGE` com margem, permanência mínima e emergência; preferências contínuas `defense`, `army`, `economy`, `risk`, com o inimigo planejado como estimativa mais `commit_margin` da incerteza; a política da ofensiva (`offense`: `PURSUE` ou `WITHDRAW`, com a razão). Não conhece missão nenhuma nem escolhe lugar no mapa. |
 | EGO / missions | [bot/ego/missions/](../bot/ego/missions/) | `MissionStatus`, `CancelMode`, `Lifecycle`, `MissionFeedback`, `MissionView` | O que todas as missões compartilham: `lifecycle` (status terminal, pedido de cancelamento e modos) e `contracts` (o feedback que a missão lê e o resumo que ela reporta). Nenhuma missão concreta mora aqui. |
-| EGO / planners | [bot/ego/planners/](../bot/ego/planners/) | `Proposal`, `Command`, `IntelPlan`, `EconomyPlan`, `StructurePlan` | Decidem o que deve ser feito (tarefa, alvo, prioridade, requisitos) sem nomear unidades, em quatro grupos: `military/` pede exército ao Engine, `intel/` obtém informação por unidades, scans e estruturas, `economy/` diz o que comprar e `control/` opera estruturas existentes. `military/defense/`: o `DefensePlanner` abre uma `DefendAreaMission` por incidente, que pede `ATTACK` com um orçamento de poder repartido entre a parte aérea e a terrestre. `military/offense/`: `OffensePlanner` (`planner.py`) abre e encerra a `MainAttackMission` (`missions/main_attack.py`) (ASSEMBLE → ADVANCE ⇄ SEARCH, ENGAGE/RETREAT → REGROUP, e WITHDRAW só num cancelamento gracioso); `ATTACK` no alvo ou `RETREAT` ao rally (o anchor do MapControl, que o frame lhe passa), com todas as unidades livres, lendo a concessão anterior da missão. `military/map_control/`: `MapControlPlanner` (`planner.py`) escolhe o anchor — a base ameaçada em STABILIZE, senão o ponto de reação que melhor responde a todas as nossas bases, na frente delas, num choke que as guarda e longe da influência inimiga (`staging.py`, com a passagem única de antes, `anchor.py`, em shadow), senão a heurística antiga do rally — e pede `HOLD` nele com todas as unidades livres, sem missão (a proposta mantém o id `core_army`, nome anterior, por compatibilidade com logs, viewer e benches). `intel/`: `IntelPlanner` (`planner.py`) abre uma `ScoutMission` (`missions/scout.py`), `SCOUT` de um SCV pela main inimiga no early game. `economy/` (`planner.py` junta um módulo por pergunta): `investment` diz quanto investir (workers, bases, gás, teto de produção, quando o plano assume do opening ou o interrompe numa emergência); `styles` diz qual exército (o estilo sorteado na partida: abertura, composição, upgrades e onde vão os Reactors); `composition` diz o que construir agora (a composição do estilo repesada pela matriz de counters contra o exército inimigo acreditado); `planner.plan` junta tudo num `EconomyPlan` para os macro behaviors do Ares (inclusive upgrades, Orbital e MULE). `intel/detection`: onde escanear, quais bases precisam de Missile Turret, Engineering Bay e a energia que cada Orbital guarda. `control/structure_control`: quais depots levantar e quais abaixar. |
+| EGO / planners | [bot/ego/planners/](../bot/ego/planners/) | `Proposal`, `Command`, `IntelPlan`, `EconomyPlan`, `StructurePlan` | Decidem o que deve ser feito (tarefa, alvo, prioridade, requisitos) sem nomear unidades, em quatro grupos: `military/` pede exército ao Engine, `intel/` obtém informação por unidades, scans e estruturas, `economy/` diz o que comprar e `structure_control/` opera estruturas existentes. `military/defense/`: o `DefensePlanner` abre uma `DefendAreaMission` por incidente, que pede `ATTACK` com um orçamento de poder repartido entre a parte aérea e a terrestre. `military/offense/`: `OffensePlanner` (`planner.py`) abre e encerra a `MainAttackMission` (`missions/main_attack.py`) (ASSEMBLE → ADVANCE ⇄ SEARCH, ENGAGE/RETREAT → REGROUP, e WITHDRAW só num cancelamento gracioso); `ATTACK` no alvo ou `RETREAT` ao rally (o anchor do MapControl, que o frame lhe passa), com todas as unidades livres, lendo a concessão anterior da missão. `military/map_control/`: `MapControlPlanner` (`planner.py`) escolhe o anchor — a base ameaçada em STABILIZE, senão o ponto de reação que melhor responde a todas as nossas bases, na frente delas, num choke que as guarda e longe da influência inimiga (`staging.py`, com a passagem única de antes, `anchor.py`, em shadow), senão a heurística antiga do rally — e pede `HOLD` nele com todas as unidades livres, sem missão (a proposta mantém o id `core_army`, nome anterior, por compatibilidade com logs, viewer e benches). `intel/`: `IntelPlanner` (`planner.py`) abre uma `ScoutMission` (`missions/scout.py`), `SCOUT` de um SCV pela main inimiga no early game. `economy/` (`planner.py` junta um módulo por pergunta): `investment` diz quanto investir (workers, bases, gás, teto de produção, quando o plano assume do opening ou o interrompe numa emergência); `styles` diz qual exército (o estilo sorteado na partida: abertura, composição, upgrades e onde vão os Reactors); `composition` diz o que construir agora (baseline do estilo combinado com respostas viáveis do catálogo contra o exército inimigo acreditado); `planner.plan` junta tudo num `EconomyPlan` para os macro behaviors do Ares (inclusive upgrades, Orbital e MULE). `intel/detection`: onde escanear, quais bases precisam de Missile Turret, Engineering Bay e a energia que cada Orbital guarda. `structure_control/planner`: quais depots levantar e quais abaixar. |
 | BODY / engine | [bot/body/engine.py](../bot/body/engine.py) | `EngineResult` | Só alocação. Ordena por `(-priority, owner, proposal_id)` e concede cada unidade de exército a no máximo uma proposta. Restrições duras vêm antes de qualquer ordem: `unit_types`, `must_attack` (`GROUND`/`AIR`) e, num pedido de poder, `power > 0`. Entre as elegíveis livres, as que já eram da proposta primeiro, depois as mais próximas. Pede-se `minimum_power` (unidades até atingir o poder), `count` ou todas as livres; cada `Grant` traz `power`, `status` (`FULL`/`PARTIAL`/`REJECTED`) e `reason`. Um pedido de todas as livres que não recebe nenhuma fica `REJECTED` (`eligible_units_taken`/`no_eligible_units`). Workers só são elegíveis para propostas que pedem um tipo de worker, só saindo da mineração (role `GATHERING`) ou já sendo da proposta. `released` lista quem perdeu o dono. O `EngineResult` é o feedback que as missões leem no frame seguinte, sem nomear unidades; o Engine é o único registro de posse e nunca lê nem muda o lifecycle de uma missão. Não comanda nada. |
-| BODY / behaviors | [bot/body/behaviors/](../bot/body/behaviors/) | — | Executam os grants, despachados por `Command`. `attack` (`ATTACK`, de Defense ou da ofensiva): `AMove`, Siege Tank decide o siege sem ficar preso ao ponto; Marine/Marauder usam Stim com inimigo a ≤ 10 e ≥ 50 % de vida; Medivac vai ao centro do próprio grupo. `retreat` (`RETREAT`): path ao ponto sem lutar, Siege Tank sai do siege. `hold` (`HOLD`): `PathUnitToTarget` até o ponto, `AMove` com inimigo a ≤ 10 (bio usa Stim pela mesma regra do `attack`), Siege Tank fica sieged perto do ponto. `scout` (`SCOUT`): tira o worker da mineral, role `SCOUTING`, path sem evitar perigo. `economy`: para o build runner do Ares quando o plano interrompe o opening; workers liberados voltam a `GATHERING`, `Mining`, um add-on por frame antes do `MacroPlan` (Reactor ou Tech Lab na estrutura `addons_on`, pelo `reactor_share`), `MacroPlan` (Orbital antes de `BuildWorkers`, pesquisa — `ExactResearch` e `UpgradeController` — antes do `SpawnController`, depois `ProductionController`, nesta ordem, com o teto de produção do plano) e MULEs, sem gastar a reserva de scan nem usar o Orbital que escaneou; devolve o `SpawnMode` (com a composição inteira exatamente na proporção, o `SpawnController` roda em `freeflow` naquele frame). `detection`: scan com o Orbital pronto de mais energia; Engineering Bay e depois uma Missile Turret por vez, pelo `BuildStructure` do Ares na expansão mais próxima da base. `execute` devolve `BodyReport` (`spawn`, `micro`, `detection`). `structure_control`: abaixa e levanta os depots do plano. `combat` guarda o que `attack` e `hold` compartilham: decisão de siege, `AMove` e a regra do Stim. O Siege Tank decide o siege também contra os inimigos que o Ares lembra fora de visão; o Stim e a saída do path no HOLD só contam inimigos à vista neste frame. |
+| BODY / behaviors | [bot/body/behaviors/](../bot/body/behaviors/) | — | Executam os grants, despachados por `Command`. `attack` (`ATTACK`, de Defense ou da ofensiva): `AMove`, Siege Tank decide o siege sem ficar preso ao ponto; Marine/Marauder usam Stim com inimigo a ≤ 10 e ≥ 50 % de vida; Medivac vai ao centro do próprio grupo. `retreat` (`RETREAT`): path ao ponto sem lutar, Siege Tank sai do siege. `hold` (`HOLD`): `PathUnitToTarget` até o ponto, `AMove` com inimigo a ≤ 10 (bio usa Stim pela mesma regra do `attack`), Siege Tank fica sieged perto do ponto. `scout` (`SCOUT`): tira o worker da mineral, role `SCOUTING`, path sem evitar perigo. `economy`: para o build runner do Ares quando o plano interrompe o opening; workers liberados voltam a `GATHERING`, `Mining`, um add-on por frame antes do `MacroPlan` (Reactor ou Tech Lab na estrutura `addons_on`, pelo `reactor_share`), `MacroPlan` (Orbital antes de `BuildWorkers`, pesquisa — `ExactResearch` e `UpgradeController` — antes do `SpawnController`, depois `ProductionController`, nesta ordem, com o teto de produção do plano) e MULEs, sem gastar a reserva de scan nem usar o Orbital que escaneou; devolve o `SpawnMode` (com a composição inteira exatamente na proporção, o `SpawnController` roda em `freeflow` naquele frame). `detection`: scan com o Orbital pronto de mais energia; uma Missile Turret por vez após o pré-requisito consolidado pelo Intel, pelo `BuildStructure` do Ares na expansão mais próxima da base. `execute` devolve `BodyReport` (`spawn`, `micro`, `detection`, `sensor_towers`, `infrastructure`). `structure_control`: abaixa e levanta os depots do plano. `combat` guarda o que `attack` e `hold` compartilham: decisão de siege, `AMove` e a regra do Stim. O Siege Tank decide o siege também contra os inimigos que o Ares lembra fora de visão; o Stim e a saída do path no HOLD só contam inimigos à vista neste frame. |
 | LOGS | [bot/logs/](../bot/logs/) | — | Log JSONL, snapshots SVG do campo e overlay in-game. Nenhum deles muda decisão nem derruba partida. |
-| HARNESS | [harness/](../harness/), [bench.py](../bench.py) | `GameSpec`, `result.json` | Fora do bot. Matriz fixa de partidas contra a IA (mapa × raça × dificuldade × build da IA × estilo do bot, `--armies`; sem `--armies` o bot sorteia e o `game_id` não leva sufixo), cada uma num processo com timeout de relógio; `result.json` liga resultado (`victory`, `defeat`, `tie`, `timeout`, `crash`, `no_result`, `not_played`) a commit, SHA do Ares, árvore suja, fingerprint da configuração, mapa, oponente, seed, replay e JSONL. Uma partida que reportou resultado com o relógio do bot em 0 é `not_played` (o python-sc2 resigna no primeiro passo quando o `on_start` levanta): conta em `games`, não em `played`, fica fora da taxa de vitória e da duração média, e `run` a joga de novo em vez de pular. `summarize` recalcula o desfecho do que cada registro guardou, então execuções antigas são resumidas pela regra atual; `compare` agrega com intervalo de Wilson. O fingerprint cobre só as configs de `Layers.configs()` (awareness, strategy, map_control, offense, structure_control, detection, army — o estilo inteiro, com composição e upgrades); as constantes de módulo da economia (`PRODUCTION_PER_BASE`, `GAS_WORKER_SHARE`, `MAX_WORKERS`, `COUNTERS`, `PRIOR_POWER`) e do poder (`SPLASH_TARGETS`) ficam de fora, então dois benches com o mesmo fingerprint podem ter economias diferentes: compare pelo commit. |
+| HARNESS | [harness/](../harness/), [bench.py](../bench.py) | `GameSpec`, `result.json` | Fora do bot. Matriz fixa de partidas contra a IA (mapa × raça × dificuldade × build da IA × estilo do bot, `--armies`; sem `--armies` o bot sorteia e o `game_id` não leva sufixo), cada uma num processo com timeout de relógio; `result.json` liga resultado (`victory`, `defeat`, `tie`, `timeout`, `crash`, `no_result`, `not_played`) a commit, SHA do Ares, árvore suja, fingerprint da configuração, mapa, oponente, seed, replay e JSONL. Uma partida que reportou resultado com o relógio do bot em 0 é `not_played` (o python-sc2 resigna no primeiro passo quando o `on_start` levanta): conta em `games`, não em `played`, fica fora da taxa de vitória e da duração média, e `run` a joga de novo em vez de pular. `summarize` recalcula o desfecho do que cada registro guardou, então execuções antigas são resumidas pela regra atual; `compare` agrega com intervalo de Wilson. O fingerprint cobre `Layers.configs()`, incluindo estilo, composição (digests do catálogo e da física) e investment; constantes fora das configs ainda exigem comparação pelo commit. |
 
 ## Matemática
 
@@ -110,10 +157,15 @@ Todo o resto lê estados imutáveis e é testável sem `AresBot`.
   para a mineração. Antes de o scout sair, o planner pede o cancelamento imediato em 240 s
   (`too_late`) ou se os workers caem abaixo de 16 (`workers_below_threshold`, a única razão que
   deixa abrir outra missão depois). Um scout que saiu nunca é reposto. Ao alcançar quatro bases,
-  também abre a missão persistente `SensorTowerMission`: uma torre na main e uma em cada base do
+  ativa o desired state de sensor coverage: uma torre na main e uma em cada base do
   anel externo, reconstruídas quando faltarem. Detection pertence ao mesmo planner: decide scans
   contra unidades escondidas, reserva de energia, Missile Turrets e Engineering Bay. A rede de
-  Sensor Towers ainda não alimenta Awareness.
+  Sensor Towers ainda não alimenta Awareness. O desbloqueio persiste se o número de bases cair.
+  `intel/sensor_towers.py` calcula locais sem cobertura; torres inacabadas já contam. Não há
+  mission id, fase nem MissionView. `IntelPlan.engineering_bay` consolida com OR as necessidades
+  de Detection e Sensor Towers antes da execução. `behaviors/intel.py` executa esse único pedido;
+  os executores de turrets e torres apenas aguardam o pré-requisito ausente. Uma Engineering Bay
+  inacabada já evita outro pedido; Ares verifica prontidão e viabilidade da construção.
 - Economy (depois do opening): `workers` é `supply_workers`, a contagem do jogo — inclui SCVs
   dentro de refinarias, que somem de `bot.units` enquanto estão lá, e exclui os em produção.
   `bases = max(1, townhalls no chão)`; satura com `workers ≥ saturated_at = min(MAX_WORKERS (80), 16·bases)` —
@@ -127,11 +179,14 @@ Todo o resto lê estados imutáveis e é testável sem `AresBot`.
   `build_order_runner.switch_opening(estilo.opening)` e anuncia no chat ("Hoje vai de MECH: Hellion, Cyclone e
   Siege Tank."). O estilo é dado, não código: abertura, composição (o prior), upgrades em ordem, `addons_on` (a
   estrutura de produção que recebe add-ons) e `against` (as raças contra quem é sorteado). Entra no fingerprint (`configs.army`).
-- Composição: `value(u) = (Σ_e poder(e)·alcance(u,e)·COUNTERS[u][e] + PRIOR_POWER) / (Σ_e poder(e) + PRIOR_POWER)`,
-  `share(u) ∝ prior(u)·value(u)`. `poder(e)` é `seen_enemy_types` da Awareness (o poder visto vivo por tipo, τ = 180 s);
-  `alcance` é física (0 se `u` não atira onde `e` está: `REACH` nosso, `flying` do `UNIT_DATA` do Ares); `COUNTERS`
-  é a troca por custo, 1 = par; `PRIOR_POWER` = 20 Marines. Sem limiar: a mistura desliza com a crença. Unidade que
-  não atira (Medivac) fica no prior.
+- Composição: `CompositionPlanner` combina o baseline do estilo com respostas ordenadas de
+  `economy/counters/{terran,protoss,zerg}.yml`. Canonicaliza aliases, filtra alcance físico e tecnologia
+  pronta, escolhe a primeira resposta viável e registra alternativas rejeitadas. Poder sem resposta
+  permanece no baseline; `prior_power=20` estabiliza a mistura. A mistura é calculada em supply e
+  convertida em proporções de contagem. `CompositionPlan` expõe baseline, adaptações, tech e resultado.
+- Sobrevivência: `StrategyState.economy_policy` publica INVEST/SURVIVE com memória temporal.
+  SURVIVE permite complementar a composição usando capacidade pronta contra o incidente prioritário;
+  não é Mission nem objetivo separado chamado SURVIVAL.
 - Add-ons: `addons` liga depois do opening e fora de STABILIZE (como os upgrades). Antes do `MacroPlan`, fora dele, uma
   por frame: a estrutura `addons_on` do estilo (Barracks na bio, Factory no mech) pronta, ociosa e sem add-on de menor tag
   recebe Reactor enquanto `reactors + 1 ≤ reactor_share · n`, e Tech Lab senão; `reactor_share = s_r / (s_r + 2·s_t)`, com `s_t` a
@@ -150,9 +205,9 @@ Todo o resto lê estados imutáveis e é testável sem `AresBot`.
   num múltiplo exato das proporções, como 11/4/3/2 para 0,55/0,20/0,15/0,10 — ele não treinaria nada; nesse
   frame roda em `freeflow` (`composition_met`). Senão segue o plano: `plan_freeflow`, `composition_short`, e
   `plan_inactive` no opening.
-- Opening: com STABILIZE e `defense ≥ OPENING_ABORT_DANGER` (0,6, o nível de emergência da estratégia) antes do fim do
-  opening, o plano econômico fica ativo (`opening_interrupted`, `interrupt_opening`) e o Body chama
-  `build_order_runner.set_build_completed()`; o `MacroPlan` roda no mesmo frame, em `freeflow`. Também com `minerals ≥ OPENING_STALL_BANK` (1.000) antes do fim do opening (`opening_stalled`): nenhuma abertura que andou passou de 680 (17 jogos), e o runner do Ares parou num passo de gás da abertura mech em `ci-mech/003` e `004` (banco de 9.415 e 2.125).
+- Opening: Investment interrompe o opening quando a política econômica é SURVIVE ou o banco
+  atinge `opening_stall_bank`. O plano fica ativo e o Behavior encerra o build runner antes do macro.
+
 - Produção (ordem): o `ProductionController` fica depois do `SpawnController` no `MacroPlan` e só roda num frame em que
   ele não agiu; registrado à parte, mandava Tech Labs em Barracks que o `SpawnController` acabara de mandar treinar
   (a última ordem vale).
@@ -251,16 +306,10 @@ Todo o resto lê estados imutáveis e é testável sem `AresBot`.
 
 ## Missões
 
-Dentro do Ego, três papéis, cada um com uma pergunta:
-
-| Papel | Onde | Decide | Não decide |
-| --- | --- | --- | --- |
-| Strategy | [strategy.py](../bot/ego/strategy.py) | A política global: o que cada domínio pode fazer e o que tem precedência. Hoje, `StrategyState.offense`: `PURSUE` fora de STABILIZE, `WITHDRAW` (`home_threatened`) em STABILIZE. | Qual missão existe, qual termina e como. Não conhece `mission_id` nem chama `cancel`. |
-| Planner | `military/{offense,defense}/planner.py`, `intel/planner.py` | Quais missões abrir, manter ou pedir para encerrar, interpretando a política e o próprio domínio; o modo do pedido (imediato ou gracioso). Guarda só a memória que sobrevive a uma operação: cooldown, lugares vistos, rota do scout, contadores de id. | Tags de unidades, comandos ao jogo, a fase de uma operação. |
-| Mission | `military/offense/missions/main_attack.py`, `military/defense/missions/defend_area.py`, `intel/missions/{scout,sensor_towers}.py`; o que todas compartilham em `bot/ego/missions/` | Identidade, fase e memória de uma operação; progride lendo observação e feedback; emite propostas ou intenções do domínio; conclui, falha, cancela ou permanece em manutenção. | Posse de unidades, registro de behaviors, política global. |
+As missões aplicam os [papéis arquiteturais](#papéis-arquiteturais) acima.
 
 **Onde fica cada coisa.** O Ego separa a coordenação global, a infraestrutura comum das missões e os
-planners, e os planners se agrupam pelo que pedem:
+planners, agrupados por domínio (military reúne os domínios militares):
 
 ```text
 bot/ego/
@@ -285,24 +334,24 @@ bot/ego/
       planner.py                    IntelPlanner -> IntelPlan
       detection.py                  scans, reserva, Missile Turrets
       missions/scout.py             ScoutMission
-      missions/sensor_towers.py     SensorTowerMission
+      sensor_towers.py              cálculo contínuo de cobertura
     economy/                        o que comprar
       planner.py, investment.py, styles.py, composition.py
-    control/                        controle direto de estruturas existentes; sem missões
-      structure_control.py
+    structure_control/              estado desejado de estruturas existentes; sem missões
+      planner.py
 
 bot/body/behaviors/
   attack.py    ATTACK        hold.py      HOLD
   retreat.py   RETREAT       scout.py     SCOUT
   combat.py    o que attack e hold compartilham
-  economy.py, detection.py, structure_control.py  planos de recurso
+  economy.py, detection.py, sensor_towers.py, structure_control.py  planos diretos
+  intel.py     pedido consolidado de Engineering Bay
 ```
 
-`bot/ego/missions/` é a infraestrutura comum; `planners/<grupo>/<domínio>/missions/` são as missões concretas
-daquele domínio. Cada pasta de planner tem `planner.py`, e o `__init__.py` só reexporta os nomes públicos
-(`from bot.ego.planners.military.offense import OffensePlanner`). Um planner de `control/` ou de
-`economy/` que crescer vira pasta do mesmo jeito. No Body, cada behavior tem o nome do `Command` que
-executa.
+`bot/ego/missions/` contém apenas contratos e lifecycle compartilhados. Missões concretas ficam
+em `missions/` dentro do domínio que as possui. Os domínios militares ficam sob `military/`;
+Intel, Economy e StructureControl são domínios irmãos. Funções auxiliares de desired state
+ficam diretamente no domínio. Não é necessário criar classe base, registry ou Mission por feature.
 
 Um tipo de missão novo entra como um módulo em `missions/` do planner que o governa, e um comando novo
 como um behavior com o nome dele. O próximo previsto é `military/harass/` (N7.3 em
@@ -311,7 +360,7 @@ como um behavior com o nome dele. O próximo previsto é `military/harass/` (N7.
 pedir. Nenhum deles existe ainda: entram com o gameplay, gatilho e teste próprios.
 
 No Body, o Engine continua a única autoridade de posse (concede, concede em parte, rejeita, transfere) e
-nunca lê nem muda o lifecycle de uma missão; o Behavior executa só as unidades concedidas no frame.
+nunca lê nem muda o lifecycle de uma missão; os Behaviors de Command executam só as unidades concedidas no frame. Planos diretos não passam pelo Engine.
 
 **Mission e Proposal.** A missão persiste; a proposta é a demanda de um frame. Uma missão emite zero, uma
 ou várias propostas (o contrato aceita várias: um drop pediria transporte e carga), cada uma com
@@ -349,22 +398,20 @@ deixa de pedir.
 
 **Resumo para quem está acima.** `planner.views()` devolve um `MissionView` imutável por missão governada no
 frame (também a que acabou de terminar), com o que a alocação anterior lhe deu. Vai para o log
-(`behavior.missions_updated`) e para `Frame.missions`; a Strategy pode recebê-lo quando precisar, mas hoje
+(`mission.updated`) e para `Frame.missions`; a Strategy pode recebê-lo quando precisar, mas hoje
 nenhuma decisão dela depende disso, então não recebe.
 
 **Quem usa missões.**
 
-- **Offense:** misturava a decisão de compromisso com a máquina de estados da operação. O `OffensePlanner`
-  ficou com admissão, cooldown, a memória de lugares vistos (que a busca de qualquer ataque lê) e o pedido
+- **Offense:** o `OffensePlanner` guarda admissão, cooldown, a memória de lugares vistos (que a busca de qualquer ataque lê) e o pedido
   de cancelamento; a `MainAttackMission` com montagem, avanço, combate, busca, retirada e reagrupamento.
   IDLE é derivado da ausência de missão, não uma segunda máquina de estados.
 - **Intel:** abrir, reabrir ou encerrar antes da saída é do planner; a rota concreta e o scout, da missão.
 - **Defense:** uma `DefendAreaMission` por incidente, com o `incident_id` da Awareness ligando a missão ao
   incidente enquanto os atacantes entram e saem. A missão é redimensionada a cada frame pelo incidente, tem
   uma fase só (`DEFENDING`) e termina quando o incidente some; o que ela acrescenta é identidade e
-  lifecycle nos logs. O planner nunca pede para encerrar uma. As propostas (ids, `demand_id`, orçamento,
-  prioridade) são as de antes.
-- **MapControl** (era ArmyFallback, antes CoreArmy): sem missão; guarda o ponto mantido de cada política e o
+  lifecycle nos logs. O planner nunca pede para encerrar uma. A missão produz as propostas por domínio aéreo/terrestre.
+- **MapControl**: sem missão; guarda o ponto mantido de cada política e o
   cache das candidatas. Não é uma reserva estratégica: recebe o que os planners acima deixaram, e escolhe onde
   ficam. Quando a Defense toma parte das unidades num incidente, o resto continua no anchor e as que ela solta
   voltam a ser dele; quando a ofensiva toma o exército, as unidades novas se juntam no anchor.
@@ -377,12 +424,9 @@ vier, ele precisa separar a meta desejada, o limite de admissão de novas opera�
 comprometidas numa retirada e a precedência para preempção: uma meta reduzida a zero pode coexistir com
 uma operação em WITHDRAW.
 
-**Diferença de gameplay.** Nenhuma nos gatilhos existentes. A Strategy em `WITHDRAW` leva o planner a pedir
-o cancelamento **imediato**, como o call-off de antes (Defense precisa das unidades já, e o MapControl as segura
-na base ameaçada, que é o anchor em STABILIZE). O cancelamento gracioso (fase WITHDRAW) existe no contrato e
-na `MainAttackMission`, testado, mas nenhum gatilho de produção o usa. Verificado fora da suíte, rodando o
-Offense, o Intel e o Defense anteriores ao lado dos novos em sequências aleatórias de frames (48 mil, 800 mil
-e 60 mil frames): mesmas etapas, razões, alvos, entradas e propostas, a menos do `mission_id`.
+**Cancelamento em produção.** A Strategy em WITHDRAW leva Offense a pedir cancelamento imediato:
+Defense recebe unidades já nesse frame. O cancelamento gracioso existe e é testado, mas nenhum
+gatilho de produção o usa.
 
 ## Visualização
 
@@ -400,15 +444,15 @@ e 60 mil frames): mesmas etapas, razões, alvos, entradas e propostas, a menos d
 
 ## Catálogo de eventos
 
-Envelope: `schema` (4), `run`, `seq`, `iteration`, `event`, `component` (a camada),
+Envelope: `schema` (5), `run`, `seq`, `iteration`, `event`, `component` (a camada),
 `game_time`, `data`. Resumos de estado passam por `ChangeGate` (mudança + heartbeat de
 10 s); decisões são escritas quando mudam.
 
-Os nomes de evento e de componente são anteriores à separação Ego/Body e continuam os
-mesmos por compatibilidade com o viewer: `behavior.*`/`behaviors` são os planners, e
-`engine.commanded` registra o grant que os behaviors executaram. Em `logs.frame_perf`,
-as fatias de tempo são `attention`, `awareness`, `strategy`, `planners`, `engine`,
-`behaviors` e `logs`.
+A taxonomia acompanha o dono da decisão: `strategy.*`, `planner.*`, `mission.*`, `engine.*`
+e `behavior.*`. Planos não carregam resultados de execução: `behavior.intel_executed` relata
+scan e construções entregues ao Ares. `engine.commanded` registra a instrução associada ao grant,
+não uma confirmação de sucesso no jogo. Tempos: attention, awareness, strategy, planners, engine,
+behaviors e logs. O viewer normaliza nomes de eventos anteriores ao schema 5 ao carregar logs antigos.
 
 | Evento | Camada | Quando | Dados |
 | --- | --- | --- | --- |
@@ -418,16 +462,17 @@ as fatias de tempo são `attention`, `awareness`, `strategy`, `planners`, `engin
 | `attention.observed` | attention | bases, fim do opening ou inimigos à vista mudam; amostra a cada 5 s | `minerals`, `vespene`, `supply_used`, `supply_cap`, `workers`, `army_units`, `army_supply`, `army_power`, `visible_enemy_units`, `visible_enemy_structures`, `bases`, `opening`, `opening_done`, `upgrades[]`, `structures` {tipo: contagem, prontas ou não} |
 | `awareness.updated` | awareness | mudança de contatos/poder/ameaça por base, contatos escondidos, primeiro camuflado, heartbeat | `contacts`, `visible_contacts`, `enemy_power`, `seen_enemy_power`, `expected_enemy_power`, `estimated_enemy_power`, `enemy_uncertainty`, `enemy_coverage`, `own_power`, `danger`, `danger_now`, `cloak_seen_at`, `hidden_contacts[]`, `bases[]` {`base_id`, `position`, `is_main`, `threat`, `recent_threat`, `pressure`, `cover`, `balance`, `air_share`, `center`}, `incidents[]` {`incident_id`, `contacts`, `center`, `power`, `ground_power`, `air_power`, `confidence`, `threat`, `pressure_by_base`} (escrito também quando os membros de um incidente mudam), `strongest_contacts[]` (com `hidden`), `field` {`samples`, `friendly`, `contested`, `enemy`, `threatened`, `max_threat`} |
 | `strategy.decided` | strategy | troca de objetivo, heartbeat | `objective`, `previous`, `since`, `reason`, `defense`, `army`, `economy`, `risk`, `inputs` {`danger`, `danger_now`, `army_share`, `own_power`, `enemy_power`, `estimated_enemy_power`, `enemy_uncertainty`, `planned_enemy_power`}, `scores`, `policy` {`offense` {`posture`, `reason`}} |
-| `behavior.proposed` | behaviors | o conjunto ranqueado de propostas muda | `proposals[]` {`proposal_id`, `owner`, `priority`, `command`, `target`, `count`, `minimum_power`, `must_attack`, `demand_id`, `mission_id`, `unit_types`, `reason`, `inputs`} |
-| `behavior.map_control_planned` | behaviors | origem, razão, anchor (grade de 3), fallback, ponto mantido do `staging` (e quando foi escolhido), anchor ou candidatas do `passage` mudam; heartbeat de 30 s | `anchor`, `source` (`threatened_base`, `staging`, `passage`, `legacy`), `reason`, `policy`, `fallback` (`no_candidates`, `no_enemy_route`, `no_separating_passage`, `anchor_unresolved` ou null), `passage` e `region` (da escolha que pôs o anchor, ou null), `staging` {`anchor`, `switch` (`kept`, `initial`, `held_invalid`, `bases_changed`, `posture_changed`, `awareness`), `since`, `previous`, `objective`, `advance`, `scale` (D), `bases`, `candidate_count`, `selected`, `top[]` (o melhor de cada região, até 5, melhor primeiro); cada ponto {`anchor`, `region`, `passage`, `reaction`, `worst` e `worst_base` (a base respondida por último e a resposta, em células), `mean` (distância média às bases), `front` (à frente da base média no caminho do inimigo, em células; negativo atrás), `choke`, `threat`, `support`, `control`, `exposure`, `score`}} ou null, `shadow` (a política que não controla: `policy`, `anchor`, `passage`, `region`, `distance` ao anchor; do `passage` também `fallback`, `candidates[]` (até 8: `passage`, `kind`, `position`, `region`, `protected_bases`, `protected`, `quality`, `overextension`, `score`) e `candidate_count`) |
-| `behavior.offense_planned` | behaviors | estágio, `since`, bloqueio, alvo (tag ou grade de 3) mudam | `stage`, `previous`, `since`, `reason`, `blocked_by`, `committed_power`, `target`, `target_tag`, `target_kind` (`known_base`, `known_structure`, `flying_structure`, `enemy_start`, `search`), `inputs` {`own_power`, `army_share`, `supply_used`, `assembled_share`, `committed_power`, `stage_for`, `cooldown_left`, `known_structures`, `squad_units`, `squad_power`, `core_power`, `local_enemy_power`, `local_share` (−1 sem inimigo), `contested`, `clear_for`, `start_cleared`}, `fight` {`center`, `own_power`, `enemy_power`, `share`, `enemy_center`} ou null, `mission_id` e `mission_status` (a missão avançada ou aberta no frame, também no frame em que termina; null em IDLE) |
-| `behavior.missions_updated` | behaviors | uma missão abre, muda de fase, recebe pedido de cancelamento ou termina | `missions[]` {`mission_id`, `owner`, `kind` (`main_attack`, `defend_area`, `scout`, `sensor_towers`), `status` (`ACTIVE`, `COMPLETED`, `FAILED`, `CANCELLED`), `phase`, `since`, `reason`, `cancel` {`mode`, `reason`, `time`} ou null, `proposals[]`, `granted_units`, `granted_power` (o que a alocação anterior lhe deu)} |
-| `behavior.economy_planned` | behaviors | o plano muda (a composição com 2 casas) | `active`, `workers`, `gas`, `bases`, `expand`, `freeflow`, `reason`, `composition[]`, `inputs` {`workers`, `bases`, `saturated_at`, `expansion_sites`, `strategy_economy`, `danger`, `production_per_base`, `gas_worker_share`, `upgrades_done`, `enemy_seen_power`}, `upgrades[]`, `orbitals`, `mules`, `interrupt_opening`, `max_production`, `addons`, `addons_on`, `reactor_share`, `army` |
+| `planner.proposed` | planners | o conjunto ranqueado de propostas muda | `proposals[]` {`proposal_id`, `owner`, `priority`, `command`, `target`, `count`, `minimum_power`, `must_attack`, `demand_id`, `mission_id`, `unit_types`, `reason`, `inputs`} |
+| `planner.map_control_planned` | planners | origem, razão, anchor (grade de 3), fallback, ponto mantido do `staging` (e quando foi escolhido), anchor ou candidatas do `passage` mudam; heartbeat de 30 s | `anchor`, `source` (`threatened_base`, `staging`, `passage`, `legacy`), `reason`, `policy`, `fallback` (`no_candidates`, `no_enemy_route`, `no_separating_passage`, `anchor_unresolved` ou null), `passage` e `region` (da escolha que pôs o anchor, ou null), `staging` {`anchor`, `switch` (`kept`, `initial`, `held_invalid`, `bases_changed`, `posture_changed`, `awareness`), `since`, `previous`, `objective`, `advance`, `scale` (D), `bases`, `candidate_count`, `selected`, `top[]` (o melhor de cada região, até 5, melhor primeiro); cada ponto {`anchor`, `region`, `passage`, `reaction`, `worst` e `worst_base` (a base respondida por último e a resposta, em células), `mean` (distância média às bases), `front` (à frente da base média no caminho do inimigo, em células; negativo atrás), `choke`, `threat`, `support`, `control`, `exposure`, `score`}} ou null, `shadow` (a política que não controla: `policy`, `anchor`, `passage`, `region`, `distance` ao anchor; do `passage` também `fallback`, `candidates[]` (até 8: `passage`, `kind`, `position`, `region`, `protected_bases`, `protected`, `quality`, `overextension`, `score`) e `candidate_count`) |
+| `planner.offense_planned` | planners | estágio, `since`, bloqueio, alvo (tag ou grade de 3) mudam | `stage`, `previous`, `since`, `reason`, `blocked_by`, `committed_power`, `target`, `target_tag`, `target_kind` (`known_base`, `known_structure`, `flying_structure`, `enemy_start`, `search`), `inputs` {`own_power`, `army_share`, `supply_used`, `assembled_share`, `committed_power`, `stage_for`, `cooldown_left`, `known_structures`, `squad_units`, `squad_power`, `core_power`, `local_enemy_power`, `local_share` (−1 sem inimigo), `contested`, `clear_for`, `start_cleared`}, `fight` {`center`, `own_power`, `enemy_power`, `share`, `enemy_center`} ou null, `mission_id` e `mission_status` (a missão avançada ou aberta no frame, também no frame em que termina; null em IDLE) |
+| `mission.updated` | missions | uma missão abre, muda de fase, recebe pedido de cancelamento ou termina | `missions[]` {`mission_id`, `owner`, `kind` (`main_attack`, `defend_area`, `scout`), `status` (`ACTIVE`, `COMPLETED`, `FAILED`, `CANCELLED`), `phase`, `since`, `reason`, `cancel` {`mode`, `reason`, `time`} ou null, `proposals[]`, `granted_units`, `granted_power` (o que a alocação anterior lhe deu)} |
+| `planner.economy_planned` | planners | o plano muda (a composição com 2 casas) | `active`, `workers`, `gas`, `bases`, `expand`, `freeflow`, `reason`, `composition[]`, `inputs` {`workers`, `bases`, `saturated_at`, `expansion_sites`, `strategy_economy`, `danger`, `production_per_base`, `gas_worker_share`, `upgrades_done`, `enemy_seen_power`}, `upgrades[]`, `orbitals`, `mules`, `interrupt_opening`, `max_production`, `addons`, `addons_on`, `reactor_share`, `army` |
+| `behavior.intel_executed` | behaviors | construção muda ou scan executado | `scanned_by`, `building[]` (inclui Engineering Bay compartilhada) |
 | `behavior.spawn_executed` | behaviors | `freeflow` ou razão do spawn mudam | `freeflow`, `reason` (`plan_inactive`, `plan_freeflow`, `composition_met`, `composition_short`), `counts` {tipo: contagem do Ares} |
 | `behavior.micro_executed` | behaviors | alguma unidade usou Stim (em `ATTACK` ou `HOLD`), ou os Medivacs que escoltam mudam | `stimmed[]`, `escorts[]` |
-| `behavior.detection_planned` | behaviors | todo scan; turrets, Engineering Bay, reserva, razão ou construção pedida ao Ares mudam | `scan`, `turrets[]`, `engineering_bay`, `energy_reserve`, `reason`, `inputs` {`hidden_enemies`, `cloak_seen_at` (−1 antes), `army_near_hidden`, `orbitals_with_scan`, `active_scans`}, `scanned_by`, `building[]` |
-| `behavior.sensor_towers_planned` | behaviors | pontos sem cobertura, requisito, razão ou construção mudam | `sites[]` {`base_id`, `base`, `target`}, `engineering_bay`, `reason`, `inputs`, `building[]` |
-| `behavior.structures_planned` | behaviors | depots a abaixar/levantar ou razão mudam | `lower`, `raise`, `reason` (`no_depots`, `enemy_near`, `enemy_recently_near`, `no_enemy_near`), `inputs` {`depots`, `lowered`, `enemy_near`, `recently_near`, `ground_enemies`, `friendly_on_raising`, `nearest_ground_enemy` (só com depot e inimigo terrestre)} |
+| `planner.detection_planned` | planners | todo scan; turrets, Engineering Bay, reserva, razão mudam | `scan`, `turrets[]`, `engineering_bay`, `energy_reserve`, `reason`, `inputs` {`hidden_enemies`, `cloak_seen_at` (−1 antes), `army_near_hidden`, `orbitals_with_scan`, `active_scans`} |
+| `planner.sensor_towers_planned` | planners | pontos sem cobertura, requisito ou razão mudam | `sites[]` {`base_id`, `base`, `target`}, `engineering_bay`, `reason`, `inputs` |
+| `planner.structures_planned` | planners | depots a abaixar/levantar ou razão mudam | `lower`, `raise`, `reason` (`no_depots`, `enemy_near`, `enemy_recently_near`, `no_enemy_near`), `inputs` {`depots`, `lowered`, `enemy_near`, `recently_near`, `ground_enemies`, `friendly_on_raising`, `nearest_ground_enemy` (só com depot e inimigo terrestre)} |
 | `engine.granted` | engine | alguma concessão muda | `grants[]` {`proposal_id`, `owner`, `mission_id`, `priority`, `requested`, `minimum_power`, `granted`, `granted_power`, `status`, `reason`, `tags`, `types`}, `transfers[]` {`tag`, `type`, `from`, `to`}, `unassigned` |
 | `engine.commanded` | engine | comando, alvo (grade de 3), unidades ou missão de uma concessão mudam | `proposal_id`, `owner`, `command`, `target`, `tags`, `types`, `priority`, `reason`, `demand_id`, `mission_id`, `inputs`, `strategy` {`objective`, `reason`, `defense`, `risk`}, `awareness` {`danger`, `contacts`, `enemy_power`}, `attention` {`army_units`, `visible_enemy_units`}; `tags: []` e `reason: no_units_granted` quando a concessão acaba |
 | `logs.frame_perf` | logs | heartbeat | `frames`, `last_ms`, `max_ms` por camada |
@@ -480,8 +525,8 @@ andamento, ou decidido como o próximo, está em [staging/](staging/README.md).
   do alvo e bases esgotadas (uma base sem minerais continua contando); supply antecipado além do
   `AutoSupply` do Ares; o resto do `MacroPlan` do Ares que para no primeiro behavior que age (supply,
   workers, gás e expansão ainda passam na frente do `SpawnController`); uma abertura e uma composição
-  por matchup. A composição (estilo, counters, sobrevivência) e a ordem de builds são o próximo refactor:
-  [staging/economia-e-builds.md](staging/economia-e-builds.md).
+  por matchup. Composição por catálogo, fallback de sobrevivência e interrupção por opening parado já estão implementados.
+  O documento [economia-e-builds.md](staging/economia-e-builds.md) registra o design histórico.
 - **MapControl:** anchor em STABILIZE alternando entre bases de ameaça quase igual, e entre a base ameaçada e
   o staging quando a Strategy oscila entre os objetivos; um só ponto para o exército todo, sem dividir; bases
   com o mesmo peso (main e natural não valem mais que as outras); distância reta dentro de uma região
@@ -527,7 +572,7 @@ Wilson 95 % de 9/9 é 0,70–1,00 e de 8/9 é 0,57–0,98: o placar não separa 
 sustenta cada uma é a medida do mecanismo no JSONL.
 
 **Anchor `staging` × `passage` em partida real** (`bench/staging-ley`, `bench/staging-pers`; as duas
-políticas no mesmo `behavior.map_control_planned`, a antiga em `shadow`). O anchor novo coincide com o antigo
+políticas no mesmo `planner.map_control_planned`, a antiga em `shadow`). O anchor novo coincide com o antigo
 com 1 e 2 bases (rampa da main, depois o choke da natural) e se afasta dele a cada base a partir da terceira:
 
 | Bases | Ley Lines: `staging` | `passage` | distância | Persephone: `staging` | `passage` | distância |

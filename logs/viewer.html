@@ -425,10 +425,10 @@ const LAYERS = ["attention", "awareness", "strategy", "behaviors", "engine", "lo
 const NARRATIVE_EVENTS = new Set([
   "game.started", "game.ended",
   "strategy.decided",
-  "behavior.map_control_planned",
-  "behavior.offense_planned",
-  "behavior.missions_updated",
-  "behavior.economy_planned",
+  "planner.map_control_planned",
+  "planner.offense_planned",
+  "mission.updated",
+  "planner.economy_planned",
   "engine.commanded",
   "logs.snapshot_failed",
   "logging.record_rejected",
@@ -512,15 +512,15 @@ function fieldsFor(record) {
       return `danger=${fmt(d.danger)} contacts=${d.contacts} (${d.visible_contacts} visible) power own=${fmt(d.own_power, 1)} enemy=${fmt(d.enemy_power, 1)}`;
     case "strategy.decided":
       return `objective=${d.objective} previous=${d.previous} danger=${fmt(d.inputs?.danger)} defense=${fmt(d.defense)} army=${fmt(d.army)} risk=${fmt(d.risk)}`;
-    case "behavior.proposed":
+    case "planner.proposed":
       return (d.proposals || []).map((p) => `${p.proposal_id} p=${fmt(p.priority)} n=${p.minimum_power != null ? `≥${fmt(p.minimum_power, 1)}pw` : p.count ?? "all"}`).join("  ");
-    case "behavior.map_control_planned":
+    case "planner.map_control_planned":
       return mapControlText(d);
-    case "behavior.offense_planned":
+    case "planner.offense_planned":
       return `stage=${d.stage} previous=${d.previous} blocked_by=${d.blocked_by ?? "—"} target=${d.target_kind ?? "—"} ${xy(d.target)} committed=${fmt(d.committed_power, 1)}${d.mission_id ? ` mission=${d.mission_id} ${d.mission_status}` : ""}`;
-    case "behavior.missions_updated":
+    case "mission.updated":
       return (d.missions || []).map((m) => `${m.mission_id} ${m.status} ${m.phase} (${m.reason})${m.cancel ? ` cancel=${m.cancel.mode}:${m.cancel.reason}` : ""} units=${m.granted_units}`).join("  ") || "no missions";
-    case "behavior.economy_planned":
+    case "planner.economy_planned":
       return `active=${d.active} workers=${d.workers} gas=${d.gas} bases=${d.bases} expand=${d.expand} freeflow=${d.freeflow}`;
     case "engine.granted":
       return `${(d.grants || []).map(grantText).join("  ")}  transfers=${(d.transfers || []).length} unassigned=${(d.unassigned || []).length}`;
@@ -545,7 +545,7 @@ function buildStreams() {
     "attention.observed": "attention",
     "awareness.updated": "awareness",
     "strategy.decided": "strategy",
-    "behavior.proposed": "proposals",
+    "planner.proposed": "proposals",
     "engine.granted": "grants",
     "engine.commanded": "commands",
     "logs.frame_perf": "perf",
@@ -1058,6 +1058,17 @@ function loadText(text, name, svgFiles = []) {
     if (!line) continue;
     try {
       const record = JSON.parse(line);
+      const legacyEvents = {
+        "behavior.proposed": "planner.proposed",
+        "behavior.map_control_planned": "planner.map_control_planned",
+        "behavior.offense_planned": "planner.offense_planned",
+        "behavior.economy_planned": "planner.economy_planned",
+        "behavior.detection_planned": "planner.detection_planned",
+        "behavior.sensor_towers_planned": "planner.sensor_towers_planned",
+        "behavior.structures_planned": "planner.structures_planned",
+        "behavior.missions_updated": "mission.updated"
+};
+      record.event = legacyEvents[record.event] || record.event;
       if (!record || typeof record !== "object" || Array.isArray(record) || typeof record.event !== "string") {
         throw new Error("record has no event name");
       }

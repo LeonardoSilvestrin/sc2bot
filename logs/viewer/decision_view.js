@@ -20,7 +20,7 @@
 
   // Periodic summaries, not decisions: kept out of "events around t".
   const NOISY_EVENTS = new Set([
-    "attention.observed", "awareness.updated", "behavior.proposed", "engine.granted",
+    "attention.observed", "awareness.updated", "planner.proposed", "engine.granted",
     "logs.frame_perf", "logs.snapshot_written",
   ]);
 

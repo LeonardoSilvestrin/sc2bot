@@ -1,5 +1,10 @@
 # Refactor: economia (composição) e ordem de builds
 
+> Registro de design/revisão histórico. Composição por catálogo, SURVIVE e fronteiras de Planner,
+> Mission e Behavior já estão implementadas; o estado atual e os nomes de eventos são definidos em
+> [architecture.md](../architecture.md).
+
+
 > Design consolidado em 19 de setembro de 2026 sobre `5f12156` (`botbandido`). O núcleo foi implementado
 > no working tree em 19 de setembro de 2026, ainda sem partidas de validação. Junta a proposta
 > STYLE / COUNTER ADAPTATION / SURVIVAL (conversa de 19/09 com outro agente)
@@ -218,7 +223,7 @@ CompositionPlan
   inputs
 ```
 
-`behavior.economy_planned` mantém nome e campos (o viewer lê) e ganha os novos. Uma adaptação vai compacta, por
+`planner.economy_planned` mantém nome e campos (o viewer lê) e ganha os novos. Uma adaptação vai compacta, por
 exemplo `MUTALISK→MARINE (THOR: tech_missing)`, `LURKERMPBURROWED→SIEGETANK`. As perguntas que o log tem que
 responder:
 

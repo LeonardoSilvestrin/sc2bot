@@ -1,5 +1,10 @@
 # Gaps
 
+> Registro de design/revisão histórico. Composição por catálogo, SURVIVE e fronteiras de Planner,
+> Mission e Behavior já estão implementadas; o estado atual e os nomes de eventos são definidos em
+> [architecture.md](architecture.md).
+
+
 Levantamento de 2026-09-18 no branch `botbandido`, em `7e5be42` mais a working tree daquele dia (a troca
 ArmyFallback → MapControl, com `map_control/anchor.py`, ainda sem commit). Tudo foi lido no código; nada
 aqui foi medido em partida. As linhas citadas são as desse dia e andam com o código.
@@ -84,7 +89,7 @@ Quem a socorre é só o STABILIZE, que precisa de `danger ≥ 0,55` para entrar.
 
 <a id="c7"></a>**C7 · `MissionView` e `Frame`** (baixa) —
 [main.py:117](../bot/main.py#L117), [main.py:147](../bot/main.py#L147). As views são montadas todo frame
-para `behavior.missions_updated` e para o `Frame`, que o `on_step` descarta (só os testes o usam). O
+para `mission.updated` e para o `Frame`, que o `on_step` descarta (só os testes o usam). O
 architecture.md diz que a Strategy "pode recebê-lo quando precisar"; hoje ninguém recebe.
 
 <a id="c8"></a>**C8 · `Proposal.demand_id`** (baixa) —
@@ -127,7 +132,7 @@ continua como terceira fonte do anchor quando a política que controla não põe
 localizada ou ponto do lattice nas regiões (`no_candidates`) ou sem caminho até o start inimigo
 (`no_enemy_route`); no `passage`, sem passagem que separe (`no_separating_passage`) ou sem ponto do lattice
 (`anchor_unresolved`). Se a topologia degrada ([F2](#f2)), o bot joga com a heurística antiga e só o campo
-`fallback` de `behavior.map_control_planned` conta. As medições até o `bench/ci-*` usaram o rally antigo ou a
+`fallback` de `planner.map_control_planned` conta. As medições até o `bench/ci-*` usaram o rally antigo ou a
 passagem; depois que o `staging` for medido num bench, o `legacy` sai ou vira um caso raro com alerta.
 
 <a id="f2"></a>**F2 · Topologia que degrada em silêncio** (média) —
@@ -239,9 +244,9 @@ architecture.md foram corrigidos, e o novas_propostas.md ganhou uma nota com os 
 comentários do código.
 
 - [architecture.md](architecture.md): `bot/ego/core/` ([L4](#l4)). O `ArmyStyle` teria `reactor_on` e
-  `techlab_reserve` (seção Matemática, "Estilo de exército"), e `behavior.economy_planned` teria `reactors`,
+  `techlab_reserve` (seção Matemática, "Estilo de exército"), e `planner.economy_planned` teria `reactors`,
   `reactor_on`, `techlab_reserve` e o input `techlab_reserve`; o plano tem `addons`, `addons_on` e
-  `reactor_share`. `behavior.missions_updated.kind` lista `main_attack` e `scout` e esquece `defend_area`. A
+  `reactor_share`. `mission.updated.kind` lista `main_attack` e `scout` e esquece `defend_area`. A
   lista de `SPLASH_TARGETS` não tem o Hellion (2,0, [frame.py:54](../bot/attention/frame.py#L54)).
 - [novas_propostas.md](novas_propostas.md): A2 a A11 apontam para `bot/ego/planners/economy.py`,
   `offense.py` e `intel.py`, que viraram pacotes. A4 e N4.1 ainda falam em CoreArmy, e
