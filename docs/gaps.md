@@ -187,7 +187,6 @@ caminho que construa o plano sem eles, que hoje são os testes.
 <a id="f9"></a>**F9 · `run.py`** (baixa) — sem `MyBotRace` no `config.yml`, `race = Race.Random`
 ([run.py:139](../run.py#L139)), mas o bot só joga de Terran (SCV, `terran_builds.yml`, add-ons). Sem mapas
 em `MAPS_PATH`, entra uma lista fixa de mapas de ladder ([run.py:181](../run.py#L181)).
-`MyBotName: MyBotName` ([config.yml:6](../config.yml#L6)) ainda é o placeholder do template.
 
 <a id="f10"></a>**F10 · Local da turret** (baixa) —
 [detection.py](../bot/body/behaviors/detection.py) (Body). `min(expansion_locations_list, …, default=base)`

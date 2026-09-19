@@ -169,9 +169,9 @@ não tem matriz própria.
 
 - **Ladder (AI Arena):** a AI Arena roda em Linux e o Ares depende de Cython,
   então o zip precisa ser gerado em Linux (`scripts/create_ladder_zip.py`,
-  Docker ou WSL). O workflow `ladder_zip.yml` faz isso a cada push na `main`,
-  depois de `pytest` e `ruff`, e publica o artefato `ladder-zip.zip` na aba
-  Actions. O upload automático fica desligado; para ligar, defina
+  Docker ou WSL). O workflow `ladder_zip.yml` faz isso a cada push na `main`
+  ou na `botbandido`, depois de `pytest` e `ruff`, e publica o artefato
+  `ladder-zip.zip` na aba Actions. O upload automático fica desligado; para ligar, defina
   `AutoUploadToAiarena: True` em `config.yml` e crie os secrets
   `UPLOAD_API_TOKEN` e `UPLOAD_BOT_ID` no repositório.
 - **Executável para jogar contra humanos (SC2AIApp):** no Windows,
@@ -179,6 +179,3 @@ não tem matriz própria.
   `ladderbots.json` e os arquivos de build; sem Windows, rode manualmente o
   workflow `Build Windows Executable`. A pasta do bot em `SC2AIApp/Bots` deve
   ter exatamente o nome do `ladderbots.json`.
-
-`config.yml` ainda usa os valores do template (`MyBotName`); ajuste antes de
-publicar.

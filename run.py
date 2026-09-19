@@ -39,7 +39,7 @@ else:
 
 CONFIG_FILE: str = "config.yml"
 MAP_FILE_EXT: str = "SC2Map"
-MY_BOT_NAME: str = "BotBandido"
+MY_BOT_NAME: str = "MyBotName"
 MY_BOT_RACE: str = "MyBotRace"
 # Gap between markers drawn by --spatial-view; presentation only.
 DEFAULT_SPATIAL_VIEW_SPACING = 4

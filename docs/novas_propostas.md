@@ -235,8 +235,6 @@ Cada item é uma fatia, com uma célula do bench que a mede.
 
 Nada disso aparece contra a IA, e todo o resto quebra no ladder se faltar:
 
-- `MyBotName: MyBotName` no [config.yml](../config.yml) e nomes placeholder no
-  YAML de builds: dar identidade ao bot.
 - **Tempo de frame:** ler `logs.frame_perf.max_ms` dos jogos longos da matriz e
   compará-lo com o limite de tempo por passo do AI Arena, que precisa ser
   conferido na wiki. Os candidatos a custo são o campo por frame (A5, sem
