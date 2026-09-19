@@ -24,7 +24,6 @@ Engineering Bay estão descritos em [architecture.md](../architecture.md#papéis
 
 | Item | Estado | Próximo passo |
 | --- | --- | --- |
-| MapControl: anchor staging | Controla o anchor; passage permanece em shadow | Medir matriz antes de remover a política em shadow |
 | Economia e builds | Catálogo, composição, SURVIVE e opening stall no código | Avaliar desempenho em partidas e os limites restantes de macro |
 
 ## Depois

@@ -17,7 +17,6 @@ from bot.ego.planners.map_control import (
     MAP_CONTROL_PRIORITY,
     MapControlConfig,
     MapControlPlanner,
-    anchor,
     staging,
 )
 from bot.ego.planners.map_control import planner as map_control_planner
@@ -31,8 +30,6 @@ from .fakes import LATTICE, MAIN, MAP, NATURAL, FakeLogger, attention, proposal,
 from .test_frame_flow import build_bot
 from .test_strategy import awareness
 
-PASSAGE_POLICY = MapControlConfig(policy="passage")
-
 
 def held(danger: float = 0.0, *, bases=(MAIN,), planner: MapControlPlanner | None = None):
     frame = attention(bases=bases)
@@ -42,18 +39,17 @@ def held(danger: float = 0.0, *, bases=(MAIN,), planner: MapControlPlanner | Non
 
 
 # --- the legacy rally, moved out of Strategy ---
-# The fake map's regions have no lattice points: no policy places an anchor.
+# The fake map's regions have no lattice points: staging places no anchor.
 
 
 def test_the_main_alone_is_held_at_the_main_ramp() -> None:
     strategy, plan = held()
 
     assert strategy.objective is Objective.BUILD_ADVANTAGE
-    assert (plan.source, plan.policy, plan.fallback) == ("legacy", "staging", "no_candidates")
+    assert (plan.source, plan.fallback) == ("legacy", "no_candidates")
     assert plan.anchor == MAP.main_ramp
     assert plan.reason == "hold_rally_build_advantage"
     assert plan.staging is None
-    assert plan.passage.fallback == "anchor_unresolved"
 
 
 def test_a_threatened_base_is_held_while_stabilizing() -> None:
@@ -84,7 +80,7 @@ def test_it_holds_every_free_army_unit_below_every_other_planner() -> None:
     assert proposal.target == plan.anchor
 
 
-# --- the single passage, now kept beside the staging point for comparison ---
+# --- a small map, region by region ---
 #
 #   pocket -(border)- main -ramp- nat
 #                                  |
@@ -171,87 +167,31 @@ def planned(
     frame = attention(bases=bases, map_view=map_view)
     believed = awareness(danger, bases=bases)
     strategy = StrategyModel().decide(frame, believed)
-    return (planner or MapControlPlanner(PASSAGE_POLICY)).plan(frame, believed, strategy)
-
-
-def scores(plan) -> dict[str, float]:
-    return {candidate.passage_id: candidate.score for candidate in plan.passage.candidates}
-
-
-def test_the_main_alone_holds_its_ramp_from_the_main_side() -> None:
-    plan = planned("main")
-
-    assert (plan.source, plan.passage.held.passage_id, plan.fallback) == ("passage", "ramp", None)
-    assert plan.passage.held.region_id == "main"
-    assert (plan.held_passage, plan.region) == ("ramp", "main")
-    assert plan.reason == "hold_passage_build_advantage"
-    # Behind the ramp, on a lattice point of the main: not on the ramp itself.
-    ramp = PASSAGES[0].position
-    main = GRAPH_MAP.topology.region("main")
-    assert plan.anchor == plan.passage.anchor
-    assert plan.anchor in [GRAPH_MAP.lattice[index] for index in main.sample_indices]
-    assert plan.anchor.distance_to(CENTERS["main"]) < ramp.distance_to(CENTERS["main"])
-    assert plan.proposals[0].target == plan.anchor
-
-
-def test_a_passage_that_shuts_off_more_bases_is_worth_more() -> None:
-    plan = planned("main", "nat")
-    natchoke, ramp = (
-        next(item for item in plan.passage.candidates if item.passage_id == name)
-        for name in ("natchoke", "ramp")
-    )
-
-    assert (natchoke.protected_bases, ramp.protected_bases) == (
-        ("base:main", "base:nat"),
-        ("base:main",),
-    )
-    assert natchoke.protected > ramp.protected
-    assert plan.passage.held.passage_id == "natchoke"
-    assert plan.passage.held.region_id == "nat"
-
-
-def test_a_dead_end_behind_our_bases_is_no_candidate() -> None:
-    assert "pocketlink" not in scores(planned("main", "nat", "third"))
-
-
-def test_the_enemy_ramp_shuts_off_every_base_but_does_not_win_from_afar() -> None:
-    plan = planned("main", "nat", "third")
-    enemy_ramp = next(item for item in plan.passage.candidates if item.passage_id == "enemyramp")
-
-    assert enemy_ramp.protected == 3.0 > plan.passage.held.protected
-    assert plan.passage.held.passage_id == "natchoke"
-    assert enemy_ramp.overextension > plan.passage.held.overextension
+    return (planner or MapControlPlanner()).plan(frame, believed, strategy)
 
 
 def test_the_same_frames_choose_the_same_anchor() -> None:
-    def run(config):
-        planner = MapControlPlanner(config)
+    def run():
+        planner = MapControlPlanner()
         return [
             planned(*names, planner=planner)
             for names in (("main",), ("main", "nat"), ("main", "nat", "third"), ("main",))
         ]
 
-    for config in (PASSAGE_POLICY, MapControlConfig()):
-        assert run(config) == run(config)
+    assert run() == run()
 
 
-def test_a_challenger_inside_the_switch_margin_does_not_move_the_army() -> None:
-    first = planned("main")
-    gap = scores(planned("main", "nat"))["natchoke"] - scores(first)["ramp"]
-    assert gap > 0.0
+def test_a_dead_end_behind_our_bases_guards_nothing() -> None:
+    bases = tuple(BASE[name] for name in ("main", "nat", "third"))
+    candidates, _ = staging.evaluate(staging.Ground(GRAPH_MAP), bases, MapControlConfig())
 
-    def second(margin: float):
-        planner = MapControlPlanner(MapControlConfig(policy="passage", switch_margin=margin))
-        planned("main", planner=planner)
-        return planned("main", "nat", planner=planner).passage.held.passage_id
-
-    assert second(gap + 0.01) == "ramp"
-    assert second(max(0.0, gap - 0.01)) == "natchoke"
+    # Closing the pocket shuts nothing of ours off from the enemy start.
+    assert "pocketlink" not in candidates.passages
+    assert "natchoke" in candidates.passages
 
 
-@pytest.mark.parametrize("config", [PASSAGE_POLICY, MapControlConfig()], ids=["passage", "staging"])
-def test_a_threatened_base_outranks_the_policy_while_stabilizing(config) -> None:
-    plan = planned("main", "nat", danger=0.7, planner=MapControlPlanner(config))
+def test_a_threatened_base_outranks_staging_while_stabilizing() -> None:
+    plan = planned("main", "nat", danger=0.7)
 
     assert (plan.source, plan.anchor, plan.fallback) == (
         "threatened_base",
@@ -260,36 +200,29 @@ def test_a_threatened_base_outranks_the_policy_while_stabilizing(config) -> None
     )
     assert (plan.held_passage, plan.region) == (None, None)
     assert plan.reason == "hold_rally_stabilize"
-    # Both policies are still evaluated, and logged.
-    assert "natchoke" in scores(plan)
+    # Staging is still evaluated, and logged.
     assert plan.staging is not None and plan.staging.advance == 0.0
 
 
 @pytest.mark.parametrize(
-    "map_view, fallback, shadow",
+    "map_view, fallback",
     [
-        (replace(GRAPH_MAP, topology=MapTopology()), "no_enemy_route", "no_separating_passage"),
+        (replace(GRAPH_MAP, topology=MapTopology()), "no_enemy_route"),
         (
             replace(GRAPH_MAP, topology=replace(GRAPH_MAP.topology, enemy_start_region=None)),
             "no_enemy_route",
-            "no_separating_passage",
         ),
-        (
-            replace(GRAPH_MAP, topology=_topology(samples=False)),
-            "no_candidates",
-            "anchor_unresolved",
-        ),
+        (replace(GRAPH_MAP, topology=_topology(samples=False)), "no_candidates"),
     ],
     ids=["no_topology", "no_enemy_region", "no_lattice_point"],
 )
-def test_without_a_place_to_stage_the_legacy_anchor_is_held(map_view, fallback, shadow) -> None:
-    for config, expected in ((MapControlConfig(), fallback), (PASSAGE_POLICY, shadow)):
-        plan = planned("main", map_view=map_view, planner=MapControlPlanner(config))
+def test_without_a_place_to_stage_the_legacy_anchor_is_held(map_view, fallback) -> None:
+    plan = planned("main", map_view=map_view)
 
-        assert (plan.source, plan.anchor, plan.fallback) == ("legacy", map_view.main_ramp, expected)
-        assert plan.reason == "hold_rally_build_advantage"
-        (proposal,) = plan.proposals
-        assert proposal.target == map_view.main_ramp
+    assert (plan.source, plan.anchor, plan.fallback) == ("legacy", map_view.main_ramp, fallback)
+    assert plan.reason == "hold_rally_build_advantage"
+    (proposal,) = plan.proposals
+    assert proposal.target == map_view.main_ramp
 
 
 def test_a_base_off_the_topology_is_staged_from_the_region_nearest_it() -> None:
@@ -298,16 +231,9 @@ def test_a_base_off_the_topology_is_staged_from_the_region_nearest_it() -> None:
     believed = awareness(0.0, bases=(stray,))
     strategy = StrategyModel().decide(frame, believed)
 
-    shadow = MapControlPlanner(PASSAGE_POLICY).plan(frame, believed, strategy)
     staged = MapControlPlanner().plan(frame, believed, strategy)
 
-    # No passage separates a base the topology does not know ...
-    assert (shadow.source, shadow.fallback, shadow.passage.candidates) == (
-        "legacy",
-        "no_separating_passage",
-        (),
-    )
-    # ... but the ground nearest it does.
+    # The topology does not know the base, but the ground nearest it does.
     assert staged.source == "staging"
     assert staged.staging.bases == 1
     assert staged.staging.selected.worst_base == "base:stray"
@@ -488,8 +414,6 @@ def test_case_a_the_natural_choke_still_holds_two_bases() -> None:
         "natchoke",
         "nat",
     )
-    # The same passage the single-passage policy holds.
-    assert two.passage.held.passage_id == "natchoke"
 
 
 def test_case_b_a_third_outside_the_natural_moves_the_anchor_out_of_it() -> None:
@@ -509,9 +433,6 @@ def test_case_b_a_third_outside_the_natural_moves_the_anchor_out_of_it() -> None
     third, nat = site(WIDE, "third"), site(WIDE, "nat")
     assert point.position.distance_to(third) < candidates.position(natchoke).distance_to(third)
     assert point.position.distance_to(nat) < third.distance_to(nat)
-    # The passage policy stays on the natural choke: logged beside, for comparison.
-    assert plan.passage.held.passage_id == "natchoke"
-    assert plan.passage.anchor != plan.anchor
 
 
 # Two entrances that share no approach:
@@ -567,8 +488,6 @@ def test_case_c_two_independent_entrances_are_answered_from_between_them() -> No
     assert point.passage_id not in ("P1", "P2")
     assert point.region_id == "home"
     assert abs(to_west - to_east) <= 2 * TWIN.lattice_spacing
-    # No passage guards anything: each entrance can be walked around through the other.
-    assert plan.passage.candidates == ()
 
 
 # One entrance every approach crosses, the bases fanned out behind it.
@@ -781,7 +700,7 @@ def test_no_planner_reaches_into_another() -> None:
     # MapControl hands its anchor to the offense through the frame, never by import.
     assert not any(
         name.startswith("bot.ego.planners.")
-        for name in _imported(map_control_planner) | _imported(anchor) | _imported(staging)
+        for name in _imported(map_control_planner) | _imported(staging)
     )
     assert not any(
         "map_control" in name for name in _imported(offense_planner) | _imported(main_attack)
@@ -799,8 +718,7 @@ def test_the_frame_holds_the_army_at_the_anchor_and_logs_why() -> None:
     assert hold.tags and hold.proposal.target == plan.anchor
     (logged,) = logger.named("planner.map_control_planned")
     data = logged["data"]
-    assert (data["source"], data["policy"], data["passage"], data["region"], data["fallback"]) == (
-        "staging",
+    assert (data["source"], data["passage"], data["region"], data["fallback"]) == (
         "staging",
         "ramp",
         "main",
@@ -819,12 +737,3 @@ def test_the_frame_holds_the_army_at_the_anchor_and_logs_why() -> None:
         -selected["reaction"] + selected["choke"] - selected["exposure"], abs=1e-3
     )
     assert {"threat", "support", "control", "front", "mean", "worst"} <= set(selected)
-    # The single-passage policy, logged beside it.
-    shadow = data["shadow"]
-    assert (shadow["policy"], shadow["passage"], shadow["fallback"]) == ("passage", "ramp", None)
-    assert shadow["distance"] == pytest.approx(plan.anchor.distance_to(plan.passage.anchor))
-    assert shadow["candidate_count"] == len(shadow["candidates"]) == 3
-    best = shadow["candidates"][0]
-    assert best["score"] == pytest.approx(
-        best["protected"] + best["quality"] - best["overextension"]
-    )

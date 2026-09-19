@@ -30,12 +30,7 @@ from bot.ego.planners import (
     SensorTowerPlan,
     StructurePlan,
 )
-from bot.ego.planners.map_control import (
-    MapControlPlan,
-    PassageCandidate,
-    StagingPlan,
-    StagingPoint,
-)
+from bot.ego.planners.map_control import MapControlPlan, StagingPlan, StagingPoint
 from bot.ego.planners.offense import LocalFight, OffensePlan
 from bot.ego.strategy import StrategyState
 
@@ -47,7 +42,6 @@ ATTENTION_HEARTBEAT = 5.0
 # Coarse grid a moving target is compared on, so a drifting point is one command.
 COMMAND_TARGET_CELL = 3.0
 TOP_CONTACTS = 8
-TOP_PASSAGES = 8
 # The staging terms move with the field every frame: sampled, not change-logged.
 MAP_CONTROL_HEARTBEAT = 30.0
 
@@ -492,8 +486,6 @@ class Telemetry:
             None
             if staging is None
             else (_cell(staging.selected.position), staging.since),
-            None if plan.passage.anchor is None else _cell(plan.passage.anchor),
-            tuple(candidate.passage_id for candidate in plan.passage.candidates),
         )
         if not self._map_control.admit(signature, now=now):
             return
@@ -505,12 +497,10 @@ class Telemetry:
                 "anchor": _xy(plan.anchor),
                 "source": plan.source,
                 "reason": plan.reason,
-                "policy": plan.policy,
                 "fallback": plan.fallback,
                 "passage": plan.held_passage,
                 "region": plan.region,
                 "staging": None if staging is None else _staging(staging),
-                "shadow": _shadow(plan),
             },
         )
 
@@ -996,20 +986,6 @@ def _cell(point: Point2) -> tuple[int, int]:
     )
 
 
-def _passage(candidate: PassageCandidate) -> dict[str, Any]:
-    return {
-        "passage": candidate.passage_id,
-        "kind": candidate.kind,
-        "position": _xy(candidate.position),
-        "region": candidate.region_id,
-        "protected_bases": list(candidate.protected_bases),
-        "protected": candidate.protected,
-        "quality": candidate.quality,
-        "overextension": candidate.overextension,
-        "score": candidate.score,
-    }
-
-
 def _staging(plan: StagingPlan) -> dict[str, Any]:
     return {
         "anchor": _xy(plan.selected.position),
@@ -1042,39 +1018,6 @@ def _staging_point(point: StagingPoint) -> dict[str, Any]:
         "control": round(point.control, 3),
         "exposure": round(point.exposure, 4),
         "score": round(point.score, 4),
-    }
-
-
-def _shadow(plan: MapControlPlan) -> dict[str, Any]:
-    """The policy that does not place the anchor, and how far its choice is
-    from the anchor."""
-
-    if plan.policy == "staging":
-        passage = plan.passage
-        held, anchor = passage.held, passage.anchor
-        return {
-            "policy": "passage",
-            "anchor": None if anchor is None else _xy(anchor),
-            "passage": None if held is None else held.passage_id,
-            "region": None if held is None else held.region_id,
-            "fallback": passage.fallback,
-            "distance": None
-            if anchor is None
-            else round(anchor.distance_to(plan.anchor), 2),
-            "candidates": [
-                _passage(candidate) for candidate in passage.candidates[:TOP_PASSAGES]
-            ],
-            "candidate_count": len(passage.candidates),
-        }
-    point = None if plan.staging is None else plan.staging.selected
-    return {
-        "policy": "staging",
-        "anchor": None if point is None else _xy(point.position),
-        "passage": None if point is None else point.passage_id,
-        "region": None if point is None else point.region_id,
-        "distance": None
-        if point is None
-        else round(point.position.distance_to(plan.anchor), 2),
     }
 
 

@@ -490,13 +490,11 @@ function mapControlText(d) {
   // Why the free army stands here: the choice, its terms and the runner-up.
   const head = `source=${d.source} anchor=${xy(d.anchor)} region=${d.region ?? "—"} passage=${d.passage ?? "—"}${d.fallback ? ` fallback=${d.fallback}` : ""}`;
   const staging = d.staging;
-  const shadow = d.shadow;
-  const beside = shadow ? `  ${shadow.policy} ${xy(shadow.anchor)}${shadow.passage ? ` ${shadow.passage}` : ""} at ${fmt(shadow.distance, 1)}` : "";
-  if (!staging) return head + beside;
+  if (!staging) return head;
   const s = staging.selected;
   const next = (staging.top || []).find((point) => point.region !== s.region);
   const runnerUp = next ? `  next ${next.region} ${fmt(next.score, 3)} (Δ${fmt(s.score - next.score, 3)})` : "";
-  return `${head}  ${staging.switch} since ${formatTime(staging.since)}  score=${fmt(s.score, 3)} = −reaction ${fmt(s.reaction, 3)} + choke ${fmt(s.choke, 3)} − exposure ${fmt(s.exposure, 3)}  worst=${s.worst_base} ${fmt(s.worst, 0)} mean=${fmt(s.mean, 0)} front=${fmt(s.front, 0)}  threat=${fmt(s.threat)} support=${fmt(s.support)} control=${fmt(s.control)}${runnerUp}${beside}`;
+  return `${head}  ${staging.switch} since ${formatTime(staging.since)}  score=${fmt(s.score, 3)} = −reaction ${fmt(s.reaction, 3)} + choke ${fmt(s.choke, 3)} − exposure ${fmt(s.exposure, 3)}  worst=${s.worst_base} ${fmt(s.worst, 0)} mean=${fmt(s.mean, 0)} front=${fmt(s.front, 0)}  threat=${fmt(s.threat)} support=${fmt(s.support)} control=${fmt(s.control)}${runnerUp}`;
 }
 
 function fieldsFor(record) {

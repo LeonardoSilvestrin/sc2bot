@@ -9,8 +9,9 @@ Candidates are the lattice points of the regions that hold a base of ours and
 of their neighbours -- our ground and the ground next to it, pathable by
 construction -- but the enemy start region and its neighbours, unless a base
 of ours is there: no army stages on the enemy's doorstep. The hold point of a
-passage that guards a base -- `setback` cells from it into the region behind
-it, as `anchor.anchor_of` -- is one of them, tagged with the passage.
+passage that guards a base -- `setback` cells from it toward the center of the
+region behind it, on that region's nearest lattice point -- is one of them,
+tagged with the passage.
 
 Distances are ground distances over the `MapTopology`: straight inside a
 region, else out through its passages, passage to passage (all pairs, once per
@@ -54,7 +55,8 @@ another outscores it by `staging_margin`.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections import deque
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -64,8 +66,6 @@ from sc2.position import Point2
 from bot.attention import AttentionState, BaseView, MapView
 from bot.awareness import InfluenceField
 from bot.ego.strategy import Objective
-
-from .anchor import reached
 
 if TYPE_CHECKING:
     from .planner import MapControlConfig
@@ -505,6 +505,21 @@ def _hold(
     goal = position.towards(region.center, setback, limit=True)
     xy = ground.lattice[samples]
     return samples[int(np.argmin((xy[:, 0] - goal.x) ** 2 + (xy[:, 1] - goal.y) ** 2))]
+
+
+def reached(
+    links: Mapping[str, tuple[tuple[str, str], ...]], start: str, *, closed: str | None = None
+) -> frozenset[str]:
+    """The regions reached from `start` without crossing the passage `closed`."""
+
+    found = {start}
+    frontier = deque([start])
+    while frontier:
+        for neighbour, passage_id in links.get(frontier.popleft(), ()):
+            if passage_id != closed and neighbour not in found:
+                found.add(neighbour)
+                frontier.append(neighbour)
+    return frozenset(found)
 
 
 def _sample(
