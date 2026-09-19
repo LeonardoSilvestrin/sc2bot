@@ -13,6 +13,12 @@
 > Complementa [novas_propostas.md](novas_propostas.md) (N2, N3, N5) e [propostas.md](propostas.md)
 > (P0.4, P0.5). Os ids são `E1`…`E9`.
 
+> **Estado em 19 de setembro de 2026 (`5f12156`).** Nenhum item implementado. O próximo refactor junta E1, E2,
+> E3 e o E6 com a proposta STYLE / COUNTER ADAPTATION / SURVIVAL: catálogo ordenado de counters por raça no lugar
+> de `COUNTERS`, baseline + adaptação no lugar de `prior × value`, e um modo de sobrevivência decidido pela
+> Strategy. O E7 passa a ser um jeito de ordenar ou validar esse catálogo. O desenho, as decisões em aberto e as
+> fatias estão em [staging/economia-e-builds.md](staging/economia-e-builds.md).
+
 ## Resumo
 
 - **A economia é o único grupo de planners fora do padrão.** Ela é feita de funções soltas, e não

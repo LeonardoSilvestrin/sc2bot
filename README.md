@@ -8,16 +8,22 @@ até o que foi observado, o que se inferiu e por que se decidiu.
 
 ## O que o bot faz hoje
 
-Uma única abertura (`BioThreeOneOne`: Reaper expand, 3 Barracks, Factory e
-Starport) para todos os adversários; depois dela:
+Um estilo de exército sorteado por partida entre os feitos para a raça
+inimiga, anunciado no chat: BIO (Marine, Marauder, Siege Tank, Medivac) contra
+todas, MECH (Hellion, Cyclone, Siege Tank e Marines) só contra Zerg. Cada
+estilo tem a sua abertura (as duas com Reaper expand); depois dela:
 
-- **Economia:** workers, gás e expansões pelos macro behaviors do Ares, com
-  composição fixa Marine/Marauder/Siege Tank/Medivac, upgrades de infantaria e
-  veículos, Orbital Command e MULE. O gás cobre os geysers das bases que o bot
+- **Economia:** workers, gás e expansões pelos macro behaviors do Ares, com a
+  composição do estilo repesada pelo exército inimigo visto, os upgrades do
+  estilo, Orbital Command e MULE. O gás cobre os geysers das bases que o bot
   segura, a expansão continua enquanto houver lugar no mapa, o teto de
-  produção cresce com as bases e as Barracks sem add-on recebem Reactor. Numa
-  emergência antes do fim da abertura, o plano dinâmico assume e a abertura é
-  interrompida.
+  produção cresce com as bases e a estrutura de produção do estilo recebe
+  Reactor ou Tech Lab na proporção do que treina. Numa emergência antes do fim
+  da abertura, ou com a abertura parada, o plano dinâmico assume e a abertura
+  é interrompida.
+- **Posição:** o exército que ninguém pediu espera num ponto de reação à frente
+  das bases, num choke que as guarda e longe da influência inimiga; é também
+  o ponto de reunião da ofensiva.
 - **Defesa:** ataques a qualquer base viram um incidente com um único
   orçamento de poder, dividido entre as partes aérea e terrestre; os supply
   depots sobem quando inimigos terrestres se aproximam.
@@ -34,8 +40,8 @@ Starport) para todos os adversários; depois dela:
 
 ### Limitações conhecidas
 
-- Uma abertura e uma composição para todos os matchups; nenhuma reação
-  específica a rush (bunker, reparo, workers lutando).
+- Uma abertura por estilo, não por matchup; nenhuma reação específica a rush
+  (bunker, reparo, workers lutando).
 - Com o exército morto, o bot pode acumular milhares de minerais com supply
   livre. Teto de produção, Reactors, gás e bases a mais deram destino ao banco
   sem que ele caísse nas partidas medidas; a causa continua em aberto.
@@ -70,7 +76,11 @@ sem o jogo. Fórmulas, eventos de log e parâmetros estão em
 | Documento | Conteúdo |
 | --- | --- |
 | [docs/architecture.md](docs/architecture.md) | Camadas, matemática, eventos, comandos, o que falta e as medições |
-| [docs/propostas.md](docs/propostas.md) | O que aprender de outros bots (Ares, PiG, Sajuuk, Sharky, MicroMachine, Sharpy) e o roadmap |
+| [docs/staging/](docs/staging/README.md) | O que está em andamento e o próximo refactor (hoje: economia e ordem de builds) |
+| [docs/propostas.md](docs/propostas.md) | O que aprender de outros bots (Ares, PiG, Sajuuk, Sharky, MicroMachine, Sharpy) e o roadmap P0–P2 |
+| [docs/novas_propostas.md](docs/novas_propostas.md) | Revisão de 18/09: benchmark, builds, Strategy, informação, micro, ofensiva (N1–N8) |
+| [docs/melhorias_propostas_eco.md](docs/melhorias_propostas_eco.md) | Revisão de 18/09 da economia e da composição (E1–E9) |
+| [docs/gaps.md](docs/gaps.md) | Achados de revisão do código: calculado sem uso, fallbacks, legado, inconsistências |
 | [docs/migration-map.md](docs/migration-map.md) | Modelos matemáticos do branch `matematização`: o que já veio e o que ainda pode vir |
 
 ## Instalação

@@ -13,40 +13,7 @@
       "justMyCode": false
     },
     {
-      "name": "play_log",
-      "type": "debugpy",
-      "request": "launch",
-      "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
-      "program": "${workspaceFolder}\\run.py",
-      "cwd": "${workspaceFolder}",
-      "args": ["--bot-log", "events"],
-      "console": "integratedTerminal",
-      "justMyCode": false
-    },
-    {
-      "name": "play_logs_imap",
-      "type": "debugpy",
-      "request": "launch",
-      "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
-      "program": "${workspaceFolder}\\run.py",
-      "cwd": "${workspaceFolder}",
-      "args": ["--bot-log", "events", "--spatial-view"],
-      "console": "integratedTerminal",
-      "justMyCode": false
-    },
-    {
-      "name": "play_logs_SVG",
-      "type": "debugpy",
-      "request": "launch",
-      "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
-      "program": "${workspaceFolder}\\run.py",
-      "cwd": "${workspaceFolder}",
-      "args": ["--bot-log", "events", "--spatial-snapshot"],
-      "console": "integratedTerminal",
-      "justMyCode": false
-    },
-    {
-      "name": "play_full_debug",
+      "name": "play full debug",
       "type": "debugpy",
       "request": "launch",
       "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
@@ -67,7 +34,7 @@
       "justMyCode": false
     },
     {
-      "name": "bench: matriz padrão",
+      "name": "bench: matriz padrão (full debug)",
       "type": "debugpy",
       "request": "launch",
       "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
@@ -76,13 +43,15 @@
       "args": [
         "run",
         "--out",
-        "${workspaceFolder}\\bench\\${input:benchLabel}"
+        "${workspaceFolder}\\bench\\${input:benchLabel}",
+        "--spatial-view",
+        "--spatial-snapshot"
       ],
       "console": "integratedTerminal",
       "justMyCode": false
     },
     {
-      "name": "bench: cenário único",
+      "name": "bench: cenário único (full debug)",
       "type": "debugpy",
       "request": "launch",
       "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
@@ -105,7 +74,9 @@
         "--games",
         "${input:benchGames}",
         "--time-limit",
-        "${input:benchTimeLimit}"
+        "${input:benchTimeLimit}",
+        "--spatial-view",
+        "--spatial-snapshot"
       ],
       "console": "integratedTerminal",
       "justMyCode": false

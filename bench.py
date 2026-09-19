@@ -1,13 +1,14 @@
 """Local benchmark: a fixed matrix of games against the built-in AI.
 
     bench.py run --out bench/<label> [--maps ...] [--races ...] [--armies ...]
-                 [--games N] [--seed S]
+                 [--games N] [--seed S] [--spatial-view] [--spatial-snapshot]
     bench.py summarize bench/<label>
     bench.py compare bench/<baseline> bench/<challenger>
 
 Each game runs in its own process, with a wall-clock timeout, and leaves
 ``<out>/<game_id>/`` with ``result.json``, ``replay.SC2Replay`` and
-``log/game.jsonl``. ``summary.json`` is rewritten after every game.
+``log/game.jsonl`` (plus ``log/spatial/`` with ``--spatial-snapshot``).
+``summary.json`` is rewritten after every game.
 """
 
 from __future__ import annotations
@@ -60,10 +61,12 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--time-limit", type=float, default=1800.0, help="game seconds")
     run.add_argument("--wall-timeout", type=float, default=3600.0, help="real seconds")
     run.add_argument("--only", type=int, nargs="*", help="play only these matrix indices")
+    _add_debug_arguments(run)
 
     play = commands.add_parser("play", help="(internal) play one game")
     play.add_argument("--spec", type=Path, required=True)
     play.add_argument("--directory", type=Path, required=True)
+    _add_debug_arguments(play)
 
     summary = commands.add_parser("summarize", help="summarize a run")
     summary.add_argument("directory", type=Path)
@@ -76,11 +79,25 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "run":
         return _run(args)
     if args.command == "play":
-        return _play(args.spec, args.directory)
+        return _play(
+            args.spec,
+            args.directory,
+            spatial_view=args.spatial_view,
+            spatial_snapshot=args.spatial_snapshot,
+        )
     if args.command == "summarize":
         print(json.dumps(summarize(load_records(args.directory)), indent=2))
         return 0
     return _compare(args.baseline, args.challenger)
+
+
+def _add_debug_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--spatial-view", action="store_true", help="draw the influence field in the game"
+    )
+    parser.add_argument(
+        "--spatial-snapshot", action="store_true", help="write SVG field snapshots to log/spatial"
+    )
 
 
 def _run(args) -> int:
@@ -130,6 +147,8 @@ def _run(args) -> int:
                         str(spec_path),
                         "--directory",
                         str(directory),
+                        *(["--spatial-view"] if args.spatial_view else []),
+                        *(["--spatial-snapshot"] if args.spatial_snapshot else []),
                     ],
                     stdout=output,
                     stderr=subprocess.STDOUT,
@@ -161,20 +180,25 @@ def _run(args) -> int:
     return 0
 
 
-def _play(spec_path: Path, directory: Path) -> int:
+def _play(spec_path: Path, directory: Path, *, spatial_view: bool, spatial_snapshot: bool) -> int:
     from sc2 import maps
     from sc2.data import AIBuild, Difficulty, Race
     from sc2.main import run_game
     from sc2.player import Bot, Computer
 
-    from bot.logs import JsonlLogger, Logs
+    from bot.logs import JsonlLogger, Logs, OverlayConfig, SnapshotConfig
     from bot.main import MyBot
 
     spec = GameSpec.from_json(_read_json(spec_path))
     child: dict = {"result": None, "game_time": None, "error": None}
-    bot = MyBot(
-        logs=Logs(JsonlLogger(directory, session_name=LOG_DIRECTORY)), army=spec.army
+    logger = JsonlLogger(directory, session_name=LOG_DIRECTORY)
+    logs = Logs(
+        logger,
+        overlay=OverlayConfig(enabled=spatial_view),
+        snapshots=SnapshotConfig(enabled=spatial_snapshot),
+        snapshot_directory=logger.session_directory / "spatial",
     )
+    bot = MyBot(logs=logs, army=spec.army)
     exit_code = 0
     try:
         result = run_game(

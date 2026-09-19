@@ -221,7 +221,7 @@ testar um caminho que nenhuma partida exercita.
 <a id="l4"></a>**L4 · Pacote `core`** (baixa) — o docstring de
 [missions/\_\_init\_\_.py:1](../bot/ego/missions/__init__.py#L1) ainda começa com "CORE:", e o
 architecture.md aponta `bot/ego/core/` em três lugares (a tabela de camadas, a tabela de papéis e "Onde fica
-cada coisa"). O pacote é `bot/ego/missions/`.
+cada coisa"). O pacote é `bot/ego/missions/`. **19/09:** o architecture.md foi corrigido; falta o docstring.
 
 <a id="l5"></a>**L5 · Counters de unidades que nenhum estilo constrói** (baixa) — `REACH` tem Thor, Widow
 Mine e Viking ([composition.py:65-67](../bot/ego/planners/economy/composition.py#L65-L67)), e `COUNTERS`
@@ -234,7 +234,9 @@ Nenhum estilo os constrói, então nunca entram em `mix`: ou entram num estilo, 
 do estilo; o comentário do próprio arquivo admite. Antes de tirar as chaves, confirmar se o parser do Ares as
 exige.
 
-<a id="l7"></a>**L7 · Docs e comentários que descrevem código que não existe** (baixa):
+<a id="l7"></a>**L7 · Docs e comentários que descrevem código que não existe** (baixa). **19/09:** os itens do
+architecture.md foram corrigidos, e o novas_propostas.md ganhou uma nota com os caminhos novos; faltam os
+comentários do código.
 
 - [architecture.md](architecture.md): `bot/ego/core/` ([L4](#l4)). O `ArmyStyle` teria `reactor_on` e
   `techlab_reserve` (seção Matemática, "Estilo de exército"), e `behavior.economy_planned` teria `reactors`,

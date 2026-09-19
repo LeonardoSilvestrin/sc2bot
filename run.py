@@ -99,7 +99,7 @@ def parse_local_args(args=None):
     parser.add_argument(
         "--difficulty",
         choices=[difficulty.name for difficulty in Difficulty],
-        default="VeryHard",
+        default="CheatInsane",
         help="Difficulty of the built-in AI (default: %(default)s).",
     )
     parser.add_argument(
