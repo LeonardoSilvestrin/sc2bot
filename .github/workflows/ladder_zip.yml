@@ -1,6 +1,7 @@
 on:
   push:
-    branches: [ main ]
+    branches: [ main, botbandido ]
+  workflow_dispatch:
 
 jobs:
   build:
