@@ -1,0 +1,5 @@
+{
+  "BotBandido": {"id": "local-botbandido", "race": "T", "type": "python", "source": "project"},
+  "basic_bot": {"id": "aiarena-basic", "race": "T", "type": "python", "source": "bootstrap/bots/basic_bot"},
+  "loser_bot": {"id": "aiarena-loser", "race": "T", "type": "python", "source": "bootstrap/bots/loser_bot"}
+}

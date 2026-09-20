@@ -1,0 +1,8 @@
+/bootstrap/
+/reference-*/
+/runtime/
+/runs/
+/downloads/
+/bots.local.json
+/host-report.json
+__pycache__/

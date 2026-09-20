@@ -1,0 +1,19 @@
+# Keep AI Arena's controller and its entrypoint; isolate only our Python runtime.
+ARG BOT_IMAGE=aiarena/arenaclient-bot:v0.8.0@sha256:584ac823ac4a7871542c294ae4ccf2a0c87cc8a4281439989e405c674ea8e0f2
+FROM ${BOT_IMAGE}
+USER root
+RUN python -c "import sys; assert sys.version_info[:2] in [(3, 11), (3, 12)], sys.version"
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends build-essential git \
+    && rm -rf /var/lib/apt/lists/*
+RUN python -m venv /opt/sc2bot-build-tools \
+    && /opt/sc2bot-build-tools/bin/pip install --no-cache-dir poetry==2.4.3 \
+    && python -m venv /opt/sc2bot-venv
+COPY . /opt/sc2bot-source
+RUN cd /opt/sc2bot-source \
+    && VIRTUAL_ENV=/opt/sc2bot-venv PATH="/opt/sc2bot-venv/bin:$PATH" \
+       /opt/sc2bot-build-tools/bin/poetry install --only main --no-root --no-interaction
+RUN cd /opt/sc2bot-source \
+    && /opt/sc2bot-venv/bin/python -c "import run; from sc2_helper import sc2_helper; import cython_extensions; print('BotBandido Linux imports OK')"
+ENV ACBOT_PYTHON=/opt/sc2bot-venv/bin/python
+ENV PYTHONUNBUFFERED=1
