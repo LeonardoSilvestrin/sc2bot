@@ -15,14 +15,20 @@ The sequence adapts to what is found: a natural that was already standing is
 not rechecked, a main that cannot be entered is not lapped forever, and a
 phase that stops being worth its time hands over to the next one.
 
-`SURVEIL` is the one phase that does not end by itself. An empty third is an
-answer with a shelf life -- it says nothing about the third that goes up two
-minutes later -- so instead of parking on it, the scout walks a round of the
-places worth watching: the natural, the third, the way out of the enemy main
-and the main itself. It always heads for whichever of them it has looked at
-least recently, which turns into a rotation, rechecks both expansions on its
-own and keeps production, tech, gas and what leaves the base coming in. Only
-the end of the opening window closes it.
+`SURVEIL` is the phase that fills whatever the scripted questions left open.
+An empty third is an answer with a shelf life -- it says nothing about the
+third that goes up two minutes later -- so instead of parking on it, the scout
+walks a round of the places worth watching: the natural, the third, the way out
+of the enemy main and the main itself. It always heads for whichever of them it
+has looked at least recently, which turns into a rotation, rechecks both
+expansions on its own and keeps production, tech, gas and what leaves the base
+coming in.
+
+The round is worth walking only while the read is still thin. Once Awareness is
+confident about the opening -- three bases up and not one army structure in
+sight is a read, not a gap -- there is nothing left out there to learn, and the
+SCV is worth more back on minerals: the mission completes on `READ_ENOUGH`, or
+with the opening window, whichever comes first.
 
 The mission records nothing. What it makes visible, Attention records
 (`bot.attention.opening`), which is what the phases then read.
@@ -39,6 +45,7 @@ from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
 from bot.attention import AttentionState, ExpansionStatus, OpeningObservations
+from bot.awareness import OpeningBelief
 from bot.ego.missions import CancelMode, Lifecycle, MissionFeedback, MissionStatus, MissionView
 from bot.ego.planners import Command, EarlyScoutReport, Proposal
 
@@ -90,6 +97,11 @@ class ScoutWindow:
 
 # A scout this close to what it was sent to is looking at it.
 ARRIVAL = 10.0
+# How sure Awareness has to be about the opening for the round to be over:
+# past this, walking it again costs a worker and buys nothing.
+READ_ENOUGH = 0.75
+# What the mission reads when nobody hands it a belief.
+NO_READ = OpeningBelief()
 # What each phase is worth against the rest of the frame's proposals: checking
 # the natural and hunting a proxy are the answers we need soonest.
 PHASE_PRIORITY: dict[ScoutPhase, float] = {
@@ -188,8 +200,15 @@ class EarlyScoutMission:
             self.set_out = attention.time
 
     def step(
-        self, attention: AttentionState, seen: Set[int], feedback: MissionFeedback
+        self,
+        attention: AttentionState,
+        seen: Set[int],
+        feedback: MissionFeedback,
+        read: OpeningBelief = NO_READ,
     ) -> tuple[Proposal, ...]:
+        """`read` is what Awareness makes of the opening so far: it is what
+        says whether the round still has anything to add."""
+
         if not self.active:
             return ()
         now = attention.time
@@ -203,7 +222,7 @@ class EarlyScoutMission:
             return self._end(MissionStatus.COMPLETED, "opening_over", now)
         self._note_arrival(attention, feedback)
         self._look_around(attention)
-        self._advance(attention, seen)
+        self._advance(attention, seen, read)
         if self.phase is ScoutPhase.COMPLETE:
             return self._end(MissionStatus.COMPLETED, self.reason, now)
         target = self._target_for(attention, seen)
@@ -228,6 +247,7 @@ class EarlyScoutMission:
                     ("phase_for", now - self.since),
                     ("arrived", -1.0 if self._arrived is None else self._arrived),
                     ("main_coverage", attention.enemy_opening.main_scout_coverage),
+                    ("read", read.confidence),
                     ("proxy_points", float(len(self.proxy_route))),
                 ),
                 mission_id=self.mission_id,
@@ -289,18 +309,18 @@ class EarlyScoutMission:
                 self._arrived = attention.time
                 return
 
-    def _advance(self, attention: AttentionState, seen: Set[int]) -> None:
+    def _advance(self, attention: AttentionState, seen: Set[int], read: OpeningBelief) -> None:
         """Walk the phases the frame already settled, at most one round."""
 
         for _ in range(len(ScoutPhase)):
-            step = self._next(attention, seen)
+            step = self._next(attention, seen, read)
             if step is None:
                 return
             phase, reason = step
             self._enter(phase, reason, attention.time)
 
     def _next(
-        self, attention: AttentionState, seen: Set[int]
+        self, attention: AttentionState, seen: Set[int], read: OpeningBelief
     ) -> tuple[ScoutPhase, str] | None:
         opening = attention.enemy_opening
         now = attention.time
@@ -357,7 +377,9 @@ class EarlyScoutMission:
                 return (ScoutPhase.SURVEIL, "third_window_over")
             return None
         if phase is ScoutPhase.SURVEIL:
-            # The round has no end of its own: the opening window closes it.
+            # A read this good is not a gap worth a worker any more.
+            if read.confidence >= READ_ENOUGH:
+                return (ScoutPhase.COMPLETE, "opening_read")
             return None
         if phase is ScoutPhase.PROXY_SEARCH:
             self._proxy_index = _walked(self.proxy_route, self._proxy_index, attention)

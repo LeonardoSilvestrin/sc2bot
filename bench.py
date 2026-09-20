@@ -1,9 +1,15 @@
 """Local benchmark: a fixed matrix of games against the built-in AI.
 
-    bench.py run --out bench/<label> [--maps ...] [--races ...] [--armies ...]
-                 [--games N] [--seed S] [--spatial-view] [--spatial-snapshot]
+    bench.py run --out bench/<label> [--matrix base|wide] [--maps ...]
+                 [--races ...] [--armies ...] [--games N] [--seed S]
+                 [--spatial-view] [--spatial-snapshot]
     bench.py summarize bench/<label>
     bench.py compare bench/<baseline> bench/<challenger>
+
+The games themselves are the table in `harness/matrix.py`: `base` is the nine
+a slice is measured on (every race against every way the AI opens, one map) and
+`wide` is those nine on all three maps. Naming an axis by hand (`--maps`,
+`--races`, `--ai-builds`) replaces that column.
 
 Each game runs in its own process, with a wall-clock timeout, and leaves
 ``<out>/<game_id>/`` with ``result.json``, ``replay.SC2Replay`` and
@@ -26,8 +32,11 @@ for extra in ("ares-sc2/src/ares", "ares-sc2/src", "ares-sc2"):
     sys.path.append(str(ROOT / extra))
 
 from harness import (  # noqa: E402
+    DEFAULT_MATRIX,
+    MATRICES,
     GameSpec,
     build_record,
+    games_of,
     identity,
     load_records,
     matrix,
@@ -36,23 +45,52 @@ from harness import (  # noqa: E402
     summarize,
 )
 
-DEFAULT_MAPS = ("PersephoneAIE_v4", "TorchesAIE_v4", "IncorporealAIE_v4")
-DEFAULT_RACES = ("Zerg", "Terran", "Protoss")
 CHILD_RESULT = "child.json"
 REPLAY = "replay.SC2Replay"
 LOG_DIRECTORY = "log"
 
 
 def main(argv: list[str] | None = None) -> int:
+    args = parser().parse_args(argv)
+    if args.command == "run":
+        return _run(args)
+    if args.command == "play":
+        return _play(
+            args.spec,
+            args.directory,
+            spatial_view=args.spatial_view,
+            spatial_snapshot=args.spatial_snapshot,
+        )
+    if args.command == "summarize":
+        print(json.dumps(summarize(load_records(args.directory)), indent=2))
+        return 0
+    return _compare(args.baseline, args.challenger)
+
+
+def parser() -> argparse.ArgumentParser:
+    """Every command and flag; what a run plays without them is in
+    harness/matrix.py."""
+
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     commands = parser.add_subparsers(dest="command", required=True)
 
     run = commands.add_parser("run", help="play the matrix")
     run.add_argument("--out", type=Path, required=True)
-    run.add_argument("--maps", nargs="+", default=list(DEFAULT_MAPS))
-    run.add_argument("--races", nargs="+", default=list(DEFAULT_RACES))
+    run.add_argument(
+        "--matrix",
+        choices=sorted(MATRICES),
+        default=DEFAULT_MATRIX,
+        help=(
+            "base: one map, 9 games; wide: every map, 27 "
+            "(default: %(default)s, from harness/matrix.py)."
+        ),
+    )
+    run.add_argument("--maps", nargs="+", default=None, help="replaces the matrix's maps")
+    run.add_argument("--races", nargs="+", default=None, help="replaces the matrix's races")
     run.add_argument("--difficulties", nargs="+", default=["VeryHard"])
-    run.add_argument("--ai-builds", nargs="+", default=["Rush"])
+    run.add_argument(
+        "--ai-builds", nargs="+", default=None, help="replaces how the matrix's AI opens"
+    )
     run.add_argument(
         "--armies", nargs="+", default=None, help="army styles (default: the bot draws)"
     )
@@ -74,21 +112,23 @@ def main(argv: list[str] | None = None) -> int:
     compare = commands.add_parser("compare", help="baseline against challenger")
     compare.add_argument("baseline", type=Path)
     compare.add_argument("challenger", type=Path)
+    return parser
 
-    args = parser.parse_args(argv)
-    if args.command == "run":
-        return _run(args)
-    if args.command == "play":
-        return _play(
-            args.spec,
-            args.directory,
-            spatial_view=args.spatial_view,
-            spatial_snapshot=args.spatial_snapshot,
-        )
-    if args.command == "summarize":
-        print(json.dumps(summarize(load_records(args.directory)), indent=2))
-        return 0
-    return _compare(args.baseline, args.challenger)
+
+def _check_names(args) -> None:
+    """Fail before a game is launched, not once SC2 is already up."""
+
+    from sc2.data import AIBuild, Difficulty, Race
+
+    for values, enum, flag in (
+        (args.races or (), Race, "--races"),
+        (args.difficulties, Difficulty, "--difficulties"),
+        (args.ai_builds or (), AIBuild, "--ai-builds"),
+    ):
+        unknown = [value for value in values if value not in enum.__members__]
+        if unknown:
+            known = ", ".join(enum.__members__)
+            raise SystemExit(f"{flag}: unknown {', '.join(unknown)} (known: {known})")
 
 
 def _add_debug_arguments(parser: argparse.ArgumentParser) -> None:
@@ -105,19 +145,20 @@ def _add_debug_arguments(parser: argparse.ArgumentParser) -> None:
 
 
 def _run(args) -> int:
+    _check_names(args)
     specs = matrix(
-        maps=args.maps,
-        races=args.races,
+        games_of(args.matrix, maps=args.maps, races=args.races, ai_builds=args.ai_builds),
         difficulties=args.difficulties,
-        ai_builds=args.ai_builds,
-        games=args.games,
+        armies=args.armies or (None,),
+        repeats=args.games,
         seed=args.seed,
         game_time_limit=args.time_limit,
-        armies=args.armies or (None,),
     )
     out: Path = args.out.resolve()
     out.mkdir(parents=True, exist_ok=True)
     label = out.name
+    played_on = ", ".join(dict.fromkeys(spec.map_name for spec in specs))
+    print(f"{label}: {len(specs)} games ({args.matrix} on {played_on})")
     build = identity()
     (out / "matrix.json").write_text(
         json.dumps({"build": build, "games": [spec.to_json() for spec in specs]}, indent=2),
@@ -237,7 +278,18 @@ def _compare(baseline: Path, challenger: Path) -> int:
     specs_before = [record["spec"] for record in before]
     specs_after = [record["spec"] for record in after]
     if specs_before != specs_after:
-        print("the two runs did not play the same matrix", file=sys.stderr)
+        maps = tuple(dict.fromkeys(spec["map_name"] for spec in specs_before))
+        drew = tuple(dict.fromkeys(spec["map_name"] for spec in specs_after))
+        detail = f": {', '.join(maps)} against {', '.join(drew)}" if maps != drew else ""
+        print(
+            f"the two runs did not play the same matrix{detail}",
+            file=sys.stderr,
+        )
+        if maps != drew:
+            print(
+                "the base matrix draws a map per run; pin it with --maps to compare",
+                file=sys.stderr,
+            )
         return 2
     print(
         json.dumps(

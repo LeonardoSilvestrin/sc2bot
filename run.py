@@ -20,6 +20,7 @@ import yaml
 from bot.ego.planners.economy.knowledge.styles import STYLES
 from bot.logs import ChatConfig, JsonlLogger, Logs, OverlayConfig, SnapshotConfig
 from bot.main import MyBot
+from harness import AI_BUILDS, DEFAULT_LAUNCHER, RACES, WIDE, WIDE_MAPS, Game
 from ladder import run_ladder_game
 
 plt = platform.system()
@@ -43,6 +44,11 @@ MY_BOT_NAME: str = "MyBotName"
 MY_BOT_RACE: str = "MyBotRace"
 # Gap between markers drawn by --spatial-view; presentation only.
 DEFAULT_SPATIAL_VIEW_SPACING = 4
+# How many games each --matrix plays, and what varies in them.
+SINGLE, BUILDS, WIDE_MATRIX = "single", "builds", "wide"
+# A game of a sweep that goes this long is called off, so one stuck game does
+# not eat the rest of the afternoon. A single game is not capped.
+SWEEP_TIME_LIMIT = 1800.0
 
 
 def _positive_int(value: str) -> int:
@@ -111,7 +117,29 @@ def parse_local_args(args=None):
         "--ai-build",
         choices=[build.name for build in AIBuild],
         default="Rush",
-        help="Build of the built-in AI (default: %(default)s).",
+        help="Build of the built-in AI (default: %(default)s); --matrix picks its own.",
+    )
+    parser.add_argument(
+        "--matrix",
+        choices=(SINGLE, BUILDS, WIDE_MATRIX),
+        default=DEFAULT_LAUNCHER,
+        help=(
+            f"single: one game. builds: {len(AI_BUILDS)} games, one per way "
+            f"the AI opens ({', '.join(AI_BUILDS)}), same map and race. "
+            f"wide: {len(WIDE)} games, the whole matrix of harness/matrix.py. "
+            "Nothing is recorded: use bench.py to measure. "
+            "Default: %(default)s, from harness/matrix.py."
+        ),
+    )
+    parser.add_argument(
+        "--time-limit",
+        type=float,
+        default=None,
+        metavar="SECONDS",
+        help=(
+            "Game seconds before a game is called off "
+            f"(default: none for --matrix {SINGLE}, {SWEEP_TIME_LIMIT:.0f} otherwise)."
+        ),
     )
     local_args, _ = parser.parse_known_args(args)
     return local_args
@@ -139,6 +167,36 @@ def build_logs(local_args, *, is_ladder: bool) -> Logs:
     )
 
 
+def local_games(local_args, map_list: list[str]) -> list[Game]:
+    """The games this run plays, in order: (map, enemy race, AI build).
+
+    `single` keeps the launcher as it was -- one game, on a map drawn from the
+    ones installed. `builds` holds the map and the race and varies only how the
+    AI opens, which is the comparison worth watching by eye. `wide` walks the
+    whole matrix `bench.py` measures.
+    """
+
+    if local_args.matrix == WIDE_MATRIX:
+        for name in WIDE_MAPS:
+            if name not in map_list:
+                print(f"{name} is not installed; skipping its games")
+        return [game for game in WIDE if game.map_name in map_list]
+    map_name = random.choice(map_list)
+    race = local_args.enemy_race or random.choice(list(RACES))
+    if local_args.matrix == BUILDS:
+        return [Game(map_name, race, ai_build) for ai_build in AI_BUILDS]
+    return [Game(map_name, race, local_args.ai_build)]
+
+
+def time_limit(local_args) -> float | None:
+    """What is asked for, else: a sweep caps each game so one stuck game does
+    not eat the rest of it; a single game runs as long as it takes."""
+
+    if local_args.time_limit is not None:
+        return local_args.time_limit
+    return None if local_args.matrix == SINGLE else SWEEP_TIME_LIMIT
+
+
 def main():
     local_args = parse_local_args()
 
@@ -158,14 +216,17 @@ def main():
 
     is_ladder = "--LadderServer" in sys.argv
     army = None if is_ladder else local_args.army
-    bot1 = Bot(
-        race, MyBot(logs=build_logs(local_args, is_ladder=is_ladder), army=army), bot_name
-    )
+
+    def our_bot() -> Bot:
+        # A bot that played a game cannot play the next one.
+        return Bot(
+            race, MyBot(logs=build_logs(local_args, is_ladder=is_ladder), army=army), bot_name
+        )
 
     if is_ladder:
         # Ladder game started by LadderManager
         print("Starting ladder game...")
-        result, opponentid = run_ladder_game(bot1)
+        result, opponentid = run_ladder_game(our_bot())
         print(result, " against opponent ", opponentid)
     else:
         # Local game
@@ -194,23 +255,30 @@ def main():
                 "UltraloveAIE_v2",
             ]
 
-        if local_args.enemy_race is None:
-            enemy_race = random.choice([Race.Zerg, Race.Terran, Race.Protoss])
-        else:
-            enemy_race = Race[local_args.enemy_race]
-        print("Starting local game...")
-        run_game(
-            maps.get(random.choice(map_list)),
-            [
-                bot1,
-                Computer(
-                    enemy_race,
-                    Difficulty[local_args.difficulty],
-                    ai_build=AIBuild[local_args.ai_build],
-                ),
-            ],
-            realtime=False,
-        )
+        games = local_games(local_args, map_list)
+        limit = time_limit(local_args)
+        if len(games) > 1:
+            print(f"Starting {len(games)} local games ({local_args.matrix})...")
+        for number, (map_name, enemy_race, ai_build) in enumerate(games, start=1):
+            if len(games) > 1:
+                print(f"game {number}/{len(games)}: {map_name} vs {enemy_race} ({ai_build})")
+            else:
+                print("Starting local game...")
+            result = run_game(
+                maps.get(map_name),
+                [
+                    our_bot(),
+                    Computer(
+                        Race[enemy_race],
+                        Difficulty[local_args.difficulty],
+                        ai_build=AIBuild[ai_build],
+                    ),
+                ],
+                realtime=False,
+                game_time_limit=limit,
+            )
+            if len(games) > 1:
+                print(f"game {number}/{len(games)}: {result}")
 
 
 # Start game

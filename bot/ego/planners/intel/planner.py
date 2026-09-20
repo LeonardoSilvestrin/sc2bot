@@ -12,7 +12,9 @@ reads it (`IntelPlan.focus`):
 The early scout is the planner's one operation (`missions/early_scout.py`). The
 planner opens it, ends it and decides when to send it hunting for a proxy --
 which it asks Awareness, not the mission: a suspicion belongs to the layer that
-reads the opening, the search to the one that walks the map.
+reads the opening, the search to the one that walks the map. The same reading
+tells the mission when its round is done: a scout only earns its place while
+the opening is still unclear.
 """
 
 from __future__ import annotations
@@ -158,7 +160,9 @@ class IntelPlanner:
                     mission.request_cancel(CancelMode.IMMEDIATE, _REOPENS, now)
         self._direct_proxy_search(mission, attention, awareness)
         granted = MissionFeedback.of(feedback, mission.mission_id)
-        proposals = mission.step(attention, frozenset(self.seen), granted)
+        # The mission reads the opening to know whether its round still has
+        # anything to add; the reading itself is Awareness'.
+        proposals = mission.step(attention, frozenset(self.seen), granted, awareness.opening)
         views.append(mission.view(granted, proposals))
         reports.append(mission.report())
         if not mission.active:

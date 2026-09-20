@@ -23,13 +23,14 @@ from bot.attention import (
     OpeningWatch,
     StructureObservation,
 )
-from bot.awareness import AwarenessModel, expectations_for, read_opening
+from bot.awareness import AwarenessModel, OpeningBelief, expectations_for, read_opening
 from bot.awareness.opening import OpeningBeliefConfig
 from bot.ego.missions import CancelMode, MissionStatus
 from bot.ego.planners import Command
 from bot.ego.planners.intel import (
     PROXY_CONFIDENCE_AT,
     PROXY_SEARCH_AT,
+    READ_ENOUGH,
     SCOUT_AT_WORKERS,
     EarlyScoutMission,
     IntelPlanner,
@@ -471,10 +472,10 @@ def mission(now: float = 50.0, **kwargs) -> EarlyScoutMission:
     )
 
 
-def step(scout: EarlyScoutMission, state, seen=frozenset()):
+def step(scout: EarlyScoutMission, state, seen=frozenset(), read=None):
     from bot.ego.missions import MissionFeedback
 
-    return scout.step(state, seen, MissionFeedback())
+    return scout.step(state, seen, MissionFeedback(), read or OpeningBelief())
 
 
 def scouting(time: float, *, opening: OpeningObservations | None = None, **kwargs):
@@ -563,6 +564,70 @@ def walk_to_the_third(scout: EarlyScoutMission, watch: OpeningWatch):
     advance(130.0, seen=frozenset(range(len(scout.route))))
     assert scout.phase is ScoutPhase.CHECK_THIRD
     return advance
+
+
+def read_of(state) -> object:
+    return read_opening(state.enemy_opening, now=state.time)
+
+
+def greedy_frame(time: float, **kwargs):
+    """Three bases up fast and not one army structure in sight: whatever else
+    is going on in there, this is a read, not a gap."""
+
+    observed = OpeningObservations(
+        enemy_race=Race.Protoss,
+        natural=expansion(ExpansionStatus.PRESENT, 95.0),
+        third=expansion(ExpansionStatus.PRESENT, 205.0),
+        structures=((UnitTypeId.NEXUS, StructureObservation(3, 95.0, time - 1.0)),),
+        gases_seen=2,
+        workers_seen=24,
+        main_scout_coverage=0.9,
+        last_updated=time - 1.0,
+    )
+    return replace(frame(time, race=Race.Protoss, **kwargs), enemy_opening=observed)
+
+
+def test_the_round_is_over_once_the_opening_was_read() -> None:
+    watch, scout = OpeningWatch(), mission()
+    advance = walk_to_the_third(scout, watch)
+    advance(150.0, visible=(ENEMY_THIRD,))
+    assert scout.phase is ScoutPhase.SURVEIL
+
+    seen_it_all = greedy_frame(210.0, own_units=(scv(100),))
+    read = read_of(seen_it_all)
+
+    assert read.confidence >= READ_ENOUGH
+    assert step(scout, seen_it_all, read=read) == ()
+    assert (scout.status, scout.reason) == (MissionStatus.COMPLETED, "opening_read")
+
+
+def test_the_round_goes_on_while_the_read_is_still_thin() -> None:
+    watch, scout = OpeningWatch(), mission()
+    advance = walk_to_the_third(scout, watch)
+    advance(150.0, visible=(ENEMY_THIRD,))
+    state = greedy_frame(210.0, own_units=(scv(100),))
+    thin = replace(read_of(state), confidence=READ_ENOUGH - 0.01)
+
+    (looking,) = step(scout, state, read=thin)
+
+    assert scout.status is MissionStatus.ACTIVE
+    assert scout.phase is ScoutPhase.SURVEIL
+    assert looking.target in scout.ring
+    assert dict(looking.inputs)["read"] == pytest.approx(thin.confidence)
+
+
+def test_a_read_that_is_already_good_does_not_cut_the_questions_short() -> None:
+    # The scripted phases are what produce the read in the first place: a
+    # confident guess before the third was ever looked at is not a reason to
+    # skip looking at it.
+    scout = mission()
+    step(scout, scouting(51.0))
+    sure = replace(read_of(greedy_frame(120.0)), confidence=1.0)
+
+    (checking,) = step(scout, scouting(120.0), read=sure)
+
+    assert scout.phase is ScoutPhase.CHECK_NATURAL
+    assert checking.target == ENEMY_NATURAL
 
 
 def test_an_empty_third_starts_the_round_instead_of_parking_on_it() -> None:
@@ -811,6 +876,17 @@ def test_the_planner_sends_the_scout_after_a_proxy_when_awareness_believes_in_on
     assert planner.proxy_search == 200.0
     assert hunting.target == proxy_route(OPENING_MAP)[0]
     assert plan(planner, state).scout.proxy_search is True
+
+
+def test_the_planner_hands_the_mission_what_awareness_read() -> None:
+    planner = IntelPlanner()
+    plan(planner, frame(50.0))
+    state = greedy_frame(210.0, own_units=(scv(100),))
+
+    (proposal,) = plan(planner, state).proposals
+
+    read = AwarenessModel().infer(state).opening
+    assert dict(proposal.inputs)["read"] == pytest.approx(read.confidence)
 
 
 def test_a_quiet_opening_never_sends_the_scout_hunting() -> None:

@@ -10,10 +10,12 @@
 """
 
 from .missions.early_scout import (
+    ARRIVAL,
     KIND,
     OWNER,
     PHASE_PRIORITY,
     PROPOSAL_ID,
+    READ_ENOUGH,
     SCOUT_TYPES,
     EarlyScoutMission,
     ScoutPhase,
@@ -34,6 +36,7 @@ from .policies.detection import Detection, DetectionConfig
 from .policies.proxy import PROXY_LIMIT, proxy_route
 
 __all__ = [
+    "ARRIVAL",
     "Detection",
     "DetectionConfig",
     "EarlyScoutMission",
@@ -46,6 +49,7 @@ __all__ = [
     "PROXY_CONFIDENCE_AT",
     "PROXY_LIMIT",
     "PROXY_SEARCH_AT",
+    "READ_ENOUGH",
     "SCOUT_AT_WORKERS",
     "SCOUT_TYPES",
     "START_BY",

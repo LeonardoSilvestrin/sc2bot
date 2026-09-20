@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import json
+import random
 from pathlib import Path
 
 import pytest
 
+import bench
+import harness
+import run
 from harness import (
     CRASH,
     DEFEAT,
@@ -13,6 +17,7 @@ from harness import (
     TIE,
     TIMEOUT,
     VICTORY,
+    Game,
     GameSpec,
     build_record,
     load_records,
@@ -26,17 +31,24 @@ from harness import (
 IDENTITY = {"commit": "abc", "branch": "botbandido", "ares_commit": "def", "dirty": False}
 
 
+SMALL = (
+    Game("A", "Zerg", "Macro"),
+    Game("A", "Protoss", "Macro"),
+    Game("B", "Zerg", "Macro"),
+    Game("B", "Protoss", "Macro"),
+)
+
+
 def small_matrix(**changes):
     arguments = {
-        "maps": ("A", "B"),
-        "races": ("Zerg", "Protoss"),
+        "games": SMALL,
         "difficulties": ("VeryHard",),
-        "ai_builds": ("Macro",),
-        "games": 2,
+        "repeats": 2,
         "seed": 10,
         "game_time_limit": 900.0,
     }
-    return matrix(**{**arguments, **changes})
+    arguments.update(changes)
+    return matrix(arguments.pop("games"), **arguments)
 
 
 def test_the_same_arguments_give_the_same_games_in_a_fixed_order() -> None:
@@ -57,7 +69,7 @@ def test_the_same_arguments_give_the_same_games_in_a_fixed_order() -> None:
 
 
 def test_each_army_style_is_its_own_cell_and_old_records_still_load() -> None:
-    specs = small_matrix(maps=("A",), races=("Zerg",), games=1, armies=("bio", "mech"))
+    specs = small_matrix(games=SMALL[:1], repeats=1, armies=("bio", "mech"))
 
     assert [spec.army for spec in specs] == ["bio", "mech"]
     assert [spec.game_id for spec in specs] == [
@@ -73,7 +85,7 @@ def test_each_army_style_is_its_own_cell_and_old_records_still_load() -> None:
 
 @pytest.mark.parametrize(
     "changes",
-    [{"games": 0}, {"game_time_limit": 0.0}, {"maps": ()}, {"races": ()}, {"armies": ()}],
+    [{"repeats": 0}, {"game_time_limit": 0.0}, {"games": ()}, {"difficulties": ()}, {"armies": ()}],
 )
 def test_an_empty_or_invalid_matrix_is_rejected(changes) -> None:
     with pytest.raises(ValueError):
@@ -174,7 +186,7 @@ def test_a_record_ties_the_outcome_to_code_configuration_replay_and_log(tmp_path
 
 
 def test_the_summary_counts_every_game_and_bounds_the_win_rate(tmp_path: Path) -> None:
-    specs = small_matrix(maps=("A",), races=("Zerg",), games=4)
+    specs = small_matrix(games=SMALL[:1], repeats=4)
     outcomes = [
         ("Result.Victory", 600.0, 0, False),
         ("Result.Defeat", 400.0, 0, False),
@@ -229,7 +241,7 @@ def test_a_game_the_bot_never_played_counts_in_no_rate_and_is_played_again(
     reported `Result.Defeat` at game_time 0 with exit code 0, and the win rate
     counted two losses the bot never played."""
 
-    specs = small_matrix(maps=("A",), races=("Zerg",), games=3)
+    specs = small_matrix(games=SMALL[:1], repeats=3)
     games = [
         ("Result.Victory", 600.0, 18.0),
         ("Result.Defeat", 400.0, 500.0),
@@ -271,7 +283,7 @@ def test_the_summary_applies_the_current_rule_to_what_a_record_stored() -> None:
     """A record keeps what the game reported, so a run recorded before the rule
     is summarized under it; one without those fields keeps its own verdict."""
 
-    spec = small_matrix(maps=("A",), races=("Zerg",), games=1)[0]
+    spec = small_matrix(games=SMALL[:1], repeats=1)[0]
     stored = {
         "spec": spec.to_json(),
         "outcome": DEFEAT,
@@ -297,3 +309,125 @@ def test_the_wilson_interval_is_wide_with_few_games() -> None:
     assert high == 1.0
     low, high = wilson(50, 100)
     assert (low, high) == (pytest.approx(0.4038, abs=1e-4), pytest.approx(0.5962, abs=1e-4))
+
+
+# --- the two sizes of the bench matrix ---
+
+
+def test_the_table_plays_every_race_against_a_rush_a_macro_and_a_drawn_build() -> None:
+    base = harness.games_of("base")
+
+    assert len(base) == 9
+    for race in harness.RACES:
+        assert [game.ai_build for game in base if game.race == race] == list(harness.AI_BUILDS)
+
+
+def test_the_base_matrix_draws_one_map_for_the_whole_run() -> None:
+    random.seed(0)
+
+    runs = [harness.games_of("base") for _ in range(20)]
+
+    for games in runs:
+        # One map per run: the nine games are played side by side, not spread.
+        assert len({game.map_name for game in games}) == 1
+        assert games[0].map_name in harness.MAPS
+    # And the next run draws again.
+    assert len({games[0].map_name for games in runs}) > 1
+
+
+def test_the_wide_table_is_the_nine_games_on_every_map() -> None:
+    wide = harness.games_of("wide")
+
+    assert len(wide) == 27
+    assert {game.map_name for game in wide} == set(harness.MAPS)
+    for map_name in harness.MAPS:
+        on_this_map = [game for game in wide if game.map_name == map_name]
+        assert [(game.race, game.ai_build) for game in on_this_map] == [
+            (game.race, game.ai_build) for game in harness.games_of("base")
+        ]
+
+
+def test_an_axis_given_by_hand_replaces_that_column() -> None:
+    pinned = harness.games_of("base", maps=["OnlyThisOne"])
+
+    assert {game.map_name for game in pinned} == {"OnlyThisOne"}
+    assert [(game.race, game.ai_build) for game in pinned] == [
+        (game.race, game.ai_build) for game in harness.BASE
+    ]
+    assert {game.race for game in harness.games_of("wide", races=["Zerg"])} == {"Zerg"}
+    assert len(harness.games_of("base", ai_builds=["Macro"])) == 3
+    # The wide table is written down, so it is handed back as it is.
+    assert harness.games_of("wide") is harness.WIDE
+
+
+def test_what_a_run_plays_by_default_is_written_in_the_matrix_file() -> None:
+    # The launch configurations pass no matrix: the file decides.
+    assert harness.DEFAULT_MATRIX in harness.MATRICES
+    assert harness.DEFAULT_LAUNCHER in (run.SINGLE, run.BUILDS, run.WIDE_MATRIX)
+    # Both entry points take the matrix from the file, not from their flags.
+    assert bench.parser().parse_args(["run", "--out", "x"]).matrix == harness.DEFAULT_MATRIX
+    assert run.parse_local_args([]).matrix == harness.DEFAULT_LAUNCHER
+
+
+def test_a_name_the_game_would_reject_fails_before_any_game_starts() -> None:
+    from argparse import Namespace
+
+    args = Namespace(races=["Zerg"], difficulties=["VeryHard"], ai_builds=["Random"])
+
+    with pytest.raises(SystemExit, match="RandomBuild"):
+        bench._check_names(args)
+
+    bench._check_names(Namespace(**{**vars(args), "ai_builds": ["RandomBuild"]}))
+
+
+# --- the launcher walks the same matrix, without recording anything ---
+
+
+def launcher(*argv):
+    return run.parse_local_args(list(argv))
+
+
+INSTALLED = ["PersephoneAIE_v4", "TorchesAIE_v4", "IncorporealAIE_v4", "PylonAIE_v4"]
+
+
+def test_one_local_game_is_still_one_local_game() -> None:
+    (game,) = run.local_games(launcher("--enemy-race", "Zerg", "--ai-build", "Macro"), INSTALLED)
+
+    map_name, race, build = game
+    assert (race, build) == ("Zerg", "Macro")
+    assert map_name in INSTALLED
+    assert run.time_limit(launcher()) is None
+
+
+def test_the_builds_mode_varies_only_how_the_ai_opens() -> None:
+    games = run.local_games(launcher("--matrix", "builds", "--enemy-race", "Terran"), INSTALLED)
+
+    assert len(games) == 3
+    assert [game.ai_build for game in games] == list(harness.AI_BUILDS)
+    # Same map and same race: the opening is the only thing that changed.
+    assert len({(map_name, race) for map_name, race, _ in games}) == 1
+    assert run.time_limit(launcher("--matrix", "builds")) == run.SWEEP_TIME_LIMIT
+
+
+def test_the_wide_mode_walks_every_map_race_and_opening() -> None:
+    games = run.local_games(launcher("--matrix", "wide"), INSTALLED)
+
+    assert len(games) == 27
+    assert {map_name for map_name, _, _ in games} == set(harness.WIDE_MAPS)
+    assert {game.race for game in games} == set(harness.RACES)
+    # The race asked for does not narrow a sweep of every race.
+    assert run.local_games(launcher("--matrix", "wide", "--enemy-race", "Zerg"), INSTALLED) == games
+
+
+def test_a_map_that_is_not_installed_is_left_out_of_the_sweep() -> None:
+    (installed,) = harness.MAPS[:1]
+
+    games = run.local_games(launcher("--matrix", "wide"), [installed])
+
+    assert len(games) == 9
+    assert {game.map_name for game in games} == {installed}
+
+
+def test_a_time_limit_given_by_hand_wins() -> None:
+    assert run.time_limit(launcher("--matrix", "wide", "--time-limit", "600")) == 600.0
+    assert run.time_limit(launcher("--time-limit", "600")) == 600.0
