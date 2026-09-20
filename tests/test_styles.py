@@ -45,9 +45,9 @@ def test_the_draw_covers_every_candidate_and_a_forced_style_wins() -> None:
 
 
 def test_the_announcement_names_the_style_and_its_units() -> None:
-    assert styles.announcement(styles.MECH) == "Hoje vai de MECH: Hellion, Cyclone e Siege Tank."
+    assert styles.announcement(styles.MECH) == "Going MECH today: Hellion, Cyclone and Siege Tank."
     assert styles.announcement(styles.BIO) == (
-        "Hoje vai de BIO: Marine, Marauder, Siege Tank e Medivac."
+        "Going BIO today: Marine, Marauder, Siege Tank and Medivac."
     )
 
 

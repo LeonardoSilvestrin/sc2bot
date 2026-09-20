@@ -126,11 +126,11 @@ def announcement(style: ArmyStyle) -> str:
     units = [
         _SPOKEN.get(unit_type, unit_type.name.title()) for unit_type, _, _ in style.composition
     ]
-    return f"Hoje vai de {style.name.upper()}: {_listed(units)}."
+    return f"Going {style.name.upper()} today: {_listed(units)}."
 
 
 def _listed(items: Iterable[str]) -> str:
     items = list(items)
     if len(items) <= 1:
         return "".join(items)
-    return f"{', '.join(items[:-1])} e {items[-1]}"
+    return f"{', '.join(items[:-1])} and {items[-1]}"

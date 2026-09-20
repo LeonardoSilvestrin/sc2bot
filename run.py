@@ -19,7 +19,7 @@ import yaml
 
 from bot.ego.planners.economy.knowledge.styles import STYLES
 from bot.logs import ChatConfig, JsonlLogger, Logs, OverlayConfig, SnapshotConfig
-from bot.main import MyBot
+from bot.main import BotBandido
 from harness import AI_BUILDS, DEFAULT_LAUNCHER, RACES, WIDE, WIDE_MAPS, Game
 from ladder import run_ladder_game
 
@@ -200,7 +200,7 @@ def time_limit(local_args) -> float | None:
 def main():
     local_args = parse_local_args()
 
-    bot_name: str = "MyBot"
+    bot_name: str = "BotBandido"
     race: Race = Race.Random
 
     __user_config_location__: str = path.abspath(".")
@@ -220,7 +220,7 @@ def main():
     def our_bot() -> Bot:
         # A bot that played a game cannot play the next one.
         return Bot(
-            race, MyBot(logs=build_logs(local_args, is_ladder=is_ladder), army=army), bot_name
+            race, BotBandido(logs=build_logs(local_args, is_ladder=is_ladder), army=army), bot_name
         )
 
     if is_ladder:

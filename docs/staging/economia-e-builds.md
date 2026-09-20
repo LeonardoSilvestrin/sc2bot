@@ -30,7 +30,7 @@ mudar o estilo. A execução continua do Body e do Ares (`SpawnController`, `Pro
 
 O pacote [economy/](../../bot/ego/planners/economy/) tem quatro módulos de funções soltas: `investment` (quanto
 investir), `styles` (BIO e MECH como dado), `composition` (o mix) e `planner.plan`, que junta tudo num
-`EconomyPlan` de 18 campos. O estilo é sorteado em `MyBot.on_start` e mora em `Layers.army`.
+`EconomyPlan` de 18 campos. O estilo é sorteado em `BotBandido.on_start` e mora em `Layers.army`.
 
 ```text
 value(u) = (Σ_e poder(e)·alcance(u,e)·COUNTERS[u][e] + PRIOR_POWER) / (Σ_e poder(e) + PRIOR_POWER)

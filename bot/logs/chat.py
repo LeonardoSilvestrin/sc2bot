@@ -10,7 +10,7 @@ It is deliberately quiet: one line at a time, `gap` seconds apart, a topic
 never repeated before `topic_cooldown`, and at most `max_lines` in a game. The
 choice of line is deterministic, so the same game says the same things.
 
-Speaking is async and a frame is not, so `observe` only queues; `MyBot.on_step`
+Speaking is async and a frame is not, so `observe` only queues; `BotBandido.on_step`
 drains the queue and sends it.
 """
 
@@ -47,17 +47,17 @@ class ChatConfig:
 # What the bot says per topic. Several lines are rotated through in order, so a
 # repeated topic sounds different without anything random.
 LINES: dict[str, tuple[str, ...]] = {
-    "rushed": ("Tô sendo rushado!", "Chegou gente em casa de novo."),
-    "emergency": ("Emergência em casa!",),
-    "pressure": ("Vou dar uma pressionada.", "Passeando na sua metade."),
-    "commit": ("Tô indo com tudo.", "Agora vai."),
-    "recover": ("Levei um tapa, recuando pra respirar.", "Preciso de um tempo."),
-    "develop": ("Voltando a construir.", "Calmaria: bora macrar."),
-    "cloaked": ("Camuflado? Já vi. Scan a caminho.",),
-    "proxy": ("Cadê a produção dessa main? Isso cheira a proxy.",),
-    "aggression": ("Natural atrasada e produção de pé: vem all-in aí.",),
-    "greed": ("Expandiu cedo assim? Anotado, vou visitar.",),
-    "tech": ("Muito gás pra tão pouca unidade: tem tech vindo.",),
+    "rushed": ("I'm getting rushed!", "Company at my place again."),
+    "emergency": ("Emergency at home!",),
+    "pressure": ("Time to lean on them a bit.", "Taking a stroll on your half."),
+    "commit": ("I'm going in with everything.", "Here we go."),
+    "recover": ("Took a slap, backing off to breathe.", "I need a minute."),
+    "develop": ("Back to building.", "All quiet: let's macro."),
+    "cloaked": ("Cloaked? Seen it. Scan on the way.",),
+    "proxy": ("Where is the production in that main? This smells like a proxy.",),
+    "aggression": ("Late natural and production up: an all-in is coming.",),
+    "greed": ("Expanding this early? Noted, I'll pay a visit.",),
+    "tech": ("Too much gas for so few units: there is tech coming.",),
     "gg": ("gg",),
 }
 _BY_POSTURE: dict[StrategicPosture, str] = {

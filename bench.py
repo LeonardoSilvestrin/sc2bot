@@ -232,7 +232,7 @@ def _play(spec_path: Path, directory: Path, *, spatial_view: bool, spatial_snaps
     from sc2.player import Bot, Computer
 
     from bot.logs import JsonlLogger, Logs, OverlayConfig, SnapshotConfig
-    from bot.main import MyBot
+    from bot.main import BotBandido
 
     spec = GameSpec.from_json(_read_json(spec_path))
     child: dict = {"result": None, "game_time": None, "error": None}
@@ -243,13 +243,13 @@ def _play(spec_path: Path, directory: Path, *, spatial_view: bool, spatial_snaps
         snapshots=SnapshotConfig(enabled=spatial_snapshot),
         snapshot_directory=logger.session_directory / "spatial",
     )
-    bot = MyBot(logs=logs, army=spec.army, style_seed=spec.seed)
+    bot = BotBandido(logs=logs, army=spec.army, style_seed=spec.seed)
     exit_code = 0
     try:
         result = run_game(
             maps.get(spec.map_name),
             [
-                Bot(Race.Terran, bot, "MyBot"),
+                Bot(Race.Terran, bot, "BotBandido"),
                 Computer(
                     Race[spec.enemy_race],
                     Difficulty[spec.difficulty],

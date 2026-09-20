@@ -27,7 +27,7 @@ def get_bot_description() -> str:
     By default, attempts to get bot name from config
     and generate a basic description.
     """
-    bot_name: str = "MyBot"
+    bot_name: str = "BotBandido"
     if name := retrieve_value_from_config(MY_BOT_NAME):
         bot_name = name
 

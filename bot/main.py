@@ -194,7 +194,7 @@ def play_frame(bot, iteration: int, layers: Layers) -> Frame:
     )
 
 
-class MyBot(AresBot):
+class BotBandido(AresBot):
     def __init__(
         self,
         game_step_override: int | None = None,

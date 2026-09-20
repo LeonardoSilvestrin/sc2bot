@@ -150,7 +150,7 @@ def test_a_silent_bot_says_nothing_at_all() -> None:
 
     assert observe(chat, 100.0, posture=StrategicPosture.DEFEND) == []
     assert chat.say("gg", 200.0, force=True) is None
-    assert chat.announce("Hoje vai de BIO.", 0.0) is None
+    assert chat.announce("Going BIO today.", 0.0) is None
     assert chat.drain() == ()
 
 
@@ -173,7 +173,7 @@ def test_everything_the_bot_says_is_written_to_the_log() -> None:
     logs = Logs(logger)
     state, awareness, intent = layers(100.0, posture=StrategicPosture.DEFEND)
 
-    logs.announced(0.0, "Hoje vai de BIO: Marine, Marauder e Medivac.")
+    logs.announced(0.0, "Going BIO today: Marine, Marauder and Medivac.")
     logs.chat.observe(*layers(10.0))
     for topic, line in logs.chat.observe(state, awareness, intent):
         logs.telemetry.said(time=state.time, topic=topic, line=line)
@@ -181,14 +181,14 @@ def test_everything_the_bot_says_is_written_to_the_log() -> None:
 
     said = [(event["data"]["topic"], event["data"]["line"]) for event in logger.named("chat.said")]
     assert said == [
-        ("army", "Hoje vai de BIO: Marine, Marauder e Medivac."),
-        ("rushed", "Tô sendo rushado!"),
+        ("army", "Going BIO today: Marine, Marauder and Medivac."),
+        ("rushed", "I'm getting rushed!"),
         ("gg", "gg"),
     ]
     # And it is still queued for whoever can actually speak.
     assert [line for _, line in logs.chat.drain()] == [
-        "Hoje vai de BIO: Marine, Marauder e Medivac.",
-        "Tô sendo rushado!",
+        "Going BIO today: Marine, Marauder and Medivac.",
+        "I'm getting rushed!",
         "gg",
     ]
 
