@@ -1,8 +1,9 @@
 """LOGS: how the bot explains itself.
 
-`Logs` bundles the three observers of a frame -- the JSONL event log, the SVG
-field snapshots and the in-game overlay. None of them may change a decision,
-and none of them may stop a match.
+`Logs` bundles the four observers of a frame -- the JSONL event log, the SVG
+field snapshots, the in-game overlay and the chat, where the bot says out loud
+what it is thinking. None of them may change a decision, and none of them may
+stop a match.
 """
 
 from __future__ import annotations
@@ -31,6 +32,7 @@ from bot.ego.planners.map_control import MapControlPlan
 from bot.ego.planners.offense import OffensePlan
 from bot.ego.strategy import StrategicIntent
 
+from .chat import Chat, ChatConfig
 from .jsonl import BotLogger, ChangeGate, JsonlLogger, NullLogger
 from .overlay import Overlay, OverlayConfig
 from .snapshot import SnapshotConfig, SnapshotExporter, render_svg
@@ -39,6 +41,8 @@ from .telemetry import Telemetry
 __all__ = [
     "BotLogger",
     "ChangeGate",
+    "Chat",
+    "ChatConfig",
     "JsonlLogger",
     "Logs",
     "NullLogger",
@@ -59,10 +63,12 @@ class Logs:
         overlay: OverlayConfig | None = None,
         snapshots: SnapshotConfig | None = None,
         snapshot_directory: Path | None = None,
+        chat: ChatConfig | None = None,
     ) -> None:
         self.logger = logger or NullLogger()
         self.telemetry = Telemetry(self.logger)
         self.overlay = Overlay(overlay)
+        self.chat = Chat(chat)
         self.snapshots = SnapshotExporter(
             config=snapshots, directory=snapshot_directory, logger=self.logger
         )
@@ -78,6 +84,13 @@ class Logs:
             opening=str(getattr(runner, "chosen_opening", "") or "") or None,
             configs=configs,
         )
+
+    def announced(self, time: float, line: str) -> None:
+        """The bot introducing itself; `on_start` is what sends it."""
+
+        said = self.chat.announce(line, time)
+        if said is not None:
+            self.telemetry.said(time=time, topic=said[0], line=said[1])
 
     def kept_clear(
         self, time: float, map_view: MapView, sites: Sequence[Point2], cleared: int
@@ -132,10 +145,16 @@ class Logs:
             )
             self.snapshots.capture(attention, awareness, intent, map_control, result)
             self.overlay.render(bot, attention, awareness, intent, map_control, result)
+            for topic, line in self.chat.observe(attention, awareness, intent):
+                self.telemetry.said(time=attention.time, topic=topic, line=line)
         finally:
             self.logger.end_frame()
             self._last_ms = (perf_counter() - started) * 1000.0
 
     def game_ended(self, time: float, result) -> None:
+        # The last word, whatever happened; `on_end` is what can still send it.
+        farewell = self.chat.say("gg", time, force=True)
+        if farewell is not None:
+            self.telemetry.said(time=time, topic=farewell[0], line=farewell[1])
         self.telemetry.ended(time=time, result=str(result))
         self.logger.close()

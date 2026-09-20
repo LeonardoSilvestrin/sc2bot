@@ -41,6 +41,7 @@ CATALOG = (
     "opening_scout.expansion_checked",
     "opening_scout.structure_seen",
     "awareness.opening_updated",
+    "chat.said",
     "planner.economy_planned",
     "engine.granted",
     "engine.commanded",

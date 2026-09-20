@@ -433,6 +433,7 @@ const NARRATIVE_EVENTS = new Set([
   "opening_scout.proxy_search_started",
   "opening_scout.expansion_checked",
   "awareness.opening_updated",
+  "chat.said",
   "planner.economy_planned",
   "engine.commanded",
   "logs.snapshot_failed",
@@ -523,6 +524,8 @@ function fieldsFor(record) {
       return mapControlText(d);
     case "planner.offense_planned":
       return `stage=${d.stage} previous=${d.previous} blocked_by=${d.blocked_by ?? "—"} target=${d.target_kind ?? "—"} ${xy(d.target)} committed=${fmt(d.committed_power, 1)}${d.mission_id ? ` mission=${d.mission_id} ${d.mission_status}` : ""}`;
+    case "chat.said":
+      return `“${d.line}” (${d.topic})`;
     case "awareness.opening_updated":
       return d.summary ?? `race=${d.race} aggression=${fmt(d.belief?.aggression)} greed=${fmt(d.belief?.greed)} tech=${fmt(d.belief?.tech)} proxy=${fmt(d.belief?.proxy)} confidence=${fmt(d.belief?.confidence)}`;
     case "opening_scout.phase_changed":

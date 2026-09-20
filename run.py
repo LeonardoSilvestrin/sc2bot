@@ -18,7 +18,7 @@ sys.path.append("ares-sc2")
 import yaml
 
 from bot.ego.planners.economy.knowledge.styles import STYLES
-from bot.logs import JsonlLogger, Logs, OverlayConfig, SnapshotConfig
+from bot.logs import ChatConfig, JsonlLogger, Logs, OverlayConfig, SnapshotConfig
 from bot.main import MyBot
 from ladder import run_ladder_game
 
@@ -85,6 +85,11 @@ def parse_local_args(args=None):
         help="Game seconds between SVG snapshots (default: %(default)s).",
     )
     parser.add_argument(
+        "--no-chat",
+        action="store_true",
+        help="Do not say anything in the game chat.",
+    )
+    parser.add_argument(
         "--army",
         choices=sorted(STYLES),
         default=None,
@@ -115,6 +120,7 @@ def parse_local_args(args=None):
 def build_logs(local_args, *, is_ladder: bool) -> Logs:
     if is_ladder:
         return Logs()
+    chat = ChatConfig(enabled=not local_args.no_chat)
     snapshots = local_args.spatial_snapshot
     logger_ = JsonlLogger(Path("logs")) if local_args.bot_log == "events" or snapshots else None
     if logger_ is not None:
@@ -129,6 +135,7 @@ def build_logs(local_args, *, is_ladder: bool) -> Logs:
             enabled=snapshots, interval_seconds=local_args.spatial_snapshot_interval
         ),
         snapshot_directory=None if logger_ is None else logger_.session_directory / "spatial",
+        chat=chat,
     )
 
 

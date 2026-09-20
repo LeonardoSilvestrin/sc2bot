@@ -158,6 +158,11 @@ class Telemetry:
     def ended(self, *, time: float, result: str) -> None:
         self._event("game.ended", "logs", time, {"result": result})
 
+    def said(self, *, time: float, topic: str, line: str) -> None:
+        """A line the bot sent to the game's chat."""
+
+        self._event("chat.said", "logs", time, {"topic": topic, "line": line})
+
     def record(
         self,
         attention: AttentionState,

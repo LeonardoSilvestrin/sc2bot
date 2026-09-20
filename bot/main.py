@@ -242,16 +242,30 @@ class MyBot(AresBot):
         corridor = self.layers.structure_control.corridor(map_view)
         cleared = behaviors.structure_control.keep_clear(self, corridor)
         self.bot_logs.kept_clear(float(self.time), map_view, corridor, cleared)
-        await self.chat_send(styles.announcement(army))
+        self.bot_logs.announced(float(self.time), styles.announcement(army))
+        await self._speak()
 
     async def on_step(self, iteration: int) -> None:
         await super().on_step(iteration)
         if self.layers is not None:
             play_frame(self, iteration, self.layers)
+        await self._speak()
 
     async def on_end(self, game_result: Result) -> None:
         await super().on_end(game_result)
         self.bot_logs.game_ended(float(self.time), game_result)
+        await self._speak()
+
+    async def _speak(self) -> None:
+        """Send what the chat queued this frame. Saying something is the last
+        thing that may cost us a match, so nothing it does is fatal."""
+
+        for _, line in self.bot_logs.chat.drain():
+            try:
+                await self.chat_send(line)
+            except Exception:
+                # A log may never drop a match, and this one talks to the game.
+                return
 
 
 class _Laps:
