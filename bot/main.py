@@ -3,6 +3,10 @@
 ATTENTION -> AWARENESS -> EGO (strategy: assessment -> intent; planners and their
 missions) -> BODY (engine -> behaviors) -> LOGS
 
+The map read in ``on_start`` is replaced only when a mineral wall or a pile of
+rocks changes which passages are open; the `MapView` is the same object on
+every other frame, so what caches per map rebuilds once per opened passage.
+
 The Engine's result is kept for the next frame: it is the feedback the
 missions read about what they were granted. Nothing is planned or allocated
 twice in a frame.
@@ -18,7 +22,14 @@ from time import perf_counter
 from ares import AresBot
 from sc2.data import Result
 
-from bot.attention import AttentionState, MapView, OpeningWatch, observe, read_map
+from bot.attention import (
+    AttentionState,
+    MapView,
+    OpeningWatch,
+    PassageWatch,
+    observe,
+    read_map,
+)
 from bot.awareness import AwarenessModel, AwarenessState
 from bot.body import behaviors
 from bot.body.behaviors.attack import MicroReport
@@ -50,8 +61,10 @@ class Layers:
     logs: Logs
     # Chosen once, in `on_start`.
     army: ArmyStyle = BIO
-    # The one thing Attention carries between frames: the opening record.
+    # What Attention carries between frames: the opening record, and which
+    # passages the blockers still hold shut.
     opening: OpeningWatch = field(default_factory=OpeningWatch)
+    passages: PassageWatch = field(default_factory=PassageWatch)
     composition: CompositionPolicy = field(init=False)
     investment: InvestmentConfig = field(default_factory=InvestmentConfig)
     awareness: AwarenessModel = field(default_factory=AwarenessModel)
@@ -117,6 +130,10 @@ class Frame:
 
 def play_frame(bot, iteration: int, layers: Layers) -> Frame:
     laps = _Laps()
+    # Blockers fall during a game. The map's identity does not move with them;
+    # only which of its passages are open, and only when one really changed.
+    layers.map_view, opened = layers.passages.refresh(bot, layers.map_view)
+    layers.logs.passages_changed(iteration, float(bot.time), opened)
     attention = observe(bot, iteration, layers.map_view, layers.opening)
     laps.mark("attention")
     awareness = layers.awareness.infer(attention)

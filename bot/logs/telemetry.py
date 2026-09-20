@@ -16,6 +16,7 @@ from sc2.position import Point2
 
 from bot.attention import AttentionState, MapView, OpeningObservations, is_army
 from bot.attention.opening import EMPTY as NO_OPENING
+from bot.attention.passages import PassageChange
 from bot.awareness import AwarenessState
 from bot.body.behaviors.attack import MicroReport
 from bot.body.behaviors.detection import DetectionReport
@@ -124,6 +125,16 @@ class Telemetry:
                 "regions": len(topology.regions),
                 "passages": len(topology.passages),
                 "chokes": sum(passage.kind == "choke" for passage in topology.passages),
+                "blocked_passages": [
+                    {
+                        "passage_id": passage.passage_id,
+                        "state": passage.state,
+                        "blocker_type": passage.blocker_type,
+                        "blockers": len(passage.blocker_tags),
+                        "regions": list(passage.regions),
+                    }
+                    for passage in topology.blocked_passages()
+                ],
                 "expansions": len(topology.expansion_to_region),
                 "unresolved_expansions": len(map_view.expansions)
                 - len(topology.expansion_to_region),
@@ -151,6 +162,28 @@ class Telemetry:
                         "passage": candidate.passage_id,
                     }
                     for candidate in candidates
+                ],
+            },
+        )
+
+    def passage_changed(self, *, time: float, change: PassageChange) -> None:
+        """A passage opened or shut: the one thing about the map that moves."""
+
+        self._event(
+            "map.passage_changed",
+            "attention",
+            time,
+            {
+                "passage_id": change.passage_id,
+                "transition": change.transition,
+                "from": change.before,
+                "to": change.after,
+                "blocker_type": change.blocker_type,
+                "blockers_left": change.blockers_left,
+                "regions": list(change.regions),
+                "position": [
+                    round(float(change.position.x), 2),
+                    round(float(change.position.y), 2),
                 ],
             },
         )

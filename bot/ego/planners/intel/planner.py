@@ -67,6 +67,7 @@ class IntelPlanner:
         self._opened = 0
         self._views: tuple[MissionView, ...] = ()
         self.sensor_coverage_enabled = False
+        self._map: MapView | None = None
 
     def views(self) -> tuple[MissionView, ...]:
         return self._views
@@ -124,10 +125,13 @@ class IntelPlanner:
         """`hold`: no scout sets out while it holds; one already asked for goes on."""
         if self.finished is not None:
             return ()
-        if not self.route:
+        if self._map is not attention.map:
+            self._map = attention.map
             self.route = scouting_route(attention.map)
             self.proxy_route = proxy_route(attention.map)
             self.exits = enemy_exits(attention.map)
+            if self.mission is not None:
+                self.mission.refresh_paths(self.proxy_route, self.exits, attention.time)
         now = attention.time
         self.seen.update(
             index for index, point in enumerate(self.route) if attention.is_visible(point)
@@ -212,16 +216,17 @@ def intel_focus(posture: StrategicPosture) -> str:
 
 
 def enemy_exits(map_view: MapView, limit: int = 2) -> tuple[Point2, ...]:
-    """The ways out of the enemy main: the passages of its region, widest
+    """The ways out of the enemy main: the open passages of its region, widest
     first. What leaves their base crosses one of these, so they are worth
-    coming back to while the opening lasts."""
+    coming back to while the opening lasts. A passage rocks or a mineral wall
+    still hold is not a way out and is not watched."""
 
     topology = map_view.topology
     region = topology.enemy_start_region
     if region is None:
         return ()
-    wanted = {passage_id for _, passage_id in topology.neighbours(region)}
-    passages = [passage for passage in topology.passages if passage.passage_id in wanted]
+    wanted = {passage_id for _, passage_id in topology.neighbours(region, open_only=True)}
+    passages = [passage for passage in topology.open_passages() if passage.passage_id in wanted]
     passages.sort(key=lambda passage: (-(passage.width or 0.0), passage.passage_id))
     return tuple(passage.position for passage in passages[:limit])
 

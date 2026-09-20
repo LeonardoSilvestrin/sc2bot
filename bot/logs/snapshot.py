@@ -145,20 +145,31 @@ def render_svg(
     topology_regions = {region.region_id: region for region in topology.regions}
     for passage in topology.passages:
         px, py = projection.point(passage.position)
+        shut = passage.is_closed
         for region_id in passage.regions:
             region = topology_regions[region_id]
             rx, ry = projection.point(region.center)
             parts.append(
-                _line(rx, ry, px, py, "#596779", 1.0, dashed=passage.kind == "border")
+                _line(
+                    rx,
+                    ry,
+                    px,
+                    py,
+                    "#4a3b46" if shut else "#596779",
+                    1.0,
+                    dashed=shut or passage.kind == "border",
+                )
             )
         parts.append(
             _circle(
                 px,
                 py,
                 3.5,
-                fill="#ffd166",
-                stroke="#11161d",
-                extra=f'data-passage="{escape(passage.passage_id)}"',
+                fill="none" if shut else "#ffd166",
+                stroke="#eb5757" if shut else "#11161d",
+                width=1.5 if shut else 1.0,
+                extra=f'data-passage="{escape(passage.passage_id)}"'
+                f' data-passage-state="{escape(passage.state)}"',
             )
         )
     for candidate in topology.choke_candidates:
@@ -497,6 +508,7 @@ def _panel(
     topology = attention.map.topology
     candidates = topology.choke_candidates
     accepted = sum(candidate.accepted for candidate in candidates)
+    shut = topology.closed_passages()
     rows += [
         ("panel", ""),
         ("head", "TOPOLOGY"),
@@ -504,6 +516,11 @@ def _panel(
         (
             "panel",
             f"Rejected {len(candidates) - accepted}  Splits {len(topology.region_splits)}",
+        ),
+        (
+            "panel",
+            f"Passages {len(topology.passages) - len(shut)}/{len(topology.passages)} open"
+            f"  Blocked {len(topology.blocked_passages())}",
         ),
     ]
     rows += [("panel", ""), ("head", "ENGINE")]

@@ -180,6 +180,24 @@ class EarlyScoutMission:
     def request_cancel(self, mode: CancelMode, reason: str, now: float) -> None:
         self.lifecycle.request_cancel(mode, reason, now)
 
+    def refresh_paths(
+        self, proxy_route: tuple[Point2, ...], watchpoints: tuple[Point2, ...], now: float
+    ) -> None:
+        """Refresh accessibility without discarding expansion identity or observations."""
+
+        if proxy_route != self.proxy_route:
+            self.proxy_route = proxy_route
+            self._proxy_index = 0
+        ring = tuple(dict.fromkeys(
+            point for point in (self.natural, self.third, *watchpoints, *self.route[1:])
+            if point is not None
+        ))
+        if ring != self.ring:
+            seen = dict(zip(self.ring, self._seen, strict=True))
+            self.ring = ring
+            self._seen = [seen.get(point, now) for point in ring]
+            self._watching = None
+
     def search_proxy(self, reason: str, now: float) -> bool:
         """Send the scout looking for a proxy; True when it took the order."""
 
@@ -226,6 +244,15 @@ class EarlyScoutMission:
         if self.phase is ScoutPhase.COMPLETE:
             return self._end(MissionStatus.COMPLETED, self.reason, now)
         target = self._target_for(attention, seen)
+        if target is None and self.phase is ScoutPhase.SURVEIL:
+            self._target = None
+            return ()
+        if target is not None and not self._reachable(attention, target):
+            target = self._patrol(attention)
+            if target is None:
+                # Keep the mission available if a wall opens later in the window.
+                self._target = None
+                return ()
         self._target = target
         if target is None:
             return self._end(MissionStatus.COMPLETED, "nowhere_left_to_look", now)
@@ -454,18 +481,38 @@ class EarlyScoutMission:
         has, and the natural and the third come round again on their own."""
 
         if not self.ring:
-            return self.route[0]
+            return self.route[0] if self._reachable(attention, self.route[0]) else None
+        reachable = [
+            index for index, point in enumerate(self.ring)
+            if self._reachable(attention, point)
+        ]
+        if not reachable:
+            self._watching = None
+            return None
         now = attention.time
         index = self._watching
+        if index not in reachable:
+            index = None
         looked = index is not None and self._seen[index] >= self._watching_since
         gave_up = index is not None and now - self._watching_since >= self.window.surveil_step
         if index is not None and gave_up and not looked:
             # It could not get there; that does not hold up the round.
             self._seen[index] = now
         if index is None or looked or gave_up:
-            self._watching = min(range(len(self.ring)), key=lambda at: (self._seen[at], at))
+            self._watching = min(reachable, key=lambda at: (self._seen[at], at))
             self._watching_since = now
         return self.ring[self._watching]
+
+    def _reachable(self, attention: AttentionState, target: Point2) -> bool:
+        origin = next(
+            (unit.position for unit in attention.own_units
+             if unit.type_id in SCOUT_TYPES and unit.role == UnitRole.SCOUTING.name),
+            attention.map.own_start,
+        )
+        start = attention.map.region_at(origin)
+        goal = attention.map.region_at(target)
+        # Missing geometry is not evidence that a path is blocked.
+        return start is None or goal is None or attention.map.topology.reachable(start, goal)
 
     def _priority(self, seen: Set[int]) -> float:
         base = PHASE_PRIORITY[self.phase]

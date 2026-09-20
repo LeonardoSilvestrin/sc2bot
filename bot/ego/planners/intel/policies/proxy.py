@@ -39,12 +39,18 @@ def proxy_route(map_view: MapView, limit: int = PROXY_LIMIT) -> tuple[Point2, ..
         # Our half, and outside what our own base already sees.
         if point.distance_to(own) < point.distance_to(enemy)
         and point.distance_to(own) > EXPANSION_GAP
+        and (
+            map_view.region_at(point) is None
+            or topology.own_start_region is None
+            or map_view.reachable_now(point)
+        )
     }
     return tuple(sorted(ours, key=lambda point: (point.distance_to(own), point.x, point.y))[:limit])
 
 
 def _neighbourhood(map_view: MapView) -> tuple[str, ...]:
-    """The regions around our main and our natural."""
+    """The regions around our main and our natural, across open passages: a
+    pocket still walled off is a pocket nothing was built in."""
 
     topology = map_view.topology
     home = [topology.own_start_region, topology.expansion_region(map_view.own_start)]
@@ -54,5 +60,8 @@ def _neighbourhood(map_view: MapView) -> tuple[str, ...]:
     around: list[str] = []
     for region_id in dict.fromkeys(region for region in home if region is not None):
         around.append(region_id)
-        around.extend(neighbour for neighbour, _ in topology.neighbours(region_id))
+        around.extend(
+            neighbour
+            for neighbour, _ in topology.neighbours(region_id, open_only=True)
+        )
     return tuple(dict.fromkeys(around))

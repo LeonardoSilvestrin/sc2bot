@@ -166,6 +166,7 @@ def test_topology_is_logged_once_at_game_start() -> None:
         "regions": 3,
         "passages": 2,
         "chokes": 2,
+        "blocked_passages": [],
         "expansions": 3,
         "unresolved_expansions": 0,
         "own_start_region": "region:0",

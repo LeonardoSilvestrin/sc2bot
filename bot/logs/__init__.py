@@ -14,7 +14,7 @@ from time import perf_counter
 
 from sc2.position import Point2
 
-from bot.attention import AttentionState, MapView
+from bot.attention import AttentionState, MapView, PassageChange
 from bot.awareness import AwarenessState
 from bot.body.behaviors.attack import MicroReport
 from bot.body.behaviors.detection import DetectionReport
@@ -98,6 +98,21 @@ class Logs:
         """The production sites StructureControl keeps empty, from the start."""
 
         self.telemetry.kept_clear(time=time, map_view=map_view, sites=sites, cleared=cleared)
+
+    def passages_changed(
+        self, iteration: int, time: float, changes: Sequence[PassageChange]
+    ) -> None:
+        """A mineral wall mined out, a rock down: written inside the frame it
+        was noticed in, since that is the frame the routes changed."""
+
+        if not changes:
+            return
+        self.logger.begin_frame(iteration)
+        try:
+            for change in changes:
+                self.telemetry.passage_changed(time=time, change=change)
+        finally:
+            self.logger.end_frame()
 
     def record(
         self,

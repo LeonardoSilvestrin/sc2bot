@@ -6,10 +6,13 @@ passages, expansions and adjacency. The frame is read every step: `observe`
 returns an immutable `AttentionState`. Neither says who controls a place or
 how dangerous it is; that is Awareness.
 
-One record outlives the frame: `opening.OpeningObservations`, what the early
-game showed of the enemy's opening and when it showed it. It is still
+Two records outlive the frame. `opening.OpeningObservations` is what the early
+game showed of the enemy's opening and when it showed it; it is still
 perception -- a fact that was observed stays a fact -- and what it means is
-read in Awareness.
+read in Awareness. `passages.PassageWatch` is the other: mineral walls and
+rocks fall during a game, and it turns the neutral objects the game still
+lists into the one thing about the map that moves, `MapPassage.state`. The
+map's identity does not move with it.
 """
 
 from .frame import (
@@ -32,6 +35,7 @@ from .map import (
     MapView,
     as_point,
     pathable_lattice,
+    read_blockers,
     read_map,
 )
 from .opening import (
@@ -44,35 +48,56 @@ from .opening import (
     OpeningWatch,
     StructureObservation,
 )
-from .topology import MapPassage, MapRegion, MapTopology
+from .passages import PassageChange, PassageWatch, passage_states
+from .topology import (
+    CLOSED,
+    OPEN,
+    UNKNOWN,
+    MapBlocker,
+    MapPassage,
+    MapRegion,
+    MapTopology,
+    Passage,
+    PassageState,
+)
 
 __all__ = [
     "BASE_SNAP_DISTANCE",
+    "CLOSED",
     "EXPANSION_GAP",
     "GAS_STRUCTURES",
     "MARINE_POWER",
+    "OPEN",
     "OPENING_WINDOW",
     "SPLASH_TARGETS",
     "TERRAN_PRODUCTION",
     "TERRAN_TRAINABLE",
     "TOWNHALLS",
+    "UNKNOWN",
     "WORKER_TYPES",
     "AttentionState",
     "BaseView",
     "ExpansionObservation",
     "ExpansionStatus",
+    "MapBlocker",
     "MapPassage",
     "MapRegion",
     "MapTopology",
     "MapView",
     "OpeningObservations",
     "OpeningWatch",
+    "Passage",
+    "PassageChange",
+    "PassageState",
+    "PassageWatch",
     "StructureObservation",
     "UnitView",
     "as_point",
     "is_army",
     "observe",
+    "passage_states",
     "pathable_lattice",
+    "read_blockers",
     "read_map",
     "unit_power",
     "unit_view",

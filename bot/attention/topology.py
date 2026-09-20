@@ -4,6 +4,16 @@ The Ares MapAnalyzer owns the expensive geometric decomposition.  This module
 copies only its regions and passages into small deterministic values aligned
 with our pathable lattice.  Nothing here describes who controls a place or
 what the bot should do there.
+
+Identity is static; accessibility is not.  The lattice is read off
+``game_info.pathing_grid``, which the game hands us with mineral walls and
+destructible rocks already counted as walkable ground, so every passage a map
+can ever have exists in the topology from the first frame -- with the same id,
+between the same regions, for the whole game.  What a blocker changes is only
+`MapPassage.state`: a passage whose blockers are all gone is ``OPEN``, one that
+still has any is ``CLOSED``.  `bot.attention.passages` follows the blocker tags
+frame by frame and hands back a topology with the new states; routines that ask
+about connectivity ask for open passages.
 """
 
 from __future__ import annotations
@@ -11,8 +21,8 @@ from __future__ import annotations
 import heapq
 import math
 from collections import Counter, deque
-from collections.abc import Iterator, Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import Collection, Iterator, Mapping, Sequence
+from dataclasses import dataclass, replace
 from itertools import combinations
 from typing import Literal
 
@@ -20,6 +30,19 @@ import numpy as np
 from sc2.position import Point2
 
 PassageKind = Literal["choke", "border"]
+PassageState = Literal["open", "closed", "unknown"]
+OPEN: PassageState = "open"
+CLOSED: PassageState = "closed"
+# We hold blockers for this passage but could not read the world this frame.
+UNKNOWN: PassageState = "unknown"
+# What stands in a passage.  ``mixed`` is a passage several kinds block at once.
+BlockerType = Literal["mineral_wall", "destructible", "mixed"]
+MINERAL_WALL: BlockerType = "mineral_wall"
+DESTRUCTIBLE: BlockerType = "destructible"
+MIXED: BlockerType = "mixed"
+# How far around a passage its blockers are looked for and judged.  Wide enough
+# to hold both sides of any choke, tight enough that the way round is outside.
+BLOCKER_WINDOW = 16.0
 ChokeReason = Literal[
     "between_regions",
     "splits_region",
@@ -44,11 +67,27 @@ class MapRegion:
 
 
 @dataclass(frozen=True, slots=True)
+class MapBlocker:
+    """One neutral object that stands in the way: a mineral wall's patch or a
+    destructible rock, as the game shows it, with the cells it covers."""
+
+    tag: int
+    blocker_type: BlockerType
+    position: Point2
+    cells: tuple[tuple[int, int], ...]
+
+
+@dataclass(frozen=True, slots=True)
 class MapPassage:
     """A ground connection shared by two or more regions.
 
     ``border`` passages are clear lattice borders for which MapAnalyzer did
     not report a geometric choke.  Their width is deliberately unknown.
+
+    Everything but `state` is the passage's identity and never changes: the
+    same id joins the same regions at the same place from the first frame to
+    the last.  `blocker_tags` are the neutral objects whose presence closes it,
+    all of them, so losing some of a mineral wall leaves the passage closed.
     """
 
     passage_id: str
@@ -56,6 +95,29 @@ class MapPassage:
     width: float | None
     regions: tuple[str, ...]
     kind: PassageKind
+    # What stands in it, when something does.
+    blocker_type: BlockerType | None = None
+    blocker_tags: tuple[int, ...] = ()
+    state: PassageState = OPEN
+
+    @property
+    def is_open(self) -> bool:
+        return self.state == OPEN
+
+    @property
+    def is_closed(self) -> bool:
+        """Closed, or unknown: nothing walks through a passage we cannot
+        vouch for."""
+
+        return self.state != OPEN
+
+    @property
+    def has_blockers(self) -> bool:
+        return bool(self.blocker_tags)
+
+
+# The name the rest of the bot may read it by; `MapPassage` is its history.
+Passage = MapPassage
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,8 +164,27 @@ class MapTopology:
             (region for region in self.regions if region.region_id == region_id), None
         )
 
-    def neighbours(self, region_id: str) -> tuple[tuple[str, str], ...]:
-        return next((links for key, links in self.adjacency if key == region_id), ())
+    def passage(self, passage_id: str) -> MapPassage | None:
+        return next(
+            (
+                passage
+                for passage in self.passages
+                if passage.passage_id == passage_id
+            ),
+            None,
+        )
+
+    def neighbours(
+        self, region_id: str, *, open_only: bool = False
+    ) -> tuple[tuple[str, str], ...]:
+        """``(neighbour, passage_id)`` of every passage out of ``region_id``;
+        with ``open_only`` only the ones something can walk through now."""
+
+        links = next((links for key, links in self.adjacency if key == region_id), ())
+        if not open_only:
+            return links
+        closed = self._closed_ids()
+        return tuple(link for link in links if link[1] not in closed)
 
     def expansion_region(self, expansion: Point2) -> str | None:
         return next(
@@ -113,6 +194,115 @@ class MapTopology:
                 if position == expansion
             ),
             None,
+        )
+
+    # --- accessibility, which the game changes under a static identity ---
+
+    def open_passages(self) -> tuple[MapPassage, ...]:
+        """The passages something can walk through right now."""
+
+        return tuple(passage for passage in self.passages if passage.is_open)
+
+    def closed_passages(self) -> tuple[MapPassage, ...]:
+        return tuple(passage for passage in self.passages if passage.is_closed)
+
+    def blocked_passages(self) -> tuple[MapPassage, ...]:
+        """Every passage a blocker was ever found in, open by now or not."""
+
+        return tuple(passage for passage in self.passages if passage.has_blockers)
+
+    def open_adjacency(self) -> tuple[tuple[str, tuple[tuple[str, str], ...]], ...]:
+        """`adjacency` without the passages that are shut; the same shape, so
+        anything that walks the region graph can take it instead."""
+
+        closed = self._closed_ids()
+        if not closed:
+            return self.adjacency
+        return tuple(
+            (
+                region_id,
+                tuple(link for link in links if link[1] not in closed),
+            )
+            for region_id, links in self.adjacency
+        )
+
+    def connected_regions(
+        self, region_id: str, *, open_only: bool = True
+    ) -> frozenset[str]:
+        """Every region reachable on foot from ``region_id``, itself included.
+
+        By open passages only: this answers where the army can walk now, not
+        what the map would look like with every rock down.
+        """
+
+        links = dict(self.open_adjacency() if open_only else self.adjacency)
+        if region_id not in links:
+            return frozenset()
+        found = {region_id}
+        frontier = deque([region_id])
+        while frontier:
+            for neighbour, _ in links.get(frontier.popleft(), ()):
+                if neighbour not in found:
+                    found.add(neighbour)
+                    frontier.append(neighbour)
+        return frozenset(found)
+
+    def route(
+        self, start: str | None, goal: str | None, *, open_only: bool = True
+    ) -> tuple[str, ...]:
+        """The regions walked from ``start`` to ``goal``, both included; empty
+        when there is no way. Fewest passages, ties by region id."""
+
+        links = dict(self.open_adjacency() if open_only else self.adjacency)
+        if start is None or goal is None or start not in links or goal not in links:
+            return ()
+        if start == goal:
+            return (start,)
+        came_from: dict[str, str] = {start: start}
+        frontier = deque([start])
+        while frontier:
+            region_id = frontier.popleft()
+            for neighbour, _ in sorted(links.get(region_id, ())):
+                if neighbour in came_from:
+                    continue
+                came_from[neighbour] = region_id
+                if neighbour == goal:
+                    walked = [goal]
+                    while walked[-1] != start:
+                        walked.append(came_from[walked[-1]])
+                    return tuple(reversed(walked))
+                frontier.append(neighbour)
+        return ()
+
+    def reachable(
+        self, start: str | None, goal: str | None, *, open_only: bool = True
+    ) -> bool:
+        return bool(self.route(start, goal, open_only=open_only))
+
+    def with_passage_states(
+        self, states: Mapping[str, PassageState]
+    ) -> MapTopology:
+        """The same topology with these passage states; ``self`` when nothing
+        moved, so a caller can tell a changed frame by identity."""
+
+        if all(
+            passage.state == states.get(passage.passage_id, passage.state)
+            for passage in self.passages
+        ):
+            return self
+        return replace(
+            self,
+            passages=tuple(
+                replace(passage, state=states[passage.passage_id])
+                if passage.passage_id in states
+                else passage
+                for passage in self.passages
+            ),
+        )
+
+    def _closed_ids(self) -> frozenset[str]:
+        return frozenset(
+            passage.passage_id for passage in self.passages if passage.is_closed
         )
 
 
@@ -139,8 +329,14 @@ def build_topology(
     enemy_start: Point2,
     *,
     map_data=None,
+    blockers: Sequence[MapBlocker] = (),
 ) -> MapTopology:
-    """Build one canonical topology from immutable map geometry."""
+    """Build one canonical topology from immutable map geometry.
+
+    ``blockers`` are the neutral objects standing on the map at the start.
+    They never change what a passage is, only whether it is open: a passage
+    they seal is born ``CLOSED`` and stays that way until they are all gone.
+    """
 
     grid = np.asarray(pathing_grid)
     canonical_expansions = tuple(sorted(set(expansions), key=_point_key))
@@ -269,8 +465,12 @@ def build_topology(
         expansion_mapping.append((expansion, region_id))
         expansion_members.setdefault(region_id, []).append(expansion)
 
-    passages = _passages(
-        chokes, lattice, sample_regions, sample_edges, lattice_spacing
+    passages = _blocked(
+        _passages(chokes, lattice, sample_regions, sample_edges, lattice_spacing),
+        blockers,
+        grid,
+        lattice,
+        sample_regions,
     )
     regions = tuple(
         MapRegion(
@@ -719,6 +919,190 @@ def _passages(
     return tuple(result)
 
 
+def _blocked(
+    passages: Sequence[MapPassage],
+    blockers: Sequence[MapBlocker],
+    grid: np.ndarray,
+    lattice: tuple[Point2, ...],
+    sample_regions: Sequence[str | None],
+) -> tuple[MapPassage, ...]:
+    """The passages, each carrying the blockers that seal it, and its state.
+
+    A blocker is put on a passage when it is what shuts it: with the blocker's
+    group stamped into the ground, the two sides of that passage no longer
+    reach each other *near the passage*.  Judging it in a window keeps the
+    answer local -- the long way round the map is not an answer to "does this
+    rock close this choke" -- and stamping a whole group at once is what a
+    mineral wall needs, since taking one patch out of fifteen opens nothing.
+    """
+
+    groups = _blocker_groups(blockers)
+    if not groups:
+        return tuple(passages)
+    cells_of = _region_cells(lattice, sample_regions)
+    result: list[MapPassage] = []
+    for passage in passages:
+        found = _sealing_groups(passage, groups, grid, cells_of)
+        if not found:
+            result.append(passage)
+            continue
+        members = [blocker for group in found for blocker in group]
+        kinds = {blocker.blocker_type for blocker in members}
+        result.append(
+            replace(
+                passage,
+                blocker_type=kinds.pop() if len(kinds) == 1 else MIXED,
+                blocker_tags=tuple(sorted({blocker.tag for blocker in members})),
+                state=CLOSED,
+            )
+        )
+    return tuple(result)
+
+
+def _blocker_groups(
+    blockers: Sequence[MapBlocker],
+) -> tuple[tuple[MapBlocker, ...], ...]:
+    """Blockers whose cells touch, as one thing to remove.
+
+    A mineral wall is fifteen patches; an expedition gate is two rocks side by
+    side.  Only the whole group opens ground, so only the whole group is asked
+    whether it closes any.
+    """
+
+    ordered = sorted(blockers, key=lambda b: (b.blocker_type, *_point_key(b.position)))
+    parent = list(range(len(ordered)))
+
+    def find(index: int) -> int:
+        while parent[index] != index:
+            parent[index] = parent[parent[index]]
+            index = parent[index]
+        return index
+
+    owner: dict[tuple[int, int], int] = {}
+    for index, blocker in enumerate(ordered):
+        for x, y in blocker.cells:
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    other = owner.get((x + dx, y + dy))
+                    if other is not None:
+                        parent[find(other)] = find(index)
+        for cell in blocker.cells:
+            owner[cell] = index
+    groups: dict[int, list[MapBlocker]] = {}
+    for index, blocker in enumerate(ordered):
+        groups.setdefault(find(index), []).append(blocker)
+    return tuple(tuple(group) for _, group in sorted(groups.items()))
+
+
+def _region_cells(
+    lattice: tuple[Point2, ...], sample_regions: Sequence[str | None]
+) -> dict[str, tuple[tuple[int, int], ...]]:
+    cells: dict[str, list[tuple[int, int]]] = {}
+    for point, region_id in zip(lattice, sample_regions, strict=True):
+        if region_id is not None:
+            cells.setdefault(region_id, []).append(
+                (math.floor(point.x), math.floor(point.y))
+            )
+    return {key: tuple(value) for key, value in cells.items()}
+
+
+def _sealing_groups(
+    passage: MapPassage,
+    groups: Sequence[Sequence[MapBlocker]],
+    grid: np.ndarray,
+    region_cells: Mapping[str, tuple[tuple[int, int], ...]],
+) -> tuple[tuple[MapBlocker, ...], ...]:
+    """The groups whose presence cuts this passage inside its own window."""
+
+    radius = max(BLOCKER_WINDOW, (passage.width or 0.0) * 1.5)
+    near = [
+        tuple(group)
+        for group in groups
+        if any(
+            _within(cell, passage.position, radius)
+            for blocker in group
+            for cell in blocker.cells
+        )
+    ]
+    if not near:
+        return ()
+    window = _window(grid, passage.position, radius)
+    sides = [
+        frozenset(
+            cell
+            for cell in region_cells.get(region_id, ())
+            if cell in window
+        )
+        for region_id in passage.regions
+    ]
+    # Judged against the first region, which every other one is a side of.
+    pairs = [
+        (sides[0], other)
+        for other in sides[1:]
+        if sides[0] and other and _joined(window, frozenset(), sides[0], other)
+    ]
+    if not pairs:
+        return ()
+    return tuple(
+        group
+        for group in near
+        if any(
+            not _joined(
+                window,
+                frozenset(cell for blocker in group for cell in blocker.cells),
+                first,
+                second,
+            )
+            for first, second in pairs
+        )
+    )
+
+
+def _window(
+    grid: np.ndarray, centre: Point2, radius: float
+) -> frozenset[tuple[int, int]]:
+    """The pathable cells within ``radius`` of ``centre``."""
+
+    low_x, low_y = math.floor(centre.x - radius), math.floor(centre.y - radius)
+    high_x, high_y = math.ceil(centre.x + radius), math.ceil(centre.y + radius)
+    return frozenset(
+        (x, y)
+        for x in range(low_x, high_x + 1)
+        for y in range(low_y, high_y + 1)
+        if _pathable(grid, x, y) and _within((x, y), centre, radius)
+    )
+
+
+def _within(cell: tuple[int, int], centre: Point2, radius: float) -> bool:
+    return math.hypot(cell[0] + 0.5 - centre.x, cell[1] + 0.5 - centre.y) <= radius
+
+
+def _joined(
+    window: frozenset[tuple[int, int]],
+    blocked: frozenset[tuple[int, int]],
+    start: Collection[tuple[int, int]],
+    goal: Collection[tuple[int, int]],
+) -> bool:
+    """Whether ``start`` reaches ``goal`` inside ``window`` with ``blocked``
+    stamped out of the ground."""
+
+    targets = frozenset(goal) - blocked
+    queue = deque(cell for cell in start if cell in window and cell not in blocked)
+    seen = set(queue)
+    if not targets or not queue:
+        return False
+    while queue:
+        x, y = queue.popleft()
+        if (x, y) in targets:
+            return True
+        for dx, dy in ((-1, 0), (0, -1), (0, 1), (1, 0)):
+            other = (x + dx, y + dy)
+            if other in window and other not in blocked and other not in seen:
+                seen.add(other)
+                queue.append(other)
+    return False
+
+
 def _strips(chokes: Sequence[_Choke]) -> tuple[tuple[_Choke, ...], ...]:
     """Chokes joining the same regions through touching cells, grouped.
 
@@ -942,6 +1326,10 @@ def _validate(topology: MapTopology, expansions: tuple[Point2, ...]) -> None:
             raise ValueError("passages must connect distinct regions")
         if not set(passage.regions) <= region_ids:
             raise ValueError("a passage references an unknown region")
+        if bool(passage.blocker_tags) != (passage.blocker_type is not None):
+            raise ValueError("a blocked passage must name its blockers and their kind")
+        if passage.state != OPEN and not passage.blocker_tags:
+            raise ValueError("only a passage with blockers may be shut")
     for split in topology.region_splits:
         if split.region_id in region_ids or not set(split.into) <= region_ids:
             raise ValueError("a split region must be replaced by known sub-regions")

@@ -15,7 +15,9 @@ tagged with the passage.
 
 Distances are ground distances over the `MapTopology`: straight inside a
 region, else out through its passages, passage to passage (all pairs, once per
-map). D is the one between the two starts; E is the enemy start.
+map) -- only the passages that are open, so a mineral wall is no shortcut and
+what stands behind one is out of reach until it falls. D is the one between the
+two starts; E is the enemy start.
 
     score = -reaction + choke - exposure
 
@@ -86,22 +88,29 @@ _TOLERANCE = 1e-9
 
 
 class Ground:
-    """Ground distances over one map's topology."""
+    """Ground distances over one map's topology.
+
+    Only open passages carry distance: a mineral wall or a pile of rocks is
+    not a way through, and a base behind one is a base no army walks to. The
+    `MapView` is replaced when a passage opens, so a `Ground` built for one is
+    rebuilt for the next -- which is why the planner keys it by map identity.
+    """
 
     def __init__(self, map_view: MapView) -> None:
         topology = map_view.topology
         self.map = map_view
+        passages = topology.open_passages()
         self._xy = np.array(
-            [(passage.position.x, passage.position.y) for passage in topology.passages],
+            [(passage.position.x, passage.position.y) for passage in passages],
             dtype=float,
         ).reshape(-1, 2)
         members: dict[str, list[int]] = {}
-        for index, passage in enumerate(topology.passages):
+        for index, passage in enumerate(passages):
             for region_id in passage.regions:
                 members.setdefault(region_id, []).append(index)
         self._passages = {key: np.array(value, dtype=int) for key, value in members.items()}
         # Passage to passage through the regions they share, then all pairs.
-        count = len(topology.passages)
+        count = len(passages)
         steps = np.full((count, count), np.inf)
         np.fill_diagonal(steps, 0.0)
         for indices in self._passages.values():
@@ -122,8 +131,10 @@ class Ground:
         self._owned = np.array(
             [index for index, region in enumerate(region_of) if region is not None], dtype=int
         )
-        # The regions the enemy start reaches, and reaches with each passage closed.
-        links = dict(topology.adjacency)
+        # The regions the enemy start reaches, and reaches with each passage
+        # closed -- over the passages that are open, since a shut one guards
+        # nothing that is not already guarded.
+        links = dict(topology.open_adjacency())
         enemy = topology.enemy_start_region
         self.open: frozenset[str] = frozenset() if enemy is None else reached(links, enemy)
         self.cut: dict[str, frozenset[str]] = (
@@ -131,7 +142,7 @@ class Ground:
             if enemy is None
             else {
                 passage.passage_id: reached(links, enemy, closed=passage.passage_id)
-                for passage in topology.passages
+                for passage in passages
             }
         )
 
@@ -247,11 +258,14 @@ def evaluate(
         return None, NO_ENEMY_ROUTE
 
     base_regions = {region for _, region, _ in located}
-    doorstep = {enemy, *(neighbour for neighbour, _ in topology.neighbours(enemy))}
+    doorstep = {
+        enemy,
+        *(neighbour for neighbour, _ in topology.neighbours(enemy, open_only=True)),
+    }
     relevant = base_regions | {
         neighbour
         for region in base_regions
-        for neighbour, _ in topology.neighbours(region)
+        for neighbour, _ in topology.neighbours(region, open_only=True)
         if neighbour not in doorstep
     }
     rows = sorted(
@@ -280,7 +294,7 @@ def evaluate(
     passages: list[str | None] = [None] * len(indices)
     choke = np.zeros(len(indices))
     row_of = {int(index): row for row, index in enumerate(indices)}
-    for passage in topology.passages:
+    for passage in topology.open_passages():
         cut = ground.cut.get(passage.passage_id, ground.open)
         guarded = sum(1 for _, region, _ in located if region in ground.open and region not in cut)
         sides = [region for region in sorted(passage.regions) if region in relevant]

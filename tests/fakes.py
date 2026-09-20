@@ -359,6 +359,10 @@ class FakeBot:
         self.enemy_structures: list[FakeUnit] = []
         self.townhalls: list[FakeUnit] = []
         self.mineral_field: list[FakeUnit] = []
+        # The neutral objects that can close a passage, and the resources the
+        # game already counted as an expansion's -- the rest are walls.
+        self.destructables: list[FakeUnit] = []
+        self.expansion_locations_dict: dict[Point2, list[FakeUnit]] = {}
         self.state = SimpleNamespace(
             dead_units=set(),
             visibility=SimpleNamespace(data_numpy=np.zeros((SIZE, SIZE), dtype=np.uint8)),
