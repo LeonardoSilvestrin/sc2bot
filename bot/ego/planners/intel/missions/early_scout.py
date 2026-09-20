@@ -2,18 +2,27 @@
 
 One operation with a lifecycle of its own: the scout checks the enemy natural
 on the way in, laps the main for production, gas, tech and units, comes back to
-the natural it found empty to close the window it went up in, and tries to
-confirm the third while a third still says something about the opening. At any
-point the Intel planner can send it looking for a proxy instead.
+the natural it found empty to close the window it went up in, tries to confirm
+the third, and then keeps watching until the opening is over. At any point the
+Intel planner can send it looking for a proxy instead.
 
 ```text
 REQUESTING -> CHECK_NATURAL -> ENTER_MAIN -> CIRCLE_MAIN -> RECHECK_NATURAL
-           -> CHECK_THIRD -> COMPLETE          (PROXY_SEARCH whenever asked)
+           -> CHECK_THIRD -> SURVEIL -> COMPLETE   (PROXY_SEARCH whenever asked)
 ```
 
 The sequence adapts to what is found: a natural that was already standing is
 not rechecked, a main that cannot be entered is not lapped forever, and a
 phase that stops being worth its time hands over to the next one.
+
+`SURVEIL` is the one phase that does not end by itself. An empty third is an
+answer with a shelf life -- it says nothing about the third that goes up two
+minutes later -- so instead of parking on it, the scout walks a round of the
+places worth watching: the natural, the third, the way out of the enemy main
+and the main itself. It always heads for whichever of them it has looked at
+least recently, which turns into a rotation, rechecks both expansions on its
+own and keeps production, tech, gas and what leaves the base coming in. Only
+the end of the opening window closes it.
 
 The mission records nothing. What it makes visible, Attention records
 (`bot.attention.opening`), which is what the phases then read.
@@ -48,6 +57,8 @@ class ScoutPhase(str, Enum):
     CIRCLE_MAIN = "CIRCLE_MAIN"
     RECHECK_NATURAL = "RECHECK_NATURAL"
     CHECK_THIRD = "CHECK_THIRD"
+    # Keeps watching what was already answered; ends with the opening itself.
+    SURVEIL = "SURVEIL"
     PROXY_SEARCH = "PROXY_SEARCH"
     COMPLETE = "COMPLETE"
 
@@ -67,6 +78,9 @@ class ScoutWindow:
     search_for: float = 60.0
     # And the longest that walk may take before the phase gives up on it.
     travel_for: float = 75.0
+    # Longest the patrol waits on one place before going round to the next:
+    # a place it cannot reach does not hold up the round.
+    surveil_step: float = 20.0
     # A third found after this game time says nothing about the opening any
     # more, and after this one the opening is over: both are clock readings,
     # not durations, because that is what an opening is measured in.
@@ -85,6 +99,7 @@ PHASE_PRIORITY: dict[ScoutPhase, float] = {
     ScoutPhase.CIRCLE_MAIN: 0.9,
     ScoutPhase.RECHECK_NATURAL: 0.8,
     ScoutPhase.CHECK_THIRD: 0.6,
+    ScoutPhase.SURVEIL: 0.5,
     ScoutPhase.PROXY_SEARCH: 1.0,
     ScoutPhase.COMPLETE: 0.0,
 }
@@ -100,6 +115,7 @@ class EarlyScoutMission:
         natural: Point2 | None = None,
         third: Point2 | None = None,
         proxy_route: tuple[Point2, ...] = (),
+        watchpoints: tuple[Point2, ...] = (),
         window: ScoutWindow | None = None,
     ) -> None:
         self.lifecycle = Lifecycle(mission_id)
@@ -108,6 +124,15 @@ class EarlyScoutMission:
         self.natural = natural
         self.third = third
         self.proxy_route = proxy_route
+        # The round the surveillance walks: both expansions first, then the
+        # ways out of the enemy main, then the main itself.
+        self.ring = tuple(
+            dict.fromkeys(
+                point
+                for point in (natural, third, *watchpoints, *route[1:])
+                if point is not None
+            )
+        )
         self.window = window or ScoutWindow()
         self.phase = ScoutPhase.REQUESTING
         self.previous: ScoutPhase | None = None
@@ -122,6 +147,11 @@ class EarlyScoutMission:
         self._target: Point2 | None = None
         # When the scout first reached what this phase sent it to.
         self._arrived: float | None = None
+        # When each place of the round was last looked at, and the one the
+        # patrol is walking to now.
+        self._seen: list[float] = [now] * len(self.ring)
+        self._watching: int | None = None
+        self._watching_since = now
 
     @property
     def mission_id(self) -> str:
@@ -172,6 +202,7 @@ class EarlyScoutMission:
         if now >= self.window.until:
             return self._end(MissionStatus.COMPLETED, "opening_over", now)
         self._note_arrival(attention, feedback)
+        self._look_around(attention)
         self._advance(attention, seen)
         if self.phase is ScoutPhase.COMPLETE:
             return self._end(MissionStatus.COMPLETED, self.reason, now)
@@ -218,6 +249,8 @@ class EarlyScoutMission:
                 ("proxy_ordered", -1.0 if self.proxy_ordered is None else self.proxy_ordered),
                 ("proxy_index", float(self._proxy_index)),
                 ("proxy_points", float(len(self.proxy_route))),
+                ("watching", -1.0 if self._watching is None else float(self._watching)),
+                ("watchpoints", float(len(self.ring))),
             ),
         )
 
@@ -312,12 +345,19 @@ class EarlyScoutMission:
                 return (ScoutPhase.CHECK_THIRD, "recheck_timed_out")
             return None
         if phase is ScoutPhase.CHECK_THIRD:
+            # Whatever the third answered, the answer has a shelf life: the
+            # scout keeps watching instead of standing on it.
             if self.third is None:
-                return (ScoutPhase.COMPLETE, "no_third_known")
+                return (ScoutPhase.SURVEIL, "no_third_known")
             if opening.third.status is ExpansionStatus.PRESENT:
-                return (ScoutPhase.COMPLETE, "third_found")
+                return (ScoutPhase.SURVEIL, "third_found")
+            if opening.third.status is ExpansionStatus.ABSENT_CONFIRMED:
+                return (ScoutPhase.SURVEIL, "third_empty")
             if now >= self.window.third_until:
-                return (ScoutPhase.COMPLETE, "third_window_over")
+                return (ScoutPhase.SURVEIL, "third_window_over")
+            return None
+        if phase is ScoutPhase.SURVEIL:
+            # The round has no end of its own: the opening window closes it.
             return None
         if phase is ScoutPhase.PROXY_SEARCH:
             self._proxy_index = _walked(self.proxy_route, self._proxy_index, attention)
@@ -368,12 +408,42 @@ class EarlyScoutMission:
             return self.route[min(unseen)] if unseen else self.route[0]
         if phase is ScoutPhase.CHECK_THIRD:
             return self.third or self.route[0]
+        if phase is ScoutPhase.SURVEIL:
+            return self._patrol(attention)
         if phase is ScoutPhase.PROXY_SEARCH:
             self._proxy_index = _walked(self.proxy_route, self._proxy_index, attention)
             if self._proxy_index < len(self.proxy_route):
                 return self.proxy_route[self._proxy_index]
             return None
         return None
+
+    def _look_around(self, attention: AttentionState) -> None:
+        """Everything the round can see right now has just been looked at."""
+
+        now = attention.time
+        for index, point in enumerate(self.ring):
+            if attention.is_visible(point):
+                self._seen[index] = now
+
+    def _patrol(self, attention: AttentionState) -> Point2 | None:
+        """The place of the round looked at least recently. Picking by
+        staleness is what turns the round into a rotation: a place just seen
+        goes to the back, so the scout never stands on an answer it already
+        has, and the natural and the third come round again on their own."""
+
+        if not self.ring:
+            return self.route[0]
+        now = attention.time
+        index = self._watching
+        looked = index is not None and self._seen[index] >= self._watching_since
+        gave_up = index is not None and now - self._watching_since >= self.window.surveil_step
+        if index is not None and gave_up and not looked:
+            # It could not get there; that does not hold up the round.
+            self._seen[index] = now
+        if index is None or looked or gave_up:
+            self._watching = min(range(len(self.ring)), key=lambda at: (self._seen[at], at))
+            self._watching_since = now
+        return self.ring[self._watching]
 
     def _priority(self, seen: Set[int]) -> float:
         base = PHASE_PRIORITY[self.phase]

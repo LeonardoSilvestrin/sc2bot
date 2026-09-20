@@ -35,6 +35,7 @@ from bot.ego.planners.intel import (
     IntelPlanner,
     ScoutPhase,
     ScoutWindow,
+    enemy_exits,
     proxy_route,
     scout_window,
     scouting_route,
@@ -465,6 +466,7 @@ def mission(now: float = 50.0, **kwargs) -> EarlyScoutMission:
         natural=ENEMY_NATURAL,
         third=ENEMY_THIRD,
         proxy_route=proxy_route(OPENING_MAP),
+        watchpoints=enemy_exits(OPENING_MAP),
         **kwargs,
     )
 
@@ -499,7 +501,7 @@ def test_the_scout_asks_for_an_scv_and_checks_the_natural_before_the_main() -> N
     )
 
 
-def test_the_lifecycle_walks_the_whole_opening_and_completes_on_the_third() -> None:
+def test_the_lifecycle_walks_the_whole_opening_and_then_keeps_watching() -> None:
     watch = OpeningWatch()
     scout = mission()
     main = [LATTICE[index] for index in ENEMY_MAIN]
@@ -533,12 +535,130 @@ def test_the_lifecycle_walks_the_whole_opening_and_completes_on_the_third() -> N
         200.0, visible=(ENEMY_THIRD,), enemy=(structure(8, UnitTypeId.NEXUS, ENEMY_THIRD),)
     )
     assert (scout.phase, scout.status, scout.reason) == (
-        ScoutPhase.COMPLETE,
-        MissionStatus.COMPLETED,
+        ScoutPhase.SURVEIL,
+        MissionStatus.ACTIVE,
         "third_found",
     )
-    assert step(scout, scouting(210.0)) == ()
+
+    # The round runs until the opening is over, and then it is over.
+    assert step(scout, scouting(scout.window.until)) == ()
+    assert (scout.status, scout.reason) == (MissionStatus.COMPLETED, "opening_over")
+    assert step(scout, scouting(310.0)) == ()
     assert phases[0] is ScoutPhase.CHECK_NATURAL
+
+
+def walk_to_the_third(scout: EarlyScoutMission, watch: OpeningWatch):
+    """Drive a mission to CHECK_THIRD the way a game would, and hand back the
+    step that keeps driving it."""
+
+    def advance(time: float, *, visible=(), enemy=(), seen=frozenset()):
+        state = scouting(time, visible=visible, enemy=enemy)
+        return step(scout, replace(state, enemy_opening=watch.observe(state)), seen)
+
+    nexus = structure(7, UnitTypeId.NEXUS, ENEMY_NATURAL)
+    advance(51.0)
+    # The natural was already standing, so there is nothing to recheck.
+    advance(91.0, visible=(ENEMY_NATURAL,), enemy=(nexus,))
+    advance(100.0, visible=(MAP.enemy_start,))
+    advance(130.0, seen=frozenset(range(len(scout.route))))
+    assert scout.phase is ScoutPhase.CHECK_THIRD
+    return advance
+
+
+def test_an_empty_third_starts_the_round_instead_of_parking_on_it() -> None:
+    watch, scout = OpeningWatch(), mission()
+    advance = walk_to_the_third(scout, watch)
+
+    # It gets to the third and finds nothing there.
+    (looking,) = advance(150.0, visible=(ENEMY_THIRD,))
+
+    assert (scout.phase, scout.reason) == (ScoutPhase.SURVEIL, "third_empty")
+    assert watch.observations.third.status is ExpansionStatus.ABSENT_CONFIRMED
+    # An answer it already has is not worth standing on.
+    assert looking.target != ENEMY_THIRD
+    assert looking.target in scout.ring
+
+
+def test_the_round_comes_back_to_the_third_and_never_stands_still() -> None:
+    watch = OpeningWatch()
+    scout = mission(window=replace(ScoutWindow(), surveil_step=5.0))
+    advance = walk_to_the_third(scout, watch)
+    (looking,) = advance(150.0, visible=(ENEMY_THIRD,))
+
+    # Every place it is sent to, it reaches: the round rotates.
+    targets = []
+    time = 150.0
+    for _ in range(10):
+        time += 5.0
+        (looking,) = advance(time, visible=(looking.target,))
+        targets.append(looking.target)
+
+    # It reaches the last place it was sent to as well.
+    advance(time + 5.0, visible=(looking.target,))
+
+    assert set(targets) <= set(scout.ring)
+    assert all(before != after for before, after in zip(targets, targets[1:], strict=False))
+    # Both expansions come round again on their own ...
+    assert ENEMY_THIRD in targets and ENEMY_NATURAL in targets
+    # ... and looking again is what the record keeps.
+    assert watch.observations.third.last_checked_at > 150.0
+    assert scout.status is MissionStatus.ACTIVE
+
+
+def test_a_place_the_round_cannot_reach_does_not_hold_it_up() -> None:
+    watch = OpeningWatch()
+    scout = mission(window=replace(ScoutWindow(), surveil_step=5.0))
+    advance = walk_to_the_third(scout, watch)
+    (looking,) = advance(150.0, visible=(ENEMY_THIRD,))
+    blocked = looking.target
+
+    # Nothing ever comes into vision: it waits its step and goes round anyway.
+    assert advance(153.0)[0].target == blocked
+    assert advance(156.0)[0].target != blocked
+
+
+def test_what_shows_up_after_the_first_check_is_still_recorded() -> None:
+    watch = OpeningWatch()
+    scout = mission(window=replace(ScoutWindow(), surveil_step=5.0))
+    advance = walk_to_the_third(scout, watch)
+    advance(150.0, visible=(ENEMY_THIRD,))
+    assert scout.phase is ScoutPhase.SURVEIL
+
+    # A Stargate goes up in the main, and the third finally appears.
+    advance(200.0, visible=(MAP.enemy_start,),
+            enemy=(structure(20, UnitTypeId.STARGATE, MAP.enemy_start),))
+    advance(230.0, visible=(ENEMY_THIRD,),
+            enemy=(structure(21, UnitTypeId.NEXUS, ENEMY_THIRD),))
+
+    observed = watch.observations
+    assert observed.structure(UnitTypeId.STARGATE).first_seen_at == 200.0
+    assert observed.third.status is ExpansionStatus.PRESENT
+    assert observed.third.appeared_between == (150.0, 230.0)
+    # The patrol goes on; the read of it is Awareness' job.
+    assert scout.status is MissionStatus.ACTIVE
+    assert read_opening(observed, now=230.0).tech > 0.0
+
+
+def test_the_round_ends_with_the_opening_window() -> None:
+    watch = OpeningWatch()
+    scout = mission()
+    advance = walk_to_the_third(scout, watch)
+    advance(150.0, visible=(ENEMY_THIRD,))
+    assert scout.phase is ScoutPhase.SURVEIL
+
+    assert advance(scout.window.until - 1.0) != ()
+    assert advance(scout.window.until) == ()
+    assert (scout.status, scout.reason) == (MissionStatus.COMPLETED, "opening_over")
+    assert scout.report().phase == ScoutPhase.COMPLETE.value
+
+
+def test_the_round_walks_the_expansions_the_way_out_and_the_main() -> None:
+    scout = mission()
+    exits = enemy_exits(OPENING_MAP)
+
+    assert exits and set(exits) <= set(scout.ring)
+    assert scout.ring[:2] == (ENEMY_NATURAL, ENEMY_THIRD)
+    assert set(scouting_route(OPENING_MAP)[1:]) <= set(scout.ring)
 
 
 def test_a_natural_already_standing_is_not_rechecked() -> None:
@@ -587,7 +707,8 @@ def test_a_scout_that_never_reaches_the_main_still_moves_on() -> None:
     step(scout, scouting(84.0))
     assert (scout.phase, scout.reason) == (ScoutPhase.CHECK_THIRD, "lap_timed_out")
     step(scout, scouting(201.0))
-    assert (scout.status, scout.reason) == (MissionStatus.COMPLETED, "third_window_over")
+    assert (scout.phase, scout.reason) == (ScoutPhase.SURVEIL, "third_window_over")
+    assert scout.status is MissionStatus.ACTIVE
 
 
 def test_the_scout_fails_when_its_scv_is_lost_and_ends_when_the_opening_does() -> None:

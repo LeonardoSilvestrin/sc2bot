@@ -110,7 +110,7 @@ def parse_local_args(args=None):
     parser.add_argument(
         "--ai-build",
         choices=[build.name for build in AIBuild],
-        default="Macro",
+        default="Rush",
         help="Build of the built-in AI (default: %(default)s).",
     )
     local_args, _ = parser.parse_known_args(args)

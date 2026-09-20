@@ -56,6 +56,7 @@ class IntelPlanner:
         self.detection = Detection(detection_config)
         self.route: tuple[Point2, ...] = ()
         self.proxy_route: tuple[Point2, ...] = ()
+        self.exits: tuple[Point2, ...] = ()
         self.seen: set[int] = set()
         self.mission: EarlyScoutMission | None = None
         self.finished: str | None = None
@@ -124,6 +125,7 @@ class IntelPlanner:
         if not self.route:
             self.route = scouting_route(attention.map)
             self.proxy_route = proxy_route(attention.map)
+            self.exits = enemy_exits(attention.map)
         now = attention.time
         self.seen.update(
             index for index, point in enumerate(self.route) if attention.is_visible(point)
@@ -143,6 +145,7 @@ class IntelPlanner:
                 natural=attention.map.enemy_natural,
                 third=attention.map.enemy_third,
                 proxy_route=self.proxy_route,
+                watchpoints=self.exits,
                 window=scout_window(attention),
             )
             self.mission = mission
@@ -202,6 +205,21 @@ def intel_focus(posture: StrategicPosture) -> str:
     if posture.offensive:
         return OFFENSE
     return ECONOMY
+
+
+def enemy_exits(map_view: MapView, limit: int = 2) -> tuple[Point2, ...]:
+    """The ways out of the enemy main: the passages of its region, widest
+    first. What leaves their base crosses one of these, so they are worth
+    coming back to while the opening lasts."""
+
+    topology = map_view.topology
+    region = topology.enemy_start_region
+    if region is None:
+        return ()
+    wanted = {passage_id for _, passage_id in topology.neighbours(region)}
+    passages = [passage for passage in topology.passages if passage.passage_id in wanted]
+    passages.sort(key=lambda passage: (-(passage.width or 0.0), passage.passage_id))
+    return tuple(passage.position for passage in passages[:limit])
 
 
 def scouting_route(map_view: MapView) -> tuple[Point2, ...]:

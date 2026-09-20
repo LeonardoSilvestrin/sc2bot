@@ -52,7 +52,7 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--maps", nargs="+", default=list(DEFAULT_MAPS))
     run.add_argument("--races", nargs="+", default=list(DEFAULT_RACES))
     run.add_argument("--difficulties", nargs="+", default=["VeryHard"])
-    run.add_argument("--ai-builds", nargs="+", default=["Macro"])
+    run.add_argument("--ai-builds", nargs="+", default=["Rush"])
     run.add_argument(
         "--armies", nargs="+", default=None, help="army styles (default: the bot draws)"
     )

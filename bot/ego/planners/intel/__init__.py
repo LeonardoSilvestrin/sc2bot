@@ -26,6 +26,7 @@ from .planner import (
     SCOUT_AT_WORKERS,
     START_BY,
     IntelPlanner,
+    enemy_exits,
     scout_window,
     scouting_route,
 )
@@ -50,6 +51,7 @@ __all__ = [
     "START_BY",
     "ScoutPhase",
     "ScoutWindow",
+    "enemy_exits",
     "proxy_route",
     "scout_window",
     "scouting_route",
