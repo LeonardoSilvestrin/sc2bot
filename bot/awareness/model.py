@@ -17,6 +17,11 @@ is its uncertainty.
 A contact remembers whether it was cloaked or burrowed, and whether nothing
 could shoot it when last seen; Awareness also remembers when an enemy army unit
 was first seen cloaked.
+
+The opening is believed apart from all of this: `opening` reads what Attention
+recorded of the enemy's first minutes (`bot.attention.opening`) into continuous
+aggression, greed, tech and proxy scores with a confidence -- see
+`bot.awareness.opening`.
 """
 
 from __future__ import annotations
@@ -31,6 +36,7 @@ from sc2.position import Point2
 from bot.attention import AttentionState, BaseView, UnitView, is_army
 
 from .field import InfluenceField, Source, build_field
+from .opening import OpeningBelief, OpeningBeliefConfig, read_opening
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,6 +73,8 @@ class AwarenessConfig:
     field_sigma: float = 7.0
     # Presence a structure lends the field, in Marines.
     structure_presence: float = 0.5
+    # How the enemy's opening is read; see bot/awareness/opening.
+    opening: OpeningBeliefConfig = field(default_factory=OpeningBeliefConfig)
 
     def __post_init__(self) -> None:
         for name in (
@@ -205,6 +213,8 @@ class AwarenessState:
     # The seen enemy power by unit type, (type, power), heaviest first: what
     # the believed army is made of.
     seen_enemy_types: tuple[tuple[UnitTypeId, float], ...] = ()
+    # What the enemy's opening looks like, from what the early game showed.
+    opening: OpeningBelief = OpeningBelief()
 
     @property
     def estimated_enemy_power(self) -> float:
@@ -304,6 +314,7 @@ class AwarenessModel:
             ),
             cloak_seen_at=self._cloak_seen_at,
             seen_enemy_types=seen_types,
+            opening=read_opening(attention.enemy_opening, attention.time, config.opening),
         )
 
     def _remember(self, attention: AttentionState) -> tuple[Contact, ...]:

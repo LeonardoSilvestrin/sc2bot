@@ -7,6 +7,13 @@ from .model import (
     Contact,
     ThreatIncident,
 )
+from .opening import (
+    OpeningBelief,
+    OpeningBeliefConfig,
+    OpeningExpectations,
+    expectations_for,
+    read_opening,
+)
 
 __all__ = [
     "AwarenessConfig",
@@ -15,9 +22,14 @@ __all__ = [
     "BaseThreat",
     "Contact",
     "InfluenceField",
+    "OpeningBelief",
+    "OpeningBeliefConfig",
+    "OpeningExpectations",
     "Source",
     "ThreatIncident",
     "accumulate",
+    "expectations_for",
     "kernel",
+    "read_opening",
     "saturate",
 ]

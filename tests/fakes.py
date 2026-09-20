@@ -8,10 +8,11 @@ from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
+from sc2.data import Race
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
-from bot.attention import AttentionState, BaseView, MapView, UnitView
+from bot.attention import AttentionState, BaseView, MapView, OpeningObservations, UnitView
 from bot.attention.topology import MapPassage, MapRegion, MapTopology
 from bot.ego.planners import Command, Proposal
 
@@ -109,6 +110,8 @@ def attention(
     opening_done: bool = True,
     map_view: MapView = MAP,
     tech_ready=(),
+    enemy_race: Race = Race.NoRace,
+    enemy_opening: OpeningObservations | None = None,
 ) -> AttentionState:
     def by_tag(items) -> tuple:
         return tuple(sorted(items, key=lambda item: item.tag))
@@ -132,6 +135,8 @@ def attention(
         map=map_view,
         visibility=visibility,
         tech_ready=frozenset(tech_ready),
+        enemy_race=enemy_race,
+        enemy_opening=enemy_opening or OpeningObservations(),
     )
 
 
@@ -346,8 +351,8 @@ class FakeBot:
         self.vespene = 100
         self.supply_used = 30.0
         self.supply_cap = 46.0
-        self.race = "Race.Terran"
-        self.enemy_race = "Race.Zerg"
+        self.race = Race.Terran
+        self.enemy_race = Race.Zerg
         self.units: list[FakeUnit] = []
         self.structures: list[FakeUnit] = []
         self.enemy_units: list[FakeUnit] = []

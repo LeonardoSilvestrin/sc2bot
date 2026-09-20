@@ -1,1 +1,1 @@
-"""Intel's continuous decision rules: detection and the sensor barrier."""
+"""Intel's continuous decision rules: detection, proxy places and the sensor barrier."""

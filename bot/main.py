@@ -18,7 +18,7 @@ from time import perf_counter
 from ares import AresBot
 from sc2.data import Result
 
-from bot.attention import AttentionState, MapView, observe, read_map
+from bot.attention import AttentionState, MapView, OpeningWatch, observe, read_map
 from bot.awareness import AwarenessModel, AwarenessState
 from bot.body import behaviors
 from bot.body.behaviors.attack import MicroReport
@@ -50,6 +50,8 @@ class Layers:
     logs: Logs
     # Chosen once, in `on_start`.
     army: ArmyStyle = BIO
+    # The one thing Attention carries between frames: the opening record.
+    opening: OpeningWatch = field(default_factory=OpeningWatch)
     composition: CompositionPolicy = field(init=False)
     investment: InvestmentConfig = field(default_factory=InvestmentConfig)
     awareness: AwarenessModel = field(default_factory=AwarenessModel)
@@ -115,7 +117,7 @@ class Frame:
 
 def play_frame(bot, iteration: int, layers: Layers) -> Frame:
     laps = _Laps()
-    attention = observe(bot, iteration, layers.map_view)
+    attention = observe(bot, iteration, layers.map_view, layers.opening)
     laps.mark("attention")
     awareness = layers.awareness.infer(attention)
     laps.mark("awareness")

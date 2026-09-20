@@ -476,6 +476,24 @@ def _panel(
                 f"p{base.pressure:.1f} c{base.cover:.1f}",
             )
         )
+    opening = awareness.opening
+    if opening.observed:
+        natural = attention.enemy_opening.natural
+        rows += [
+            ("panel", ""),
+            ("head", f"OPENING {opening.race.name}"),
+            (
+                "panel",
+                f"Aggr {opening.aggression:.2f}  Greed {opening.greed:.2f}"
+                f"  Tech {opening.tech:.2f}",
+            ),
+            (
+                "panel",
+                f"Proxy {opening.proxy:.2f}  Conf {opening.confidence:.2f}"
+                f"  Cov {attention.enemy_opening.main_scout_coverage:.2f}",
+            ),
+            ("panel", f"Natural {natural.status.value}"),
+        ]
     topology = attention.map.topology
     candidates = topology.choke_candidates
     accepted = sum(candidate.accepted for candidate in candidates)

@@ -214,6 +214,9 @@
       ownPower: seriesTrack("awareness.own_power", "Power own", "Awareness", { min: 0, format: 1 }),
       enemyPower: seriesTrack("awareness.enemy_power", "Power enemy", "Awareness", { min: 0, format: 1 }),
       contacts: seriesTrack("awareness.contacts", "Contacts", "Awareness", { min: 0, format: 0 }),
+      openingAggression: seriesTrack("awareness.opening_aggression", "Opening aggression", "Awareness", { min: 0, max: 1, format: 2 }),
+      openingGreed: seriesTrack("awareness.opening_greed", "Opening greed", "Awareness", { min: 0, max: 1, format: 2 }),
+      openingProxy: seriesTrack("awareness.opening_proxy", "Opening proxy", "Awareness", { min: 0, max: 1, format: 2 }),
       economy: stateTrack("behaviors.economy", "Economy plan", "Behaviors"),
       coreUnits: seriesTrack("engine.units.core_army", "Units core army", "Engine", { min: 0, format: 0 }),
       defenseUnits: seriesTrack("engine.units.defense", "Units defense", "Engine", { min: 0, format: 0 }),
@@ -226,6 +229,7 @@
     const proposals = intervals();
     const commands = intervals();
     const awarenessRecords = [];
+    const openingRecords = [];
     const strategyRecords = [];
     const attentionRecords = [];
     let strategySeen = false;
@@ -262,6 +266,12 @@
           pushSeries(t.enemyPower, time, data.enemy_power);
           pushSeries(t.contacts, time, data.contacts);
           awarenessRecords.push({ t: time, record });
+          break;
+        case "awareness.opening_updated":
+          pushSeries(t.openingAggression, time, data.belief?.aggression);
+          pushSeries(t.openingGreed, time, data.belief?.greed);
+          pushSeries(t.openingProxy, time, data.belief?.proxy);
+          openingRecords.push({ t: time, record });
           break;
         case "attention.observed":
           pushSeries(t.supply, time, data.supply_used);
@@ -319,6 +329,7 @@
       proposalTracks,
       commandTracks,
       awarenessRecords,
+      openingRecords,
       strategyRecords,
       attentionRecords,
       strategy: { available: strategySeen },
@@ -356,6 +367,7 @@
       strategy: posture ? { ...(posture.lastDetail ?? posture.detail), since: posture.t } : undefined,
       strategyRecord: recordAt(model.strategyRecords, time),
       awarenessRecord: recordAt(model.awarenessRecords, time),
+      openingRecord: recordAt(model.openingRecords, time),
       attentionRecord: recordAt(model.attentionRecords, time),
       danger: valueAt(t.danger, time),
       ownPower: valueAt(t.ownPower, time),

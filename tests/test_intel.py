@@ -10,7 +10,7 @@ from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 from scipy.ndimage import label
 
-from bot.attention import BaseView
+from bot.attention import BaseView, OpeningWatch
 from bot.attention.map import read_map
 from bot.awareness import AwarenessModel
 from bot.body import behaviors
@@ -18,7 +18,12 @@ from bot.body.behaviors import intel as intel_behavior
 from bot.body.behaviors import sensor_towers as sensor_tower_behavior
 from bot.body.engine import Engine
 from bot.ego.planners import Command, EconomyPlan, Proposal, StructurePlan, intel
-from bot.ego.planners.intel import DetectionConfig, IntelPlanner, scouting_route
+from bot.ego.planners.intel import (
+    DetectionConfig,
+    IntelPlanner,
+    ScoutPhase,
+    scouting_route,
+)
 from bot.ego.planners.intel.policies.sensor_towers import MIN_BASES, RADAR_RADIUS
 from bot.ego.strategy import StrategicPosture, StrategyModel
 
@@ -88,14 +93,15 @@ def test_no_scout_before_the_mineral_line_grows() -> None:
     assert intel_step(IntelPlanner(), state).proposals == ()
 
 
-def test_the_scout_asks_for_one_scv_and_goes_to_the_enemy_start_first() -> None:
+def test_the_scout_asks_for_one_scv_and_checks_the_natural_first() -> None:
     (proposal,) = intel_step(IntelPlanner(), frame(50.0)).proposals
 
     assert proposal.owner == intel.OWNER
     assert proposal.command is Command.SCOUT
     assert proposal.count == 1
     assert proposal.unit_types == frozenset({UnitTypeId.SCV})
-    assert proposal.target == MAP.enemy_start
+    # The enemy natural is the first answer worth having, main second.
+    assert proposal.target == MAIN_MAP.enemy_natural
     assert proposal.priority == 1.0
 
 
@@ -112,23 +118,41 @@ def test_the_route_laps_the_edge_of_the_enemy_main() -> None:
     ) == (MAP.enemy_start,)
 
 
-def test_the_scout_follows_the_route_as_it_comes_into_vision_then_goes_home() -> None:
+def opening_frame(watch: OpeningWatch, time: float, **kwargs):
+    """A frame whose opening record is what a scout has seen so far."""
+
+    state = frame(time, **kwargs)
+    return replace(state, enemy_opening=watch.observe(state))
+
+
+def test_the_scout_laps_the_main_by_what_is_still_unseen() -> None:
     model = IntelPlanner()
+    watch = OpeningWatch()
     route = scouting_route(MAIN_MAP)
     scout = scv(100, 50, 50, role=SCOUTING)
 
     intel_step(model, frame(50.0))
+    # The natural was checked and the main entered: the lap begins.
+    intel_step(model, opening_frame(watch, 60.0, own_units=(scout,),
+                                    visible=(MAIN_MAP.enemy_natural,)))
     (proposal,) = intel_step(
-        model, frame(60.0, own_units=(scout,), visible=route[:2])
+        model, opening_frame(watch, 61.0, own_units=(scout,), visible=route[:2])
     ).proposals
-    assert proposal.target == route[2]
-    assert proposal.reason == "lap_enemy_main"
-    assert proposal.priority == (len(route) - 2) / len(route)
 
-    assert not intel_step(
-        model, frame(70.0, own_units=(scout,), visibility=seen_everywhere())
+    assert model.mission.phase is ScoutPhase.CIRCLE_MAIN
+    assert proposal.target == route[2]
+    assert proposal.reason == "circle_main"
+
+    # The lap is done, but the natural was just looked at: it keeps circling.
+    intel_step(model, opening_frame(watch, 70.0, own_units=(scout,), visibility=seen_everywhere()))
+    assert model.mission.phase is ScoutPhase.CIRCLE_MAIN
+
+    # Once an expansion could have gone up there, it walks back to look again.
+    (recheck,) = intel_step(
+        model, opening_frame(watch, 100.0, own_units=(scout,), visible=route)
     ).proposals
-    assert model.finished == "route_seen"
+    assert model.mission.phase is ScoutPhase.RECHECK_NATURAL
+    assert recheck.target == MAIN_MAP.enemy_natural
 
 
 def test_a_lost_scout_is_not_replaced() -> None:
@@ -141,15 +165,16 @@ def test_a_lost_scout_is_not_replaced() -> None:
     assert not intel_step(model, frame(61.0, own_units=(scv(101),))).proposals
 
 
-def test_a_scout_that_cannot_finish_the_lap_goes_home() -> None:
+def test_a_scout_that_runs_out_of_opening_ends_with_it() -> None:
     model = IntelPlanner()
     scout = scv(100, role=SCOUTING)
     intel_step(model, frame(50.0, own_units=(scout,)))
+    window = model.mission.window
 
     assert not intel_step(
-        model, frame(50.0 + intel.LAP_TIMEOUT, own_units=(scout,))
+        model, frame(50.0 + window.until, own_units=(scout,))
     ).proposals
-    assert model.finished == "lap_timed_out"
+    assert model.finished == "opening_over"
 
 
 def test_no_scout_once_the_early_game_is_over() -> None:
@@ -470,7 +495,7 @@ def test_no_scout_sets_out_while_home_is_defended() -> None:
     assert intel_step(planner, frame(50.0), StrategicPosture.DEFEND).proposals == ()
     assert planner.mission is None
     (proposal,) = intel_step(planner, frame(51.0)).proposals
-    assert proposal.mission_id == "intel:scout:1"
+    assert proposal.mission_id == "intel:early_scout:1"
 
 
 @pytest.mark.parametrize(

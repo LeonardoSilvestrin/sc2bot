@@ -429,6 +429,10 @@ const NARRATIVE_EVENTS = new Set([
   "planner.map_control_planned",
   "planner.offense_planned",
   "mission.updated",
+  "opening_scout.phase_changed",
+  "opening_scout.proxy_search_started",
+  "opening_scout.expansion_checked",
+  "awareness.opening_updated",
   "planner.economy_planned",
   "engine.commanded",
   "logs.snapshot_failed",
@@ -519,6 +523,16 @@ function fieldsFor(record) {
       return mapControlText(d);
     case "planner.offense_planned":
       return `stage=${d.stage} previous=${d.previous} blocked_by=${d.blocked_by ?? "—"} target=${d.target_kind ?? "—"} ${xy(d.target)} committed=${fmt(d.committed_power, 1)}${d.mission_id ? ` mission=${d.mission_id} ${d.mission_status}` : ""}`;
+    case "awareness.opening_updated":
+      return d.summary ?? `race=${d.race} aggression=${fmt(d.belief?.aggression)} greed=${fmt(d.belief?.greed)} tech=${fmt(d.belief?.tech)} proxy=${fmt(d.belief?.proxy)} confidence=${fmt(d.belief?.confidence)}`;
+    case "opening_scout.phase_changed":
+      return `${d.previous ?? "—"} -> ${d.phase} (${d.reason}) ${d.status} target=${xy(d.target)}`;
+    case "opening_scout.proxy_search_started":
+      return `proxy search (${d.reason}) target=${xy(d.target)}`;
+    case "opening_scout.expansion_checked":
+      return `${d.expansion}: ${d.previous} -> ${d.status}${d.appeared_between ? ` between ${fmt(d.appeared_between[0], 0)}s and ${fmt(d.appeared_between[1], 0)}s` : ""}`;
+    case "opening_scout.structure_seen":
+      return `${d.structure} ×${d.count_seen} first=${fmt(d.first_seen_at, 0)}s gases=${d.gases_seen} coverage=${fmt(d.main_coverage)}`;
     case "mission.updated":
       return (d.missions || []).map((m) => `${m.mission_id} ${m.status} ${m.phase} (${m.reason})${m.cancel ? ` cancel=${m.cancel.mode}:${m.cancel.reason}` : ""} units=${m.granted_units}`).join("  ") || "no missions";
     case "planner.economy_planned":

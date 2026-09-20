@@ -8,24 +8,31 @@ reads it (`IntelPlan.focus`):
 - `offense` (PRESSURE, COMMIT): a fight is sought. Every Orbital holds a scan
   for the army.
 - `economy` (DEVELOP, RECOVER): Orbitals hold scans only once cloak was seen.
+
+The early scout is the planner's one operation (`missions/early_scout.py`). The
+planner opens it, ends it and decides when to send it hunting for a proxy --
+which it asks Awareness, not the mission: a suspicion belongs to the layer that
+reads the opening, the search to the one that walks the map.
 """
 
 from __future__ import annotations
 
 import math
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from sc2.position import Point2
 
-from bot.attention import AttentionState, MapView
-from bot.awareness import AwarenessState
+from bot.attention import OPENING_WINDOW, AttentionState, MapView
+from bot.awareness import AwarenessState, expectations_for
 from bot.ego.missions import CancelMode, MissionFeedback, MissionView
-from bot.ego.planners import IntelPlan, Proposal, SensorTowerPlan
+from bot.ego.planners import EarlyScoutReport, IntelPlan, Proposal, SensorTowerPlan
 from bot.ego.strategy import StrategicIntent, StrategicPosture
 
-from .missions.scout import KIND, OWNER, ScoutMission
+from .missions.early_scout import KIND, OWNER, EarlyScoutMission, ScoutWindow
 from .policies import sensor_towers
 from .policies.detection import Detection, DetectionConfig
+from .policies.proxy import proxy_route
 from .policies.sensor_towers import MIN_BASES
 
 if TYPE_CHECKING:
@@ -34,6 +41,10 @@ if TYPE_CHECKING:
 SCOUT_AT_WORKERS = 16
 START_BY = 240.0
 LAP_SECTORS = 8
+# The opening read that sends the scout looking for a proxy, and the least it
+# must be worth to be acted on.
+PROXY_SEARCH_AT = 0.55
+PROXY_CONFIDENCE_AT = 0.3
 _REOPENS = "workers_below_threshold"
 THREAT = "threat"
 OFFENSE = "offense"
@@ -44,9 +55,12 @@ class IntelPlanner:
     def __init__(self, detection_config: DetectionConfig | None = None) -> None:
         self.detection = Detection(detection_config)
         self.route: tuple[Point2, ...] = ()
+        self.proxy_route: tuple[Point2, ...] = ()
         self.seen: set[int] = set()
-        self.mission: ScoutMission | None = None
+        self.mission: EarlyScoutMission | None = None
         self.finished: str | None = None
+        # When the proxy search was ordered; None while none was.
+        self.proxy_search: float | None = None
         self._opened = 0
         self._views: tuple[MissionView, ...] = ()
         self.sensor_coverage_enabled = False
@@ -63,7 +77,10 @@ class IntelPlanner:
     ) -> IntelPlan:
         focus = intel_focus(intent.posture)
         views: list[MissionView] = []
-        proposals = self._plan_scout(attention, feedback, views, hold=focus == THREAT)
+        scout: list[EarlyScoutReport] = []
+        proposals = self._plan_scout(
+            attention, awareness, feedback, views, scout, hold=focus == THREAT
+        )
         sensor_towers = self._plan_sensor_towers(attention)
         self._views = tuple(views)
         detection = self.detection.plan(attention, awareness, hold_scan=focus != ECONOMY)
@@ -73,6 +90,7 @@ class IntelPlanner:
             sensor_towers=sensor_towers,
             engineering_bay=detection.engineering_bay or sensor_towers.engineering_bay,
             focus=focus,
+            scout=scout[0] if scout else None,
         )
 
     def _plan_sensor_towers(self, attention: AttentionState) -> SensorTowerPlan:
@@ -93,8 +111,10 @@ class IntelPlanner:
     def _plan_scout(
         self,
         attention: AttentionState,
+        awareness: AwarenessState,
         feedback: EngineResult | None,
         views: list[MissionView],
+        reports: list[EarlyScoutReport],
         *,
         hold: bool = False,
     ) -> tuple[Proposal, ...]:
@@ -103,40 +123,75 @@ class IntelPlanner:
             return ()
         if not self.route:
             self.route = scouting_route(attention.map)
+            self.proxy_route = proxy_route(attention.map)
         now = attention.time
         self.seen.update(
-            index
-            for index, point in enumerate(self.route)
-            if attention.is_visible(point)
+            index for index, point in enumerate(self.route) if attention.is_visible(point)
         )
         mission = self.mission
         if mission is None:
-            if len(self.seen) == len(self.route):
-                self.finished = "route_seen"
-                return ()
             if now >= START_BY:
                 self.finished = "too_late"
                 return ()
             if attention.workers < SCOUT_AT_WORKERS or hold:
                 return ()
             self._opened += 1
-            mission = ScoutMission(f"{OWNER}:{KIND}:{self._opened}", self.route, now)
+            mission = EarlyScoutMission(
+                f"{OWNER}:{KIND}:{self._opened}",
+                self.route,
+                now,
+                natural=attention.map.enemy_natural,
+                third=attention.map.enemy_third,
+                proxy_route=self.proxy_route,
+                window=scout_window(attention),
+            )
             self.mission = mission
         else:
             mission.observe(attention)
-            if mission.set_out is None and len(self.seen) < len(self.route):
+            if mission.set_out is None:
                 if now >= START_BY:
                     mission.request_cancel(CancelMode.IMMEDIATE, "too_late", now)
                 elif attention.workers < SCOUT_AT_WORKERS:
                     mission.request_cancel(CancelMode.IMMEDIATE, _REOPENS, now)
+        self._direct_proxy_search(mission, attention, awareness)
         granted = MissionFeedback.of(feedback, mission.mission_id)
         proposals = mission.step(attention, frozenset(self.seen), granted)
         views.append(mission.view(granted, proposals))
+        reports.append(mission.report())
         if not mission.active:
             self.mission = None
             if mission.reason != _REOPENS:
                 self.finished = mission.reason
         return proposals
+
+    def _direct_proxy_search(
+        self, mission: EarlyScoutMission, attention: AttentionState, awareness: AwarenessState
+    ) -> None:
+        """A proxy the opening read believes in is worth looking for, once."""
+
+        if self.proxy_search is not None:
+            return
+        opening = awareness.opening
+        if opening.proxy < PROXY_SEARCH_AT or opening.confidence < PROXY_CONFIDENCE_AT:
+            return
+        if mission.search_proxy("opening_reads_proxy", attention.time):
+            self.proxy_search = attention.time
+
+
+def scout_window(attention: AttentionState) -> ScoutWindow:
+    """The scout's clock, by the race it is scouting: a third that says
+    something about a Zerg opening says it long before a Terran one.
+
+    Nothing is recorded past `OPENING_WINDOW`, so there is nothing left to
+    learn there either: that is where the operation stops for every race."""
+
+    default = ScoutWindow()
+    third_late = expectations_for(attention.enemy_race).third_late
+    return replace(
+        default,
+        third_until=min(third_late, OPENING_WINDOW),
+        until=OPENING_WINDOW,
+    )
 
 
 def intel_focus(posture: StrategicPosture) -> str:

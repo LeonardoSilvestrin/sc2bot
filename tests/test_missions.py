@@ -21,7 +21,13 @@ from bot.ego.missions import (
 )
 from bot.ego.planners import Command, Proposal, defense
 from bot.ego.planners.defense import DefensePlanner
-from bot.ego.planners.intel import SCOUT_AT_WORKERS, START_BY, IntelPlanner, ScoutMission
+from bot.ego.planners.intel import (
+    SCOUT_AT_WORKERS,
+    START_BY,
+    EarlyScoutMission,
+    IntelPlanner,
+    ScoutPhase,
+)
 from bot.ego.planners.offense import OWNER, MainAttackMission, Stage
 from bot.ego.planners.offense.missions.main_attack import OffenseContext
 from bot.ego.strategy import StrategicPosture, StrategyModel
@@ -375,7 +381,7 @@ def test_a_terminal_mission_proposes_nothing() -> None:
 
     assert (step.status, step.proposals, step.target) == (MissionStatus.FAILED, (), None)
 
-    scout = ScoutMission("intel:scout:1", (MAP.enemy_start,), 50.0)
+    scout = EarlyScoutMission("intel:early_scout:1", (MAP.enemy_start,), 50.0)
     scout.request_cancel(CancelMode.IMMEDIATE, "too_late", 50.0)
     assert scout.step(frame(50.0), frozenset(), MissionFeedback()) == ()
     assert scout.step(frame(51.0), frozenset(), MissionFeedback()) == ()
@@ -502,15 +508,15 @@ def test_the_intel_planner_opens_one_scout_and_the_mission_carries_it() -> None:
 
     (asked,) = intel_step(planner, frame(50.0)).proposals
     mission = planner.mission
-    assert (asked.proposal_id, asked.mission_id) == ("intel", "intel:scout:1")
-    assert (mission.phase, mission.status) == (ScoutMission.REQUESTING, MissionStatus.ACTIVE)
+    assert (asked.proposal_id, asked.mission_id) == ("intel", "intel:early_scout:1")
+    assert (mission.phase, mission.status) == (ScoutPhase.REQUESTING, MissionStatus.ACTIVE)
 
     scout = scv(100, 50, 50, role=SCOUTING)
-    (lapping,) = intel_step(planner, frame(51.0, own_units=(scout,))).proposals
-    assert (mission.phase, mission.set_out, lapping.mission_id) == (
-        ScoutMission.LAPPING,
+    (checking,) = intel_step(planner, frame(51.0, own_units=(scout,))).proposals
+    assert (mission.phase, mission.set_out, checking.mission_id) == (
+        ScoutPhase.CHECK_NATURAL,
         51.0,
-        "intel:scout:1",
+        "intel:early_scout:1",
     )
 
     assert intel_step(planner, frame(52.0, own_units=(scv(100),))).proposals == ()
@@ -529,7 +535,7 @@ def test_a_scout_not_yet_out_is_cancelled_when_the_mineral_line_shrinks_and_reop
     assert planner.finished is None
 
     (proposal,) = intel_step(planner, frame(52.0)).proposals
-    assert proposal.mission_id == "intel:scout:2"
+    assert proposal.mission_id == "intel:early_scout:2"
 
 
 def test_a_scout_not_yet_out_is_cancelled_once_the_early_game_is_over() -> None:

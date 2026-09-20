@@ -1,5 +1,5 @@
 """Episodic scouting operations owned by Intel."""
 
-from .scout import ScoutMission
+from .early_scout import EarlyScoutMission, ScoutPhase, ScoutWindow
 
-__all__ = ["ScoutMission"]
+__all__ = ["EarlyScoutMission", "ScoutPhase", "ScoutWindow"]

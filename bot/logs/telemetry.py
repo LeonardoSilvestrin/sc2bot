@@ -14,7 +14,8 @@ from typing import Any
 
 from sc2.position import Point2
 
-from bot.attention import AttentionState, MapView, is_army
+from bot.attention import AttentionState, MapView, OpeningObservations, is_army
+from bot.attention.opening import EMPTY as NO_OPENING
 from bot.awareness import AwarenessState
 from bot.body.behaviors.attack import MicroReport
 from bot.body.behaviors.detection import DetectionReport
@@ -24,6 +25,7 @@ from bot.body.engine import EngineResult, rank
 from bot.ego.missions import MissionView
 from bot.ego.planners import (
     DetectionPlan,
+    EarlyScoutReport,
     EconomyPlan,
     IntelPlan,
     Proposal,
@@ -64,6 +66,11 @@ class Telemetry:
         self._structures = ChangeGate()
         self._detection = ChangeGate()
         self._sensor_towers = ChangeGate()
+        self._opening = ChangeGate(heartbeat=heartbeat)
+        self._scout = ChangeGate()
+        # The opening facts already written, to write only what is new.
+        self._opening_facts: OpeningObservations = NO_OPENING
+        self._proxy_search_written = False
         self._intel_execution = ChangeGate()
         self._perf = ChangeGate(heartbeat=heartbeat)
         self._proposals = ChangeGate()
@@ -173,7 +180,9 @@ class Telemetry:
         missions: Sequence[MissionView] = (),
     ) -> None:
         self._record_attention(attention)
+        self._record_opening_facts(attention)
         self._record_awareness(attention.time, awareness)
+        self._record_opening(attention, awareness)
         self._record_strategy(intent)
         self._record_map_control(attention.time, map_control)
         self._record_offense(attention.time, offense)
@@ -184,6 +193,8 @@ class Telemetry:
         self._record_micro(attention.time, micro)
         self._record_structures(attention.time, structures)
         if intel is not None:
+            if intel.scout is not None:
+                self._record_scout(attention.time, intel.scout)
             self._record_detection(attention.time, intel.detection, intel.focus)
             self._record_sensor_towers(
                 attention.time,
@@ -210,6 +221,149 @@ class Telemetry:
         self._record_grants(attention, result)
         self._record_commands(attention, awareness, intent, result)
         self._record_perf(attention.time, timings)
+
+    def _record_opening_facts(self, attention: AttentionState) -> None:
+        """Every new fact about the enemy's opening, as perception records it:
+        an expansion answered, a structure counted."""
+
+        observations = attention.enemy_opening
+        previous = self._opening_facts
+        if observations is previous:
+            return
+        self._opening_facts = observations
+        now = attention.time
+        for name, seen, before, position in (
+            ("natural", observations.natural, previous.natural, attention.map.enemy_natural),
+            ("third", observations.third, previous.third, attention.map.enemy_third),
+        ):
+            if seen.status is before.status:
+                continue
+            self._event(
+                "opening_scout.expansion_checked",
+                "attention",
+                now,
+                {
+                    "expansion": name,
+                    "status": seen.status.value,
+                    "previous": before.status.value,
+                    "position": None if position is None else _xy(position),
+                    "last_checked_at": seen.last_checked_at,
+                    "first_seen_at": seen.first_seen_at,
+                    "absent_at": seen.absent_at,
+                    # (last seen empty, first seen standing), once both happened.
+                    "appeared_between": list(seen.appeared_between or ()) or None,
+                },
+            )
+        for type_id, seen in observations.structures:
+            if seen.count_seen <= previous.structure(type_id).count_seen:
+                continue
+            self._event(
+                "opening_scout.structure_seen",
+                "attention",
+                now,
+                {
+                    "structure": type_id.name,
+                    "count_seen": seen.count_seen,
+                    "first_seen_at": seen.first_seen_at,
+                    "last_seen_at": seen.last_seen_at,
+                    "gases_seen": observations.gases_seen,
+                    "workers_seen": observations.workers_seen,
+                    "proxy_structures_seen": observations.proxy_structures_seen,
+                    "main_coverage": observations.main_scout_coverage,
+                },
+            )
+
+    def _record_opening(self, attention: AttentionState, awareness: AwarenessState) -> None:
+        """How the opening reads now: the facts, the four scores and what they
+        are worth."""
+
+        observations = attention.enemy_opening
+        if observations.last_updated is None:
+            return
+        belief = awareness.opening
+        now = attention.time
+        # Every new fact is written; the scores move a little every frame the
+        # scout is looking at something, so they are written by band.
+        signature = (
+            observations.natural.status,
+            observations.third.status,
+            tuple((type_id.name, seen.count_seen) for type_id, seen in observations.structures),
+            round(observations.main_scout_coverage, 1),
+            round(belief.aggression, 1),
+            round(belief.greed, 1),
+            round(belief.tech, 1),
+            round(belief.proxy, 1),
+            round(belief.confidence, 1),
+        )
+        if not self._opening.admit(signature, now=now):
+            return
+        self._event(
+            "awareness.opening_updated",
+            "awareness",
+            now,
+            {
+                "summary": _opening_summary(observations, belief, now),
+                "race": belief.race.name,
+                "natural": _expansion(observations.natural),
+                "third": _expansion(observations.third),
+                "observed": {
+                    **{
+                        type_id.name.lower(): seen.count_seen
+                        for type_id, seen in observations.structures
+                    },
+                    "gases": observations.gases_seen,
+                    "workers": observations.workers_seen,
+                    "combat_units": observations.early_combat_units_seen,
+                    "proxy_structures": observations.proxy_structures_seen,
+                },
+                "main_coverage": observations.main_scout_coverage,
+                "last_updated": observations.last_updated,
+                "belief": {
+                    "aggression": belief.aggression,
+                    "greed": belief.greed,
+                    "tech": belief.tech,
+                    "proxy": belief.proxy,
+                    "confidence": belief.confidence,
+                },
+                "evidence": dict(belief.evidence),
+            },
+        )
+
+    def _record_scout(self, now: float, scout: EarlyScoutReport) -> None:
+        # Every phase of the early scout is a decision; the proxy search is
+        # written the frame it is ordered.
+        if scout.proxy_search and not self._proxy_search_written:
+            self._proxy_search_written = True
+            self._event(
+                "opening_scout.proxy_search_started",
+                "missions",
+                now,
+                {
+                    "mission_id": scout.mission_id,
+                    "reason": scout.reason,
+                    "target": None if scout.target is None else _xy(scout.target),
+                    "inputs": dict(scout.inputs),
+                },
+            )
+        signature = (scout.mission_id, scout.phase, scout.since, scout.status)
+        if not self._scout.admit(signature, now=now):
+            return
+        self._event(
+            "opening_scout.phase_changed",
+            "missions",
+            now,
+            {
+                "mission_id": scout.mission_id,
+                "phase": scout.phase,
+                "previous": scout.previous,
+                "since": scout.since,
+                "reason": scout.reason,
+                "status": scout.status,
+                "target": None if scout.target is None else _xy(scout.target),
+                "proxy_search": scout.proxy_search,
+                "inputs": dict(scout.inputs),
+            },
+        )
 
     def _record_detection(self, now: float, detection: DetectionPlan, focus: str) -> None:
         # Every scan is a decision; the rest is state.
@@ -994,6 +1148,38 @@ class Telemetry:
 
 def _xy(point: Point2) -> list[float]:
     return [round(float(point.x), 2), round(float(point.y), 2)]
+
+
+def _expansion(observation) -> dict[str, Any]:
+    return {
+        "status": observation.status.value,
+        "last_checked_at": observation.last_checked_at,
+        "first_seen_at": observation.first_seen_at,
+        "absent_at": observation.absent_at,
+        "appeared_between": list(observation.appeared_between or ()) or None,
+    }
+
+
+def _clock(seconds: float) -> str:
+    return f"{int(max(0.0, seconds)) // 60}:{int(max(0.0, seconds)) % 60:02d}"
+
+
+def _opening_summary(observations, belief, now: float) -> str:
+    """One line of the whole read, as the viewer and a tail of the log show it."""
+
+    def expansion(name: str, seen) -> str:
+        at = seen.first_seen_at if seen.first_seen_at is not None else seen.last_checked_at
+        return f"{name}={seen.status.value}" + ("" if at is None else f"@{_clock(at)}")
+
+    return (
+        f"t={_clock(now)} race={belief.race.name} "
+        f"{expansion('natural', observations.natural)} "
+        f"{expansion('third', observations.third)} "
+        f"coverage={observations.main_scout_coverage:.2f} | "
+        f"aggression={belief.aggression:.2f} greed={belief.greed:.2f} "
+        f"tech={belief.tech:.2f} proxy={belief.proxy:.2f} "
+        f"confidence={belief.confidence:.2f}"
+    )
 
 
 def _cell(point: Point2) -> tuple[int, int]:

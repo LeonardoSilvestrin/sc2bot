@@ -180,8 +180,15 @@ def panel_text(awareness: AwarenessState, intent: StrategicIntent, result: Engin
         f"defense {intent.defense:.2f}  army {intent.army:.2f}  risk {intent.risk:.2f}",
         f"contacts {len(awareness.contacts)} ({visible} visible)  "
         f"enemy power {awareness.enemy_power:.1f} (est {awareness.estimated_enemy_power:.1f})",
-        "ENGINE",
     ]
+    opening = awareness.opening
+    if opening.observed:
+        lines.append(
+            f"OPENING {opening.race.name} aggression {opening.aggression:.2f}  "
+            f"greed {opening.greed:.2f}  tech {opening.tech:.2f}  "
+            f"proxy {opening.proxy:.2f}  confidence {opening.confidence:.2f}"
+        )
+    lines.append("ENGINE")
     for grant in result.grants:
         proposal = grant.proposal
         lines.append(

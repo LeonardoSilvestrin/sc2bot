@@ -16,6 +16,11 @@ from sc2.position import Point2
 
 from .topology import MapTopology, build_topology
 
+# python-sc2's own gap: an expansion this close to a start is that start.
+EXPANSION_GAP = 15.0
+# A townhall this close to an expansion location stands on it.
+BASE_SNAP_DISTANCE = 6.0
+
 
 @dataclass(frozen=True, slots=True)
 class MapView:
@@ -39,6 +44,22 @@ class MapView:
     tower_sites: tuple[tuple[Point2, tuple[Point2, ...]], ...] = ()
     # Per expansion, the same for a 3x3 structure and its add-on.
     base_production_sites: tuple[tuple[Point2, tuple[Point2, ...]], ...] = ()
+    # The expansions as each side would take them, natural first: Ares' ground
+    # path distance from that start. Empty falls back to straight distance.
+    own_expansion_order: tuple[Point2, ...] = ()
+    enemy_expansion_order: tuple[Point2, ...] = ()
+
+    @property
+    def own_natural(self) -> Point2 | None:
+        return _nth_expansion(self, self.own_expansion_order, self.own_start, 0)
+
+    @property
+    def enemy_natural(self) -> Point2 | None:
+        return _nth_expansion(self, self.enemy_expansion_order, self.enemy_start, 0)
+
+    @property
+    def enemy_third(self) -> Point2 | None:
+        return _nth_expansion(self, self.enemy_expansion_order, self.enemy_start, 1)
 
 
 def read_map(bot, *, lattice_spacing: int = 4) -> MapView:
@@ -88,7 +109,39 @@ def read_map(bot, *, lattice_spacing: int = 4) -> MapView:
         production_sites=_production_sites(bot),
         tower_sites=_tower_sites(bot),
         base_production_sites=_base_production_sites(bot),
+        own_expansion_order=_expansion_order(bot, "get_own_expansions"),
+        enemy_expansion_order=_expansion_order(bot, "get_enemy_expansions"),
     )
+
+
+def _expansion_order(bot, request: str) -> tuple[Point2, ...]:
+    """The expansions Ares ordered by ground path distance from that start."""
+
+    try:
+        ordered = getattr(bot.mediator, request)
+    except (AttributeError, KeyError, RuntimeError, TypeError):
+        return ()
+    return tuple(as_point(location) for location, _ in ordered or ())
+
+
+def _nth_expansion(
+    map_view: MapView, order: tuple[Point2, ...], start: Point2, index: int
+) -> Point2 | None:
+    """The nth expansion out from a start, the natural first. Without Ares'
+    path order, straight distance answers it."""
+
+    if order:
+        return order[index] if index < len(order) else None
+    starts = (map_view.own_start, map_view.enemy_start)
+    away = sorted(
+        (
+            point
+            for point in map_view.expansions
+            if all(point.distance_to(base) > EXPANSION_GAP for base in starts)
+        ),
+        key=lambda point: (point.distance_to(start), point.x, point.y),
+    )
+    return away[index] if index < len(away) else None
 
 
 def pathable_lattice(

@@ -179,6 +179,8 @@
     track("awareness.danger");
     track("awareness.own_power", { overlay: "awareness.enemy_power", label: "Power own / enemy" });
     track("awareness.contacts");
+    track("awareness.opening_aggression", { overlay: "awareness.opening_greed", label: "Opening aggression / greed" });
+    track("awareness.opening_proxy");
 
     group("Behaviors · proposals");
     intervalRows(model.proposalTracks);
@@ -563,6 +565,20 @@
     kv(awareness, "contacts", na(state.contacts, 0));
     for (const base of state.awarenessRecord?.data?.bases ?? []) {
       kv(awareness, `${base.is_main ? "main" : "base"} ${base.base_id}`, `thr ${na(base.threat)} p ${na(base.pressure, 1)} c ${na(base.cover, 1)}`, "dt-sub");
+    }
+
+    const opening = state.openingRecord?.data;
+    if (opening) {
+      const read = section(grid, `Opening read · ${opening.race ?? "?"}`);
+      kv(read, "aggression / greed", `${na(opening.belief?.aggression)} / ${na(opening.belief?.greed)}`);
+      kv(read, "tech / proxy", `${na(opening.belief?.tech)} / ${na(opening.belief?.proxy)}`);
+      kv(read, "confidence", na(opening.belief?.confidence));
+      kv(read, "natural", `${opening.natural?.status ?? "?"}${opening.natural?.first_seen_at != null ? ` @ ${fmtTime(opening.natural.first_seen_at)}` : ""}`);
+      kv(read, "third", `${opening.third?.status ?? "?"}${opening.third?.first_seen_at != null ? ` @ ${fmtTime(opening.third.first_seen_at)}` : ""}`);
+      kv(read, "main coverage", na(opening.main_coverage));
+      for (const [name, value] of Object.entries(opening.observed ?? {})) {
+        if (value) kv(read, name, String(value), "dt-sub");
+      }
     }
 
     const behaviors = section(grid, `Behaviors · proposals (${state.proposals.length})`);

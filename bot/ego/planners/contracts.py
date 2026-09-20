@@ -4,7 +4,8 @@
   the Engine for.
 - `EconomyPlan`: what Ares' macro behaviors should buy.
 - `StructurePlan`: which existing structure acts, and how (`RelocationEvent`).
-- `IntelPlan`: scouting proposals, detection and information infrastructure.
+- `IntelPlan`: scouting proposals, detection and information infrastructure,
+  with `EarlyScoutReport` telling where the early scout stands.
 """
 
 from __future__ import annotations
@@ -210,6 +211,25 @@ class SensorTowerPlan:
 
 
 @dataclass(frozen=True, slots=True)
+class EarlyScoutReport:
+    """Where the early scout stands, for the log: its phase, what moved it
+    there and what it is walking to."""
+
+    mission_id: str
+    phase: str
+    # The phase it left; None while it has not changed phase yet.
+    previous: str | None
+    since: float
+    # Why the phase, or the terminal status, was entered.
+    reason: str
+    status: str
+    target: Point2 | None
+    # Whether the planner has ordered the proxy search.
+    proxy_search: bool
+    inputs: tuple[tuple[str, float], ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class IntelPlan:
     """Everything the Intel domain asks the Body to do this frame."""
 
@@ -221,3 +241,5 @@ class IntelPlan:
     # What information matters most under Strategy's posture: threat, offense
     # or economy.
     focus: str = "economy"
+    # The early scout this frame; None without one.
+    scout: EarlyScoutReport | None = None
