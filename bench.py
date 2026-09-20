@@ -1,15 +1,22 @@
-"""Local benchmark: a fixed matrix of games against the built-in AI.
+"""Local benchmark: a matrix of games against the built-in AI.
 
-    bench.py run --out bench/<label> [--matrix base|wide] [--maps ...]
-                 [--races ...] [--armies ...] [--games N] [--seed S]
-                 [--spatial-view] [--spatial-snapshot]
+    bench.py run --out bench/<label> [--matrix-file FILE] [--seed S]
+                 [--time-limit S] [--spatial-view] [--spatial-snapshot]
+    bench.py run --out bench/<label> --matrix base|wide [--maps ...]
+                 [--races ...] [--armies ...] [--games N]
     bench.py summarize bench/<label>
     bench.py compare bench/<baseline> bench/<challenger>
 
-The games themselves are the table in `harness/matrix.py`: `base` is the nine
-a slice is measured on (every race against every way the AI opens, one map) and
-`wide` is those nine on all three maps. Naming an axis by hand (`--maps`,
-`--races`, `--ai-builds`) replaces that column.
+What gets played is the list in `harness/matrix.yml`: one line per game --
+race, how the AI opens, the map, which army the bot plays -- and `games: 10` on
+a line to ask for ten of it. The file carries the cheat sheet of every name
+that fits, so changing what a run plays is editing that file, not this command
+line.
+
+The two fixed tables of `harness/matrix.py` are still there behind `--matrix`:
+`base` is the nine games a slice is measured on (every race against every way
+the AI opens, one map) and `wide` is those nine on all three maps. With them,
+naming an axis by hand (`--maps`, `--races`, `--ai-builds`) replaces a column.
 
 Each game runs in its own process, with a wall-clock timeout, and leaves
 ``<out>/<game_id>/`` with ``result.json``, ``replay.SC2Replay`` and
@@ -34,8 +41,12 @@ for extra in ("ares-sc2/src/ares", "ares-sc2/src", "ares-sc2"):
 from harness import (  # noqa: E402
     DEFAULT_MATRIX,
     MATRICES,
+    MATRIX_FILE,
+    MATRIX_PATH,
     GameSpec,
+    MatrixFileError,
     build_record,
+    file_specs,
     games_of,
     identity,
     load_records,
@@ -48,12 +59,24 @@ from harness import (  # noqa: E402
 CHILD_RESULT = "child.json"
 REPLAY = "replay.SC2Replay"
 LOG_DIRECTORY = "log"
+# What the built-in tables are played with when no flag says otherwise; the
+# file says it for itself.
+DEFAULT_DIFFICULTY = "VeryHard"
+DEFAULT_SEED = 1
+DEFAULT_TIME_LIMIT = 1800.0
+# The flags that describe a built-in table, and mean nothing to a file that
+# already says what to play.
+TABLE_FLAGS = ("maps", "races", "difficulties", "ai_builds", "armies", "games")
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     if args.command == "run":
-        return _run(args)
+        try:
+            return _run(args)
+        except MatrixFileError as error:
+            # A hand wrote the file: it gets the line, not the traceback.
+            raise SystemExit(str(error)) from None
     if args.command == "play":
         return _play(
             args.spec,
@@ -68,7 +91,8 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def parser() -> argparse.ArgumentParser:
-    """Every command and flag; what a run plays without them is in
+    """Every command and flag; what a run plays without them is the list in
+    harness/matrix.yml, and which matrix that is by default is in
     harness/matrix.py."""
 
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -78,25 +102,39 @@ def parser() -> argparse.ArgumentParser:
     run.add_argument("--out", type=Path, required=True)
     run.add_argument(
         "--matrix",
-        choices=sorted(MATRICES),
+        choices=[MATRIX_FILE, *sorted(MATRICES)],
         default=DEFAULT_MATRIX,
         help=(
-            "base: one map, 9 games; wide: every map, 27 "
+            f"{MATRIX_FILE}: the games --matrix-file lists; base: one map, "
+            "9 games; wide: every map, 27 "
             "(default: %(default)s, from harness/matrix.py)."
         ),
     )
+    run.add_argument(
+        "--matrix-file",
+        type=Path,
+        default=MATRIX_PATH,
+        help="the list of games to play (default: %(default)s).",
+    )
     run.add_argument("--maps", nargs="+", default=None, help="replaces the matrix's maps")
     run.add_argument("--races", nargs="+", default=None, help="replaces the matrix's races")
-    run.add_argument("--difficulties", nargs="+", default=["VeryHard"])
+    run.add_argument(
+        "--difficulties", nargs="+", default=None, help=f"default: {DEFAULT_DIFFICULTY}"
+    )
     run.add_argument(
         "--ai-builds", nargs="+", default=None, help="replaces how the matrix's AI opens"
     )
     run.add_argument(
         "--armies", nargs="+", default=None, help="army styles (default: the bot draws)"
     )
-    run.add_argument("--games", type=int, default=1)
-    run.add_argument("--seed", type=int, default=1)
-    run.add_argument("--time-limit", type=float, default=1800.0, help="game seconds")
+    run.add_argument("--games", type=int, default=None, help="repeats of the matrix (default: 1)")
+    run.add_argument("--seed", type=int, default=None, help=f"default: {DEFAULT_SEED}")
+    run.add_argument(
+        "--time-limit",
+        type=float,
+        default=None,
+        help=f"game seconds (default: {DEFAULT_TIME_LIMIT:.0f}, or what the file says)",
+    )
     run.add_argument("--wall-timeout", type=float, default=3600.0, help="real seconds")
     run.add_argument("--only", type=int, nargs="*", help="play only these matrix indices")
     _add_debug_arguments(run)
@@ -122,7 +160,7 @@ def _check_names(args) -> None:
 
     for values, enum, flag in (
         (args.races or (), Race, "--races"),
-        (args.difficulties, Difficulty, "--difficulties"),
+        (args.difficulties or (), Difficulty, "--difficulties"),
         (args.ai_builds or (), AIBuild, "--ai-builds"),
     ):
         unknown = [value for value in values if value not in enum.__members__]
@@ -144,21 +182,55 @@ def _add_debug_arguments(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def _run(args) -> int:
+def _specs(args) -> tuple[GameSpec, ...]:
+    """The games to play: what the file lists, or one of the built-in tables
+    with whatever column was named by hand."""
+
+    if args.matrix == MATRIX_FILE:
+        named = [
+            "--" + flag.replace("_", "-") for flag in TABLE_FLAGS if getattr(args, flag) is not None
+        ]
+        if named:
+            raise SystemExit(
+                f"{', '.join(named)}: columns of a built-in table, and "
+                f"{args.matrix_file.name} already says what to play "
+                f"(--matrix base or --matrix wide to play a table instead)"
+            )
+        return file_specs(args.matrix_file, seed=args.seed, time_limit=args.time_limit)
     _check_names(args)
-    specs = matrix(
+    return matrix(
         games_of(args.matrix, maps=args.maps, races=args.races, ai_builds=args.ai_builds),
-        difficulties=args.difficulties,
+        difficulties=args.difficulties or (DEFAULT_DIFFICULTY,),
         armies=args.armies or (None,),
-        repeats=args.games,
-        seed=args.seed,
-        game_time_limit=args.time_limit,
+        repeats=args.games or 1,
+        seed=DEFAULT_SEED if args.seed is None else args.seed,
+        game_time_limit=DEFAULT_TIME_LIMIT if args.time_limit is None else args.time_limit,
     )
+
+
+def _check_maps(specs: tuple[GameSpec, ...]) -> None:
+    """A map nobody installed is a message before the first game, not a game
+    that crashes on its way up."""
+
+    from sc2 import maps
+
+    for map_name in dict.fromkeys(spec.map_name for spec in specs):
+        try:
+            maps.get(map_name)
+        except (KeyError, OSError) as error:
+            said = error.args[0] if error.args else error
+            raise SystemExit(f"{map_name}: {said}") from error
+
+
+def _run(args) -> int:
+    specs = _specs(args)
+    _check_maps(specs)
     out: Path = args.out.resolve()
     out.mkdir(parents=True, exist_ok=True)
     label = out.name
     played_on = ", ".join(dict.fromkeys(spec.map_name for spec in specs))
-    print(f"{label}: {len(specs)} games ({args.matrix} on {played_on})")
+    source = args.matrix_file.name if args.matrix == MATRIX_FILE else args.matrix
+    print(f"{label}: {len(specs)} games ({source} on {played_on})")
     build = identity()
     (out / "matrix.json").write_text(
         json.dumps({"build": build, "games": [spec.to_json() for spec in specs]}, indent=2),

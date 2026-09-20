@@ -20,7 +20,19 @@ import yaml
 from bot.ego.planners.economy.knowledge.styles import STYLES
 from bot.logs import ChatConfig, JsonlLogger, Logs, OverlayConfig, SnapshotConfig
 from bot.main import BotBandido
-from harness import AI_BUILDS, DEFAULT_LAUNCHER, RACES, WIDE, WIDE_MAPS, Game
+from harness import (
+    AI_BUILDS,
+    DEFAULT_LAUNCHER,
+    MAPS,
+    MATRIX_FILE,
+    MATRIX_PATH,
+    RACES,
+    WIDE,
+    Game,
+    GameSpec,
+    MatrixFileError,
+    file_specs,
+)
 from ladder import run_ladder_game
 
 plt = platform.system()
@@ -121,15 +133,23 @@ def parse_local_args(args=None):
     )
     parser.add_argument(
         "--matrix",
-        choices=(SINGLE, BUILDS, WIDE_MATRIX),
+        choices=(SINGLE, BUILDS, WIDE_MATRIX, MATRIX_FILE),
         default=DEFAULT_LAUNCHER,
         help=(
             f"single: one game. builds: {len(AI_BUILDS)} games, one per way "
             f"the AI opens ({', '.join(AI_BUILDS)}), same map and race. "
             f"wide: {len(WIDE)} games, the whole matrix of harness/matrix.py. "
-            "Nothing is recorded: use bench.py to measure. "
+            f"{MATRIX_FILE}: the games --matrix-file lists, which is what "
+            "bench.py plays; its map, race, army and difficulty win over the "
+            "flags above. Nothing is recorded: use bench.py to measure. "
             "Default: %(default)s, from harness/matrix.py."
         ),
+    )
+    parser.add_argument(
+        "--matrix-file",
+        type=Path,
+        default=MATRIX_PATH,
+        help=f"the list --matrix {MATRIX_FILE} plays (default: %(default)s).",
     )
     parser.add_argument(
         "--time-limit",
@@ -167,34 +187,59 @@ def build_logs(local_args, *, is_ladder: bool) -> Logs:
     )
 
 
-def local_games(local_args, map_list: list[str]) -> list[Game]:
-    """The games this run plays, in order: (map, enemy race, AI build).
+def local_games(local_args, map_list: list[str]) -> list[GameSpec]:
+    """The games this run plays, in order.
 
     `single` keeps the launcher as it was -- one game, on a map drawn from the
     ones installed. `builds` holds the map and the race and varies only how the
     AI opens, which is the comparison worth watching by eye. `wide` walks the
-    whole matrix `bench.py` measures.
+    whole matrix `bench.py` measures. `file` plays the list of `matrix.yml`,
+    where each game brings its own map, race, opening, army and difficulty.
     """
 
+    limit = time_limit(local_args)
+    if local_args.matrix == MATRIX_FILE:
+        return _installed(file_specs(local_args.matrix_file, time_limit=limit), map_list)
     if local_args.matrix == WIDE_MATRIX:
-        for name in WIDE_MAPS:
-            if name not in map_list:
-                print(f"{name} is not installed; skipping its games")
-        return [game for game in WIDE if game.map_name in map_list]
-    map_name = random.choice(map_list)
-    race = local_args.enemy_race or random.choice(list(RACES))
-    if local_args.matrix == BUILDS:
-        return [Game(map_name, race, ai_build) for ai_build in AI_BUILDS]
-    return [Game(map_name, race, local_args.ai_build)]
+        games = _installed(WIDE, map_list)
+    else:
+        map_name = random.choice(map_list)
+        race = local_args.enemy_race or random.choice(list(RACES))
+        builds = AI_BUILDS if local_args.matrix == BUILDS else (local_args.ai_build,)
+        games = [Game(map_name, race, ai_build) for ai_build in builds]
+    return [
+        GameSpec(
+            index=index,
+            map_name=game.map_name,
+            enemy_race=game.race,
+            difficulty=local_args.difficulty,
+            ai_build=game.ai_build,
+            # Nothing wrote a seed down, so the game draws its own.
+            seed=None,
+            game_time_limit=limit,
+            army=local_args.army,
+        )
+        for index, game in enumerate(games)
+    ]
+
+
+def _installed(games, map_list: list[str]):
+    """The games on maps this machine has, saying which ones it skipped."""
+
+    for name in dict.fromkeys(game.map_name for game in games):
+        if name not in map_list:
+            print(f"{name} is not installed; skipping its games")
+    return [game for game in games if game.map_name in map_list]
 
 
 def time_limit(local_args) -> float | None:
     """What is asked for, else: a sweep caps each game so one stuck game does
-    not eat the rest of it; a single game runs as long as it takes."""
+    not eat the rest of it; a single game runs as long as it takes, and the
+    games of a file are capped by what the file says."""
 
     if local_args.time_limit is not None:
         return local_args.time_limit
-    return None if local_args.matrix == SINGLE else SWEEP_TIME_LIMIT
+    return None if local_args.matrix in (SINGLE, MATRIX_FILE) else SWEEP_TIME_LIMIT
 
 
 def main():
@@ -215,9 +260,8 @@ def main():
                 race = Race[config[MY_BOT_RACE].title()]
 
     is_ladder = "--LadderServer" in sys.argv
-    army = None if is_ladder else local_args.army
 
-    def our_bot() -> Bot:
+    def our_bot(army: str | None = None) -> Bot:
         # A bot that played a game cannot play the next one.
         return Bot(
             race, BotBandido(logs=build_logs(local_args, is_ladder=is_ladder), army=army), bot_name
@@ -246,36 +290,37 @@ def main():
             )
 
             # see if user has any recent ladder maps
-            map_list = [
-                "PylonAIE_v4",
-                "PersephoneAIE_v4",
-                "TorchesAIE_v4",
-                "IncorporealAIE_v4",
-                "MagannathaAIE_v2",
-                "UltraloveAIE_v2",
-            ]
+            map_list = list(MAPS)
 
-        games = local_games(local_args, map_list)
-        limit = time_limit(local_args)
+        try:
+            games = local_games(local_args, map_list)
+        except MatrixFileError as error:
+            # A hand wrote the file: it gets the line, not the traceback.
+            raise SystemExit(str(error)) from None
         if len(games) > 1:
             print(f"Starting {len(games)} local games ({local_args.matrix})...")
-        for number, (map_name, enemy_race, ai_build) in enumerate(games, start=1):
+        for number, spec in enumerate(games, start=1):
             if len(games) > 1:
-                print(f"game {number}/{len(games)}: {map_name} vs {enemy_race} ({ai_build})")
+                army = "" if spec.army is None else f", {spec.army}"
+                print(
+                    f"game {number}/{len(games)}: {spec.map_name} vs "
+                    f"{spec.enemy_race} ({spec.ai_build}{army})"
+                )
             else:
                 print("Starting local game...")
             result = run_game(
-                maps.get(map_name),
+                maps.get(spec.map_name),
                 [
-                    our_bot(),
+                    our_bot(spec.army),
                     Computer(
-                        Race[enemy_race],
-                        Difficulty[local_args.difficulty],
-                        ai_build=AIBuild[ai_build],
+                        Race[spec.enemy_race],
+                        Difficulty[spec.difficulty],
+                        ai_build=AIBuild[spec.ai_build],
                     ),
                 ],
                 realtime=False,
-                game_time_limit=limit,
+                game_time_limit=spec.game_time_limit,
+                random_seed=spec.seed,
             )
             if len(games) > 1:
                 print(f"game {number}/{len(games)}: {result}")

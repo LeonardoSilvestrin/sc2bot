@@ -14,9 +14,11 @@ read it -- one line per game, ``map, race, how the AI opens``:
 for instead; `matrix` turns games into `GameSpec`s, which is what a run plays
 and what a record stores.
 
-What a run plays when nothing is asked for is decided here too, in the block
-below: that is the file to edit to change what a plain `bench.py run` or
-`run.py` does, instead of the arguments of a launch configuration.
+The list a hand writes is next door: `matrix.yml`, read by `config.py`, is
+where a run of ten games against a Protoss rush on one map is asked for, and
+it is what a plain `bench.py run` plays. The tables here are the fixed ones,
+the matrices a slice is measured on, kept in code so that they cannot be
+edited by accident.
 """
 
 from __future__ import annotations
@@ -35,9 +37,21 @@ class Game(NamedTuple):
     ai_build: str
 
 
-# Every map the matrix knows.
-MAPS = ("PersephoneAIE_v4", "TorchesAIE_v4", "IncorporealAIE_v4")
-WIDE_MAPS = MAPS
+# The rotation: every map the matrix knows, and what a `random` map draws
+# from. It is the ladder pool, so it is what changes when the season does.
+MAPS = (
+    "IncorporealAIE_v4",
+    "LeyLinesAIE_v3",
+    "MagannathaAIE_v2",
+    "PersephoneAIE_v4",
+    "PylonAIE_v4",
+    "TorchesAIE_v4",
+    "UltraloveAIE_v2",
+)
+# The maps the wide table walks, which is not the whole rotation: nine games on
+# each of seven maps is sixty-three, and whether the map was carrying a result
+# is already answered by three.
+WIDE_MAPS = ("PersephoneAIE_v4", "TorchesAIE_v4", "IncorporealAIE_v4")
 # A map drawn when the games are built, not written into the table.
 RANDOM = "random"
 # The map the nine base games are played on. `RANDOM` draws one of `MAPS` per
@@ -69,9 +83,11 @@ MATRICES: Mapping[str, tuple[Game, ...]] = {"base": BASE, "wide": WIDE}
 # --- what a run plays when nothing is asked for ----------------------------
 # Edit these two lines instead of a launch configuration; every flag wins over
 # them.
-# `bench.py run --matrix`: base (9 games) or wide (27).
-DEFAULT_MATRIX = "base"
-# `run.py --matrix`: single (one game), builds (the three openings) or wide.
+# `bench.py run --matrix`: file (the games matrix.yml lists), base (the nine
+# above) or wide (27).
+DEFAULT_MATRIX = "file"
+# `run.py --matrix`: single (one game), builds (the three openings), wide, or
+# file (the games matrix.yml lists).
 DEFAULT_LAUNCHER = "single"
 
 
@@ -123,8 +139,12 @@ class GameSpec:
     enemy_race: str
     difficulty: str
     ai_build: str
-    seed: int
-    game_time_limit: float
+    # The seed the game is played with; None lets it draw its own, which is
+    # what the launcher does when no file wrote one down.
+    seed: int | None
+    # Game seconds before the game is called off; None lets it run as long as
+    # it takes, which is what a single watched game does.
+    game_time_limit: float | None
     # The bot's army style, by name; None lets the bot draw one.
     army: str | None = None
 

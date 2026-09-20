@@ -53,6 +53,8 @@ else:
 
 ZIP_DIRECTORIES: Dict[str, Dict] = {
     "bot": {"zip_all": True, "folder_to_zip": "bot"},
+    # run.py imports it, and matrix.yml rides along inside it.
+    "harness": {"zip_all": True, "folder_to_zip": "harness"},
     "ares-sc2": {"zip_all": True, "folder_to_zip": ""},
     "python-sc2": {"zip_all": False, "folder_to_zip": "sc2"},
     # "sc2_helper": {"zip_all": True, "folder_to_zip": "sc2_helper"},

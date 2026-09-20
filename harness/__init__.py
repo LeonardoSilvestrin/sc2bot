@@ -4,6 +4,7 @@ Pure and testable without StarCraft; ``bench.py`` runs the games and ``run.py``
 can walk the same matrix with the game window open.
 
 ```text
+config.py    the list a hand writes: matrix.yml, read into GameSpecs
 matrix.py    what gets played: the table of games (map, race, opening), GameSpec
 outcome.py   what happened to one game, including the ones nobody played
 record.py    the record written next to a replay and a log
@@ -11,6 +12,16 @@ summary.py   what a run of the matrix came to
 ```
 """
 
+from .config import (
+    DEFAULT_PATH as MATRIX_PATH,
+)
+from .config import (
+    MATRIX_FILE,
+    MatrixFileError,
+)
+from .config import (
+    specs as file_specs,
+)
 from .matrix import (
     AI_BUILDS,
     BASE,
@@ -57,6 +68,8 @@ __all__ = [
     "LIMIT_TOLERANCE",
     "MAPS",
     "MATRICES",
+    "MATRIX_FILE",
+    "MATRIX_PATH",
     "NOT_PLAYED",
     "NO_RESULT",
     "OUTCOMES",
@@ -71,7 +84,9 @@ __all__ = [
     "WIDE_MAPS",
     "Game",
     "GameSpec",
+    "MatrixFileError",
     "build_record",
+    "file_specs",
     "games_of",
     "identity",
     "load_records",

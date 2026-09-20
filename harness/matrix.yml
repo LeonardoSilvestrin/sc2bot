@@ -1,0 +1,53 @@
+# The games that get played. One line per game, under "matrix"; what a line
+# leaves out comes from "defaults".
+#
+#   .venv\Scripts\python.exe bench.py run --out bench\<label>   measured
+#   .venv\Scripts\python.exe run.py --matrix file               watched
+#
+# A line is made of:
+#
+#   race        Zerg  Terran  Protoss  Random          the built-in AI's race
+#   strategy    Rush  Macro  Timing  Power  Air  RandomBuild
+#               how the built-in AI opens
+#   map         IncorporealAIE_v4  LeyLinesAIE_v3  MagannathaAIE_v2
+#               PersephoneAIE_v4  PylonAIE_v4  TorchesAIE_v4
+#               UltraloveAIE_v2  random
+#               (random: one of those drawn per run, the same one for every
+#               game that says random; name a map to pin that game to it)
+#   army        bio  mech  null        what the bot builds; null: it draws one
+#   difficulty  VeryEasy  Easy  Medium  MediumHard  Hard  Harder  VeryHard
+#               CheatVision  CheatMoney  CheatInsane
+#   games       how many of that game to play, each one with its own seed
+#   time_limit  game seconds before a game is called off
+#
+# So ten games against a Protoss rush on one map is one line:
+#
+#   - {race: Protoss, strategy: Rush, map: TorchesAIE_v4, games: 10}
+#
+# and mech against a Zerg macro game is another:
+#
+#   - {race: Zerg, strategy: Macro, map: PersephoneAIE_v4, army: mech}
+#
+# What is below is the nine games a slice is measured on: every race against a
+# rush, a macro game and a build the AI draws itself. Two runs that have to be
+# compared need the same map, so name one instead of random before comparing.
+
+seed: 1
+
+defaults:
+  map: random
+  difficulty: CheatInsane
+  army: null
+  games: 1
+  time_limit: 1800
+
+matrix:
+  - {race: Zerg,    strategy: Rush,        map: random}
+  - {race: Zerg,    strategy: Macro,       map: random}
+  - {race: Zerg,    strategy: RandomBuild, map: random}
+  - {race: Terran,  strategy: Rush,        map: random}
+  - {race: Terran,  strategy: Macro,       map: random}
+  - {race: Terran,  strategy: RandomBuild, map: random}
+  - {race: Protoss, strategy: Rush,        map: random}
+  - {race: Protoss, strategy: Macro,       map: random}
+  - {race: Protoss, strategy: RandomBuild, map: random}
