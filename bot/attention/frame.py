@@ -12,6 +12,7 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field, replace
 
 import numpy as np
+from ares.consts import BuildingSize
 from sc2.data import Alliance, Race
 from sc2.dicts.unit_trained_from import UNIT_TRAINED_FROM
 from sc2.ids.unit_typeid import UnitTypeId
@@ -93,6 +94,9 @@ class AttentionState:
     # part of the frame that remembers older frames, because a fact that was
     # observed stays a fact. Empty outside the opening window.
     enemy_opening: OpeningObservations = EMPTY
+    # Current free 2x2 construction spots. None means placement data was not
+    # supplied; an empty tuple means no sites are available this frame.
+    available_tower_sites: tuple[tuple[Point2, tuple[Point2, ...]], ...] | None = None
 
     def is_visible(self, point: Point2) -> bool:
         grid = self.visibility
@@ -137,10 +141,33 @@ def observe(
         tech_ready=_ready_tech(bot),
         radar_blips=_radar_blips(bot),
         enemy_race=_enemy_race(bot),
+        available_tower_sites=_available_tower_sites(bot, map_view),
     )
     if opening is None:
         return perceived
     return replace(perceived, enemy_opening=opening.observe(perceived))
+
+
+def _available_tower_sites(bot, map_view: MapView):
+    """Keep static geometry separate from occupied and reserved build sites."""
+
+    try:
+        placements = bot.mediator.get_placements_dict
+    except (AttributeError, KeyError, RuntimeError, TypeError):
+        return None
+    return tuple(
+        (
+            base,
+            tuple(
+                point for point in points
+                if (info := placements.get(base, {}).get(BuildingSize.TWO_BY_TWO, {}).get(point))
+                and info.get("available", False)
+                and not info.get("worker_on_route", False)
+                and not info.get("custom", False)
+            ),
+        )
+        for base, points in map_view.tower_sites
+    )
 
 
 def _enemy_race(bot) -> Race:

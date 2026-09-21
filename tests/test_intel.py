@@ -407,7 +407,7 @@ def test_sensor_tower_behavior_builds_prerequisite_then_the_first_site() -> None
     assert built.structure_id is UnitTypeId.SENSORTOWER
     assert built.closest_to == first.target
     assert built.base_location == first.base
-    assert built.sensor_tower and not built.production and not built.find_alternative
+    assert not built.sensor_tower and not built.production and not built.find_alternative
     assert report.building == ("SENSORTOWER",)
 
 

@@ -69,7 +69,9 @@ def sensor_tower_sites(attention: AttentionState) -> tuple[SensorTowerSite, ...]
         map_view.bounds,
         map_view.own_start,
         map_view.enemy_start,
-        map_view.tower_sites,
+        map_view.tower_sites
+        if attention.available_tower_sites is None
+        else attention.available_tower_sites,
         tuple(sorted(attention.bases, key=lambda base: base.base_id)),
         _towers(attention),
     )

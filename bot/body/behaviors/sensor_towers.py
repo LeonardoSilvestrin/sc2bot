@@ -19,6 +19,28 @@ class SensorTowerReport:
     building: tuple[str, ...] = ()
 
 
+class BuildSensorTower(BuildStructure):
+    """Build only at the point whose radar coverage the planner evaluated.
+
+    Ares' sensor_tower flag prefers preset tower spots over closest_to. Even
+    without that flag, an occupied target can fall back to a different spot.
+    Preview without reserving and reject that fallback before sending a worker.
+    """
+
+    def execute(self, ai, config, mediator) -> bool:
+        placement = mediator.request_building_placement(
+            base_location=self.base_location,
+            structure_type=self.structure_id,
+            closest_to=self.closest_to,
+            production=False,
+            find_alternative=False,
+            reserve_placement=False,
+        )
+        if placement is None or placement != self.closest_to:
+            return False
+        return super().execute(ai, config, mediator)
+
+
 def execute(bot, plan: SensorTowerPlan) -> SensorTowerReport:
     building: list[str] = []
     if (
@@ -29,11 +51,10 @@ def execute(bot, plan: SensorTowerPlan) -> SensorTowerReport:
     ):
         site = plan.sites[0]
         bot.register_behavior(
-            BuildStructure(
+            BuildSensorTower(
                 site.base,
                 UnitTypeId.SENSORTOWER,
                 closest_to=site.target,
-                sensor_tower=True,
                 production=False,
                 find_alternative=False,
             )
