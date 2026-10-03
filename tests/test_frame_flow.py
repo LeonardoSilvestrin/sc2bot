@@ -23,6 +23,7 @@ from bot.logs import Logs, OverlayConfig, SnapshotConfig
 from bot.main import Layers, play_frame
 
 from .fakes import MAIN, MAP, FakeBot, FakeLogger, FakeUnit
+from .fakes import attention as fake_attention
 from .test_economy import Runner
 
 # The fake map has one expansion per base these tests hold, so a bot on all of
@@ -32,6 +33,15 @@ ROOMY_MAP = replace(MAP, expansions=(*MAP.expansions, Point2((40.5, 40.5))))
 
 ARMY_TAGS = {200, 201, 202, 203, 204, 205, 300}
 
+
+
+def unseen_until(layers: Layers, time: float) -> Layers:
+    """A game in which nothing of the enemy was seen until `time`: the enemy
+    army observer believes in what the enemy economy paid for by then."""
+
+    for before in range(0, int(time), 5):
+        layers.awareness.infer(fake_attention(time=float(before)))
+    return layers
 
 def build_bot(*, attackers: int = 3) -> FakeBot:
     bot = FakeBot()
@@ -249,7 +259,7 @@ def test_a_worker_inside_a_gas_building_does_not_flip_the_economy_plan() -> None
     scvs = [
         FakeUnit(100 + index, UnitTypeId.SCV, 12, 8 + index % 4, dps=5.0) for index in range(48)
     ]
-    layers = Layers(map_view=ROOMY_MAP, logs=Logs(logger))
+    layers = unseen_until(Layers(map_view=ROOMY_MAP, logs=Logs(logger)), 300.0)
 
     plans, workers, economies, dangers = [], [], [], []
     for iteration in range(8):
@@ -366,21 +376,22 @@ def test_the_fog_does_not_let_a_threatened_bot_expand_as_if_the_enemy_had_no_arm
     ]
     bot.units = [*scvs, *army]
 
-    frame = play_frame(bot, 0, Layers(map_view=ROOMY_MAP, logs=Logs(logger)))
+    # Ten minutes in which nothing of the enemy army was seen.
+    layers = unseen_until(Layers(map_view=ROOMY_MAP, logs=Logs(logger)), 600.0)
+    frame = play_frame(bot, 0, layers)
 
     assert frame.awareness.danger > 0.0
     assert frame.intent.economy < 0.5
     assert (frame.economy.expand, frame.economy.reason) == (False, "build_economy")
-    config = AwarenessConfig()
-    expected = config.army_growth * (600.0 - config.army_onset)
     updated = logger.named("awareness.updated")[0]["data"]
     assert updated["enemy_power"] == pytest.approx(frame.awareness.incidents[0].power)
-    assert updated["expected_enemy_power"] == pytest.approx(expected)
-    assert updated["estimated_enemy_power"] == pytest.approx(expected)
-    assert updated["enemy_uncertainty"] == pytest.approx(expected - updated["enemy_power"])
+    assert updated["estimated_enemy_power"] > 10.0 * updated["enemy_power"]
+    assert updated["enemy_sigma"] == pytest.approx(updated["enemy_army"]["sigma"])
+    assert updated["enemy_sigma"] > 0.0
     decided = logger.named("strategy.decided")[0]["data"]["inputs"]
     assert decided["planned_enemy_power"] == pytest.approx(
-        expected + AssessmentConfig().commit_margin * updated["enemy_uncertainty"]
+        updated["estimated_enemy_power"]
+        + AssessmentConfig().sigma_margin * updated["enemy_sigma"]
     )
     (planned,) = logger.named("planner.economy_planned")
     assert planned["data"]["inputs"]["strategy_economy"] == pytest.approx(frame.intent.economy)
@@ -428,7 +439,7 @@ def test_a_maxed_army_attacks_the_known_enemy_base_and_the_log_says_why() -> Non
     )
     bot.enemy_structures = [hatchery]
     army = tuple(sorted({*ARMY_TAGS, *range(400, 420)}))
-    layers = Layers(map_view=MAP, logs=Logs(logger))
+    layers = unseen_until(Layers(map_view=MAP, logs=Logs(logger)), 700.0)
 
     first = play_frame(bot, 0, layers)
     bot.time = 700.5

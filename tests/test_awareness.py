@@ -294,7 +294,7 @@ def test_enemy_workers_and_structures_are_no_army() -> None:
 
 
 def test_an_army_out_of_sight_is_believed_alive_until_it_is_seen_to_die() -> None:
-    config = AwarenessConfig(army_growth=0.0)
+    config = AwarenessConfig()
     model = AwarenessModel(config)
     tau = config.army_memory
     seen = model.infer(
@@ -309,50 +309,70 @@ def test_an_army_out_of_sight_is_believed_alive_until_it_is_seen_to_die() -> Non
     gone = model.infer(attention(time=200.0 + tau * math.log(1.0 / config.forget_below) + 1.0))
 
     assert seen.enemy_power == seen.estimated_enemy_power == pytest.approx(7.5)
-    assert (seen.enemy_uncertainty, seen.enemy_coverage) == (0.0, 1.0)
+    assert seen.enemy_coverage == 1.0
     assert hidden.enemy_power == pytest.approx(7.5 * math.exp(-10.0 / config.unit_memory))
     assert hidden.seen_enemy_power == pytest.approx(7.5 * math.exp(-10.0 / tau))
-    assert hidden.enemy_uncertainty == pytest.approx(
-        hidden.seen_enemy_power - hidden.enemy_power
-    )
     assert moved.contacts == () and moved.enemy_power == 0.0
     assert moved.seen_enemy_power == pytest.approx(7.5 * math.exp(-13.0 / tau))
-    assert moved.enemy_uncertainty == moved.estimated_enemy_power == moved.seen_enemy_power
     assert moved.enemy_coverage == 0.0
     assert later.seen_enemy_power == pytest.approx(7.5 * math.exp(-90.0 / tau))
     assert fewer.seen_enemy_power == pytest.approx(3.0 * math.exp(-91.0 / tau))
-    assert gone.seen_enemy_power == gone.estimated_enemy_power == 0.0
+    assert gone.seen_enemy_power == 0.0
     for state in (seen, hidden, moved, later, fewer, gone):
         assert state.enemy_power <= state.seen_enemy_power
+        # The observer never believes in less than what was seen alive.
+        assert state.estimated_enemy_power >= state.seen_enemy_power
 
 
-@pytest.mark.parametrize(
-    "time, expected", [(60.0, 0.0), (320.0, 20.0), (600.0, 48.0), (2000.0, 100.0)]
-)
-def test_an_enemy_never_seen_is_expected_an_army_growing_to_a_cap(
-    time: float, expected: float
-) -> None:
-    state = AwarenessModel().infer(attention(time=time))
+def test_an_enemy_never_seen_is_believed_an_army_its_economy_pays_for() -> None:
+    model = AwarenessModel()
+    states = [model.infer(attention(time=float(time))) for time in range(0, 601, 5)]
+    early, late = states[60], states[-1]
 
-    assert state.enemy_power == state.seen_enemy_power == 0.0
-    assert state.estimated_enemy_power == pytest.approx(expected)
-    assert state.enemy_uncertainty == pytest.approx(expected)
-    assert state.enemy_coverage == (1.0 if expected == 0.0 else 0.0)
+    assert late.enemy_power == late.seen_enemy_power == 0.0
+    assert 0.0 < early.estimated_enemy_power < late.estimated_enemy_power
+    assert late.estimated_enemy_power == late.enemy_army.power
+    assert 0.0 < early.enemy_sigma < late.enemy_sigma
+    assert late.enemy_coverage == 0.0
 
 
-def test_a_fresh_sighting_of_more_than_the_expected_army_leaves_no_uncertainty() -> None:
+def test_a_fresh_sighting_of_more_than_the_predicted_army_is_believed() -> None:
     army = tuple(roach(tag, 50, 50) for tag in range(1, 41))
     state = AwarenessModel().infer(attention(time=600.0, enemy_units=army))
 
-    assert state.expected_enemy_power == pytest.approx(48.0)
     assert state.enemy_power == state.estimated_enemy_power == pytest.approx(60.0)
-    assert (state.enemy_uncertainty, state.enemy_coverage) == (0.0, 1.0)
+    assert state.enemy_army.correction == "lower_bound"
+    assert state.enemy_coverage == 1.0
 
 
-@pytest.mark.parametrize(
-    "change",
-    [{"army_memory": 10.0}, {"army_growth": -0.1}, {"army_onset": -1.0}, {"army_cap": -1.0}],
-)
+def test_an_army_seen_to_die_leaves_the_estimate_at_once() -> None:
+    model = AwarenessModel()
+    army = tuple(roach(tag, 50, 50) for tag in range(1, 21))
+    seen = model.infer(attention(time=600.0, enemy_units=army))
+    dead = model.infer(attention(time=601.0, dead_tags=range(1, 21)))
+
+    assert seen.estimated_enemy_power == pytest.approx(30.0)
+    assert dead.enemy_army.lost == pytest.approx(30.0)
+    # One second of production is all that is left of it.
+    assert dead.estimated_enemy_power < 1.0
+
+
+def test_a_townhall_seen_to_die_is_a_base_less() -> None:
+    model = AwarenessModel()
+    hatcheries = tuple(
+        unit(900 + index, UnitTypeId.HATCHERY, 50 - 5 * index, 50, power=0.0, structure=True)
+        for index in range(3)
+    )
+    scouted = model.infer(attention(time=300.0, enemy_structures=hatcheries))
+    razed = model.infer(attention(time=301.0, dead_tags=(900, 901)))
+
+    assert scouted.enemy_army.bases == 3.0
+    # The prior on this three-expansion map is 1.5 bases; two of them were seen to die.
+    assert razed.enemy_army.known_bases == 1.0
+    assert razed.enemy_army.bases == 1.0
+
+
+@pytest.mark.parametrize("change", [{"army_memory": 10.0}])
 def test_an_invalid_army_estimate_is_rejected(change: dict[str, float]) -> None:
     with pytest.raises(ValueError):
         AwarenessConfig(**change)

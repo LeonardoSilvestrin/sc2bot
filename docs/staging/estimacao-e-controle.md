@@ -1,0 +1,95 @@
+# Estimação e controle
+
+Registro de uma virada de direção, decidida em 2026-10-03 no branch `observador` (tag de rollback
+`pre-observador`, em `9457a4a`). O que já está no HEAD está descrito em
+[architecture.md](../architecture.md#matemática); aqui fica o porquê, o que vem depois e como medir.
+
+## A virada
+
+Até `9457a4a`, o bot decidia com crenças feitas de pisos, limiares e histerese. O exemplo mais caro era o
+exército inimigo: `max(conhecido, visto vivo, prior por tempo)`, um prior que nenhuma evidência derrubava.
+A direção nova é tratar o bot como uma malha de controle e cada crença como um **estimador**, com modelo,
+medições e incerteza:
+
+```text
+          inimigo (perturbação que reage)
+                │
+  jogo ──► Attention ──► Awareness ──► Strategy + planners ──► Engine / Ares ──► jogo
+           sensor com     observador     controlador            atuador: satura
+           névoa                                                e tem tempo morto
+```
+
+Regras que saem disso, na ordem em que valem:
+
+1. **Crença é estado estimado, com σ.** Um valor sem incerteza não serve de margem robusta. Isso formaliza a
+   regra já escrita de "crença robusta antes de histerese": o filtro com covariância é a crença; histerese
+   fica para a última camada.
+2. **Margem robusta = k·σ.** Planejar contra μ + kσ, sendo k o apetite de risco, em vez de margens fixas.
+3. **Cascata: a malha externa vê o erro da interna, não a perturbação.** A Strategy não deve reagir à
+   pressão bruta que a Defense já trata localmente, e sim ao déficit dela.
+4. **Lei contínua onde o atuador é contínuo.** Relé com tempo morto dá ciclo limite; a divisão do gasto entre
+   exército e economia é contínua.
+5. **Adaptativo é parâmetro no estado.** O que varia por oponente (renda por worker, fatia em exército) é
+   estimado online, não fixado.
+
+## Passo 1 — observador do exército inimigo (no HEAD)
+
+`bot/awareness/enemy_army.py`: filtro de Kalman de `(A, g)` — exército e poder comprado por worker-segundo —
+com as bases e os workers acreditados como entrada, as mortes vistas como entrada conhecida e o visto vivo
+como medição censurada (limite inferior, e medição por cima enquanto as bases do inimigo estão em visão). A
+Assessment planeja contra `μ + 0,5σ`. Entrou sem shadow mode e sem bench: o bot ainda não joga ladder, e o
+rollback é a tag.
+
+O motivo medido (`bench/t0`, verdade dos replays): nas duas vitórias o inimigo ficou com 0–16 de poder por
+5–10 min enquanto o bot acreditava em 78–100; o bot esteve realmente à frente 49–64 % do tempo e se achou à
+frente 0–1 % (com a margem que usava). Tabela completa em
+[architecture.md](../architecture.md#medições), "Observador do exército inimigo".
+
+### Como medir
+
+```text
+.venv\Scripts\python.exe bench.py run --out bench\<rótulo>
+python tools\replay_truth.py bench\<rótulo>
+```
+
+O que olhar, contra o `bench/t0`:
+
+- **Erro do estimador** (`bias`, `mae`): deve cair, sobretudo nas partidas em que o inimigo perde o exército.
+- **Consistência** (`nees`, `in_2sigma`): a média de `(verdade − μ)² / σ²` perto de 1 e ~95 % dentro de 2σ.
+  Acima disso o filtro é otimista demais e o σ não serve de margem; bem abaixo, pessimista demais.
+- **Decisão**: o "tempo à frente" do bot deve se aproximar do real; `strategy.posture_changed` deve passar a
+  ter PRESSURE por `army_advantage` e COMMIT, que nunca abriram.
+- **Efeito colateral esperado**: sem nada visto, a previsão é mais alta que o prior antigo no meio do jogo
+  (74 contra 48 aos 600 s), então antes da primeira luta o bot pode se achar mais atrás do que se achava.
+
+### Parâmetros a calibrar com o replay_truth
+
+`growth` (prior 0,008), a rampa `f(t)` (0,15 → 0,65 entre 240 e 600 s), `worker_rate` (0,1/s),
+`coverage_sigma` (15), `power_drift` (0,05), `cap_sigma` (15) e `sigma_margin` (0,5). Os quatro primeiros
+saíram dos replays do `bench/t0`, que são só CheatInsane, com renda trapaceada; um bench contra oponentes sem
+cheat deve mover o `growth` aprendido para baixo — se não mover, a adaptação não está funcionando.
+
+## Próximos passos (decididos como direção, não implementados)
+
+1. **DEFEND em cascata.** Hoje o DEFEND dispara com 3–4 Marines de pressão mesmo com 10–53 de cobertura na
+   base (`bench/t0`: 42–45 % do tempo em DEFEND nas derrotas, 7 de 12 ataques cancelados no ASSEMBLE). A malha
+   externa passa a ler o déficit da Defense — poder pedido menos concedido, o `GrantStatus` que nenhuma missão
+   lê (C6 do [gaps.md](../gaps.md#c6)) — ou a ameaça líquida da cobertura (`balance`, C2). DEFEND passa a
+   significar "a malha interna saturou".
+2. **Lei de gasto contínua.** `alvo = μ̂(t+τ) + kσ̂(t+τ)`, `erro = alvo − (exército + exército na fila)` (o
+   termo da fila é um preditor de Smith: sem ele um controlador de alvo dá overshoot pelo tempo de produção),
+   `u_army = PI(erro)` saturado com anti-windup (supply 200, teto de produção). Substitui o liga/desliga de
+   upgrades, add-ons e expansão por postura. O atuador é o Ares, que não aceita um `u` contínuo: a tradução
+   passa por reserva de minerais ou ordem de prioridade.
+3. **Observador mais rico.** Workers vistos como medição de renda (não só limite), cobertura pelo mapa e não só
+   pelas bases, composição por tipo no estado para a `CompositionPolicy` ler a crença em vez do visto vivo.
+4. **Adaptativo entre partidas.** Estilo de exército como bandit por oponente (Thompson sampling), com os
+   resultados guardados entre partidas no ladder.
+
+## O que fica de fora da analogia
+
+O inimigo se adapta (é mais teoria dos jogos que perturbação; o controle robusto é a ponte), luta é fortemente
+não linear e discreta, e decisões combinatórias — onde lutar, que alvo — não são malha de controle. Controle
+serve aos fluxos: economia, produção e estimação. A métrica de poder `sqrt(dps·hp)` somada já é a força de
+combate da lei quadrática de Lanchester, então comparar somas está certo; a consequência é que a força cresce
+com N², e reforço chegando aos poucos custa quadraticamente.

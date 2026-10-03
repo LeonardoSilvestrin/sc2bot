@@ -112,7 +112,7 @@ MULE no mesmo frame; a reserva de energia é intenção do Intel, não política
 | Camada | Arquivo | Estado público | O que faz |
 | --- | --- | --- | --- |
 | ATTENTION | [bot/attention/](../bot/attention/) | `MapView`, `AttentionState` | Percepção. `map.py`/`topology.py`: no `on_start`, `read_map` congela lattice, expansões, `MapTopology` (regiões, passagens/chokes, adjacência, regiões dos starts) e os sites 3x3 com espaço de add-on que o placement do Ares resolveu na nossa main, sem o wall da rampa (`production_sites`), e os spots 2x2 dele por expansão, também sem o wall (`tower_sites`), e os sites 3x3 por expansão (`base_production_sites`) — "o mapa físico é assim". `frame.py`: `observe` lê o frame (recursos, workers pela contagem do jogo, unidades próprias e inimigas visíveis neste frame ordenadas por tag — sem os snapshots de até 30 s que o Ares mistura em `enemy_units` para inimigos fora de visão, porque lembrar é papel da Awareness —, bases, mortes, visibilidade, upgrades concluídos; por unidade, energia, se está camuflada/enterrada e se nada a detecta, o ponto aonde a primeira ordem a leva — move, attack-move, patrol ou smart no chão (`moving_to`) — e se tem add-on (`has_add_on`); e os contatos inimigos que as nossas Sensor Towers pegam fora de visão, só a posição, ordenada (`radar_blips`)); `units.py` classifica e precifica unidades (`UnitView`, `unit_power`, `is_army`). `opening.py`: o registro de scouting que atravessa frames — `OpeningWatch` dobra cada frame em `OpeningObservations` (natural e third como `UNKNOWN`/`ABSENT_CONFIRMED`/`PRESENT` com os instantes em que foram checadas, estruturas inimigas por tipo com contagem e timestamps, gases, workers, unidades de combate, estruturas vistas na nossa metade e a cobertura acumulada da main inimiga), até `OPENING_WINDOW` = 300 s; depois congela. `passages.py`: o outro registro que atravessa frames — a identidade do mapa (regiões, ids de passagem, qual expansão é a natural/third do inimigo) é fixa, mas mineral walls e rocks caem durante a partida, e só isso muda: `MapPassage.state` (`OPEN`/`CLOSED`/`UNKNOWN`). O `pathing_grid` do jogo já vem com blocker em cima do chão andável, então toda passagem que o mapa pode ter existe desde o primeiro frame; as que um blocker sela nascem `CLOSED`. Cada passagem guarda as tags dos objetos neutros que a fecham (`blocker_tags`, `blocker_type`) e `PassageWatch` pergunta a cada frame quais delas o jogo ainda lista — compara as tags sobreviventes antes de atualizar estados, sem reconstruir geometria. Sobra alguma → `CLOSED`; sumiram todas → `OPEN`; não deu para ler → `UNKNOWN`, que não é caminho. Quando algo muda de estado o `MapView` é substituído (e só então), e quem depende de conectividade lê `topology.open_passages()`, `neighbours(..., open_only=True)`, `connected_regions`, `route`, `map.route_to`/`reachable_now`. Não interpreta valor, ameaça ou controle. |
-| AWARENESS | [bot/awareness/](../bot/awareness/) | `AwarenessState` | Pinta o mapa ao longo da partida. Memória de contatos com confiança `exp(-idade/τ)` e incerteza `min(cap, v·idade)`; esquece por morte confirmada, posição vista vazia (após carência) ou confiança < piso. Pressão por base com a ameaça lembrada (`recent_threat`, τ = `threat_memory`), incidentes de ameaça (`ThreatIncident`), estimativa do exército inimigo (conhecido, visto vivo, esperado sem avistamento, incerteza e cobertura), contatos escondidos (camuflados sem detecção, à vista) e quando um exército camuflado foi visto pela primeira vez, e campo de influência. `opening/`: lê os fatos da Attention como `OpeningBelief` — `aggression`, `greed`, `tech` e `proxy` contínuos e independentes, com a `confidence` que cobertura, checagens e atualidade lhe dão; as expectativas por raça ficam em `opening/knowledge.py`. Descreve; não escolhe margem nem prioridade. |
+| AWARENESS | [bot/awareness/](../bot/awareness/) | `AwarenessState` | Pinta o mapa ao longo da partida. Memória de contatos com confiança `exp(-idade/τ)` e incerteza `min(cap, v·idade)`; esquece por morte confirmada, posição vista vazia (após carência) ou confiança < piso. Pressão por base com a ameaça lembrada (`recent_threat`, τ = `threat_memory`), incidentes de ameaça (`ThreatIncident`), o exército inimigo conhecido e visto vivo e o **observador** dele (`enemy_army.py`, `EnemyArmyBelief`: filtro de Kalman do exército e da produção por worker, com a economia acreditada — bases e workers — como entrada, as mortes vistas como entrada conhecida e o visto vivo como medição censurada; média, σ, cobertura), contatos escondidos (camuflados sem detecção, à vista) e quando um exército camuflado foi visto pela primeira vez, e campo de influência. `opening/`: lê os fatos da Attention como `OpeningBelief` — `aggression`, `greed`, `tech` e `proxy` contínuos e independentes, com a `confidence` que cobertura, checagens e atualidade lhe dão; as expectativas por raça ficam em `opening/knowledge.py`. Descreve; não escolhe margem nem prioridade. |
 | EGO / strategy | [bot/ego/strategy/](../bot/ego/strategy/) | `GameAssessment`, `StrategicIntent`, `StrategicPosture` | `model.py`: os contratos. `assessment.py`: `AssessmentModel` transforma Awareness (e as mortes e upgrades do frame) em `GameAssessment` contínuo — ameaça, posição militar e econômica, vulnerabilidade inimiga, power spike, revés e confiança —, com o inimigo sempre como estimativa. `strategy.py`: `StrategyModel` escolhe a postura (`RECOVER`, `DEFEND`, `DEVELOP`, `PRESSURE`, `COMMIT`) por perguntas com histerese e persistência, e publica o `StrategicIntent` com motivo, valores que o explicam, emergência travada e as preferências `defense`, `army`, `economy`, `risk`. Não conhece missão nenhuma nem escolhe lugar no mapa. |
 | EGO / missions | [bot/ego/missions/](../bot/ego/missions/) | `MissionStatus`, `CancelMode`, `Lifecycle`, `MissionFeedback`, `MissionView` | O que todas as missões compartilham: `lifecycle` (status terminal, pedido de cancelamento e modos) e `contracts` (o feedback que a missão lê e o resumo que ela reporta). Nenhuma missão concreta mora aqui. |
 | EGO / planners | [bot/ego/planners/](../bot/ego/planners/) | `Proposal`, `Command`, `IntelPlan`, `EconomyPlan`, `StructurePlan` | Decidem o que deve ser feito (tarefa, alvo, prioridade, requisitos) sem nomear unidades, um pacote por planner: `offense/`, `defense/` e `map_control/` pedem exército ao Engine, `intel/` obtém informação por unidades, scans e estruturas, `economy/` diz o que comprar e `structure_control/` opera estruturas existentes. `defense/`: o `DefensePlanner` abre uma `DefendAreaMission` por incidente, que pede `ATTACK` com um orçamento de poder repartido entre a parte aérea e a terrestre. `offense/`: `OffensePlanner` (`planner.py`) abre e encerra a `MainAttackMission` (`missions/main_attack.py`) (ASSEMBLE → ADVANCE ⇄ SEARCH, ENGAGE/RETREAT → REGROUP, e WITHDRAW só num cancelamento gracioso); `ATTACK` no alvo ou `RETREAT` ao rally (o anchor do MapControl, que o frame lhe passa), com todas as unidades livres, lendo a concessão anterior da missão. `map_control/`: `MapControlPlanner` (`planner.py`) escolhe o anchor — a base ameaçada em DEFEND, senão o ponto de reação que melhor responde a todas as nossas bases, na frente delas, num choke que as guarda e longe da influência inimiga (`policies/staging.py`), senão a heurística antiga do rally — e pede `HOLD` nele com todas as unidades livres, sem missão (a proposta mantém o id `core_army`, nome anterior, por compatibilidade com logs, viewer e benches). `intel/`: `IntelPlanner` (`planner.py`) abre a `EarlyScoutMission` (`missions/early_scout.py`), o SCV que lê a opening inimiga (CHECK_NATURAL → ENTER_MAIN → CIRCLE_MAIN → RECHECK_NATURAL → CHECK_THIRD → SURVEIL → COMPLETE, e PROXY_SEARCH quando o planner manda; SURVEIL é a ronda que tapa o que ficou em aberto, sempre indo ao lugar visto há mais tempo — natural, third, saídas da main e a própria main —, e acaba quando a `confidence` da `OpeningBelief` passa de `READ_ENOUGH` (0,75) ou a janela da opening fecha: um scout só se paga enquanto a leitura ainda está fina), e manda procurar proxy quando a leitura da Awareness acredita em um (`policies/proxy.py` diz onde procurar, na nossa metade do mapa). `economy/` (`planner.py` junta uma policy por pergunta e o estilo): `policies/investment` diz quanto investir (workers, bases, gás, teto de produção, quando o plano assume do opening ou o interrompe numa emergência); `knowledge/styles` diz qual exército (o estilo sorteado na partida: abertura, composição, upgrades e onde vão os Reactors); `policies/composition` (`CompositionPolicy`) diz o que construir agora (baseline do estilo combinado com respostas viáveis do catálogo `knowledge/counter_catalog` contra o exército inimigo acreditado); `planner.plan` junta tudo num `EconomyPlan` para os macro behaviors do Ares (inclusive upgrades, Orbital e MULE). `intel/policies/detection`: onde escanear, quais bases precisam de Missile Turret, Engineering Bay e a energia que cada Orbital guarda. `structure_control/`: `StructureControlPlanner` (`planner.py`) diz quais depots levantar e quais abaixar e junta `policies/relocation.py`, que tira do caminho de um Siege Tank preso a Barracks, Factory ou Starport que o bloqueia (levanta, espera o Tank andar, pousa fora do caminho) e diz quais sites da main ficam vazios no corredor da rampa. |
@@ -141,10 +141,33 @@ MULE no mesmo frame; a reserva de energia é intenção do Intel, não política
   - `seen_enemy_power` (visto vivo): `Σ poder·exp(-idade / army_memory)` das unidades de exército vistas vivas e não
     vistas morrer, τ = 180 s; sai com a morte confirmada ou abaixo de `forget_below`, não quando a última posição
     volta à visão vazia. Como `army_memory ≥ unit_memory`, conhecido ≤ visto vivo.
-  - `expected_enemy_power` (esperado sem avistamento): `min(army_cap, army_growth · max(0, t − army_onset))`,
-    0,1 Marine/s a partir de 120 s, teto 100.
-  - `estimated_enemy_power = max(conhecido, visto vivo, esperado)`, `enemy_uncertainty = estimado − conhecido`,
-    `enemy_coverage = conhecido / estimado` (1 enquanto o estimado é 0).
+  - O exército inteiro é estado de um observador ([enemy_army.py](../bot/awareness/enemy_army.py)), não um
+    prior por tempo: previsto pela economia que o paga, baixado pelo que se vê morrer e corrigido pelo que se
+    vê vivo. Por frame, com `Δt` desde o anterior:
+    - bases `B = max(townhalls lembrados, min(expansões / 2, 1 + t / base_interval) − townhalls vistos morrer)`,
+      `base_interval` 150 s;
+    - workers `W ← min(vaga, W + worker_rate · Δt) − workers vistos morrer`, nunca menos que os workers
+      lembrados, com `vaga = min(80, 22 · B)`, `W₀ = 12`, `worker_rate` 0,1/s;
+    - produção `u = min(W, 22 · B) · f(t)`, `f` a fatia da renda em exército: 0,15 até 240 s, rampa linear até
+      0,65 aos 600 s;
+    - exército `A ← A + Δt · g · u − D`, com `D` o poder inimigo visto morrer no frame (preço do último
+      avistamento) e `g` o poder que a renda de um worker compra por segundo (prior 0,008, σ 0,003, limites
+      0,002–0,03), **no estado**: o filtro é de `x = (A, g)`, `F = [[1, Δt·u], [0, 1]]`, `H = [1, 0]`,
+      `Q = diag(0,05, 1,5·10⁻⁸)·Δt`. É isso que o torna adaptativo: uma inovação positiva sobe `A` e `g`
+      pela covariância cruzada, então um inimigo que produz mais que o prior (a renda trapaceada do
+      CheatInsane) é aprendido, e um que produz menos também;
+    - teto `cap = 0,9 · (200 − W)` (o supply que os workers deixam); no teto não há produção, e a variância
+      de `A` fica limitada a `cap_sigma²` (15²): ninguém planeja contra mais exército do que cabe no supply;
+    - medição 1, **limite inferior**: o visto vivo `y`. Se a previsão fica abaixo, atualização com
+      `R = 2²`, e `A ≥ y`;
+    - medição 2, **cobertura**: `c` = fração das bases inimigas conhecidas (ou do start, sem nenhuma) em visão
+      agora. Com `c > 0` e `y < A`, `y` mede `A` por cima com `R = 15² / (c · Δt)`: quanto mais tempo e mais
+      das bases dele se olha sem achar o exército, mais se acredita que ele não existe;
+    - sem nada visto, a previsão dá 11 aos 300 s, 37 aos 480 s, 74 aos 600 s e o teto (108) aos ~700 s; nos
+      replays do `bench/t0` o exército pago pelo inimigo foi 12–16, 39–60 e 85–109, e pelo próprio bot 4–8,
+      27–38 e 54–86.
+  - `estimated_enemy_power = max(conhecido, visto vivo, A)`, `enemy_sigma = σ_A`, `enemy_coverage =
+    conhecido / estimado` (1 enquanto o estimado é 0).
 - Leitura da opening (`bot/awareness/opening/`), em [0, 1] e independentes entre si — não somam 1.
   Toda evidência é contínua: nada tem limiar, e o que vale é **quando foi observado**, não o instante atual.
   - Rampas por raça (`knowledge.py`): `atraso = clamp((referência − early) / (late − early))` e
@@ -169,11 +192,12 @@ MULE no mesmo frame; a reserva de energia é intenção do Intel, não política
   - `threat_level = danger` (a ameaça lembrada na base mais ameaçada), com um nome para leitura
     (`CLEAR` < 0,05 ≤ `LOW` < 0,3 ≤ `ELEVATED` < 0,6 ≤ `HIGH`); decisões leem o valor.
   - `army_position = (own − planejado) / (own + planejado + prior_power)` em [−1, 1], com inimigo planejado
-    `= estimated_enemy_power + commit_margin · enemy_uncertainty` (margem 0,5: a névoa não é vantagem) e
+    `= estimated_enemy_power + sigma_margin · enemy_sigma` (μ + 0,5 σ: a névoa não é vantagem, e um inimigo
+    bem observado não vale mais do que é) e
     `prior_power` (20 Marines) de dúvida nos dois lados: uma escaramuça de poucas unidades não é veredito.
     `army_share = (1 + army_position) / 2`.
-  - `economy_position = (nossas bases − bases inimigas) / soma`, com as bases inimigas `= max(townhalls
-    lembrados, 1 + t / enemy_base_interval (150 s))`, o prior limitado à metade das expansões do mapa.
+  - `economy_position = (nossas bases − bases inimigas) / soma`, com as bases inimigas do observador (`B` acima:
+    townhalls lembrados, ou o prior menos os townhalls vistos morrer).
   - `enemy_vulnerability = perdido / (perdido + estimado)`: poder do exército inimigo morto à nossa vista
     (tags de `dead_tags` com o poder do frame anterior), somado com memória `exp(−Δt / loss_memory)` (30 s).
   - `setback`: o mesmo para o nosso exército, `perdido / (perdido + own)`, vezes `min(1, 2 · perdido /
@@ -606,14 +630,14 @@ behaviors e logs. O viewer normaliza nomes de eventos anteriores ao schema 5 ao 
 | `planner.production_kept_clear` | planners | `on_start` | `production_sites` (da main), `sites` (os do corredor da rampa), `cleared` (quantos o placement do Ares tinha) |
 | `game.ended` | logs | `on_end` | `result` |
 | `attention.observed` | attention | bases, fim do opening, inimigos à vista ou contatos de radar mudam; amostra a cada 5 s | `minerals`, `vespene`, `supply_used`, `supply_cap`, `workers`, `army_units`, `army_supply`, `army_power`, `visible_enemy_units`, `visible_enemy_structures`, `radar_blips`, `bases`, `opening`, `opening_done`, `upgrades[]`, `structures` {tipo: contagem, prontas ou não} |
-| `awareness.updated` | awareness | mudança de contatos/poder/ameaça por base, contatos escondidos, primeiro camuflado, heartbeat | `contacts`, `visible_contacts`, `enemy_power`, `seen_enemy_power`, `expected_enemy_power`, `estimated_enemy_power`, `enemy_uncertainty`, `enemy_coverage`, `own_power`, `danger`, `danger_now`, `cloak_seen_at`, `hidden_contacts[]`, `bases[]` {`base_id`, `position`, `is_main`, `threat`, `recent_threat`, `pressure`, `cover`, `balance`, `air_share`, `center`}, `incidents[]` {`incident_id`, `contacts`, `center`, `power`, `ground_power`, `air_power`, `confidence`, `threat`, `pressure_by_base`} (escrito também quando os membros de um incidente mudam), `strongest_contacts[]` (com `hidden`), `field` {`samples`, `friendly`, `contested`, `enemy`, `threatened`, `max_threat`} |
+| `awareness.updated` | awareness | mudança de contatos/poder/ameaça por base, contatos escondidos, primeiro camuflado, estimativa do observador (de 5 em 5 Marines) ou da medição que a corrigiu, heartbeat | `contacts`, `visible_contacts`, `enemy_power`, `seen_enemy_power`, `estimated_enemy_power`, `enemy_sigma`, `enemy_coverage`, `enemy_army` {`power`, `sigma`, `growth`, `growth_sigma`, `production`, `workers`, `bases`, `known_bases`, `expected_bases`, `coverage`, `cap`, `lost`, `correction` (`none`/`lower_bound`/`coverage`)}, `own_power`, `danger`, `danger_now`, `cloak_seen_at`, `hidden_contacts[]`, `bases[]` {`base_id`, `position`, `is_main`, `threat`, `recent_threat`, `pressure`, `cover`, `balance`, `air_share`, `center`}, `incidents[]` {`incident_id`, `contacts`, `center`, `power`, `ground_power`, `air_power`, `confidence`, `threat`, `pressure_by_base`} (escrito também quando os membros de um incidente mudam), `strongest_contacts[]` (com `hidden`), `field` {`samples`, `friendly`, `contested`, `enemy`, `threatened`, `max_threat`} |
 | `opening_scout.expansion_checked` | attention | o estado da natural ou do third inimigo muda | `expansion` (`natural`/`third`), `status` (`UNKNOWN`/`ABSENT_CONFIRMED`/`PRESENT`), `previous`, `position`, `last_checked_at`, `first_seen_at`, `absent_at`, `appeared_between` (vista vazia, vista de pé) |
 | `opening_scout.structure_seen` | attention | mais uma estrutura inimiga de um tipo é vista no early game | `structure`, `count_seen`, `first_seen_at`, `last_seen_at`, `gases_seen`, `workers_seen`, `proxy_structures_seen`, `main_coverage` |
 | `awareness.opening_updated` | awareness | um fato novo, a leitura muda de faixa (1 casa) ou heartbeat | `summary` (uma linha: `t=1:52 race=Protoss natural=ABSENT_CONFIRMED@1:34 third=UNKNOWN coverage=0.81 \| aggression=0.74 …`), `race`, `natural` e `third` {`status`, `last_checked_at`, `first_seen_at`, `absent_at`, `appeared_between`}, `observed` {estrutura: contagem, `gases`, `workers`, `combat_units`, `proxy_structures`}, `main_coverage`, `last_updated`, `belief` {`aggression`, `greed`, `tech`, `proxy`, `confidence`}, `evidence` {cada termo da leitura} |
 | `opening_scout.phase_changed` | missions | o early scout abre, muda de fase ou termina | `mission_id`, `phase` (`REQUESTING`, `CHECK_NATURAL`, `ENTER_MAIN`, `CIRCLE_MAIN`, `RECHECK_NATURAL`, `CHECK_THIRD`, `SURVEIL`, `PROXY_SEARCH`, `COMPLETE`), `previous`, `since`, `reason` (em `SURVEIL`: `third_found`, `third_empty`, `third_window_over`, `no_third_known`), `status`, `target`, `proxy_search`, `inputs` {`set_out`, `proxy_ordered`, `proxy_index`, `proxy_points`, `watching`, `watchpoints`}; em `COMPLETE` o motivo diz o que a encerrou (`opening_read`, `opening_over`, `proxy_found`, `proxy_search_done`, `proxy_search_timed_out`, `nowhere_left_to_look`, ou o motivo do cancelamento) |
 | `opening_scout.proxy_search_started` | missions | o planner manda o scout procurar proxy (uma vez) | `mission_id`, `reason`, `target`, `inputs` |
 | `strategy.posture_changed` | strategy | toda troca de postura (e a primeira), nunca por heartbeat | `posture`, `previous` (null na primeira), `reason`, `because` {os valores salientes da troca}, `summary` (uma linha: `DEVELOP -> DEFEND (home_threatened): threat=HIGH threat_level=0.71 army_position=-0.18 power_spike=0.00`), `threat` (CLEAR/LOW/ELEVATED/HIGH), `emergency`, `assessment` {como abaixo}, `gates` {postura: {`score`, `open`, `since`}} |
-| `strategy.decided` | strategy | troca de postura ou de emergência, heartbeat | `posture`, `previous`, `since`, `reason`, `emergency`, `defense`, `army`, `economy`, `risk`, `assessment` {`threat_level`, `threat`, `army_position`, `economy_position`, `enemy_vulnerability`, `power_spike`, `confidence`, `setback`, `upgrade_spike`, `supply_spike`}, `inputs` {`danger`, `danger_now`, `army_share`, `own_power`, `enemy_power`, `seen_enemy_power`, `expected_enemy_power`, `estimated_enemy_power`, `enemy_uncertainty`, `planned_enemy_power`, `own_lost`, `enemy_lost`, `own_bases`, `known_enemy_bases`, `expected_enemy_bases`, `fresh_upgrades`, `supply_used`}, `scores` {postura: score do gate}, `gates` |
+| `strategy.decided` | strategy | troca de postura ou de emergência, heartbeat | `posture`, `previous`, `since`, `reason`, `emergency`, `defense`, `army`, `economy`, `risk`, `assessment` {`threat_level`, `threat`, `army_position`, `economy_position`, `enemy_vulnerability`, `power_spike`, `confidence`, `setback`, `upgrade_spike`, `supply_spike`}, `inputs` {`danger`, `danger_now`, `army_share`, `own_power`, `enemy_power`, `seen_enemy_power`, `estimated_enemy_power`, `enemy_sigma`, `enemy_growth`, `enemy_production`, `enemy_workers`, `planned_enemy_power`, `own_lost`, `enemy_lost`, `own_bases`, `known_enemy_bases`, `expected_enemy_bases`, `enemy_bases`, `fresh_upgrades`, `supply_used`}, `scores` {postura: score do gate}, `gates` |
 | `planner.proposed` | planners | o conjunto ranqueado de propostas muda | `proposals[]` {`proposal_id`, `owner`, `priority`, `command`, `target`, `count`, `minimum_power`, `must_attack`, `demand_id`, `mission_id`, `unit_types`, `reason`, `inputs`} |
 | `planner.map_control_planned` | planners | origem, razão, anchor (grade de 3), fallback, ponto mantido do `staging` (e quando foi escolhido) mudam; heartbeat de 30 s | `anchor`, `source` (`threatened_base`, `staging`, `legacy`), `reason` (`hold_<staging|rally>_<postura>`), `posture`, `advance`, `fallback` (`no_candidates`, `no_enemy_route` ou null), `passage` e `region` (do ponto do `staging` que pôs o anchor, ou null), `staging` {`anchor`, `switch` (`kept`, `initial`, `held_invalid`, `bases_changed`, `posture_changed`, `awareness`), `since`, `previous`, `advance`, `scale` (D), `bases`, `candidate_count`, `selected`, `top[]` (o melhor de cada região, até 5, melhor primeiro); cada ponto {`anchor`, `region`, `passage`, `reaction`, `worst` e `worst_base` (a base respondida por último e a resposta, em células), `mean` (distância média às bases), `front` (à frente da base média no caminho do inimigo, em células; negativo atrás), `choke`, `threat`, `support`, `control`, `exposure`, `score`}} ou null |
 | `planner.offense_planned` | planners | estágio, `since`, bloqueio, alvo (tag ou grade de 3) mudam | `stage`, `previous`, `since`, `reason`, `blocked_by`, `committed_power`, `target`, `target_tag`, `target_kind` (`known_base`, `known_structure`, `flying_structure`, `enemy_start`, `search`), `inputs` {`own_power`, `army_share`, `power_spike`, `offensive`, `supply_used`, `assembled_share`, `committed_power`, `stage_for`, `cooldown_left`, `known_structures`, `squad_units`, `squad_power`, `core_power`, `local_enemy_power`, `local_share` (−1 sem inimigo), `contested`, `clear_for`, `start_cleared`}, `fight` {`center`, `own_power`, `enemy_power`, `share`, `enemy_center`} ou null, `mission_id` e `mission_status` (a missão avançada ou aberta no frame, também no frame em que termina; null em IDLE) |
@@ -656,7 +680,10 @@ behaviors e logs. O viewer normaliza nomes de eventos anteriores ao schema 5 ao 
 .venv\Scripts\python.exe bench.py run --out bench\<rótulo> --matrix base --maps PersephoneAIE_v4 --races Zerg --difficulties CheatInsane --ai-builds Macro Timing --armies bio mech --time-limit 1200
 .venv\Scripts\python.exe bench.py summarize bench\<rótulo>
 .venv\Scripts\python.exe bench.py compare bench\<base> bench\<desafiante>
+python tools\replay_truth.py bench\<rótulo>
 ```
+
+`tools/replay_truth.py` precisa do `sc2reader` (`pip install sc2reader`), que não é dependência do bot.
 
 ## Ainda não implementado
 
@@ -667,10 +694,11 @@ andamento, ou decidido como o próximo, está em [staging/](staging/README.md).
 - **Informação:** a Strategy ainda não consome a `OpeningBelief` (Attention, Awareness e Intel já a
   produzem e a registram); nenhum limiar ou peso da leitura da opening foi medido em partida real;
   scouting depois do early game (o SCV sai uma vez, antes de 240 s, e a ronda dele acaba com a janela
-  da opening), belief
-  probabilístico do exército inimigo, forças inimigas agregadas além dos incidentes, estimativa do
-  inimigo por produção ou economia vista, informação ampla que mostre um exército menor que o esperado,
-  calibração de `army_growth`/`army_cap`, Raven e scan de informação.
+  da opening), forças inimigas agregadas além dos incidentes, Raven e scan de informação. O observador do
+  exército inimigo ainda não tem: composição por tipo no estado (o poder é um escalar), renda medida pelos
+  workers vistos em vez de só limitada por eles, cobertura além das bases conhecidas (o exército no meio do
+  mapa não conta como "olhei e não vi"), atraso de produção, e nenhum parâmetro dele foi medido com o
+  `tools/replay_truth.py` em partidas jogadas com ele.
 - **Espaço:** `RegionState` e território (a topologia e o campo são calculados e nenhuma decisão os
   consome), map control, path de grupo consciente de risco, alcance de estruturas voando sobre terreno
   impassável.
@@ -702,9 +730,9 @@ andamento, ou decidido como o próximo, está em [staging/](staging/README.md).
   de PRESSURE e COMMIT usa esse mesmo ponto sem medição própria.
 - **Estratégia:** nenhum limiar, peso ou `stance_dwell` da avaliação e das posturas foi medido em partida
   (bench pendente). Onde os dados ainda não sustentam uma avaliação confiável:
-  - o prior `expected_enemy_power` (0,1 Marine/s até 100) só cresce: matar o exército inimigo não baixa a
-    estimativa abaixo dele, então `army_position` quase não sobe depois de uma luta vencida no meio do jogo
-    e COMMIT raramente abre antes de o avistamento superar o prior;
+  - a estimativa do exército inimigo é do observador, e o σ dele entra no planejado (`sigma_margin` 0,5);
+    as posturas foram ajustadas contra o prior antigo, que nunca deixava `army_position` positivo
+    (ver Medições, "Observador do exército inimigo"), e nenhum gate foi revisto depois da troca;
   - `enemy_vulnerability` só vê mortes à nossa vista; exército inimigo fora de posição, bases desprotegidas,
     defesa estática e troca de tech não entram;
   - `economy_position` compara só bases, e o lado inimigo é quase sempre prior (nenhum scouting depois de
@@ -768,6 +796,29 @@ emergência pula o `minimum_dwell`). A alternância é da Strategy; com a polít
 choke da natural (150,102), a 46 células da base ameaçada. Uma partida por mapa: nada aqui separa resultado.
 A política `passage` (`anchor.py`) e o `shadow` do log foram removidos depois desta comparação, sem uma
 matriz própria do `staging`.
+
+**Observador do exército inimigo.** O `bench/t0` (`9457a4a`, Zerg e Terran CheatInsane, 4 partidas com
+replay) foi a primeira medição das posturas e a última do prior por tempo. A verdade dos replays
+(`tools/replay_truth.py`) contra o que o bot acreditou:
+
+| Partida | Resultado | Erro médio da estimativa | Erro absoluto médio | Tempo realmente à frente | Tempo em que o bot se achou à frente |
+| --- | --- | --- | --- | --- | --- |
+| 000 Zerg Rush | derrota | +9,7 | 18,0 | 13 % | 0 % |
+| 001 Zerg Macro | derrota | +5,5 | 14,9 | 10 % | 5 % |
+| 002 Zerg RandomBuild | vitória | +40,8 | 47,8 | 64 % | 8 % |
+| 003 Terran Rush | vitória | +22,3 | 28,5 | 49 % | 41 % |
+
+(O "achou à frente" desta tabela planeja contra a estimativa sem margem; com a margem de 0,5 da incerteza
+que o bot usava, o `army_position` máximo de cada partida ficou entre 0,00 e 0,13.) Nas vitórias o inimigo
+perdeu o exército (poder real 0–16) e o prior seguiu subindo até 78–100: na 002, aos 15 min, o inimigo tinha
+7,6 de poder, 51 workers e 2 bases, e o bot acreditava em 78. Nas derrotas o erro pequeno é coincidência: a
+rampa calhou de bater com o Zerg CheatInsane. O visto vivo acompanhou a verdade quando o inimigo desmoronou
+(17 → 11 → 6,6 contra 28 → 16 → 7,6), e o `max()` o descartava. Parâmetros medidos nos mesmos replays e usados
+no observador: renda por worker de 55–68/min do bot e 75–112/min do CheatInsane (por isso a produção é
+adaptativa); fatia da renda em exército de 0,2–0,4 até ~6 min e 0,4–0,8 depois, igual nos dois lados;
+1,0–1,3 Marine de poder por 100 de recurso em exército. O poder "verdadeiro" vem de uma tabela estática
+calibrada por partida pelo `own_power` do próprio bot (escala 0,79–0,84). O observador entrou no HEAD sem
+bench próprio (commit "virada de chave", tag de rollback `pre-observador`).
 
 **Nunca medido sozinho:** Reactors nas Barracks sem add-on (`BARRACKSREACTOR`), a expansão além da
 sexta base sem o pedido mantido (o código que roda hoje), o splash no poder e a interrupção do opening.

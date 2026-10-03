@@ -3,14 +3,15 @@
 Every value is continuous and every enemy value is an estimate:
 
 - `threat_level` is Awareness' remembered danger at our most threatened base.
-- `army_position` compares our army with the enemy army planned against: its
-  estimate (never less than the prior that grows with game time) plus
-  `commit_margin` of the part no contact places, so the fog is no advantage.
-  Both armies carry `prior_power` Marines of doubt, so a skirmish between a
-  few units is no verdict: (own - planned) / (own + planned + prior_power).
-- `economy_position` compares our bases with the enemy bases believed: the
-  townhalls remembered, never fewer than one base plus one per
-  `enemy_base_interval` seconds, up to half the map's expansions.
+- `army_position` compares our army with the enemy army planned against: the
+  observer's estimate plus `sigma_margin` of its standard deviation, mu + k
+  sigma, so the fog is no advantage and a well-watched enemy is no more than
+  it is. Both armies carry `prior_power` Marines of doubt, so a skirmish
+  between a few units is no verdict: (own - planned) / (own + planned +
+  prior_power).
+- `economy_position` compares our bases with the enemy bases Awareness
+  believes (`EnemyArmyBelief.bases`: the townhalls remembered, never fewer
+  than the prior expects by now, less the townhalls seen to die).
 - `enemy_vulnerability` is the share of the enemy army that died in our sight
   recently: lost / (lost + estimate), the losses fading with `loss_memory`.
 - `setback` is the same share of our own army, counted in full when it
@@ -31,8 +32,6 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from ares.consts import TOWNHALL_TYPES
-from sc2.ids.unit_typeid import UnitTypeId
 from sc2.ids.upgrade_id import UpgradeId
 
 from bot.attention import AttentionState, UnitView, is_army
@@ -40,15 +39,12 @@ from bot.awareness import AwarenessState
 
 from .model import GameAssessment
 
-# A townhall in the air holds no base.
-_BASES = TOWNHALL_TYPES - {UnitTypeId.COMMANDCENTERFLYING, UnitTypeId.ORBITALCOMMANDFLYING}
-
 
 @dataclass(frozen=True, slots=True)
 class AssessmentConfig:
-    # The enemy army planned against is its estimate plus this share of the
-    # part no contact places.
-    commit_margin: float = 0.5
+    # The enemy army planned against is its estimate plus this many of its
+    # standard deviations.
+    sigma_margin: float = 0.5
     # Power, in Marines, of doubt both armies carry.
     prior_power: float = 20.0
     # tau of a remembered loss, ours or the enemy's.
@@ -58,13 +54,11 @@ class AssessmentConfig:
     # Supply where the spike of a capped army starts, and where it is full.
     supply_spike_from: float = 170.0
     maxed_supply: float = 190.0
-    # The enemy is believed to take one more base every this many seconds.
-    enemy_base_interval: float = 150.0
 
     def __post_init__(self) -> None:
-        if min(self.commit_margin, self.prior_power) < 0.0:
-            raise ValueError("commit_margin and prior_power must not be negative")
-        for name in ("loss_memory", "upgrade_window", "enemy_base_interval"):
+        if min(self.sigma_margin, self.prior_power) < 0.0:
+            raise ValueError("sigma_margin and prior_power must not be negative")
+        for name in ("loss_memory", "upgrade_window"):
             if getattr(self, name) <= 0.0:
                 raise ValueError(f"{name} must be positive")
         if not 0.0 <= self.supply_spike_from < self.maxed_supply <= 200.0:
@@ -90,20 +84,10 @@ class AssessmentModel:
         own_lost, enemy_lost = self._losses(attention)
         own = awareness.own_power
         estimated = awareness.estimated_enemy_power
-        planned = estimated + config.commit_margin * awareness.enemy_uncertainty
+        belief = awareness.enemy_army
+        planned = estimated + config.sigma_margin * belief.sigma
         own_bases = float(len(attention.bases))
-        known_bases = float(
-            sum(
-                1
-                for contact in awareness.contacts
-                if contact.is_structure and contact.type_id in _BASES
-            )
-        )
-        expected_bases = min(
-            max(1.0, 0.5 * len(attention.map.expansions)),
-            1.0 + max(0.0, now) / config.enemy_base_interval,
-        )
-        enemy_bases = max(known_bases, expected_bases)
+        enemy_bases = belief.bases
         fresh = self._fresh_upgrades(attention)
         upgrade_spike = 1.0 - math.exp(-fresh)
         supply_spike = _unit(
@@ -132,15 +116,18 @@ class AssessmentModel:
                 ("own_power", own),
                 ("enemy_power", awareness.enemy_power),
                 ("seen_enemy_power", awareness.seen_enemy_power),
-                ("expected_enemy_power", awareness.expected_enemy_power),
                 ("estimated_enemy_power", estimated),
-                ("enemy_uncertainty", awareness.enemy_uncertainty),
+                ("enemy_sigma", belief.sigma),
+                ("enemy_growth", belief.growth),
+                ("enemy_production", belief.production),
+                ("enemy_workers", belief.workers),
                 ("planned_enemy_power", planned),
                 ("own_lost", own_lost),
                 ("enemy_lost", enemy_lost),
                 ("own_bases", own_bases),
-                ("known_enemy_bases", known_bases),
-                ("expected_enemy_bases", expected_bases),
+                ("known_enemy_bases", belief.known_bases),
+                ("expected_enemy_bases", belief.expected_bases),
+                ("enemy_bases", enemy_bases),
                 ("fresh_upgrades", fresh),
                 ("supply_used", attention.supply_used),
             ),

@@ -9,10 +9,10 @@ attackers in reach of our bases that belong together -- and a coarse influence
 field.
 
 The enemy army is believed to exist far longer than it is believed to be where
-it was seen: a unit seen alive and not seen die fades with ``army_memory``, and
-an enemy never seen is still expected to have an army that grows with game
-time. The estimate is the larger of the two; the part of it no contact places
-is its uncertainty.
+it was seen: a unit seen alive and not seen die fades with ``army_memory``. How
+much army the enemy has in all is a state observer's (`enemy_army`): predicted
+from the economy believed behind it, lowered by what is seen to die, and
+corrected by what is seen alive, with a standard deviation.
 
 A contact remembers whether it was cloaked or burrowed, and whether nothing
 could shoot it when last seen; Awareness also remembers when an enemy army unit
@@ -30,13 +30,18 @@ import math
 from dataclasses import dataclass, field, replace
 
 import numpy as np
+from ares.consts import TOWNHALL_TYPES
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
 from bot.attention import AttentionState, BaseView, UnitView, is_army
 
+from .enemy_army import EnemyArmyBelief, EnemyArmyConfig, EnemyArmyFilter
 from .field import InfluenceField, Source, build_field
 from .opening import OpeningBelief, OpeningBeliefConfig, read_opening
+
+# A townhall in the air holds no base.
+TOWNHALLS = TOWNHALL_TYPES - {UnitTypeId.COMMANDCENTERFLYING, UnitTypeId.ORBITALCOMMANDFLYING}
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,11 +70,8 @@ class AwarenessConfig:
     # still exists: an army does not vanish into the fog, but a unit can die
     # unseen or run out of timed life.
     army_memory: float = 180.0
-    # The army, in Marines, expected of an enemy with no sighting: it grows
-    # this much per second from `army_onset` on, up to `army_cap`.
-    army_growth: float = 0.1
-    army_onset: float = 120.0
-    army_cap: float = 100.0
+    # The observer of the whole enemy army and its economy; see enemy_army.
+    enemy_army: EnemyArmyConfig = field(default_factory=EnemyArmyConfig)
     field_sigma: float = 7.0
     # Presence a structure lends the field, in Marines.
     structure_presence: float = 0.5
@@ -95,9 +97,6 @@ class AwarenessConfig:
         # Otherwise a contact could place more of the army than is believed alive.
         if self.army_memory < self.unit_memory:
             raise ValueError("army_memory must not be shorter than unit_memory")
-        for name in ("army_growth", "army_onset", "army_cap"):
-            if getattr(self, name) < 0.0:
-                raise ValueError(f"{name} must not be negative")
 
 
 @dataclass(frozen=True, slots=True)
@@ -206,8 +205,8 @@ class AwarenessState:
     # sum(power * exp(-age / army_memory)) of the enemy army units seen alive
     # and not seen die.
     seen_enemy_power: float = 0.0
-    # The army an enemy is expected to have by now without any sighting.
-    expected_enemy_power: float = 0.0
+    # The observer's belief about the whole enemy army and its economy.
+    enemy_army: EnemyArmyBelief = EnemyArmyBelief()
     # When an enemy army unit was first seen cloaked or burrowed; None before.
     cloak_seen_at: float | None = None
     # The seen enemy power by unit type, (type, power), heaviest first: what
@@ -218,16 +217,16 @@ class AwarenessState:
 
     @property
     def estimated_enemy_power(self) -> float:
-        """The enemy army believed to exist: everything seen alive, and never
-        less than an enemy is expected to have by now."""
+        """The enemy army believed to exist: the observer's estimate, never
+        less than what was seen alive."""
 
-        return max(self.enemy_power, self.seen_enemy_power, self.expected_enemy_power)
+        return max(self.enemy_power, self.seen_enemy_power, self.enemy_army.power)
 
     @property
-    def enemy_uncertainty(self) -> float:
-        """The part of the estimate no contact places."""
+    def enemy_sigma(self) -> float:
+        """The observer's standard deviation of the enemy army, in Marines."""
 
-        return self.estimated_enemy_power - self.enemy_power
+        return self.enemy_army.sigma
 
     @property
     def enemy_coverage(self) -> float:
@@ -276,6 +275,7 @@ class AwarenessModel:
         # (last seen, power, type) of every enemy army unit believed alive, by tag.
         self._army: dict[int, tuple[float, float, UnitTypeId]] = {}
         self._cloak_seen_at: float | None = None
+        self._enemy_army = EnemyArmyFilter(self.config.enemy_army)
         # Last frame's incidents: (id, member tags, lowest member tag).
         self._incident_members: tuple[tuple[str, frozenset[int], int], ...] = ()
         self._lattice: tuple[Point2, ...] | None = None
@@ -283,9 +283,28 @@ class AwarenessModel:
         self._ys = np.zeros(0)
 
     def infer(self, attention: AttentionState) -> AwarenessState:
-        config = self.config
+        # What was seen to die, priced as it was last remembered.
+        dead = attention.dead_tags
+        army_lost = sum(power for tag, (_, power, _) in self._army.items() if tag in dead)
+        died = [contact for tag, contact in self._contacts.items() if tag in dead]
         contacts = self._remember(attention)
         seen_enemy, seen_types = self._remember_army(attention)
+        townhalls = [c for c in contacts if c.is_structure and c.type_id in TOWNHALLS]
+        # Where the enemy army is produced and kept: its known bases, else its start.
+        places = [c.position for c in townhalls] or [attention.map.enemy_start]
+        enemy_army = self._enemy_army.update(
+            now=attention.time,
+            seen=seen_enemy,
+            army_lost=army_lost,
+            workers_lost=sum(contact.is_worker for contact in died),
+            townhalls_lost=sum(
+                contact.is_structure and contact.type_id in TOWNHALLS for contact in died
+            ),
+            known_bases=len(townhalls),
+            known_workers=sum(contact.is_worker for contact in contacts),
+            coverage=sum(attention.is_visible(place) for place in places) / len(places),
+            base_sites=len(attention.map.expansions),
+        )
         if self._cloak_seen_at is None and any(
             unit.is_cloaked and is_army(unit) for unit in attention.enemy_units
         ):
@@ -308,13 +327,10 @@ class AwarenessModel:
             influence=self._field(attention, contacts, army),
             incidents=self._incidents(attention.bases, contacts),
             seen_enemy_power=seen_enemy,
-            expected_enemy_power=min(
-                config.army_cap,
-                config.army_growth * max(0.0, attention.time - config.army_onset),
-            ),
+            enemy_army=enemy_army,
             cloak_seen_at=self._cloak_seen_at,
             seen_enemy_types=seen_types,
-            opening=read_opening(attention.enemy_opening, attention.time, config.opening),
+            opening=read_opening(attention.enemy_opening, attention.time, self.config.opening),
         )
 
     def _remember(self, attention: AttentionState) -> tuple[Contact, ...]:

@@ -179,7 +179,8 @@ def panel_text(awareness: AwarenessState, intent: StrategicIntent, result: Engin
         f"setback {assessment.setback:.2f}  confidence {assessment.confidence:.2f}",
         f"defense {intent.defense:.2f}  army {intent.army:.2f}  risk {intent.risk:.2f}",
         f"contacts {len(awareness.contacts)} ({visible} visible)  "
-        f"enemy power {awareness.enemy_power:.1f} (est {awareness.estimated_enemy_power:.1f})",
+        f"enemy power {awareness.enemy_power:.1f} (est {awareness.estimated_enemy_power:.1f}"
+        f" ± {awareness.enemy_sigma:.1f})",
     ]
     opening = awareness.opening
     if opening.observed:

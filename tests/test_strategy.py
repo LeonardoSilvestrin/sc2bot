@@ -14,6 +14,7 @@ from bot.awareness import (
     AwarenessModel,
     AwarenessState,
     BaseThreat,
+    EnemyArmyBelief,
     InfluenceField,
 )
 from bot.ego.planners.map_control import MapControlPlanner
@@ -46,6 +47,7 @@ def awareness(
     enemy: float = 0.0,
     seen: float = 0.0,
     expected: float = 0.0,
+    sigma: float = 0.0,
     bases=(MAIN,),
 ) -> AwarenessState:
     threats = tuple(
@@ -72,7 +74,7 @@ def awareness(
         enemy_power=enemy,
         influence=EMPTY_FIELD,
         seen_enemy_power=max(seen, enemy),
-        expected_enemy_power=expected,
+        enemy_army=EnemyArmyBelief(power=expected, sigma=sigma),
     )
 
 
@@ -267,34 +269,40 @@ def test_the_fog_is_no_advantage_but_a_fresh_look_at_the_whole_army_is() -> None
     # Trace 3769f04, 240-560 s: no enemy army in sight, so enemy_power 0,
     # army_share 1.0 and risk 1.0 -- until 45 Marines of it arrived at 575 s.
     x, y = MAIN.position
-    own = tuple(unit(tag, x=x, y=y, power=4.7) for tag in range(100, 110))
-    config = AwarenessConfig()
-    expected = config.army_growth * (500.0 - config.army_onset)
-    margin = AssessmentConfig().commit_margin
+    own = tuple(unit(tag, x=x, y=y, power=3.0) for tag in range(100, 110))
+    margin = AssessmentConfig().sigma_margin
 
     def intent(*enemies):
+        # Eight minutes of nothing seen, then this frame.
+        model = AwarenessModel()
+        for time in range(0, 500, 5):
+            model.infer(attention(time=float(time), own_units=own))
         frame = attention(time=500.0, own_units=own, enemy_units=enemies)
-        return StrategyModel().decide(frame, AwarenessModel().infer(frame))
+        return StrategyModel().decide(frame, model.infer(frame))
 
     fog = intent()
-    # 26 Roaches far from our bases: 39 Marines, a little more than expected by now.
-    whole = intent(*(unit(tag, UnitTypeId.ROACH, 50, 50, power=1.5) for tag in range(1, 27)))
+    # 40 Roaches far from our bases: 60 Marines, more than the economy explains.
+    whole = intent(*(unit(tag, UnitTypeId.ROACH, 50, 50, power=1.5) for tag in range(1, 41)))
     fog_inputs = dict(fog.assessment.inputs)
     whole_inputs = dict(whole.assessment.inputs)
 
     assert fog_inputs["enemy_power"] == 0.0
-    assert fog_inputs["enemy_uncertainty"] == pytest.approx(expected)
-    assert fog_inputs["planned_enemy_power"] == pytest.approx((1.0 + margin) * expected)
-    planned = (1.0 + margin) * expected
-    assert fog.army_share == pytest.approx((47.0 + PRIOR / 2) / (47.0 + planned + PRIOR))
+    assert fog_inputs["estimated_enemy_power"] > 0.0
+    planned = fog_inputs["estimated_enemy_power"] + margin * fog_inputs["enemy_sigma"]
+    assert fog_inputs["planned_enemy_power"] == pytest.approx(planned)
+    assert fog.army_share == pytest.approx((30.0 + PRIOR / 2) / (30.0 + planned + PRIOR))
     assert 0.0 < fog.army_share < 0.5
-    # Nothing backs the estimate but the prior.
+    # Nothing backs the estimate but the economy believed behind it.
     assert fog.assessment.confidence == 0.0
-    assert whole_inputs["enemy_uncertainty"] == 0.0
-    assert whole_inputs["planned_enemy_power"] == pytest.approx(39.0)
-    assert whole.army_share == pytest.approx((47.0 + PRIOR / 2) / (47.0 + 39.0 + PRIOR))
-    assert whole.army_share > 0.5
+    assert whole_inputs["estimated_enemy_power"] == pytest.approx(60.0)
+    # The sighting is the army's floor, and doubt about it shrinks.
+    assert whole_inputs["enemy_sigma"] < fog_inputs["enemy_sigma"]
+    assert whole_inputs["planned_enemy_power"] == pytest.approx(
+        60.0 + margin * whole_inputs["enemy_sigma"]
+    )
     assert whole.assessment.confidence == pytest.approx(1.0)
+    # More than the economy explained: the enemy is believed to produce more.
+    assert whole_inputs["enemy_growth"] > fog_inputs["enemy_growth"]
 
 
 def test_a_skirmish_between_a_few_units_is_no_verdict() -> None:

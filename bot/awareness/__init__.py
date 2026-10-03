@@ -1,3 +1,4 @@
+from .enemy_army import EnemyArmyBelief, EnemyArmyConfig, EnemyArmyFilter
 from .field import InfluenceField, Source, accumulate, kernel, saturate
 from .model import (
     AwarenessConfig,
@@ -21,6 +22,9 @@ __all__ = [
     "AwarenessState",
     "BaseThreat",
     "Contact",
+    "EnemyArmyBelief",
+    "EnemyArmyConfig",
+    "EnemyArmyFilter",
     "InfluenceField",
     "OpeningBelief",
     "OpeningBeliefConfig",

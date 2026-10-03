@@ -63,6 +63,7 @@ class Game:
         # With an Engine, the offense is told what it was granted last frame.
         self.engine = Engine() if engine else None
         self.feedback = None
+        self._started = False
 
     def step(
         self,
@@ -76,8 +77,15 @@ class Game:
         visibility=None,
         posture=None,
     ):
-        """`posture` overrides Strategy's, for the offense's reading of each."""
+        """`posture` overrides Strategy's, for the offense's reading of each.
 
+        The first step comes after a game in which nothing of the enemy was
+        seen: the enemy army observer has run on empty frames until then."""
+
+        if not self._started:
+            self._started = True
+            for before in range(0, int(time), 5):
+                self.awareness.infer(attention(time=float(before)))
         frame = replace(
             attention(
                 time=time,
@@ -95,8 +103,11 @@ class Game:
             strategy = replace(strategy, posture=posture, reason=f"test_{posture.value.lower()}")
         held = self.map_control.plan(frame, awareness, strategy)
         if self.engine is None:
-            return frame, awareness, strategy, self.offense.plan(
-                frame, awareness, strategy, held.anchor
+            return (
+                frame,
+                awareness,
+                strategy,
+                self.offense.plan(frame, awareness, strategy, held.anchor),
             )
         plan = self.offense.plan(frame, awareness, strategy, held.anchor, self.feedback)
         self.feedback = self.engine.allocate(
@@ -154,19 +165,19 @@ ROACH_POWER = 1.5
 
 
 @pytest.mark.parametrize(
-    "time, army, roaches, stage, why, share",
+    "time, army, roaches, stage, why",
     [
-        # 3 Marines of army in sight and 8 expected by 200 s: 8 + 0.5 * 5
-        # planned against. Both armies carry 20 Marines of doubt; 20 of our own
-        # is enough.
-        (200.0, 20, 2, Stage.ASSEMBLE, "army_advantage", 30.0 / 50.5),
-        (200.0, 19, 2, Stage.IDLE, "army_below_minimum", 29.0 / 49.5),
-        # Nothing in sight at 600 s: 48 expected, all of it uncertain, 72 planned.
-        (600.0, 30, 0, Stage.IDLE, "no_opportunity", 40.0 / 122.0),
+        # 3 Marines of army in sight by 200 s, and a little more believed paid
+        # for. Both armies carry 20 Marines of doubt; 20 of our own is enough.
+        (200.0, 20, 2, Stage.ASSEMBLE, "army_advantage"),
+        (200.0, 19, 2, Stage.IDLE, "army_below_minimum"),
+        # Nothing in sight at 600 s: what the enemy economy paid for by then,
+        # and the doubt about it, outweigh 30 Marines.
+        (600.0, 30, 0, Stage.IDLE, "no_opportunity"),
     ],
 )
 def test_the_army_pressures_on_an_advantage_over_the_enemy_planned_against(
-    time: float, army: int, roaches: int, stage: Stage, why: str, share: float
+    time: float, army: int, roaches: int, stage: Stage, why: str
 ) -> None:
     enemies = tuple(
         unit(500 + index, UnitTypeId.ROACH, 50, 50, power=ROACH_POWER, attack_air=False)
@@ -177,7 +188,16 @@ def test_the_army_pressures_on_an_advantage_over_the_enemy_planned_against(
 
     assert plan.stage is stage
     assert (plan.reason if stage is Stage.ASSEMBLE else plan.blocked_by) == why
-    assert strategy.army_share == pytest.approx(share)
+    inputs = dict(strategy.assessment.inputs)
+    planned = (
+        inputs["estimated_enemy_power"] + AssessmentConfig().sigma_margin * inputs["enemy_sigma"]
+    )
+    assert inputs["planned_enemy_power"] == pytest.approx(planned)
+    own = float(army)
+    prior = AssessmentConfig().prior_power
+    assert strategy.army_share == pytest.approx(
+        0.5 + 0.5 * (own - planned) / (own + planned + prior)
+    )
     assert dict(plan.inputs)["army_share"] == strategy.army_share
 
 
@@ -381,9 +401,7 @@ def test_a_squad_engages_a_weaker_force_and_advances_again_once_it_is_gone() -> 
         for step in range(1, 8)
     ]
 
-    assert [(plan.stage, plan.blocked_by) for plan in plans[:5]] == [
-        (Stage.ENGAGE, "clearing")
-    ] * 5
+    assert [(plan.stage, plan.blocked_by) for plan in plans[:5]] == [(Stage.ENGAGE, "clearing")] * 5
     assert (plans[5].stage, plans[5].reason, plans[5].since) == (
         Stage.ADVANCE,
         "fight_won",
@@ -416,8 +434,7 @@ def test_an_unfavorable_contact_retreats_regroups_and_advances_again() -> None:
     *_, still = game.step(701.5, army=army, supply=MAXED)
     *_, regrouped = game.step(702.0, army=marines(30), supply=MAXED)
     home = [
-        game.step(702.0 + 0.5 * step, army=marines(30), supply=MAXED)[-1]
-        for step in range(1, 21)
+        game.step(702.0 + 0.5 * step, army=marines(30), supply=MAXED)[-1] for step in range(1, 21)
     ]
 
     assert (still.stage, still.blocked_by, still.proposals[0].command) == (
@@ -621,9 +638,7 @@ def test_an_empty_enemy_start_turns_the_advance_into_a_search_of_the_stale_expan
     assert (next_place.stage, next_place.target) == (Stage.SEARCH, ENEMY_START_SPOT)
 
     # Once it is seen, the natural -- seen before the start was, this time -- is next.
-    *_, back = game.step(
-        703.0, army=marines(30), supply=MAXED, visibility=vision(ENEMY_START_SPOT)
-    )
+    *_, back = game.step(703.0, army=marines(30), supply=MAXED, visibility=vision(ENEMY_START_SPOT))
     assert back.target == NATURAL_SPOT
 
 
@@ -757,9 +772,7 @@ def strung_out() -> tuple:
     """The granted squad in two clumps 14 cells apart: the core falls in the
     back one, which holds as much power as the front one and the lower tag."""
 
-    return marines(20, FRONT.x, FRONT.y) + marines(
-        10, FRONT.x, FRONT.y + 14.0, first_tag=120
-    )
+    return marines(20, FRONT.x, FRONT.y) + marines(10, FRONT.x, FRONT.y + 14.0, first_tag=120)
 
 
 def sieged(count: int, *, y: float, first_tag: int = 900) -> tuple:
@@ -819,8 +832,14 @@ def test_the_splash_of_a_tank_line_turns_the_advance_away() -> None:
     squad = marines(30, FRONT.x, FRONT.y)
     tanks = tuple(
         unit_view(
-            FakeUnit(900 + index, UnitTypeId.SIEGETANKSIEGED, FRONT.x, FRONT.y + 14.0,
-                     dps=40.0 / 2.14, hit_points=175.0),
+            FakeUnit(
+                900 + index,
+                UnitTypeId.SIEGETANKSIEGED,
+                FRONT.x,
+                FRONT.y + 14.0,
+                dps=40.0 / 2.14,
+                hit_points=175.0,
+            ),
             lambda _: 3.0,
         )
         for index in range(8)

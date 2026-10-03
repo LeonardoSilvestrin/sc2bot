@@ -467,7 +467,7 @@ def _panel(
         (
             "panel",
             f"Power     own {awareness.own_power:.1f} enemy {awareness.enemy_power:.1f}"
-            f" est {awareness.estimated_enemy_power:.1f}",
+            f" est {awareness.estimated_enemy_power:.1f} ± {awareness.enemy_sigma:.1f}",
         ),
         ("panel", f"Samples   {summary['samples']}"),
         (

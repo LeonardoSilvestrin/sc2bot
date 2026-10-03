@@ -17,7 +17,7 @@ from sc2.position import Point2
 from bot.attention import AttentionState, MapView, OpeningObservations, is_army
 from bot.attention.opening import EMPTY as NO_OPENING
 from bot.attention.passages import PassageChange
-from bot.awareness import AwarenessState
+from bot.awareness import AwarenessState, EnemyArmyBelief
 from bot.body.behaviors.attack import MicroReport
 from bot.body.behaviors.detection import DetectionReport
 from bot.body.behaviors.economy import SpawnMode
@@ -549,6 +549,9 @@ class Telemetry:
             len(awareness.contacts),
             sum(contact.visible for contact in awareness.contacts),
             round(awareness.enemy_power),
+            # The observer's belief, coarsely: a correction or a death moves it.
+            round(awareness.estimated_enemy_power / 5.0),
+            awareness.enemy_army.correction,
             tuple((base.base_id, round(base.threat, 1)) for base in awareness.bases),
             # Membership, so every split and merge is written.
             tuple(
@@ -575,10 +578,10 @@ class Telemetry:
                 ),
                 "enemy_power": awareness.enemy_power,
                 "seen_enemy_power": awareness.seen_enemy_power,
-                "expected_enemy_power": awareness.expected_enemy_power,
                 "estimated_enemy_power": awareness.estimated_enemy_power,
-                "enemy_uncertainty": awareness.enemy_uncertainty,
+                "enemy_sigma": awareness.enemy_sigma,
                 "enemy_coverage": awareness.enemy_coverage,
+                "enemy_army": _enemy_army(awareness.enemy_army),
                 "own_power": awareness.own_power,
                 "danger": awareness.danger,
                 "danger_now": awareness.danger_now,
@@ -1182,6 +1185,24 @@ class Telemetry:
         self, name: str, component: str, time: float, data: dict[str, Any]
     ) -> None:
         self.logger.event(name, component=component, game_time=time, data=data)
+
+
+def _enemy_army(belief: EnemyArmyBelief) -> dict[str, object]:
+    return {
+        "power": belief.power,
+        "sigma": belief.sigma,
+        "growth": belief.growth,
+        "growth_sigma": belief.growth_sigma,
+        "production": belief.production,
+        "workers": belief.workers,
+        "bases": belief.bases,
+        "known_bases": belief.known_bases,
+        "expected_bases": belief.expected_bases,
+        "coverage": belief.coverage,
+        "cap": belief.cap,
+        "lost": belief.lost,
+        "correction": belief.correction,
+    }
 
 
 def _xy(point: Point2) -> list[float]:
