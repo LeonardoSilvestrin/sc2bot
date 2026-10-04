@@ -1,0 +1,2 @@
+{"schema":3,"run":"run-1","seq":1,"iteration":null,"event":"game.started","component":"logs","game_time":0.0,"data":{"map":"X"}}
+{"schema":3,"run":"run-1","seq":2,"iteration":4,"event":"logging.record_rejected","component":"logs","game_time":1.5,"data":{"rejected_event":"strategy.decided","rejected_component":"strategy","error":"ValueError: Out of range float values are not JSON compliant: nan"}}
