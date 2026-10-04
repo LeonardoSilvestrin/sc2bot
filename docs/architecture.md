@@ -141,6 +141,10 @@ MULE no mesmo frame; a reserva de energia é intenção do Intel, não política
   - `seen_enemy_power` (visto vivo): `Σ poder·exp(-idade / army_memory)` das unidades de exército vistas vivas e não
     vistas morrer, τ = 180 s; sai com a morte confirmada ou abaixo de `forget_below`, não quando a última posição
     volta à visão vazia. Como `army_memory ≥ unit_memory`, conhecido ≤ visto vivo.
+  - `produced_enemy_types` (produzido, por tipo): `Σ poder·exp(-idade / production_memory)` de toda unidade de
+    exército já vista, **morta ou viva**, cada uma pelo maior poder com que foi vista, τ = 360 s
+    (`production_memory ≥ army_memory`). É o que o inimigo constrói, não o que ele tem: um Lurker morto ainda
+    diz que existe Lurker Den. Lido pela composição.
   - O exército inteiro é estado de um observador ([enemy_army.py](../bot/awareness/enemy_army.py)), não um
     prior por tempo: previsto pela economia que o paga, baixado pelo que se vê morrer e corrigido pelo que se
     vê vivo. Por frame, com `Δt` desde o anterior:
@@ -315,20 +319,23 @@ MULE no mesmo frame; a reserva de energia é intenção do Intel, não política
   Oracle ficam com a tabela (`client: []`), e hit points sempre vêm dela. O YAML também tem o prior de composição de
   cada raça (parcelas de poder antes de ver qualquer unidade).
 - Composição (`CompositionPolicy`): crença `w_e` = (visto_e + (U + P)·m_e) / (S + U + P), com `m_e` a média de
-  Dirichlet (visto + `prior_power`=10 × prior da raça; média das três raças enquanto a raça é desconhecida), S o
-  poder visto (`seen_enemy_types`, modos somados no tipo canônico) e U = max(S, μ + 0,5σ do observador) − S o não
-  visto. Valor por recurso do nosso tipo i contra e: `k_ie = a_i·√(dps(i,e)·T_i)/custo_i` (Lanchester), com
+  Dirichlet do que o inimigo produz (produzido H_e + `prior_power`=10 × prior da raça; média das três raças
+  enquanto a raça é desconhecida), S o poder visto vivo (`seen_enemy_types`), H o produzido
+  (`produced_enemy_types`, nunca menos que o vivo; modos somados no tipo canônico) e U = max(S, μ + 0,5σ do
+  observador) − S o não visto. O vivo diz o que está lá agora; o produzido diz de que é feito o resto e pesa
+  contra a doutrina, então ganhar uma luta não devolve o mix ao estilo. Valor por recurso do nosso tipo i contra e: `k_ie = a_i·√(dps(i,e)·T_i)/custo_i` (Lanchester), com
   `T_i = hp_i / Σ_e (w_e/power_e)·dps(e,i)` (quanto i dura sob o fogo do exército acreditado) e
   `a_i = exp(−atraso_i / 60 s)` (atraso = tempo de construção da tech que falta, metade se em construção). O mix
-  de recursos x maximiza `S·Σ_e w_e log(Σ_i x_i k_ie) + D·Σ_i b_i log x_i` (portfólio log-ótimo contra o inimigo +
+  de recursos x maximiza `H·Σ_e w_e log(Σ_i x_i k_ie) + D·Σ_i b_i log x_i` (portfólio log-ótimo contra o inimigo +
   doutrina do estilo b em recursos com peso `doctrine_power` D = 20 Marines), resolvido pelo ponto fixo
-  `x_i ← (S·x_i·Σ_e w_e k_ie/(Kx)_e + D·b_i)/(S + D)` (concavo, ~1 ms). No ótimo, cada tipo inimigo recebe a
+  `x_i ← (H·x_i·Σ_e w_e k_ie/(Kx)_e + D·b_i)/(H + D)` (concavo, ~1 ms). No ótimo, cada tipo inimigo recebe a
   parcela `w_e` dos recursos, gasta nas unidades na proporção em que o respondem. Suporte sem arma (Medivac)
   fica com a parcela de recursos da doutrina. Sem nada visto, o mix é exatamente o estilo (`style_baseline`);
   senão `efficacy`. A saída é convertida em proporções de contagem e um tipo abaixo de `min_share` (0,05, o mesmo
   corte de produção do Ares) não entra — o `TechUp` do `ProductionController` compra a tech de todo tipo da
-  composição, então é aí que tech nova é comprada. `CompositionPlan` expõe crença por tipo (visto, parcela, quem
-  a responde), poder visto e acreditado, peso da doutrina, mix em recursos com disponibilidade e tipos sem modelo.
+  composição, então é aí que tech nova é comprada. `CompositionPlan` expõe crença por tipo (visto, produzido,
+  parcela, quem a responde), poder visto, produzido e acreditado, peso da doutrina, mix em recursos com
+  disponibilidade e tipos sem modelo.
 - Sobrevivência: `StrategicIntent.emergency`, travada dentro de DEFEND. Os tipos do estilo, os `adds` e
   `survival_types` (Marine, Marauder, Hellion, Siege Tank, Cyclone, Thor, Viking: as unidades com que o Body sabe
   lutar) treináveis agora (tech pronta e produtor pronto) que atingem os atacantes do incidente prioritário vão para
@@ -671,7 +678,7 @@ behaviors e logs. O viewer normaliza nomes de eventos anteriores ao schema 5 ao 
 | `planner.map_control_planned` | planners | origem, razão, anchor (grade de 3), fallback, ponto mantido do `staging` (e quando foi escolhido) mudam; heartbeat de 30 s | `anchor`, `source` (`threatened_base`, `staging`, `legacy`), `reason` (`hold_<staging|rally>_<postura>`), `posture`, `advance`, `fallback` (`no_candidates`, `no_enemy_route` ou null), `passage` e `region` (do ponto do `staging` que pôs o anchor, ou null), `staging` {`anchor`, `switch` (`kept`, `initial`, `held_invalid`, `bases_changed`, `posture_changed`, `awareness`), `since`, `previous`, `advance`, `scale` (D), `bases`, `candidate_count`, `selected`, `top[]` (o melhor de cada região, até 5, melhor primeiro); cada ponto {`anchor`, `region`, `passage`, `reaction`, `worst` e `worst_base` (a base respondida por último e a resposta, em células), `mean` (distância média às bases), `front` (à frente da base média no caminho do inimigo, em células; negativo atrás), `choke`, `threat`, `support`, `control`, `exposure`, `score`}} ou null |
 | `planner.offense_planned` | planners | estágio, `since`, bloqueio, alvo (tag ou grade de 3) mudam | `stage`, `previous`, `since`, `reason`, `blocked_by`, `committed_power`, `target`, `target_tag`, `target_kind` (`known_base`, `known_structure`, `flying_structure`, `enemy_start`, `search`), `inputs` {`own_power`, `army_share`, `power_spike`, `offensive`, `supply_used`, `assembled_share`, `committed_power`, `stage_for`, `cooldown_left`, `known_structures`, `squad_units`, `squad_power`, `core_power`, `local_enemy_power`, `local_share` (−1 sem inimigo), `contested`, `clear_for`, `start_cleared`}, `fight` {`center`, `own_power`, `enemy_power`, `share`, `enemy_center`} ou null, `mission_id` e `mission_status` (a missão avançada ou aberta no frame, também no frame em que termina; null em IDLE) |
 | `mission.updated` | missions | uma missão abre, muda de fase, recebe pedido de cancelamento ou termina | `missions[]` {`mission_id`, `owner`, `kind` (`main_attack`, `defend_area`, `early_scout`), `status` (`ACTIVE`, `COMPLETED`, `FAILED`, `CANCELLED`), `phase`, `since`, `reason`, `cancel` {`mode`, `reason`, `time`} ou null, `proposals[]`, `granted_units`, `granted_power` (o que a alocação anterior lhe deu)} |
-| `planner.economy_planned` | planners | o plano muda (a composição com 2 casas) | `active`, `workers`, `gas`, `bases`, `expand`, `freeflow`, `reason`, `composition[]`, `inputs` {`workers`, `bases`, `saturated_at`, `expansion_sites`, `strategy_economy`, `danger`, `production_per_base`, `gas_worker_share`, `upgrades_done`, `enemy_seen_power`}, `upgrades[]`, `orbitals`, `mules`, `interrupt_opening`, `max_production`, `addons`, `addons_on`, `reactor_share`, `army`, `style`, `baseline[]`, `enemy[]` {`type`, `seen`, `share`, `answers[]` {`type`, `share`}}, `seen_power`, `believed_power`, `doctrine`, `mix[]` {`type`, `resources`, `availability`}, `unmodeled[]`, `survival`, `composition_reason` (`style_baseline`, `efficacy`, `survival_fallback`), `tech_ready[]` |
+| `planner.economy_planned` | planners | o plano muda (a composição com 2 casas) | `active`, `workers`, `gas`, `bases`, `expand`, `freeflow`, `reason`, `composition[]`, `inputs` {`workers`, `bases`, `saturated_at`, `expansion_sites`, `strategy_economy`, `danger`, `production_per_base`, `gas_worker_share`, `upgrades_done`, `enemy_seen_power`}, `upgrades[]`, `orbitals`, `mules`, `interrupt_opening`, `max_production`, `addons`, `addons_on`, `reactor_share`, `army`, `style`, `baseline[]`, `enemy[]` {`type`, `seen`, `produced`, `share`, `answers[]` {`type`, `share`}}, `seen_power`, `believed_power`, `produced_power`, `doctrine`, `mix[]` {`type`, `resources`, `availability`}, `unmodeled[]`, `survival`, `composition_reason` (`style_baseline`, `efficacy`, `survival_fallback`), `tech_ready[]` |
 | `behavior.intel_executed` | behaviors | construção muda ou scan executado | `scanned_by`, `building[]` (inclui Engineering Bay compartilhada) |
 | `behavior.spawn_executed` | behaviors | `freeflow` ou razão do spawn mudam | `freeflow`, `reason` (`plan_inactive`, `plan_freeflow`, `composition_met`, `composition_short`), `counts` {tipo: contagem do Ares} |
 | `behavior.micro_executed` | behaviors | alguma unidade usou Stim (em `ATTACK` ou `HOLD`), ou os Medivacs que escoltam mudam | `stimmed[]`, `escorts[]` |

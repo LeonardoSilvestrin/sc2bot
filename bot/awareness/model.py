@@ -12,7 +12,9 @@ The enemy army is believed to exist far longer than it is believed to be where
 it was seen: a unit seen alive and not seen die fades with ``army_memory``. How
 much army the enemy has in all is a state observer's (`enemy_army`): predicted
 from the economy believed behind it, lowered by what is seen to die, and
-corrected by what is seen alive, with a standard deviation.
+corrected by what is seen alive, with a standard deviation. What the enemy
+builds outlasts what it has: every army unit ever seen, dead or alive, counts
+towards its production by type and fades with ``production_memory``.
 
 A contact remembers whether it was cloaked or burrowed, and whether nothing
 could shoot it when last seen; Awareness also remembers when an enemy army unit
@@ -70,6 +72,10 @@ class AwarenessConfig:
     # still exists: an army does not vanish into the fog, but a unit can die
     # unseen or run out of timed life.
     army_memory: float = 180.0
+    # tau of what the enemy is believed to build: an army unit seen once counts
+    # towards the enemy's production by type, alive or dead, until this fades
+    # it. A Lurker killed still says there is a Lurker Den.
+    production_memory: float = 360.0
     # The observer of the whole enemy army and its economy; see enemy_army.
     enemy_army: EnemyArmyConfig = field(default_factory=EnemyArmyConfig)
     field_sigma: float = 7.0
@@ -97,6 +103,9 @@ class AwarenessConfig:
         # Otherwise a contact could place more of the army than is believed alive.
         if self.army_memory < self.unit_memory:
             raise ValueError("army_memory must not be shorter than unit_memory")
+        # What was produced includes what is alive.
+        if self.production_memory < self.army_memory:
+            raise ValueError("production_memory must not be shorter than army_memory")
 
 
 @dataclass(frozen=True, slots=True)
@@ -212,6 +221,9 @@ class AwarenessState:
     # The seen enemy power by unit type, (type, power), heaviest first: what
     # the believed army is made of.
     seen_enemy_types: tuple[tuple[UnitTypeId, float], ...] = ()
+    # sum(power * exp(-age / production_memory)) by unit type of every enemy
+    # army unit seen, dead or alive, heaviest first: what the enemy builds.
+    produced_enemy_types: tuple[tuple[UnitTypeId, float], ...] = ()
     # What the enemy's opening looks like, from what the early game showed.
     opening: OpeningBelief = OpeningBelief()
 
@@ -274,6 +286,9 @@ class AwarenessModel:
         self._threats: dict[str, tuple[float, float]] = {}
         # (last seen, power, type) of every enemy army unit believed alive, by tag.
         self._army: dict[int, tuple[float, float, UnitTypeId]] = {}
+        # (last seen, most power seen, type) of every enemy army unit ever
+        # seen, by tag, dead or alive.
+        self._produced: dict[int, tuple[float, float, UnitTypeId]] = {}
         self._cloak_seen_at: float | None = None
         self._enemy_army = EnemyArmyFilter(self.config.enemy_army)
         # Last frame's incidents: (id, member tags, lowest member tag).
@@ -289,6 +304,7 @@ class AwarenessModel:
         died = [contact for tag, contact in self._contacts.items() if tag in dead]
         contacts = self._remember(attention)
         seen_enemy, seen_types = self._remember_army(attention)
+        produced_types = self._remember_production(attention)
         townhalls = [c for c in contacts if c.is_structure and c.type_id in TOWNHALLS]
         # Where the enemy army is produced and kept: its known bases, else its start.
         places = [c.position for c in townhalls] or [attention.map.enemy_start]
@@ -331,6 +347,7 @@ class AwarenessModel:
             enemy_army=enemy_army,
             cloak_seen_at=self._cloak_seen_at,
             seen_enemy_types=seen_types,
+            produced_enemy_types=produced_types,
             opening=read_opening(attention.enemy_opening, attention.time, self.config.opening),
         )
 
@@ -402,6 +419,31 @@ class AwarenessModel:
             by_type[type_id] = by_type.get(type_id, 0.0) + unit_power * existence
         types = tuple(sorted(by_type.items(), key=lambda item: (-item[1], item[0].name)))
         return power, types
+
+    def _remember_production(
+        self, attention: AttentionState
+    ) -> tuple[tuple[UnitTypeId, float], ...]:
+        """sum(power * exp(-age / production_memory)) by type of the enemy army
+        units ever seen, the dead included, each at the most power it was seen
+        with: a unit seen dying is no less what the enemy built."""
+
+        config = self.config
+        now = attention.time
+        for unit in attention.enemy_units:
+            if is_army(unit) and unit.power > 0.0:
+                _, most, _ = self._produced.get(unit.tag, (now, 0.0, unit.type_id))
+                self._produced[unit.tag] = (now, max(most, unit.power), unit.type_id)
+        produced = self._produced
+        self._produced = {}
+        by_type: dict[UnitTypeId, float] = {}
+        for tag in sorted(produced):
+            seen_at, unit_power, type_id = produced[tag]
+            weight = math.exp(-max(0.0, now - seen_at) / config.production_memory)
+            if weight < config.forget_below:
+                continue
+            self._produced[tag] = produced[tag]
+            by_type[type_id] = by_type.get(type_id, 0.0) + unit_power * weight
+        return tuple(sorted(by_type.items(), key=lambda item: (-item[1], item[0].name)))
 
     def _pressure(self, contact: Contact, position: Point2) -> float | None:
         """power * confidence * K of a contact at a base; None beyond its reach."""

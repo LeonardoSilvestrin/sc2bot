@@ -1,11 +1,15 @@
 """Army composition: the mix that fights the enemy army believed in best.
 
-THE BELIEF. Awareness remembers the enemy army seen alive and not seen die,
-by type: S_e Marines of power, S in all. The observer
+THE BELIEF. Awareness remembers two things by type: the enemy army seen
+alive and not seen die, S_e Marines of power (S in all), and what the enemy
+has been seen to build, dead or alive, H_e (H in all). The first is what is
+there now; the second is what the enemy makes, and outlives a won fight: a
+Lurker killed still says there is a Lurker Den. The observer
 (`bot.awareness.enemy_army`) believes in more army than was seen. What the
-unseen part is made of is the Dirichlet posterior mean of the enemy's shares,
+unseen part is made of is the Dirichlet posterior mean of the enemy's
+production shares,
 
-    m_e = (S_e + P r_e) / (S + P)        r: the race's prior (knowledge/combat.yml)
+    m_e = (H_e + P r_e) / (H + P)        r: the race's prior (knowledge/combat.yml)
 
 with P = `prior_power` Marines of weight. The army believed in is
 A = max(S, mu + k sigma) and its unseen part U = A - S. The share of type e,
@@ -26,7 +30,7 @@ tech is still to be built by the time that takes.
 
 THE MIX. The army's resources x, a share per combat type, maximize
 
-    J(x) = S sum_e w_e log(sum_i x_i k_ie) + D sum_i b_i log x_i
+    J(x) = H sum_e w_e log(sum_i x_i k_ie) + D sum_i b_i log x_i
 
 The first term is the log-optimal portfolio against the enemy: at its optimum
 each enemy type e takes a share w_e of our resources, spent on the units that
@@ -34,11 +38,11 @@ answer it in proportion to how much of the answer they are. No enemy type can
 be left unanswered (log 0), and no unit is chosen by rank: a slightly better
 unit gets slightly more. The second term is the style's doctrine b (the
 style's composition, in resources) as a prior worth D = `doctrine_power`
-Marines of enemy seen: with nothing seen the mix is the style, and the more of
-the enemy is seen the more the enemy decides. J is concave, and its maximum is
-the fixed point of
+Marines of enemy production seen: with nothing seen the mix is the style, and
+the more of what the enemy builds is seen the more the enemy decides. J is
+concave, and its maximum is the fixed point of
 
-    x_i <- (S x_i sum_e w_e k_ie / (K x)_e + D b_i) / (S + D)
+    x_i <- (H x_i sum_e w_e k_ie / (K x)_e + D b_i) / (H + D)
 
 which each step climbs (the EM update of mixture weights under a Dirichlet
 prior). The target is a ratio; Ares' SpawnController closes the loop on it,
@@ -205,32 +209,38 @@ class CompositionPolicy:
         intent: StrategicIntent,
         enemy: Iterable[tuple[UnitTypeId, float]] = (),
         *,
+        produced: Iterable[tuple[UnitTypeId, float]] = (),
         army: EnemyArmyBelief | None = None,
         contacts: Iterable[Contact] = (),
         incidents: Iterable[ThreatIncident] = (),
     ) -> CompositionPlan:
+        """`enemy` is the army seen alive by type, `produced` what the enemy
+        was seen to build by type (`enemy` when not given), `army` the
+        observer's belief."""
+
         config = self.config
-        seen: dict[UnitTypeId, float] = {}
-        unmodeled: dict[UnitTypeId, float] = {}
-        for type_id, power in enemy:
-            if power <= 0.0:
-                continue
-            canonical = canonical_unit(type_id)
-            into = seen if self.model.stats(canonical) is not None else unmodeled
-            into[canonical] = into.get(canonical, 0.0) + power
+        enemy = tuple(enemy)
+        seen, unmodeled = self._by_type(enemy)
+        made, unknown = self._by_type(tuple(produced) or enemy)
+        for type_id, power in unknown.items():
+            unmodeled[type_id] = max(unmodeled.get(type_id, 0.0), power)
+        # What is alive was built.
+        for type_id, power in seen.items():
+            made[type_id] = max(made.get(type_id, 0.0), power)
         seen_power = sum(seen.values())
+        evidence = sum(made.values())
         believed = seen_power
         if army is not None:
             believed = max(seen_power, army.power + config.sigma_margin * army.sigma)
-        shares = self._belief(seen, seen_power, believed, attention)
+        shares = self._belief(seen, made, believed, attention)
         availability = {
             unit_type: math.exp(-self._delay(unit_type, attention) / config.tech_horizon)
             for unit_type in self._combat
         }
 
         answers: dict[UnitTypeId, tuple[tuple[UnitTypeId, float], ...]] = {}
-        if seen_power > 0.0:
-            x, answers = self._optimize(shares, seen_power, availability)
+        if evidence > 0.0:
+            x, answers = self._optimize(shares, evidence, availability)
         else:
             x = self._doctrine
         resources = {
@@ -244,7 +254,7 @@ class CompositionPolicy:
             for unit_type, share in resources.items()
             if share > 0.0
         )
-        if seen_power > 0.0:
+        if evidence > 0.0:
             units = self._units(resources)
             reason = "efficacy"
         else:
@@ -263,14 +273,21 @@ class CompositionPolicy:
             style=self.style.name,
             baseline=self.style.composition,
             enemy=tuple(
-                EnemyShare(type_id, seen.get(type_id, 0.0), share, answers.get(type_id, ()))
+                EnemyShare(
+                    type_id,
+                    seen.get(type_id, 0.0),
+                    share,
+                    answers.get(type_id, ()),
+                    made.get(type_id, 0.0),
+                )
                 for type_id, share in sorted(
                     shares.items(), key=lambda item: (-item[1], item[0].name)
                 )
             ),
             seen_power=seen_power,
             believed_power=believed,
-            doctrine=config.doctrine_power / (seen_power + config.doctrine_power),
+            doctrine=config.doctrine_power / (evidence + config.doctrine_power),
+            produced_power=evidence,
             mix=mix,
             unmodeled=tuple(sorted(unmodeled.items(), key=lambda item: item[0].name)),
             survival=survival,
@@ -279,19 +296,37 @@ class CompositionPolicy:
             reason=reason,
         )
 
+    def _by_type(
+        self, powers: Iterable[tuple[UnitTypeId, float]]
+    ) -> tuple[dict[UnitTypeId, float], dict[UnitTypeId, float]]:
+        """Power by canonical type: the types the combat model knows, and
+        the ones it does not."""
+
+        known: dict[UnitTypeId, float] = {}
+        unknown: dict[UnitTypeId, float] = {}
+        for type_id, power in powers:
+            if power <= 0.0:
+                continue
+            canonical = canonical_unit(type_id)
+            into = known if self.model.stats(canonical) is not None else unknown
+            into[canonical] = into.get(canonical, 0.0) + power
+        return known, unknown
+
     def _belief(
         self,
         seen: dict[UnitTypeId, float],
-        seen_power: float,
+        made: dict[UnitTypeId, float],
         believed: float,
         attention: AttentionState,
     ) -> dict[UnitTypeId, float]:
         prior_power = self.config.prior_power
         prior = self.model.prior(attention.enemy_race)
-        types = set(seen) | set(prior)
+        seen_power = sum(seen.values())
+        made_power = sum(made.values())
+        types = set(seen) | set(made) | set(prior)
         posterior = {
-            type_id: (seen.get(type_id, 0.0) + prior_power * prior.get(type_id, 0.0))
-            / (seen_power + prior_power)
+            type_id: (made.get(type_id, 0.0) + prior_power * prior.get(type_id, 0.0))
+            / (made_power + prior_power)
             for type_id in types
         }
         unseen = max(0.0, believed - seen_power) + prior_power
@@ -304,7 +339,7 @@ class CompositionPolicy:
     def _optimize(
         self,
         shares: dict[UnitTypeId, float],
-        seen_power: float,
+        evidence: float,
         availability: dict[UnitTypeId, float],
     ) -> tuple[np.ndarray, dict[UnitTypeId, tuple[tuple[UnitTypeId, float], ...]]]:
         config = self.config
@@ -319,8 +354,8 @@ class CompositionPolicy:
         x = 0.5 * self._doctrine + 0.5 / len(self._combat)
         for _ in range(config.iterations):
             strength = x @ k
-            step = (seen_power * x * (k @ (w / strength)) + doctrine * self._doctrine) / (
-                seen_power + doctrine
+            step = (evidence * x * (k @ (w / strength)) + doctrine * self._doctrine) / (
+                evidence + doctrine
             )
             step = step / step.sum()
             moved = float(np.abs(step - x).max())

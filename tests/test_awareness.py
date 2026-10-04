@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from dataclasses import replace
 
 import numpy as np
 import pytest
@@ -412,6 +413,21 @@ def test_the_same_frames_give_the_same_beliefs() -> None:
         assert np.array_equal(a.influence.threat, b.influence.threat)
 
 
+def test_what_the_enemy_built_outlives_its_death_at_the_most_power_seen() -> None:
+    model = AwarenessModel()
+    tau = model.config.production_memory
+    model.infer(attention(time=200.0, enemy_units=(zergling(1, 40, 40), roach(3, 42, 40))))
+    hurt = replace(roach(3, 42, 40), power=0.5)
+    model.infer(attention(time=210.0, enemy_units=(hurt,)))
+    later = model.infer(attention(time=260.0, dead_tags=(1, 3)))
+
+    assert later.seen_enemy_types == ()
+    assert later.produced_enemy_types == (
+        (UnitTypeId.ROACH, pytest.approx(1.5 * math.exp(-50.0 / tau))),
+        (UnitTypeId.ZERGLING, pytest.approx(0.9 * math.exp(-60.0 / tau))),
+    )
+
+
 def test_the_seen_army_is_told_by_type_heaviest_first_and_forgets_the_dead() -> None:
     model = AwarenessModel()
     tau = model.config.army_memory
@@ -427,9 +443,7 @@ def test_the_seen_army_is_told_by_type_heaviest_first_and_forgets_the_dead() -> 
         (UnitTypeId.ZERGLING, pytest.approx(1.8)),
         (UnitTypeId.ROACH, pytest.approx(1.5)),
     )
-    assert sum(power for _, power in seen.seen_enemy_types) == pytest.approx(
-        seen.seen_enemy_power
-    )
+    assert sum(power for _, power in seen.seen_enemy_types) == pytest.approx(seen.seen_enemy_power)
     assert later.seen_enemy_types == (
         (UnitTypeId.ZERGLING, pytest.approx(1.8 * math.exp(-60.0 / tau))),
     )

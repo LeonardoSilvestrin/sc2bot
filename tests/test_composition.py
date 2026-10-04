@@ -271,3 +271,24 @@ def test_survive_trains_only_what_the_body_fights_with() -> None:
     assert plan.reason == "survival_fallback"
     assert UnitTypeId.MARINE in trained
     assert not trained & {UnitTypeId.LIBERATOR, UnitTypeId.REAPER}
+
+
+def test_a_won_fight_does_not_send_the_mix_back_to_the_doctrine() -> None:
+    """The Lurkers died; the Lurker Den did not."""
+
+    frame = attention(tech_ready=EVERYTHING, enemy_race=Race.Zerg)
+    _, strategy = state(frame)
+    policy = composition.CompositionPolicy(styles.BIO)
+    lurkers = ((UnitTypeId.LURKERMPBURROWED, 40.0), (UnitTypeId.ZERGLING, 10.0))
+
+    fighting = policy.plan(frame, strategy, lurkers)
+    after = policy.plan(frame, strategy, (), produced=lurkers)
+
+    lurker = lambda plan: next(i for i in plan.enemy if i.type_id is UnitTypeId.LURKERMP)  # noqa: E731
+    assert after.doctrine == pytest.approx(fighting.doctrine)
+    assert after.reason == "efficacy"
+    assert lurker(after).seen == 0.0
+    assert lurker(after).produced == pytest.approx(40.0)
+    assert lurker(after).share > 0.5
+    assert after.seen_power == 0.0
+    assert after.produced_power == pytest.approx(50.0)

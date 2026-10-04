@@ -93,14 +93,22 @@ O que entrou no lugar (o mecanismo completo está em [architecture.md](../archit
 - **Modelo de combate** (`economy/knowledge/combat.yml`): dps de qualquer tipo contra qualquer tipo, com bônus,
   armadura, splash e overkill; os dados de tipo do cliente substituem a tabela no `on_start`, então o 4.10 do AI
   Arena e o 5.0.14 local são precificados cada um pelo seu patch.
-- **Crença de composição**: Dirichlet (visto + prior da raça) e o não visto do observador (μ + 0,5σ − visto)
-  espalhado por ela. Usa o observador para *quanto* exército não foi visto; a composição por tipo no estado do
-  observador (item 3 abaixo) continua por fazer.
+- **Crença de composição**: Dirichlet (produzido + prior da raça) e o não visto do observador (μ + 0,5σ − visto
+  vivo) espalhado por ela. O produzido (`produced_enemy_types`, toda unidade já vista, morta ou viva, τ = 360 s)
+  é a evidência de composição e o peso contra a doutrina; o vivo diz o que está presente; o observador, *quanto*
+  exército não foi visto. A composição por tipo no estado do observador (item 3 abaixo) continua por fazer.
 - **Decisão**: portfólio log-ótimo de Lanchester (`k_ie = a_i √(dps·T_i)/custo_i`) com a doutrina do estilo como prior
   de peso D = 20 Marines vistos. Contínua: um Roach a mais move o mix um pouco, não troca o counter. Tech que falta
   desconta por `exp(−atraso/60 s)`; tipo com ≥ 5 % entra na composição e o `TechUp` do Ares compra a tech.
 - **Estilo**: ganhou `adds` (o que o mix pode acrescentar). O mech não usa Marine nem fora do SURVIVE: contra Muta
   vai de Thor e Cyclone.
+
+Primeiros jogos (`bench/comp-eficacia` contra `bench/comp-base` no `fd732fe`, Torches, CheatInsane, seed 1;
+interrompidos): Zerg Rush e Macro, bio e mech, 4 vitórias contra 2 vitórias, 1 derrota e 1 timeout. Uma seed por
+célula não separa a composição das outras divergências. Dois achados nos logs, corrigidos depois do `e647f7d`:
+(1) o SURVIVE treinava qualquer unidade e pôs 6 Liberators (precificados pela arma sieged, que o Body nunca usa)
+num exército bio — agora só `survival_types`; (2) a evidência era o visto *vivo*, então cada luta ganha devolvia
+o mix à doutrina (jogo 000: visto 65 → 9 entre 780 e 900 s, doutrina 0,24 → 0,70) — agora é o produzido.
 
 Ressalva medida antes do bench (cenários sintéticos): pela lei quadrada por custo o Marine é das unidades mais
 eficientes do jogo — bio contra 200 de Zergling vai a 93 % de Marine. O modelo não vê alcance (melee que não

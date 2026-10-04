@@ -897,7 +897,7 @@ class Telemetry:
                 tuple(
                     (item.type_id, item.answers[0][0] if item.answers else None)
                     for item in composition_plan.enemy
-                    if item.seen > 0.0
+                    if item.produced > 0.0
                 ),
                 composition_plan.survival,
             ),
@@ -953,6 +953,7 @@ class Telemetry:
                     {
                         "type": item.type_id.name,
                         "seen": item.seen,
+                        "produced": item.produced,
                         "share": item.share,
                         "answers": [
                             {"type": unit_type.name, "share": share}
@@ -967,6 +968,9 @@ class Telemetry:
                 "believed_power": None
                 if composition_plan is None
                 else composition_plan.believed_power,
+                "produced_power": None
+                if composition_plan is None
+                else composition_plan.produced_power,
                 "doctrine": None if composition_plan is None else composition_plan.doctrine,
                 "mix": []
                 if composition_plan is None
