@@ -80,6 +80,37 @@ partida).
 saíram dos replays do `bench/t0`, que são só CheatInsane, com renda trapaceada; um bench contra oponentes sem
 cheat deve mover o `growth` aprendido para baixo — se não mover, a adaptação não está funcionando.
 
+## Composição por eficácia (working tree, sem bench)
+
+O que estava errado no catálogo de counters (conversa de 2026-10-03): a resposta a cada tipo inimigo era a
+**primeira da lista do YAML que já tinha tech pronta** — discreta (troca de uma vez quando um Tech Lab fica pronto),
+cega à tech que falta (contra Colossus sem Starport ia de Siege Tank, e nada pedia a Starport), um único counter por
+tipo independente de quão melhor ele é, poder inimigo em Marines somado direto como supply nosso, e a entrada era o
+visto vivo, não o observador. Algumas linhas eram ruins (`IMMORTAL: [MARINE, MARAUDER…]`).
+
+O que entrou no lugar (o mecanismo completo está em [architecture.md](../architecture.md)):
+
+- **Modelo de combate** (`economy/knowledge/combat.yml`): dps de qualquer tipo contra qualquer tipo, com bônus,
+  armadura, splash e overkill; os dados de tipo do cliente substituem a tabela no `on_start`, então o 4.10 do AI
+  Arena e o 5.0.14 local são precificados cada um pelo seu patch.
+- **Crença de composição**: Dirichlet (visto + prior da raça) e o não visto do observador (μ + 0,5σ − visto)
+  espalhado por ela. Usa o observador para *quanto* exército não foi visto; a composição por tipo no estado do
+  observador (item 3 abaixo) continua por fazer.
+- **Decisão**: portfólio log-ótimo de Lanchester (`k_ie = a_i √(dps·T_i)/custo_i`) com a doutrina do estilo como prior
+  de peso D = 20 Marines vistos. Contínua: um Roach a mais move o mix um pouco, não troca o counter. Tech que falta
+  desconta por `exp(−atraso/60 s)`; tipo com ≥ 5 % entra na composição e o `TechUp` do Ares compra a tech.
+- **Estilo**: ganhou `adds` (o que o mix pode acrescentar). O mech não usa Marine nem fora do SURVIVE: contra Muta
+  vai de Thor e Cyclone.
+
+Ressalva medida antes do bench (cenários sintéticos): pela lei quadrada por custo o Marine é das unidades mais
+eficientes do jogo — bio contra 200 de Zergling vai a 93 % de Marine. O modelo não vê alcance (melee que não
+encosta, kite), upgrades, feitiços nem cura. Se o bench mostrar que isso pesa, o próximo termo é físico
+(alcance/superfície de contato ou custo em supply perto do teto), não um bônus.
+
+Como medir: bench 3 seeds × 3 raças × bio/mech contra a última execução medida; `planner.economy_planned`
+(`enemy[].answers`, `doctrine`, `mix`, `composition_reason`) e `knowledge.combat_model.changed` (onde a tabela
+divergiu do cliente).
+
 ## Próximos passos (decididos como direção, não implementados)
 
 1. **DEFEND em cascata.** Hoje o DEFEND dispara com 3–4 Marines de pressão mesmo com 10–53 de cobertura na
@@ -93,7 +124,8 @@ cheat deve mover o `growth` aprendido para baixo — se não mover, a adaptaçã
    upgrades, add-ons e expansão por postura. O atuador é o Ares, que não aceita um `u` contínuo: a tradução
    passa por reserva de minerais ou ordem de prioridade.
 3. **Observador mais rico.** Workers vistos como medição de renda (não só limite), cobertura pelo mapa e não só
-   pelas bases, composição por tipo no estado para a `CompositionPolicy` ler a crença em vez do visto vivo.
+   pelas bases, composição por tipo no estado (hoje a `CompositionPolicy` lê o visto por tipo e só o poder escalar
+   do observador).
 4. **Adaptativo entre partidas.** Estilo de exército como bandit por oponente (Thompson sampling), com os
    resultados guardados entre partidas no ladder.
 

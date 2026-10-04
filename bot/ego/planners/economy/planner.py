@@ -40,12 +40,16 @@ def plan(
     policy = composition_policy or CompositionPolicy(army)
     if awareness is not None:
         enemy = awareness.seen_enemy_types
+        believed = awareness.enemy_army
         contacts = awareness.contacts
         incidents = awareness.incidents
     else:
+        believed = None
         contacts = ()
         incidents = ()
-    composition_plan = policy.plan(attention, intent, enemy, contacts=contacts, incidents=incidents)
+    composition_plan = policy.plan(
+        attention, intent, enemy, army=believed, contacts=contacts, incidents=incidents
+    )
     mix = composition_plan.units
     upgrades_done = sum(item in attention.upgrades for item in army.upgrades)
     invests = spend.active and not spend.defending

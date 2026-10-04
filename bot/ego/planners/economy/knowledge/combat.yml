@@ -1,0 +1,388 @@
+# What a fight is made of, per canonical unit type: hit points, shields,
+# armor, attributes, and the weapon of the mode the unit fights in (a Siege
+# Tank sieged, a Lurker burrowed, a Viking in the air). Values of LotV 5.0.14
+# at Faster speed, no upgrades, checked against that client's type data.
+#
+# The game's own data wins: `CombatModel.with_client` replaces armor,
+# attributes and weapons with what the running client says, read from the
+# `client` types listed (the unit itself when the key is left out). A unit with
+# `client: []` keeps this table: a Baneling attacks once, a Widow Mine every
+# 29 seconds, and a Carrier's damage is its Interceptors'. Hit points are never
+# in the client's type data, so they always come from here.
+#
+# A weapon: `hits` ground, air or any; `damage` per attack, `attacks` per shot,
+# `cooldown` in seconds, `bonus` by attribute, `splash` the targets one shot
+# covers against a clump (as `bot.attention.units.SPLASH_TARGETS`).
+
+units:
+  # Terran
+  MARINE:
+    hp: 45
+    armor: 0
+    attributes: [Light, Biological]
+    weapons:
+      - {hits: any, damage: 6, cooldown: 0.61}
+  MARAUDER:
+    hp: 125
+    armor: 1
+    attributes: [Armored, Biological]
+    weapons:
+      - {hits: ground, damage: 10, cooldown: 1.07, bonus: {Armored: 10}}
+  REAPER:
+    hp: 60
+    armor: 0
+    attributes: [Light, Biological]
+    weapons:
+      - {hits: ground, damage: 4, attacks: 2, cooldown: 0.79}
+  GHOST:
+    hp: 100
+    armor: 0
+    attributes: [Biological, Psionic]
+    weapons:
+      - {hits: any, damage: 10, cooldown: 1.07, bonus: {Light: 10}}
+  HELLION:
+    hp: 90
+    armor: 0
+    attributes: [Light, Mechanical]
+    weapons:
+      - {hits: ground, damage: 8, cooldown: 1.79, bonus: {Light: 6}, splash: 2.0}
+  HELLIONTANK:
+    hp: 135
+    armor: 0
+    attributes: [Light, Biological, Mechanical]
+    weapons:
+      - {hits: ground, damage: 18, cooldown: 1.43, splash: 2.5}
+  WIDOWMINE:
+    hp: 90
+    armor: 0
+    attributes: [Light, Mechanical]
+    client: []
+    weapons:
+      - {hits: any, damage: 125, cooldown: 29.0, splash: 2.5}
+  SIEGETANK:
+    hp: 175
+    armor: 1
+    attributes: [Armored, Mechanical]
+    client: [SIEGETANKSIEGED]
+    weapons:
+      - {hits: ground, damage: 40, cooldown: 2.14, bonus: {Armored: 30}, splash: 2.5}
+  CYCLONE:
+    hp: 120
+    armor: 1
+    attributes: [Armored, Mechanical]
+    weapons:
+      - {hits: any, damage: 18, cooldown: 0.71}
+  THOR:
+    hp: 400
+    armor: 1
+    attributes: [Armored, Mechanical, Massive]
+    weapons:
+      - {hits: ground, damage: 30, attacks: 2, cooldown: 0.91}
+      - {hits: air, damage: 6, attacks: 4, cooldown: 2.14, bonus: {Light: 6}, splash: 2.0}
+  VIKINGFIGHTER:
+    hp: 135
+    armor: 0
+    attributes: [Armored, Mechanical]
+    flying: true
+    weapons:
+      - {hits: air, damage: 10, attacks: 2, cooldown: 1.43, bonus: {Armored: 4}}
+  MEDIVAC:
+    hp: 150
+    armor: 1
+    attributes: [Armored, Mechanical]
+    flying: true
+    weapons: []
+  LIBERATOR:
+    hp: 180
+    armor: 0
+    attributes: [Armored, Mechanical]
+    flying: true
+    client: [LIBERATOR, LIBERATORAG]
+    weapons:
+      - {hits: air, damage: 5, attacks: 2, cooldown: 1.29, splash: 2.0}
+      - {hits: ground, damage: 75, cooldown: 1.14}
+  RAVEN:
+    hp: 140
+    armor: 1
+    attributes: [Light, Mechanical]
+    flying: true
+    weapons: []
+  BANSHEE:
+    hp: 140
+    armor: 0
+    attributes: [Light, Mechanical]
+    flying: true
+    weapons:
+      - {hits: ground, damage: 12, attacks: 2, cooldown: 0.89}
+  BATTLECRUISER:
+    hp: 550
+    armor: 3
+    attributes: [Armored, Mechanical, Massive]
+    flying: true
+    client: []
+    weapons:
+      - {hits: ground, damage: 8, cooldown: 0.16}
+      - {hits: air, damage: 5, cooldown: 0.16}
+
+  # Protoss
+  ZEALOT:
+    hp: 100
+    shields: 50
+    armor: 1
+    attributes: [Light, Biological]
+    weapons:
+      - {hits: ground, damage: 8, attacks: 2, cooldown: 0.86}
+  ADEPT:
+    hp: 70
+    shields: 70
+    armor: 1
+    attributes: [Light, Biological]
+    weapons:
+      - {hits: ground, damage: 10, cooldown: 1.61, bonus: {Light: 12}}
+  STALKER:
+    hp: 80
+    shields: 80
+    armor: 1
+    attributes: [Armored, Mechanical]
+    weapons:
+      - {hits: any, damage: 13, cooldown: 1.34, bonus: {Armored: 5}}
+  SENTRY:
+    hp: 40
+    shields: 40
+    armor: 1
+    attributes: [Light, Mechanical, Psionic]
+    weapons:
+      - {hits: any, damage: 6, cooldown: 0.71}
+  HIGHTEMPLAR:
+    hp: 40
+    shields: 40
+    armor: 0
+    attributes: [Light, Biological, Psionic]
+    weapons:
+      - {hits: ground, damage: 4, cooldown: 1.25}
+  DARKTEMPLAR:
+    hp: 40
+    shields: 80
+    armor: 1
+    attributes: [Light, Biological, Psionic]
+    weapons:
+      - {hits: ground, damage: 45, cooldown: 1.21}
+  ARCHON:
+    hp: 10
+    shields: 350
+    armor: 0
+    attributes: [Psionic, Massive]
+    weapons:
+      - {hits: any, damage: 25, cooldown: 1.25, bonus: {Biological: 10}, splash: 2.0}
+  IMMORTAL:
+    hp: 200
+    shields: 100
+    armor: 1
+    attributes: [Armored, Mechanical]
+    weapons:
+      - {hits: ground, damage: 20, cooldown: 1.13, bonus: {Armored: 30}}
+  COLOSSUS:
+    hp: 200
+    shields: 150
+    armor: 1
+    attributes: [Armored, Mechanical, Massive]
+    # Walks on the ground and is hit by anti-air too.
+    both_layers: true
+    weapons:
+      - {hits: ground, damage: 10, attacks: 2, cooldown: 1.07, bonus: {Light: 5}, splash: 2.5}
+  DISRUPTOR:
+    hp: 100
+    shields: 100
+    armor: 1
+    attributes: [Armored, Mechanical]
+    weapons: []
+  PHOENIX:
+    hp: 120
+    shields: 60
+    armor: 0
+    attributes: [Light, Mechanical]
+    flying: true
+    weapons:
+      - {hits: air, damage: 5, attacks: 2, cooldown: 0.79, bonus: {Light: 5}}
+  VOIDRAY:
+    hp: 150
+    shields: 100
+    armor: 0
+    attributes: [Armored, Mechanical]
+    flying: true
+    weapons:
+      - {hits: any, damage: 6, cooldown: 0.36, bonus: {Armored: 4}}
+  ORACLE:
+    hp: 100
+    shields: 60
+    armor: 0
+    attributes: [Armored, Mechanical, Psionic]
+    flying: true
+    client: []
+    weapons:
+      - {hits: ground, damage: 15, cooldown: 0.61, bonus: {Light: 7}}
+  TEMPEST:
+    hp: 200
+    shields: 100
+    armor: 2
+    attributes: [Armored, Mechanical, Massive]
+    flying: true
+    weapons:
+      - {hits: ground, damage: 40, cooldown: 2.36}
+      - {hits: air, damage: 30, cooldown: 2.36, bonus: {Massive: 22}}
+  CARRIER:
+    hp: 300
+    shields: 150
+    armor: 2
+    attributes: [Armored, Massive, Mechanical]
+    flying: true
+    client: []
+    # Eight Interceptors, two beams each.
+    weapons:
+      - {hits: any, damage: 5, attacks: 16, cooldown: 2.14}
+  MOTHERSHIP:
+    hp: 350
+    shields: 350
+    armor: 2
+    attributes: [Armored, Mechanical, Psionic, Massive, Heroic]
+    flying: true
+    weapons:
+      - {hits: any, damage: 6, attacks: 4, cooldown: 1.58}
+  WARPPRISM:
+    hp: 80
+    shields: 100
+    armor: 0
+    attributes: [Armored, Mechanical, Psionic]
+    flying: true
+    weapons: []
+
+  # Zerg
+  ZERGLING:
+    hp: 35
+    armor: 0
+    attributes: [Light, Biological]
+    weapons:
+      - {hits: ground, damage: 5, cooldown: 0.497}
+  BANELING:
+    hp: 30
+    armor: 0
+    attributes: [Biological]
+    client: []
+    # It attacks once: its blast spread over a ten-second fight.
+    weapons:
+      - {hits: ground, damage: 16, cooldown: 10.0, bonus: {Light: 19}, splash: 3.0}
+  ROACH:
+    hp: 145
+    armor: 1
+    attributes: [Armored, Biological]
+    weapons:
+      - {hits: ground, damage: 16, cooldown: 1.43}
+  RAVAGER:
+    hp: 120
+    armor: 1
+    attributes: [Biological]
+    weapons:
+      - {hits: ground, damage: 16, cooldown: 1.14}
+  HYDRALISK:
+    hp: 90
+    armor: 0
+    attributes: [Light, Biological]
+    weapons:
+      - {hits: any, damage: 12, cooldown: 0.59}
+  LURKERMP:
+    hp: 190
+    armor: 1
+    attributes: [Armored, Biological]
+    client: [LURKERMPBURROWED]
+    weapons:
+      - {hits: ground, damage: 20, cooldown: 1.43, bonus: {Armored: 10}, splash: 2.5}
+  MUTALISK:
+    hp: 120
+    armor: 0
+    attributes: [Light, Biological]
+    flying: true
+    weapons:
+      - {hits: any, damage: 9, cooldown: 1.09, splash: 1.5}
+  CORRUPTOR:
+    hp: 200
+    armor: 2
+    attributes: [Armored, Biological]
+    flying: true
+    weapons:
+      - {hits: air, damage: 14, cooldown: 1.36, bonus: {Massive: 6}}
+  BROODLORD:
+    hp: 225
+    armor: 1
+    attributes: [Armored, Biological, Massive]
+    flying: true
+    weapons:
+      - {hits: ground, damage: 20, cooldown: 1.79}
+  ULTRALISK:
+    hp: 500
+    armor: 2
+    attributes: [Armored, Biological, Massive]
+    weapons:
+      - {hits: ground, damage: 35, cooldown: 0.61, splash: 1.5}
+  INFESTOR:
+    hp: 90
+    armor: 0
+    attributes: [Armored, Biological, Psionic]
+    weapons: []
+  VIPER:
+    hp: 150
+    armor: 1
+    attributes: [Armored, Biological, Psionic]
+    flying: true
+    weapons: []
+  SWARMHOSTMP:
+    hp: 160
+    armor: 1
+    attributes: [Armored, Biological]
+    weapons: []
+  LOCUSTMP:
+    hp: 50
+    armor: 0
+    attributes: [Light, Biological]
+    weapons:
+      - {hits: ground, damage: 10, cooldown: 0.43}
+  QUEEN:
+    hp: 175
+    armor: 1
+    attributes: [Biological, Psionic]
+    weapons:
+      - {hits: ground, damage: 4, attacks: 2, cooldown: 0.71}
+      - {hits: air, damage: 9, cooldown: 0.71}
+  BROODLING:
+    hp: 30
+    armor: 0
+    attributes: [Light, Biological]
+    weapons:
+      - {hits: ground, damage: 4, cooldown: 0.57}
+
+# What an enemy army of each race is believed to be made of before any of it
+# is seen, as shares of its power. A prior with a few Marines of weight
+# (`CompositionConfig.prior_power`): the first units seen outweigh it.
+priors:
+  Terran:
+    MARINE: 0.35
+    MARAUDER: 0.15
+    SIEGETANK: 0.15
+    HELLION: 0.1
+    CYCLONE: 0.05
+    VIKINGFIGHTER: 0.1
+    LIBERATOR: 0.1
+  Protoss:
+    ZEALOT: 0.2
+    STALKER: 0.25
+    ADEPT: 0.1
+    IMMORTAL: 0.15
+    ARCHON: 0.1
+    COLOSSUS: 0.1
+    VOIDRAY: 0.1
+  Zerg:
+    ZERGLING: 0.25
+    ROACH: 0.25
+    HYDRALISK: 0.2
+    BANELING: 0.1
+    QUEEN: 0.1
+    MUTALISK: 0.1

@@ -66,15 +66,17 @@ class Proposal:
 
 
 @dataclass(frozen=True, slots=True)
-class CounterAdaptation:
-    enemy: UnitTypeId
-    canonical: UnitTypeId
-    power: float
-    response: UnitTypeId | None
-    # Alternatives rejected before the selected response.
-    skipped: tuple[tuple[UnitTypeId, str], ...] = ()
-    # selected, known_no_counter, uncatalogued or no_producible_counter.
-    status: str = "selected"
+class EnemyShare:
+    """One enemy unit type as the composition policy believes in it."""
+
+    # Canonical: a Siege Tank sieged or not is a Siege Tank.
+    type_id: UnitTypeId
+    # Power seen alive and not seen die, remembered.
+    seen: float
+    # Believed share of the enemy army's power.
+    share: float
+    # Our unit types by the share of our strength against it they make up.
+    answers: tuple[tuple[UnitTypeId, float], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,9 +90,18 @@ class SurvivalComposition:
 class CompositionPlan:
     style: str
     baseline: tuple[tuple[UnitTypeId, float, int], ...]
-    # Observed type, canonical type and remembered power.
-    enemy: tuple[tuple[UnitTypeId, UnitTypeId, float], ...]
-    adaptations: tuple[CounterAdaptation, ...]
+    enemy: tuple[EnemyShare, ...]
+    # Enemy army power seen, and believed in (the observer's mean plus margin).
+    seen_power: float
+    believed_power: float
+    # How much of the mix is the style's doctrine rather than the enemy:
+    # doctrine_power / (seen_power + doctrine_power).
+    doctrine: float
+    # (unit type, share of the army's resources, availability): how soon its
+    # tech lets it be trained, 1 when it can be now.
+    mix: tuple[tuple[UnitTypeId, float, float], ...]
+    # Enemy types seen that the combat model does not know, with their power.
+    unmodeled: tuple[tuple[UnitTypeId, float], ...]
     survival: SurvivalComposition | None
     # Count proportions consumed by Ares.
     units: tuple[tuple[UnitTypeId, float, int], ...]

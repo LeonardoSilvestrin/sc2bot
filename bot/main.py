@@ -40,8 +40,9 @@ from bot.body.engine import Engine, EngineResult
 from bot.ego.missions import MissionView
 from bot.ego.planners import EconomyPlan, IntelPlan, Proposal, StructurePlan, economy
 from bot.ego.planners.defense import DefensePlanner
-from bot.ego.planners.economy import CompositionPolicy, InvestmentConfig
+from bot.ego.planners.economy import CombatModel, CompositionPolicy, InvestmentConfig
 from bot.ego.planners.economy.knowledge import styles
+from bot.ego.planners.economy.knowledge.combat import default_model
 from bot.ego.planners.economy.knowledge.styles import BIO, ArmyStyle
 from bot.ego.planners.intel import IntelPlanner
 from bot.ego.planners.map_control import MapControlPlan, MapControlPlanner
@@ -61,6 +62,8 @@ class Layers:
     logs: Logs
     # Chosen once, in `on_start`.
     army: ArmyStyle = BIO
+    # The table's, or as the running client says it, from `on_start`.
+    combat: CombatModel = field(default_factory=default_model)
     # What Attention carries between frames: the opening record, and which
     # passages the blockers still hold shut.
     opening: OpeningWatch = field(default_factory=OpeningWatch)
@@ -79,7 +82,7 @@ class Layers:
     feedback: EngineResult | None = None
 
     def __post_init__(self) -> None:
-        self.composition = CompositionPolicy(self.army)
+        self.composition = CompositionPolicy(self.army, self.combat)
 
     def configs(self) -> dict[str, object]:
         return {
@@ -254,8 +257,10 @@ class BotBandido(AresBot):
         army = styles.choose(self.enemy_race, Random(seed), forced=self.army)
         # Nothing of the opening has been played yet.
         self.build_order_runner.switch_opening(army.opening, remove_completed=False)
-        self.layers = Layers(map_view=map_view, logs=self.bot_logs, army=army)
+        combat, changed = default_model().with_client(self.game_data)
+        self.layers = Layers(map_view=map_view, logs=self.bot_logs, army=army, combat=combat)
         self.bot_logs.game_started(self, map_view, self.layers.configs())
+        self.bot_logs.combat_model(float(self.time), combat.digest, changed)
         corridor = self.layers.structure_control.corridor(map_view)
         cleared = behaviors.structure_control.keep_clear(self, corridor)
         self.bot_logs.kept_clear(float(self.time), map_view, corridor, cleared)

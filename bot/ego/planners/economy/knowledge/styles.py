@@ -1,9 +1,9 @@
 """Army styles: what army the bot builds, chosen once per game.
 
 A style is data, not code: the opening Ares plays (a build of
-`terran_builds.yml`), the composition Ares' SpawnController and
-ProductionController keep, the upgrades in order, and which production
-structure takes add-ons. The economy plan reads whichever style was chosen;
+`terran_builds.yml`), the composition that is its doctrine, the types it may
+add when the enemy calls for them, the upgrades in order, and which
+production structure takes add-ons. The economy plan reads whichever style was chosen;
 nothing else in the bot asks which one it is.
 
 The choice is a draw among the styles meant for the enemy's race, made in
@@ -47,6 +47,9 @@ class ArmyStyle:
     addons_on: UnitTypeId
     # The enemy races this style is drawn against.
     against: frozenset[Race]
+    # The types the composition may add beyond `composition` when the enemy
+    # calls for them: what this style's production builds anyway.
+    adds: tuple[UnitTypeId, ...] = ()
 
 
 BIO = ArmyStyle(
@@ -76,6 +79,7 @@ BIO = ArmyStyle(
     ),
     addons_on=UnitTypeId.BARRACKS,
     against=ANY_RACE,
+    adds=(UnitTypeId.HELLION, UnitTypeId.CYCLONE, UnitTypeId.THOR, UnitTypeId.VIKINGFIGHTER),
 )
 
 MECH = ArmyStyle(
@@ -99,6 +103,8 @@ MECH = ArmyStyle(
     ),
     addons_on=UnitTypeId.FACTORY,
     against=frozenset((Race.Zerg,)),
+    # No infantry: the Barracks may stay idle.
+    adds=(UnitTypeId.THOR, UnitTypeId.VIKINGFIGHTER),
 )
 
 STYLES: dict[str, ArmyStyle] = {style.name: style for style in (BIO, MECH)}

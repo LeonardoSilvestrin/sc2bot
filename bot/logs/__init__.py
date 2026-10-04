@@ -92,6 +92,12 @@ class Logs:
         if said is not None:
             self.telemetry.said(time=time, topic=said[0], line=said[1])
 
+    def combat_model(self, time: float, digest: str, changed: Sequence[str]) -> None:
+        """The combat model the composition prices units with, and where the
+        running client's data replaced the table's."""
+
+        self.telemetry.combat_model(time=time, digest=digest, changed=changed)
+
     def kept_clear(
         self, time: float, map_view: MapView, sites: Sequence[Point2], cleared: int
     ) -> None:

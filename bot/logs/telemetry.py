@@ -456,6 +456,14 @@ class Telemetry:
             },
         )
 
+    def combat_model(self, *, time: float, digest: str, changed: Sequence[str]) -> None:
+        self._event(
+            "knowledge.combat_model",
+            "planners",
+            time,
+            {"digest": digest, "changed": list(changed)},
+        )
+
     def kept_clear(
         self, *, time: float, map_view: MapView, sites: Sequence[Point2], cleared: int
     ) -> None:
@@ -885,14 +893,11 @@ class Telemetry:
             if composition_plan is None
             else (
                 composition_plan.reason,
+                # Which of our types answers each enemy type most.
                 tuple(
-                    (
-                        item.enemy,
-                        item.response,
-                        item.status,
-                        tuple(item.skipped),
-                    )
-                    for item in composition_plan.adaptations
+                    (item.type_id, item.answers[0][0] if item.answers else None)
+                    for item in composition_plan.enemy
+                    if item.seen > 0.0
                 ),
                 composition_plan.survival,
             ),
@@ -946,29 +951,34 @@ class Telemetry:
                 if composition_plan is None
                 else [
                     {
-                        "type": observed.name,
-                        "canonical": canonical.name,
-                        "power": power,
-                    }
-                    for observed, canonical, power in composition_plan.enemy
-                ],
-                "adaptations": []
-                if composition_plan is None
-                else [
-                    {
-                        "enemy": item.enemy.name,
-                        "canonical": item.canonical.name,
-                        "power": item.power,
-                        "response": None
-                        if item.response is None
-                        else item.response.name,
-                        "status": item.status,
-                        "skipped": [
-                            {"type": unit_type.name, "reason": reason}
-                            for unit_type, reason in item.skipped
+                        "type": item.type_id.name,
+                        "seen": item.seen,
+                        "share": item.share,
+                        "answers": [
+                            {"type": unit_type.name, "share": share}
+                            for unit_type, share in item.answers
                         ],
                     }
-                    for item in composition_plan.adaptations
+                    for item in composition_plan.enemy
+                ],
+                "seen_power": None
+                if composition_plan is None
+                else composition_plan.seen_power,
+                "believed_power": None
+                if composition_plan is None
+                else composition_plan.believed_power,
+                "doctrine": None if composition_plan is None else composition_plan.doctrine,
+                "mix": []
+                if composition_plan is None
+                else [
+                    {"type": unit_type.name, "resources": share, "availability": availability}
+                    for unit_type, share, availability in composition_plan.mix
+                ],
+                "unmodeled": []
+                if composition_plan is None
+                else [
+                    {"type": unit_type.name, "power": power}
+                    for unit_type, power in composition_plan.unmodeled
                 ],
                 "survival": None
                 if composition_plan is None or composition_plan.survival is None

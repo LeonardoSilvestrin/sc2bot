@@ -7,16 +7,16 @@ should buy.
   the `EconomyPlan` the Body's economy behavior runs.
 - `policies.investment`: how much -- workers, bases, gas, production ceiling,
   and when the macro plan takes over from the opening.
-- `policies.composition`: what now -- `CompositionPolicy` reweights the style's
-  composition by what each unit is worth against the enemy army Awareness
-  believes in.
+- `policies.composition`: what now -- `CompositionPolicy` chooses the mix
+  worth most against the enemy army believed in, with the style as its prior.
 - `knowledge.styles`: what -- the army styles, with their opening,
   composition, upgrades and add-ons, and the draw among them.
-- `knowledge.counter_catalog`: the ordered responses to each enemy unit type
-  (`knowledge/counters/*.yml`) and what each response can hit.
+- `knowledge.combat`: how hard each unit type hits each other one and how much
+  it takes (`knowledge/combat.yml`, refreshed from the client), and what each
+  race's army is believed to be made of before any of it is seen.
 """
 
-from .knowledge.counter_catalog import CounterCatalog
+from .knowledge.combat import CombatModel
 from .knowledge.styles import ArmyStyle
 from .planner import plan
 from .policies.composition import CompositionConfig, CompositionPolicy
@@ -24,9 +24,9 @@ from .policies.investment import InvestmentConfig
 
 __all__ = [
     "ArmyStyle",
+    "CombatModel",
     "CompositionConfig",
     "CompositionPolicy",
-    "CounterCatalog",
     "InvestmentConfig",
     "plan",
 ]
