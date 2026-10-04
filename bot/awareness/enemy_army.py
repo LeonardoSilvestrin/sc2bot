@@ -27,8 +27,14 @@ that turns it all into army -- is learned, and so is one that produces less.
 Two measurements, both of the power seen alive and not seen to die (`seen`),
 which is a lower bound of the army, never all of it:
 
-- lower bound: when the prediction falls below `seen`, the update pulls it up
-  with `lower_sigma`, and the estimate is never left below `seen`;
+- lower bound: A >= seen is a constraint, not a measurement of A. When the
+  prediction falls below it, the estimate is *projected* onto it (the
+  estimate-projection method of constrained Kalman filtering): A = seen, and g
+  moves by the regression of the shortfall, pag / paa * (seen - A), while the
+  covariance stays as it was. Seeing 40 Marines alive says the enemy has at
+  least 40, not that nothing else exists: as an equality with a small noise
+  (the first version, `bench/testando observador`) it collapsed sigma from 71
+  to 2 after a fight, with 10-30 more army out of sight (NEES 35);
 - coverage: while a share `c` of the enemy's known bases is in vision, `seen`
   also measures the army from above, with R = coverage_sigma^2 / (c dt): the
   longer and the more of their bases we look at without finding the army, the
@@ -79,11 +85,10 @@ class EnemyArmyConfig:
     growth_min: float = 0.002
     growth_max: float = 0.03
     growth_drift: float = 1.5e-8
-    # Variance per second of the army itself, beyond what the economy explains.
-    power_drift: float = 0.05
-    # How sure a sighting above the prediction is, and how much an empty look
-    # at the enemy's bases tells, per second of looking.
-    lower_sigma: float = 2.0
+    # Variance per second of the army itself, beyond what the economy explains:
+    # a timing, a proxy, a cheating income before the growth has adapted to it.
+    power_drift: float = 0.3
+    # How much an empty look at the enemy's bases tells, per second of looking.
     coverage_sigma: float = 15.0
     # The army fits in the supply the workers leave.
     power_per_supply: float = 0.9
@@ -100,7 +105,6 @@ class EnemyArmyConfig:
             "growth",
             "growth_sigma",
             "growth_max",
-            "lower_sigma",
             "coverage_sigma",
             "power_per_supply",
             "max_supply",
@@ -188,6 +192,8 @@ class EnemyArmyFilter:
         `base_sites`: the map's expansions."""
 
         config = self.config
+        # Plain floats out, whatever came in: the belief reaches decisions and logs.
+        now, seen, army_lost, coverage = float(now), float(seen), float(army_lost), float(coverage)
         dt = 0.0 if self._then is None else max(0.0, now - self._then)
         self._then = now
 
@@ -224,9 +230,10 @@ class EnemyArmyFilter:
         # Correct by what is seen.
         correction = NO_CORRECTION
         if seen > power:
-            power, growth, paa, pag, pgg = _measure(
-                power, growth, paa, pag, pgg, seen, config.lower_sigma**2
-            )
+            # Projection onto A >= seen: the mean moves, the doubt does not.
+            if paa > _EPSILON:
+                growth += pag / paa * (seen - power)
+            power = seen
             correction = LOWER_BOUND
         elif coverage > 0.0 and dt > 0.0 and seen < power:
             noise = config.coverage_sigma**2 / (coverage * dt)

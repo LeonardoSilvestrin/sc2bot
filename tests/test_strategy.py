@@ -295,8 +295,8 @@ def test_the_fog_is_no_advantage_but_a_fresh_look_at_the_whole_army_is() -> None
     # Nothing backs the estimate but the economy believed behind it.
     assert fog.assessment.confidence == 0.0
     assert whole_inputs["estimated_enemy_power"] == pytest.approx(60.0)
-    # The sighting is the army's floor, and doubt about it shrinks.
-    assert whole_inputs["enemy_sigma"] < fog_inputs["enemy_sigma"]
+    # The sighting is the army's floor; it says nothing of what else is out of sight.
+    assert whole_inputs["enemy_sigma"] == pytest.approx(fog_inputs["enemy_sigma"])
     assert whole_inputs["planned_enemy_power"] == pytest.approx(
         60.0 + margin * whole_inputs["enemy_sigma"]
     )

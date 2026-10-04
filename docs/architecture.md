@@ -153,14 +153,17 @@ MULE no mesmo frame; a reserva de energia é intenção do Intel, não política
     - exército `A ← A + Δt · g · u − D`, com `D` o poder inimigo visto morrer no frame (preço do último
       avistamento) e `g` o poder que a renda de um worker compra por segundo (prior 0,008, σ 0,003, limites
       0,002–0,03), **no estado**: o filtro é de `x = (A, g)`, `F = [[1, Δt·u], [0, 1]]`, `H = [1, 0]`,
-      `Q = diag(0,05, 1,5·10⁻⁸)·Δt`. É isso que o torna adaptativo: uma inovação positiva sobe `A` e `g`
+      `Q = diag(0,3, 1,5·10⁻⁸)·Δt`. É isso que o torna adaptativo: uma inovação positiva sobe `A` e `g`
       pela covariância cruzada, então um inimigo que produz mais que o prior (a renda trapaceada do
       CheatInsane) é aprendido, e um que produz menos também;
     - teto `cap = 0,9 · (200 − W)` (o supply que os workers deixam); no teto não há produção, e a variância
       de `A` fica limitada a `cap_sigma²` (15²): ninguém planeja contra mais exército do que cabe no supply;
-    - medição 1, **limite inferior**: o visto vivo `y`. Se a previsão fica abaixo, atualização com
-      `R = 2²`, e `A ≥ y`;
-    - medição 2, **cobertura**: `c` = fração das bases inimigas conhecidas (ou do start, sem nenhuma) em visão
+    - **limite inferior**: o visto vivo `y` é restrição, `A ≥ y`, e não medição de `A`. Com a previsão
+      abaixo dele, a estimativa é **projetada** na restrição (o método de projeção do Kalman com restrições):
+      `A = y` e `g += P_Ag / P_AA · (y − A)`, com a covariância intacta. Ver 40 Marines vivos diz que o
+      inimigo tem pelo menos 40, não que não há mais nada: como medição de igualdade com `R = 2²` (a
+      primeira versão) o σ caía de 71 para 2 depois de uma luta, com 10–30 a mais fora de vista;
+    - medição, **cobertura**: `c` = fração das bases inimigas conhecidas (ou do start, sem nenhuma) em visão
       agora. Com `c > 0` e `y < A`, `y` mede `A` por cima com `R = 15² / (c · Δt)`: quanto mais tempo e mais
       das bases dele se olha sem achar o exército, mais se acredita que ele não existe;
     - sem nada visto, a previsão dá 11 aos 300 s, 37 aos 480 s, 74 aos 600 s e o teto (108) aos ~700 s; nos

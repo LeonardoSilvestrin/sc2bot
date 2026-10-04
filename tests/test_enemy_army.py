@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import numpy as np
 import pytest
 
 from bot.awareness import EnemyArmyConfig, EnemyArmyFilter
@@ -62,11 +63,26 @@ def test_a_sighting_above_the_prediction_is_believed_and_a_richer_enemy_learned(
     corrected = observer.update(now=401.0, seen=seen, base_sites=SITES)
 
     assert corrected.correction == "lower_bound"
-    assert corrected.power >= seen
-    assert corrected.sigma < predicted.sigma
+    assert corrected.power == pytest.approx(seen)
+    # At least that much is no measure of what else is out of sight.
+    assert corrected.sigma >= predicted.sigma
     # More than its economy explained: it produces more than the prior believed.
     assert corrected.growth > EnemyArmyConfig().growth
     assert corrected.production > predicted.production
+
+
+def test_seeing_more_and_more_of_an_army_does_not_add_up_to_certainty() -> None:
+    # An army coming into sight a unit at a time: each frame a little more than
+    # the estimate. Only a look that can see all of it shrinks the doubt.
+    observer = EnemyArmyFilter()
+    predicted = run(observer, 600.0)
+    seen = predicted.power
+    for step in range(1, 41):
+        seen += 1.0
+        belief = observer.update(now=600.0 + 0.05 * step, seen=seen, base_sites=SITES)
+
+    assert belief.power == pytest.approx(seen)
+    assert belief.sigma >= predicted.sigma
 
 
 def test_looking_at_their_bases_and_finding_little_lowers_the_estimate() -> None:
@@ -141,3 +157,17 @@ def test_the_share_of_income_spent_on_army_ramps_from_early_to_late() -> None:
 def test_an_invalid_observer_is_rejected(change: dict[str, float]) -> None:
     with pytest.raises(ValueError):
         EnemyArmyConfig(**change)
+
+
+def test_numpy_readings_leave_only_plain_floats_in_the_belief() -> None:
+    # A numpy bool from the visibility grid made `expand` a numpy bool, and
+    # every `planner.economy_planned` was rejected by the JSON log.
+    observer = EnemyArmyFilter()
+    run(observer, 600.0)
+    belief = observer.update(
+        now=np.float64(601.0), seen=np.float64(5.0), coverage=np.True_ / 1, base_sites=SITES
+    )
+
+    assert belief.correction == "coverage"
+    for name in ("power", "sigma", "growth", "production", "coverage", "workers", "bases", "cap"):
+        assert type(getattr(belief, name)) is float, name

@@ -302,7 +302,8 @@ class AwarenessModel:
             ),
             known_bases=len(townhalls),
             known_workers=sum(contact.is_worker for contact in contacts),
-            coverage=sum(attention.is_visible(place) for place in places) / len(places),
+            # `is_visible` reads a numpy grid: a numpy bool would leak into every belief.
+            coverage=sum(bool(attention.is_visible(place)) for place in places) / len(places),
             base_sites=len(attention.map.expansions),
         )
         if self._cloak_seen_at is None and any(

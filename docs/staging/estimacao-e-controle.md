@@ -62,10 +62,21 @@ O que olhar, contra o `bench/t0`:
 - **Efeito colateral esperado**: sem nada visto, a previsão é mais alta que o prior antigo no meio do jogo
   (74 contra 48 aos 600 s), então antes da primeira luta o bot pode se achar mais atrás do que se achava.
 
+### Primeira partida (`bench/testando observador`, Zerg CheatInsane Rush, derrota)
+
+Contra a mesma célula do `bench/t0`: erro médio +9,7 → **+1,7**, erro absoluto 18,0 → **12,8**. Até 800 s
+o erro normalizado ficou em |z| < 1. Mas `nees` 34,9 e só 67 % dentro de 2σ: depois de uma luta aos ~820 s o
+σ caiu de 71 para 2 e ficou, com 10–30 a mais do inimigo fora de vista. Causa: o limite inferior era
+medição de igualdade (`R = 2²`). Corrigido para projeção na restrição `A ≥ y` com a covariância intacta, e
+o `power_drift` subiu de 0,05 para 0,3 (o CheatInsane produz mais cedo do que o σ admitia: z = +3 a +4
+entre 200 e 280 s). Essa partida também revelou um bug do observador: a cobertura vinha como bool do numpy
+e contaminava a crença até o `expand`, e todo `planner.economy_planned` era rejeitado pelo log (838 na
+partida).
+
 ### Parâmetros a calibrar com o replay_truth
 
 `growth` (prior 0,008), a rampa `f(t)` (0,15 → 0,65 entre 240 e 600 s), `worker_rate` (0,1/s),
-`coverage_sigma` (15), `power_drift` (0,05), `cap_sigma` (15) e `sigma_margin` (0,5). Os quatro primeiros
+`coverage_sigma` (15), `power_drift` (0,3), `cap_sigma` (15) e `sigma_margin` (0,5). Os quatro primeiros
 saíram dos replays do `bench/t0`, que são só CheatInsane, com renda trapaceada; um bench contra oponentes sem
 cheat deve mover o `growth` aprendido para baixo — se não mover, a adaptação não está funcionando.
 
