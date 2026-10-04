@@ -46,8 +46,16 @@ from sc2.position import Point2
 
 from bot.attention import AttentionState, ExpansionStatus, OpeningObservations
 from bot.awareness import OpeningBelief
-from bot.ego.missions import CancelMode, Lifecycle, MissionFeedback, MissionStatus, MissionView
-from bot.ego.planners import Command, EarlyScoutReport, Proposal
+from bot.ego.planners import (
+    CancelMode,
+    Command,
+    EarlyScoutReport,
+    Lifecycle,
+    MissionFeedback,
+    MissionStatus,
+    MissionView,
+    Proposal,
+)
 
 OWNER = "intel"
 KIND = "early_scout"

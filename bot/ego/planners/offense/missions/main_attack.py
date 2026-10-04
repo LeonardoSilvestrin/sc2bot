@@ -74,14 +74,16 @@ from sc2.position import Point2
 
 from bot.attention import AttentionState, MapView, UnitView
 from bot.awareness import AwarenessState, Contact
-from bot.ego.missions import (
+from bot.ego.planners import (
     CancelMode,
+    Command,
+    Domain,
     Lifecycle,
     MissionFeedback,
     MissionStatus,
     MissionView,
+    Proposal,
 )
-from bot.ego.planners import Command, Domain, Proposal
 from bot.ego.strategy import StrategicIntent
 
 OWNER = "offense"

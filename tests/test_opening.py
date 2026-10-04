@@ -25,8 +25,7 @@ from bot.attention import (
 )
 from bot.awareness import AwarenessModel, OpeningBelief, expectations_for, read_opening
 from bot.awareness.opening import OpeningBeliefConfig
-from bot.ego.missions import CancelMode, MissionStatus
-from bot.ego.planners import Command
+from bot.ego.planners import CancelMode, Command, MissionStatus
 from bot.ego.planners.intel import (
     PROXY_CONFIDENCE_AT,
     PROXY_SEARCH_AT,
@@ -473,7 +472,7 @@ def mission(now: float = 50.0, **kwargs) -> EarlyScoutMission:
 
 
 def step(scout: EarlyScoutMission, state, seen=frozenset(), read=None):
-    from bot.ego.missions import MissionFeedback
+    from bot.ego.planners import MissionFeedback
 
     return scout.step(state, seen, MissionFeedback(), read or OpeningBelief())
 

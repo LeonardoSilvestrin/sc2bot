@@ -18,8 +18,7 @@ from typing import TYPE_CHECKING
 
 from bot.attention import AttentionState
 from bot.awareness import AwarenessState
-from bot.ego.missions import MissionFeedback, MissionView
-from bot.ego.planners import Proposal
+from bot.ego.planners import MissionFeedback, MissionView, Proposal
 from bot.ego.strategy import StrategicIntent
 
 from .missions.defend_area import KIND, OWNER, DefendAreaMission

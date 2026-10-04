@@ -59,7 +59,7 @@ class Proposal:
     # The coordinated demand this proposal is one part of; its parts share one
     # budget. None for a proposal that stands alone.
     demand_id: str | None = None
-    # The mission (`bot.ego.missions`) that made it; None for a planner without
+    # The mission (`bot.ego.planners.common.mission`) that made it; None for a planner without
     # missions. A mission may make several proposals, and keeps a proposal's
     # id across its phases so the Engine keeps the same units.
     mission_id: str | None = None

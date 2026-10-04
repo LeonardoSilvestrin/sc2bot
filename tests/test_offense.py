@@ -11,8 +11,7 @@ from sc2.position import Point2
 from bot.attention import unit_power, unit_view
 from bot.awareness import AwarenessModel
 from bot.body.engine import Engine, GrantStatus
-from bot.ego.missions import MissionStatus
-from bot.ego.planners import Command, Domain, defense, map_control
+from bot.ego.planners import Command, Domain, MissionStatus, defense, map_control
 from bot.ego.planners.defense import DefensePlanner
 from bot.ego.planners.offense import (
     ENEMY_START,

@@ -27,8 +27,15 @@ from sc2.position import Point2
 
 from bot.attention import OPENING_WINDOW, AttentionState, MapView
 from bot.awareness import AwarenessState, expectations_for
-from bot.ego.missions import CancelMode, MissionFeedback, MissionView
-from bot.ego.planners import EarlyScoutReport, IntelPlan, Proposal, SensorTowerPlan
+from bot.ego.planners import (
+    CancelMode,
+    EarlyScoutReport,
+    IntelPlan,
+    MissionFeedback,
+    MissionView,
+    Proposal,
+    SensorTowerPlan,
+)
 from bot.ego.strategy import StrategicIntent, StrategicPosture
 
 from .missions.early_scout import KIND, OWNER, EarlyScoutMission, ScoutWindow

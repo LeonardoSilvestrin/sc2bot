@@ -13,13 +13,15 @@ from sc2.position import Point2
 
 from bot.awareness import AwarenessModel
 from bot.body.engine import Engine, GrantStatus
-from bot.ego.missions import (
+from bot.ego.planners import (
     CancelMode,
+    Command,
     Lifecycle,
     MissionFeedback,
     MissionStatus,
+    Proposal,
+    defense,
 )
-from bot.ego.planners import Command, Proposal, defense
 from bot.ego.planners.defense import DefensePlanner
 from bot.ego.planners.intel import (
     SCOUT_AT_WORKERS,

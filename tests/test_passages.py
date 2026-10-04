@@ -471,7 +471,7 @@ def test_snapshot_without_mineral_contents_is_still_a_blocker() -> None:
 
 
 def test_scout_waits_for_a_wall_to_open_without_changing_expansion_identity() -> None:
-    from bot.ego.missions import MissionFeedback
+    from bot.ego.planners import MissionFeedback
     from bot.ego.planners.intel.missions.early_scout import EarlyScoutMission
 
     from .fakes import attention
@@ -509,7 +509,7 @@ def test_intel_refreshes_active_scout_watchpoints_when_a_passage_opens() -> None
 
 
 def test_surveillance_waits_when_its_entire_ring_is_blocked() -> None:
-    from bot.ego.missions import MissionFeedback
+    from bot.ego.planners import MissionFeedback
     from bot.ego.planners.intel.missions.early_scout import EarlyScoutMission, ScoutPhase
 
     from .fakes import attention

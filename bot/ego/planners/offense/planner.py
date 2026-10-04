@@ -41,13 +41,13 @@ from sc2.position import Point2
 
 from bot.attention import AttentionState
 from bot.awareness import AwarenessState
-from bot.ego.missions import (
+from bot.ego.planners import (
     CancelMode,
     MissionFeedback,
     MissionStatus,
     MissionView,
+    Proposal,
 )
-from bot.ego.planners import Proposal
 from bot.ego.strategy import StrategicIntent, StrategicPosture
 
 from .missions.main_attack import (

@@ -26,14 +26,16 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from bot.awareness import ThreatIncident
-from bot.ego.missions import (
+from bot.ego.planners import (
     CancelMode,
+    Command,
+    Domain,
     Lifecycle,
     MissionFeedback,
     MissionStatus,
     MissionView,
+    Proposal,
 )
-from bot.ego.planners import Command, Domain, Proposal
 from bot.ego.strategy import StrategicIntent, StrategicPosture
 
 OWNER = "defense"
