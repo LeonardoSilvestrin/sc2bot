@@ -329,9 +329,12 @@ MULE no mesmo frame; a reserva de energia é intenção do Intel, não política
   corte de produção do Ares) não entra — o `TechUp` do `ProductionController` compra a tech de todo tipo da
   composição, então é aí que tech nova é comprada. `CompositionPlan` expõe crença por tipo (visto, parcela, quem
   a responde), poder visto e acreditado, peso da doutrina, mix em recursos com disponibilidade e tipos sem modelo.
-- Sobrevivência: `StrategicIntent.emergency`, travada dentro de DEFEND. Qualquer tipo treinável agora (tech pronta
-  e produtor pronto) que atinge os atacantes do incidente prioritário vai para a frente, ordenado pela parcela da
-  resposta ao incidente que ele faz (a mesma eficácia `k`); não é Mission nem postura separada.
+- Sobrevivência: `StrategicIntent.emergency`, travada dentro de DEFEND. Os tipos do estilo, os `adds` e
+  `survival_types` (Marine, Marauder, Hellion, Siege Tank, Cyclone, Thor, Viking: as unidades com que o Body sabe
+  lutar) treináveis agora (tech pronta e produtor pronto) que atingem os atacantes do incidente prioritário vão para
+  a frente, ordenados pela parcela da resposta ao incidente que fazem (a mesma eficácia `k`); não é Mission nem
+  postura separada. Só esses: o modelo precifica o Liberator pela arma sieged, que o Body nunca usa
+  (`bench/comp-eficacia/004`: 6 Liberators num exército bio em DEFEND).
 - Add-ons: `addons` liga depois do opening e fora de DEFEND (como os upgrades). Antes do `MacroPlan`, fora dele, uma
   por frame: a estrutura `addons_on` do estilo (Barracks na bio, Factory no mech) pronta, ociosa e sem add-on de menor tag
   recebe Reactor enquanto `reactors + 1 ≤ reactor_share · n`, e Tech Lab senão; `reactor_share = s_r / (s_r + 2·s_t)`, com `s_t` a

@@ -58,9 +58,12 @@ THE STYLE. Its composition is the doctrine; the mix may also use the types
 the style `adds`, which its production builds anyway. A mech army fighting
 Mutalisks takes Thors and Vikings, not Marines.
 
-SURVIVE. While Strategy says the base is falling, any type that can be
-trained now and hits the strongest incident's attackers goes first, ordered
-by the share of the answer to that incident it makes up, beyond the style.
+SURVIVE. While Strategy says the base is falling, any type the Body fights
+with (`survival_types`) that can be trained now and hits the strongest
+incident's attackers goes first, ordered by the share of the answer to that
+incident it makes up, beyond the style. Only those: the model prices a
+Liberator by its sieged weapon, which the Body never sieges (6 Liberators
+of a bio army in `bench/comp-eficacia/004`).
 """
 
 from __future__ import annotations
@@ -120,6 +123,16 @@ class CompositionConfig:
     tech_horizon: float = 60.0
     # The least share of the army a unit type enters the composition with.
     min_share: float = 0.05
+    # The types SURVIVE may train beyond the style: the ones the Body fights with.
+    survival_types: tuple[UnitTypeId, ...] = (
+        UnitTypeId.MARINE,
+        UnitTypeId.MARAUDER,
+        UnitTypeId.HELLION,
+        UnitTypeId.SIEGETANK,
+        UnitTypeId.CYCLONE,
+        UnitTypeId.THOR,
+        UnitTypeId.VIKINGFIGHTER,
+    )
     iterations: int = 500
     # The largest change of a resource share at which the mix is solved.
     tolerance: float = 1e-6
@@ -163,11 +176,14 @@ class CompositionPolicy:
                 + [unit_type for unit_type in style.adds if self._stats(unit_type).weapons]
             )
         )
-        # Whatever production trains, for SURVIVE.
+        # What SURVIVE may train.
         self._trainable = tuple(
-            unit_type
-            for unit_type, stats in sorted(self.model.units.items(), key=lambda item: item[0].name)
-            if stats.weapons and UNIT_TRAINED_FROM.get(unit_type, set()) & TERRAN_PRODUCTION
+            dict.fromkeys(
+                unit_type
+                for unit_type in (*self._combat, *self.config.survival_types)
+                if self._stats(unit_type).weapons
+                and UNIT_TRAINED_FROM.get(unit_type, set()) & TERRAN_PRODUCTION
+            )
         )
         resources = {
             unit_type: share * _cost(unit_type) for unit_type, share, _ in style.composition

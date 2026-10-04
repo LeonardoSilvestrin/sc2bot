@@ -243,3 +243,31 @@ def test_survive_uses_ready_barracks_and_the_fallback_leaves_with_the_policy() -
     assert UnitTypeId.MARINE not in {unit_type for unit_type, _, _ in normal.units}
     # What hits Zerglings best per resource trains first.
     assert emergency.units[0][0] in {UnitTypeId.MARINE, UnitTypeId.HELLION}
+
+
+def test_survive_trains_only_what_the_body_fights_with() -> None:
+    """A Liberator is priced by its sieged weapon; the Body never sieges it."""
+
+    barracks = unit(100, UnitTypeId.BARRACKS, structure=True, power=0.0)
+    starport = unit(101, UnitTypeId.STARPORT, structure=True, power=0.0)
+    roach = unit(1, UnitTypeId.ROACH, x=10.5, y=10.5)
+    frame = attention(
+        own_structures=(barracks, starport),
+        enemy_units=(roach,),
+        tech_ready={UnitTypeId.MARINE, UnitTypeId.LIBERATOR, UnitTypeId.REAPER},
+    )
+    believed, survive = state(frame, emergency=True)
+
+    plan = composition.CompositionPolicy(styles.BIO).plan(
+        frame,
+        survive,
+        believed.seen_enemy_types,
+        army=believed.enemy_army,
+        contacts=believed.contacts,
+        incidents=believed.incidents,
+    )
+
+    trained = {unit_type for unit_type, _, _ in plan.units}
+    assert plan.reason == "survival_fallback"
+    assert UnitTypeId.MARINE in trained
+    assert not trained & {UnitTypeId.LIBERATOR, UnitTypeId.REAPER}
