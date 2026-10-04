@@ -168,6 +168,22 @@
           "value": "PhantomBot"
         },
         {
+          "label": "SharpKnives (Protoss, proxy zealots)",
+          "value": "SharpKnives"
+        },
+        {
+          "label": "SharpCannon (Protoss, cannon rush)",
+          "value": "SharpCannon"
+        },
+        {
+          "label": "RustyMarines (Terran, marine all-in)",
+          "value": "RustyMarines"
+        },
+        {
+          "label": "RoachRush (Zerg, roach rush)",
+          "value": "RoachRush"
+        },
+        {
           "label": "IA do jogo",
           "value": "builtin"
         }
@@ -179,7 +195,23 @@
       "type": "pickString",
       "description": "Bot da ladder",
       "options": [
-        "PhantomBot"
+        "PhantomBot",
+        {
+          "label": "SharpKnives (Protoss, proxy zealots)",
+          "value": "SharpKnives"
+        },
+        {
+          "label": "SharpCannon (Protoss, cannon rush)",
+          "value": "SharpCannon"
+        },
+        {
+          "label": "RustyMarines (Terran, marine all-in)",
+          "value": "RustyMarines"
+        },
+        {
+          "label": "RoachRush (Zerg, roach rush)",
+          "value": "RoachRush"
+        }
       ],
       "default": "PhantomBot"
     },

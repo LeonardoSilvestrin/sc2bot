@@ -1,7 +1,9 @@
 # Partidas locais AI Arena
 
-Adversário competitivo disponível nesta máquina: **PhantomBot 3.48.1**.
-Veja [o guia para jogar contra ele](PHANTOMBOT.md), com comandos e artefatos da validação local.
+Adversários disponíveis nesta máquina: **PhantomBot 3.48.1**, **SharpKnives**
+(proxy zealots), **SharpCannon** (cannon rush), **RustyMarines** (marine all-in)
+e **RoachRush** (rush de roaches).
+Veja [o guia dos bots de rush](OPPONENTS.md) e [o guia do PhantomBot](PHANTOMBOT.md).
 
 Há dois modos: com janela (`run.py` e `bench.py`) e totalmente no Docker
 (`run_local_opponent.py`, independente do ambiente `.venv` do bot).
@@ -16,12 +18,12 @@ cadastro, upload, token nem participação na ladder oficial.
 
 No VS Code, abra **Run and Debug** e escolha:
 
-- **play**: escolha `PhantomBot` ou `IA do jogo`, depois o mapa.
+- **play**: escolha um dos cinco bots ou `IA do jogo`, depois o mapa.
 - **play full debug**: a mesma escolha, com eventos, overlay e snapshots SVG.
 - **bench: bot da ladder (full debug)**: escolha adversário, mapa, estilo,
   quantidade de partidas, tempo máximo de jogo e rótulo de saída.
 
-O seletor da ladder contém somente PhantomBot por enquanto. Os perfis de
+Os cinco bots estão nos seletores de partida e bench da ladder. Os perfis de
 matriz/cenário contra a IA do jogo, resumo e comparação continuam disponíveis.
 
 ```powershell
@@ -32,7 +34,7 @@ matriz/cenário contra a IA do jogo, resumo e comparação continuam disponívei
 
 Nesse modo, **dois clientes SC2 4.10 / Base75689 nativos do Windows** abrem
 com janela: nosso ponto de vista à esquerda, o adversário à direita. O
-BotBandido roda no Python do depurador; o PhantomBot continua no Docker Linux.
+BotBandido roda no Python do depurador; o adversário roda no Docker Linux.
 A ponte WebSocket escuta apenas em `127.0.0.1` e é acessada pelo Docker via
 `host.docker.internal`. Não é preciso construir a imagem Linux do BotBandido.
 O jogo avança por steps, como o launcher anterior; pode rodar mais rápido que
@@ -109,8 +111,9 @@ demorar. `setup.log` acompanha essas etapas. O wrapper valida o executável
 `/root/StarCraftII/Versions/Base75689/SC2_x64` e rejeita uma imagem em que o
 controller selecionaria outro build. O runtime oficial consultado usa Python
 3.12.12; o Dockerfile mantém o controller oficial e instala as dependências de
-nosso `poetry.lock` em um virtualenv Linux próprio. A imagem do adversário
-continua sendo a oficial, com suas dependências originais.
+nosso `poetry.lock` em um virtualenv Linux próprio. PhantomBot usa a imagem
+oficial do adversário; os bots de rush usam a imagem derivada com Python 3.11
+e dependências compatíveis, mantendo o controller oficial.
 
 Smoke test curto (100 segundos de jogo, resultado normalmente `Tie`):
 
@@ -145,6 +148,10 @@ Também é possível passar uma pasta descompactada em `--source`.
 O cadastro base está em `bots.json`; os downloads são copiados para
 `runtime/bots/<nome>` e registrados em `bots.local.json` (ignorado pelo Git).
 Para outra versão, use outro nome de cadastro. A raça aceita `T`, `Z`, `P`, `R`.
+Pacotes com extensões compiladas para CPython 3.11, como os house bots Sharpy,
+devem ser cadastrados com `--runtime python311`. Essa opção constrói um ambiente
+compatível separado, usado tanto pelo launcher com janela quanto pelo Compose.
+Veja [as versões, origem e validação dos novos adversários](OPPONENTS.md).
 
 O tipo determina a convenção oficial de entrada:
 

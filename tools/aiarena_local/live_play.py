@@ -48,8 +48,11 @@ def opponent_info(name: str) -> dict:
     return info
 
 
-def docker_command(docker: str, name: str, source: Path, port: int, start: int) -> list[str]:
+def docker_command(
+    docker: str, name: str, source: Path, port: int, start: int, *, info: dict | None = None
+) -> list[str]:
     # A list keeps Windows paths with spaces intact; no shell interpolation.
+    runtime = local.opponent_runtime(info or {})
     return [
         docker,
         "run",
@@ -66,8 +69,8 @@ def docker_command(docker: str, name: str, source: Path, port: int, start: int) 
         "--env",
         "PYTHONUNBUFFERED=1",
         "--entrypoint",
-        "python",
-        local.BOT_IMAGE,
+        runtime["python"],
+        runtime["image"],
         "run.py",
         "--GamePort",
         str(port),
@@ -184,7 +187,7 @@ async def _match(player, game_map, info, directory, replay, time_limit, seed, do
         source = directory / "opponent"
         shutil.copytree(info["source"], source)
         process = await asyncio.create_subprocess_exec(
-            *docker_command(docker, container, source, port, ports.server[0] - 2),
+            *docker_command(docker, container, source, port, ports.server[0] - 2, info=info),
             stdout=output,
             stderr=subprocess.STDOUT,
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
@@ -283,12 +286,15 @@ def play_match(
     print(f"Partida com janela: BotBandido vs {opponent}. Artefatos: {directory}", flush=True)
     try:
         docker = local.docker_ready()
-        try:
-            local.command([docker, "image", "inspect", local.BOT_IMAGE])
-        except RuntimeError:
-            local.command(
-                [docker, "pull", local.BOT_IMAGE], timeout=1800, log=directory / "setup.log"
-            )
+        runtime = local.ensure_opponent_image(docker, info, directory / "setup.log")
+        image_info = local.command(
+            [docker, "image", "inspect", runtime["image"], "--format", "{{.Id}}"]
+        )
+        manifest["opponent_runtime"] = {
+            "image": runtime["image"],
+            "image_id": image_info.strip(),
+            "python": runtime["python"],
+        }
         manifest["status"] = "running"
         local.write_json(path, manifest)
 

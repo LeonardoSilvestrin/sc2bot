@@ -129,15 +129,18 @@ sorteados (`run.py`; nome e raça do bot em `config.yml`):
   (linha do tempo das decisões e inspetor por camada).
 
 No VS Code, os perfis **play** e **play full debug** perguntam o adversário
-(`PhantomBot` ou `IA do jogo`) e o mapa. Para jogar contra a ladder com janela:
+(`PhantomBot`, `SharpKnives`, `SharpCannon`, `RustyMarines`, `RoachRush` ou
+`IA do jogo`) e o mapa. Para jogar contra a ladder com janela:
 
 ```powershell
 .venv\Scripts\python.exe run.py --opponent PhantomBot --map PersephoneAIE_v4 --bot-log events --spatial-view --spatial-snapshot
 ```
 
-O BotBandido roda no Python do depurador e o PhantomBot no Docker; abrem duas
+O BotBandido roda no Python do depurador e o adversário no Docker; abrem duas
 janelas SC2 nativas do Windows. Docker Desktop precisa estar funcionando.
 Veja [o guia dos modos locais](tools/aiarena_local/README.md).
+Para testar defesa contra proxy zealots, cannon rush e all-ins, veja
+[os adversários de rush disponíveis](tools/aiarena_local/OPPONENTS.md).
 
 Testes e lint (o CI roda os dois antes de gerar qualquer artefato):
 

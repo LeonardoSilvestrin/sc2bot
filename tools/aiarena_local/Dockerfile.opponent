@@ -1,0 +1,12 @@
+# Preserve the official controller; legacy ladder packages bundle CPython 3.11 extensions.
+ARG BOT_IMAGE
+FROM ${BOT_IMAGE}
+ARG NUMPY_VERSION=1.26.4
+RUN python -m pip install --no-cache-dir virtualenv==20.26.6 \
+    && python -m virtualenv --python /usr/bin/python3.11 /opt/opponent-venv \
+    && /opt/opponent-venv/bin/pip install --no-cache-dir \
+        s2clientprotocol==4.10.3.76114.0 protobuf==3.20.3 \
+        numpy==${NUMPY_VERSION} scipy==1.10.1 aiohttp==3.9.5 async-timeout==4.0.3 \
+        portpicker==1.6.0 requests==2.32.3 six==1.16.0 \
+        opencv-python-headless==4.10.0.84 more-itertools==10.5.0 \
+        mpyq==0.2.5 scikit-learn==1.5.2 loguru==0.7.2

@@ -63,6 +63,16 @@ def test_docker_command_preserves_paths_and_ladder_port_contract():
     assert "--RealTime" not in command  # PhantomBot's entrypoint does not accept it.
 
 
+def test_legacy_runtime_uses_python311_even_when_match_copy_is_named_opponent():
+    source = Path("C:/partida/opponent")
+    info = {"runtime": "python311"}
+    runtime = local_play.opponent_runtime(info)
+    command = live_play.docker_command("docker.exe", "fixture", source, 12345, 23450, info=info)
+    assert command[command.index("--entrypoint") + 1] == runtime["python"]
+    assert runtime["image"] in command
+    assert local_play.BOT_IMAGE not in command
+
+
 def test_ladder_bench_records_opponent_repeats_maps_and_armies(ladder_package):
     args = bench.parser().parse_args(
         [

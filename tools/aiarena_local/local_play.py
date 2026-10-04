@@ -202,6 +202,60 @@ def registry():
     return bots
 
 
+def opponent_runtime(bot):
+    """Select a compatible runtime without changing the official controller."""
+    profile = bot.get("runtime", "default")
+    if profile == "default":
+        return {"image": BOT_IMAGE, "python": "python"}
+    numpy_versions = {"python311": "1.26.4", "python311-oldnumpy": "1.23.5"}
+    if profile not in numpy_versions:
+        raise ValueError(f"Unknown opponent runtime: {profile}")
+    numpy_version = numpy_versions[profile]
+    recipe = HERE / "Dockerfile.opponent"
+    digest = hashlib.sha256(
+        recipe.read_bytes() + BOT_IMAGE.encode() + numpy_version.encode()
+    ).hexdigest()[:12]
+    return {
+        "image": f"sc2bot-aiarena-opponent:{profile}-{digest}",
+        "python": "/opt/opponent-venv/bin/python",
+        "build": {
+            "context": str(HERE),
+            "dockerfile": str(recipe),
+            "args": {"BOT_IMAGE": BOT_IMAGE, "NUMPY_VERSION": numpy_version},
+        },
+    }
+
+
+def ensure_opponent_image(docker, bot, log):
+    runtime = opponent_runtime(bot)
+    try:
+        command([docker, "image", "inspect", runtime["image"]])
+    except RuntimeError:
+        if "build" in runtime:
+            command(
+                [
+                    docker,
+                    "build",
+                    "--platform",
+                    "linux/amd64",
+                    "--build-arg",
+                    f"BOT_IMAGE={BOT_IMAGE}",
+                    "--build-arg",
+                    f"NUMPY_VERSION={runtime['build']['args']['NUMPY_VERSION']}",
+                    "--file",
+                    runtime["build"]["dockerfile"],
+                    "--tag",
+                    runtime["image"],
+                    HERE,
+                ],
+                timeout=1800,
+                log=log,
+            )
+        else:
+            command([docker, "pull", runtime["image"]], timeout=1800, log=log)
+    return runtime
+
+
 def validate_name(name):
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,79}", name):
         raise ValueError("Use a simple bot/map name (letters, digits, dots, underscores, hyphens).")
@@ -223,8 +277,9 @@ def extract_zip(archive, destination):
         bundle.extractall(destination)
 
 
-def register_bot(name, source, race, bot_type):
+def register_bot(name, source, race, bot_type, runtime="default"):
     validate_name(name)
+    opponent_runtime({"runtime": runtime})
     if name in registry():
         raise ValueError(f"Bot already registered: {name}. Use a new name for a new version.")
     source = Path(source).resolve()
@@ -259,6 +314,8 @@ def register_bot(name, source, race, bot_type):
         "source": destination.relative_to(HERE).as_posix(),
         "download": str(source),
     }
+    if runtime != "default":
+        data[name]["runtime"] = runtime
     write_json(path, data)
     print(f"Registered {name}: {destination}")
 
@@ -380,13 +437,19 @@ def prepare_run(bot_name, opponent, map_name, max_game_time, max_real_time):
         bot["name"] = name
         manifest["players"].append(bot)
         service = {
-            "image": BOT_IMAGE,
+            "image": opponent_runtime(bot)["image"],
             "platform": "linux/amd64",
             "volumes": [
                 mount(run_dir / "bots", "/bots"),
                 mount(run_dir / "logs" / f"bot_controller{number}", "/logs"),
             ],
         }
+        if not project and bot.get("runtime", "default") != "default":
+            runtime = opponent_runtime(bot)
+            service.update(
+                build=runtime["build"],
+                environment={"ACBOT_PYTHON": runtime["python"], "PYTHONUNBUFFERED": "1"},
+            )
         if project:
             recipe_hash = hashlib.sha256((HERE / "Dockerfile.bot").read_bytes()).hexdigest()[:8]
             service.update(
@@ -578,6 +641,9 @@ def main(argv=None):
     parser.add_argument("--source", type=Path, help="Downloaded ZIP or extracted bot folder")
     parser.add_argument("--race", choices=["T", "Z", "P", "R"])
     parser.add_argument("--type", choices=sorted(BOT_TYPES), default="python")
+    parser.add_argument(
+        "--runtime", choices=["default", "python311", "python311-oldnumpy"], default="default"
+    )
     parser.add_argument("--bot", default="BotBandido")
     parser.add_argument("--opponent")
     parser.add_argument("--map", default="PersephoneAIE_v4")
@@ -595,7 +661,7 @@ def main(argv=None):
         if args.register:
             if not args.source or not args.race:
                 parser.error("--register requires --source and --race")
-            register_bot(args.register, args.source, args.race, args.type)
+            register_bot(args.register, args.source, args.race, args.type, args.runtime)
         if args.list_bots:
             print(json.dumps(registry(), indent=2))
         if args.doctor:

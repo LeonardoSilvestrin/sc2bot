@@ -1,0 +1,2 @@
+# This recipe installs dependencies only; bot packages are mounted per match.
+*

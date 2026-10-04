@@ -73,6 +73,21 @@ def test_failed_game_is_never_success(isolated, result):
         play.verify_result(run_dir)
 
 
+def test_legacy_compose_runtime_keeps_controller_and_uses_compatible_python(isolated):
+    (isolated / "Dockerfile.opponent").write_text("FROM fixture")
+    path = isolated / "bots.json"
+    bots = json.loads(path.read_text())
+    bots["loser_bot"]["runtime"] = "python311"
+    play.write_json(path, bots)
+    run_dir, _ = prepare()
+    services = json.loads((run_dir / "compose.override.json").read_text())["services"]
+    assert services["bot_controller1"]["image"] == play.BOT_IMAGE
+    opponent = services["bot_controller2"]
+    assert opponent["environment"]["ACBOT_PYTHON"] == "/opt/opponent-venv/bin/python"
+    assert opponent["build"]["args"]["BOT_IMAGE"] == play.BOT_IMAGE
+    assert "entrypoint" not in opponent
+
+
 def test_success_requires_played_frames_replay_and_both_bot_logs(isolated):
     run_dir, _ = prepare()
     result = {"type": "Player1Win", "game_steps": 0}
