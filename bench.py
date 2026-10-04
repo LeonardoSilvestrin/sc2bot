@@ -5,7 +5,7 @@
     bench.py run --out bench/<label> --matrix base|wide [--maps ...]
                  [--races ...] [--armies ...] [--games N]
     bench.py run --out bench/<label> --opponent PhantomBot [--maps ...]
-                 [--armies ...] [--games N] [--time-limit S]
+                 [--armies ...] [--games N] [--time-limit S] [--headless]
     bench.py summarize bench/<label>
     bench.py compare bench/<baseline> bench/<challenger>
 
@@ -87,6 +87,7 @@ def main(argv: list[str] | None = None) -> int:
             spatial_view=args.spatial_view,
             spatial_snapshot=args.spatial_snapshot,
             wall_timeout=args.wall_timeout,
+            headless=args.headless,
         )
     if args.command == "summarize":
         print(json.dumps(summarize(load_records(args.directory)), indent=2))
@@ -190,12 +191,19 @@ def _add_debug_arguments(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="write SVG field snapshots to log/spatial",
     )
+    parser.add_argument(
+        "--headless",
+        action="store_true",
+        help="ladder bot games: both SC2 clients in Docker, no windows",
+    )
 
 
 def _specs(args) -> tuple[GameSpec, ...]:
     """The games to play: what the file lists, or one of the built-in tables
     with whatever column was named by hand."""
 
+    if args.headless and args.opponent == "builtin":
+        raise SystemExit("--headless só vale contra um bot da ladder (--opponent).")
     if args.opponent != "builtin":
         from dataclasses import replace
 
@@ -325,6 +333,7 @@ def _run(args) -> int:
                         str(args.wall_timeout),
                         *(["--spatial-view"] if args.spatial_view else []),
                         *(["--spatial-snapshot"] if args.spatial_snapshot else []),
+                        *(["--headless"] if args.headless else []),
                     ],
                     stdout=output,
                     stderr=subprocess.STDOUT,
@@ -364,6 +373,7 @@ def _play(
     spatial_view: bool,
     spatial_snapshot: bool,
     wall_timeout: float = 3600,
+    headless: bool = False,
 ) -> int:
     from sc2 import maps
     from sc2.data import AIBuild, Difficulty, Race
@@ -398,6 +408,7 @@ def _play(
                 seed=spec.seed,
                 expected_sha256=spec.opponent_sha256,
                 wall_timeout=wall_timeout,
+                headless=headless,
             )
         else:
             result = run_game(

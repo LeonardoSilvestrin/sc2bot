@@ -41,6 +41,23 @@ O jogo avança por steps, como o launcher anterior; pode rodar mais rápido que
 o relógio. Pausas longas em breakpoints podem exceder o timeout interno do
 PhantomBot (120 segundos).
 
+### Sem janela (`--headless`)
+
+`--headless` em `run.py` ou `bench.py run`, ou os perfis **play headless (bot
+da ladder)** e **bench: bot da ladder (headless)**, troca só os dois clientes:
+em vez das janelas, dois SC2 4.10 Linux sobem num contêiner da imagem oficial
+`arenaclient-sc2` (a mesma do Compose). O BotBandido continua no processo do
+depurador, com breakpoints, `--bot-log` e snapshots; o adversário continua no
+seu contêiner, falando com a mesma ponte. Só as portas de API dos dois SC2 são
+publicadas, em `127.0.0.1`; o mapa é montado somente leitura. A saída dos SC2
+fica em `sc2.txt` e `live-manifest.json` registra `"headless": true`.
+Vale apenas contra bots da ladder; contra a IA do jogo a flag é recusada.
+
+```powershell
+.venv\Scripts\python.exe run.py --opponent PhantomBot --map PersephoneAIE_v4 --headless --bot-log events
+.venv\Scripts\python.exe bench.py run --out bench\phantom-headless --opponent PhantomBot --maps PersephoneAIE_v4 --games 3 --headless
+```
+
 `play full debug` grava o log em `logs/game-*/` e replay/manifest/log do
 adversário em `tools/aiarena_local/runs/*-live-vs-PhantomBot/`. O bench grava
 `result.json`, `replay.SC2Replay`, `log/game.jsonl`, `log/spatial/`,

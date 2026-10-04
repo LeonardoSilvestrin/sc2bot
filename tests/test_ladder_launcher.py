@@ -73,6 +73,29 @@ def test_legacy_runtime_uses_python311_even_when_match_copy_is_named_opponent():
     assert local_play.BOT_IMAGE not in command
 
 
+def test_headless_sc2_mounts_only_the_map_and_publishes_only_the_api_on_loopback():
+    map_file = Path("C:/Program Files (x86)/StarCraft II/Maps/PersephoneAIE_v4.SC2Map")
+    server = live_play.ContainerSC2("docker.exe", "fixture-sc2", map_file, Path("sc2.txt"))
+    command = server.command()
+    assert server.game_map.name == "PersephoneAIE_v4"
+    assert str(server.game_map.relative_path) == "/maps/PersephoneAIE_v4.SC2Map"
+    assert command[command.index("--mount") + 1] == (
+        f"type=bind,source={map_file},target=/maps/PersephoneAIE_v4.SC2Map,readonly"
+    )
+    published = [command[i + 1] for i, arg in enumerate(command) if arg == "--publish"]
+    assert published == ["127.0.0.1::5001", "127.0.0.1::5002"]
+    assert local_play.SC2_IMAGE in command
+    launch = command[-1]
+    assert launch.count(live_play.SC2_LINUX) == 2 and launch.endswith("wait")
+
+
+def test_headless_is_only_for_ladder_opponents(ladder_package):
+    assert run.parse_local_args(["--opponent", "PhantomBot", "--headless"]).headless
+    args = bench.parser().parse_args(["run", "--out", "bench/fixture", "--headless"])
+    with pytest.raises(SystemExit, match="--headless"):
+        bench._specs(args)
+
+
 def test_ladder_bench_records_opponent_repeats_maps_and_armies(ladder_package):
     args = bench.parser().parse_args(
         [

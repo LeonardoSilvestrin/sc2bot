@@ -20,6 +20,25 @@
       "justMyCode": false
     },
     {
+      "name": "play headless (bot da ladder)",
+      "type": "debugpy",
+      "request": "launch",
+      "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "program": "${workspaceFolder}\\run.py",
+      "cwd": "${workspaceFolder}",
+      "args": [
+        "--bot-log",
+        "events",
+        "--headless",
+        "--opponent",
+        "${input:ladderOpponent}",
+        "--map",
+        "${input:benchMap}"
+      ],
+      "console": "integratedTerminal",
+      "justMyCode": false
+    },
+    {
       "name": "play full debug",
       "type": "debugpy",
       "request": "launch",
@@ -122,6 +141,33 @@
         "${input:benchTimeLimit}",
         "--spatial-view",
         "--spatial-snapshot"
+      ],
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "subProcess": true
+    },
+    {
+      "name": "bench: bot da ladder (headless)",
+      "type": "debugpy",
+      "request": "launch",
+      "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "program": "${workspaceFolder}\\bench.py",
+      "cwd": "${workspaceFolder}",
+      "args": [
+        "run",
+        "--out",
+        "${workspaceFolder}\\bench\\${input:benchLabel}",
+        "--opponent",
+        "${input:ladderOpponent}",
+        "--maps",
+        "${input:benchMap}",
+        "--armies",
+        "${input:benchArmy}",
+        "--games",
+        "${input:benchGames}",
+        "--time-limit",
+        "${input:benchTimeLimit}",
+        "--headless"
       ],
       "console": "integratedTerminal",
       "justMyCode": false,

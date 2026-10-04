@@ -79,6 +79,11 @@ def parse_local_args(args=None):
     )
     parser.add_argument("--map", dest="map_name", default=None, help="Mapa da partida local.")
     parser.add_argument(
+        "--headless",
+        action="store_true",
+        help="Bot da ladder: os dois SC2 rodam no Docker, sem janela.",
+    )
+    parser.add_argument(
         "--bot-log",
         choices=("off", "events"),
         default="off",
@@ -278,6 +283,8 @@ def main():
         print("Starting ladder game...")
         result, opponentid = run_ladder_game(our_bot())
         print(result, " against opponent ", opponentid)
+    elif local_args.headless and local_args.opponent == "builtin":
+        raise SystemExit("--headless só vale contra um bot da ladder (--opponent).")
     elif local_args.opponent != "builtin":
         from tools.aiarena_local.live_play import play_match
 
@@ -286,6 +293,7 @@ def main():
             maps.get(local_args.map_name or "PersephoneAIE_v4"),
             local_args.opponent,
             time_limit=local_args.time_limit,
+            headless=local_args.headless,
         )
         print(result, " against opponent ", local_args.opponent)
     else:
