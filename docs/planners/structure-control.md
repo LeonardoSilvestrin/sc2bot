@@ -106,7 +106,7 @@ tank_stuck ─▶ blocker_selected ─▶ lifting ─▶ tank_moving / tank_gone
 ## Limitações conhecidas
 
 - **A relocation resolve pouco:** nos benches houve 127 `tank_stuck`, só 11 com `blocker_selected` (9 %) e 64
-  `no_blocker` ([debate](../agent_discussion/README.md)). A causa é o placement do Ares, que empacota a
+  `no_blocker` ([debate](../dev/agent_discussion/README.md)). A causa é o placement do Ares, que empacota a
   produção Terran sem corredores e faz Tanks nascerem cercados. A relocation é um remendo; o caminho seria
   atacar o placement ou retirá-la.
 - O wall ainda não antecipa o fechamento por contato lembrado ou pela rota, não usa a velocidade do inimigo,

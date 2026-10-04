@@ -121,7 +121,7 @@ solta ao sair de DEFEND. A Economy usa a emergência para interromper a abertura
 - **O DEFEND ignora a cobertura.** `threat_level` vem da pressão bruta: cerca de 3 Marines de pressão abrem o
   DEFEND, mesmo com 49 de cobertura na base. A Awareness calcula `cover` e `balance`, e nada os lê. Isso
   cancelou ataques que estavam ganhando (`comp-eficacia/001` e `004`, ver
-  [debate](../agent_discussion/README.md)).
+  [debate](../dev/agent_discussion/README.md)).
 - **Postura instável:** 37 trocas em 1.249 s no `comp-eficacia/004`. Cada troca mexe na economia, no anchor
   e no ataque ao mesmo tempo.
 - **Sinais sem leitor:** `risk`, `economy_position` e a leitura da abertura da Awareness

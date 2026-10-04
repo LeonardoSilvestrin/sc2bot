@@ -170,12 +170,12 @@ Medidas nos logs de `comp-eficacia` e na partida contra o PhantomBot (`logs/game
   natural e a rampa é 0,009, e a margem é 0,04. O exército ficou 60 s longe da natural, até a terceira base.
   Recuar pode estar certo quando estamos atrás, mas aqui quem decidiu foi `exposure` ≈ 0,01, e não a razão
   de forças.
-- **Em DEFEND, o exército espera no townhall**, não no choke nem na luta (I17 no [gaps.md](../gaps.md)). No
+- **Em DEFEND, o exército espera no townhall**, não no choke nem na luta (I17 no [gaps.md](../dev/gaps.md)). No
   `comp-eficacia/004`, isso foi 32 % do tempo. O anchor também alterna entre bases com ameaça parecida, e
   entre a base ameaçada e o staging quando a postura entra e sai de DEFEND.
 - **Um ponto só** para o exército todo, sem dividir.
 - **Todas as bases pesam igual:** a main e a natural não valem mais que uma base nova.
-- **Base em construção conta como base** (I4 no [gaps.md](../gaps.md)): os candidatos são recalculados no
+- **Base em construção conta como base** (I4 no [gaps.md](../dev/gaps.md)): os candidatos são recalculados no
   frame em que o SCV põe o CC.
 - **Distância reta dentro de uma região**, o que subestima regiões côncavas.
 - A exclusão das regiões vizinhas ao start inimigo é uma regra fixa.

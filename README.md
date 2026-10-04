@@ -73,18 +73,18 @@ A Strategy decide **o que é permitido**, o Planner **quais operações** existe
 a Mission **como a operação avança**, o Engine **quem** recebe as unidades e o
 Behavior **como** executar. Só `observe`, os behaviors e os logs tocam o bot; o resto é testável
 sem o jogo. Fórmulas, eventos de log e parâmetros estão em
-[docs/architecture.md](docs/architecture.md).
+[docs/architecture.md](docs/architecture.md) e, para cada planner, em [docs/planners/](docs/planners/README.md).
+
+Como o bot funciona:
 
 | Documento | Conteúdo |
 | --- | --- |
-| [docs/architecture.md](docs/architecture.md) | Camadas, matemática, eventos, comandos, o que falta e as medições |
-| [docs/staging/](docs/staging/README.md) | Trabalho em andamento, medições pendentes e histórico dos designs |
-| [docs/propostas.md](docs/propostas.md) | O que aprender de outros bots (Ares, PiG, Sajuuk, Sharky, MicroMachine, Sharpy) e o roadmap P0–P2 |
-| [docs/bots-opensource.md](docs/bots-opensource.md) | Pesquisa de 03/10: implementações verificadas em bots open source, aplicação no código atual e prioridades OS1–OS10 |
-| [docs/novas_propostas.md](docs/novas_propostas.md) | Revisão de 18/09: benchmark, builds, Strategy, informação, micro, ofensiva (N1–N8) |
-| [docs/melhorias_propostas_eco.md](docs/melhorias_propostas_eco.md) | Revisão de 18/09 da economia e da composição (E1–E9) |
-| [docs/gaps.md](docs/gaps.md) | Achados de revisão do código: calculado sem uso, fallbacks, legado, inconsistências |
-| [docs/migration-map.md](docs/migration-map.md) | Modelos matemáticos do branch `matematização`: o que já veio e o que ainda pode vir |
+| [docs/architecture.md](docs/architecture.md) | Camadas, matemática da percepção, missões, eventos, comandos, o que falta e as medições |
+| [docs/planners/](docs/planners/README.md) | Um documento por planner (Strategy, Defense, Offense, MapControl, Intel, Economy, StructureControl): como decide, parâmetros, log e limitações |
+| [docs/passages.md](docs/passages.md) | Passagens dinâmicas: mineral walls e rocks que abrem durante a partida |
+
+O desenvolvimento (trabalho em andamento, pesquisa, backlog, revisões de código e debates) fica em
+[docs/dev/](docs/dev/README.md).
 
 ## Instalação
 

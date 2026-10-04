@@ -2,7 +2,7 @@
 
 > Registro de design/revisão histórico. Composição por catálogo, SURVIVE e fronteiras de Planner,
 > Mission e Behavior já estão implementadas; o estado atual e os nomes de eventos são definidos em
-> [architecture.md](../architecture.md).
+> [architecture.md](../../architecture.md).
 
 
 > Design consolidado em 19 de setembro de 2026 sobre `5f12156` (`botbandido`). O núcleo foi implementado
@@ -28,7 +28,7 @@ mudar o estilo. A execução continua do Body e do Ares (`SpawnController`, `Pro
 
 ## Como era antes deste refactor
 
-O pacote [economy/](../../bot/ego/planners/economy/) tem quatro módulos de funções soltas: `investment` (quanto
+O pacote [economy/](../../../bot/ego/planners/economy/) tem quatro módulos de funções soltas: `investment` (quanto
 investir), `styles` (BIO e MECH como dado), `composition` (o mix) e `planner.plan`, que junta tudo num
 `EconomyPlan` de 18 campos. O estilo é sorteado em `BotBandido.on_start` e mora em `Layers.army`.
 
@@ -114,9 +114,9 @@ ser o próximo passo e vira um jeito futuro de **ordenar ou validar** o catálog
 ### Produzível agora
 
 Um counter só entra no target se a tech atual o treina. A definição é a do Ares, `tech_ready_for_unit`
-([custom_bot_ai.py:246](../../ares-sc2/src/ares/custom_bot_ai.py#L246)): toda estrutura de
+([custom_bot_ai.py:246](../../../ares-sc2/src/ares/custom_bot_ai.py#L246)): toda estrutura de
 `UNIT_TECH_REQUIREMENT` pronta (com os equivalentes de `EQUIVALENTS_FOR_TECH_PROGRESS`). É o mesmo teste que o
-`SpawnController` faz ([spawn_controller.py:130](../../ares-sc2/src/ares/behaviors/macro/spawn_controller.py#L130)).
+`SpawnController` faz ([spawn_controller.py:130](../../../ares-sc2/src/ares/behaviors/macro/spawn_controller.py#L130)).
 Os requisitos vêm do Ares, nunca do YAML. Exemplos: Thor pede Armory e Tech Lab de Factory; Viking, Liberator e
 Medivac pedem Starport; Hellion e Widow Mine pedem Factory.
 
@@ -125,7 +125,7 @@ chamando o próprio `bot.tech_ready_for_unit` para os tipos Terran do catálogo 
 como `upgrades`. A alternativa é uma função pura sobre `attention.own_structures` com os mesmos dicts do Ares.
 
 **Por que isto é uma guarda, não um detalhe.** O `ProductionController` do Ares roda `TechUp` para todo tipo do
-dict ([production_controller.py:145](../../ares-sc2/src/ares/behaviors/macro/production_controller.py#L145)): um
+dict ([production_controller.py:145](../../../ares-sc2/src/ares/behaviors/macro/production_controller.py#L145)): um
 Thor no dict sem Armory faz o Ares construir o Armory. Pôr no target só o que já é produzível impede tech implícita.
 Decidir **investir** em tech por causa de um counter é outra decisão (o E6.2: preço da infraestrutura amortizado) e
 fica fora desta versão.
@@ -202,7 +202,7 @@ depois.
 **Volta ao baseline.** O planner não guarda memória da emergência: o target é recalculado a cada frame de
 (estilo, crença, tech, política). Quando a política sai do SURVIVE, o fallback some e o Marine sai do dict. Os
 Marines já feitos continuam no exército (o Engine os concede como qualquer unidade); o `SpawnController` só conta os
-tipos do dict ([spawn_controller.py:99](../../ares-sc2/src/ares/behaviors/macro/spawn_controller.py#L99)); o
+tipos do dict ([spawn_controller.py:99](../../../ares-sc2/src/ares/behaviors/macro/spawn_controller.py#L99)); o
 `ProductionController` não acrescenta Barracks para um tipo que não está no dict. Se Mutalisk continua acreditado,
 o Marine fica — como `counter_adaptation`, não como sobrevivência.
 
@@ -240,7 +240,7 @@ responder:
 
 Hoje:
 
-- **Aberturas.** Duas, em [terran_builds.yml](../../terran_builds.yml): `BioThreeOneOne` e `MechHellionTank`. O
+- **Aberturas.** Duas, em [terran_builds.yml](../../../terran_builds.yml): `BioThreeOneOne` e `MechHellionTank`. O
   estilo escolhe e o `on_start` troca a abertura do Ares por `switch_opening`. `BuildSelection: Cycle` e
   `BuildChoices` não decidem nada ([L6](../gaps.md#l6)).
 - **Sorteio do estilo.** Sem seed ([I8](../gaps.md#i8)); contra Random só sai BIO, e o estilo não é revisto quando a

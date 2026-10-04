@@ -2,12 +2,12 @@
 
 > Registro de design/revisão histórico. Composição por catálogo, SURVIVE e fronteiras de Planner,
 > Mission e Behavior já estão implementadas; o estado atual e os nomes de eventos são definidos em
-> [architecture.md](architecture.md).
+> [architecture.md](../architecture.md).
 
 
 > Revisão feita em 18 de setembro de 2026 sobre `7e5be42` (`botbandido`), com a reorganização
 > dos planners militares (MapControl) ainda na árvore de trabalho. Foram lidos o pacote
-> [economy](../bot/ego/planners/economy/), os planners militares e de controle, a Strategy, o
+> [economy](../../bot/ego/planners/economy/), os planners militares e de controle, a Strategy, o
 > `play_frame`, o behavior de economia do Body, os testes de economia e três peças do Ares:
 > `SpawnController`, `ProductionController` e `get_build_structures`. Também foi lido o JSONL
 > `logs/game-20260918T214112316288Z` (local, fora do git): bio contra a IA Terran em Ley Lines,
@@ -51,15 +51,15 @@ O padrão é o que os planners militares e de controle têm em comum depois da r
 
 | Aspecto | Militares e controle | Economia hoje |
 | --- | --- | --- |
-| Forma | Uma classe por planner, guardada em `Layers`, com `plan()` | Funções de módulo: `economy.plan`, `investment.plan` e `composition.mix` ([planner.py:22](../bot/ego/planners/economy/planner.py#L22)) |
-| Entrada | `attention`, `awareness` e `strategy` inteiros, mais o feedback | `plan(attention, strategy, army, awareness.seen_enemy_types)`: um pedaço da Awareness e o estilo passado por fora ([main.py:118](../bot/main.py#L118)) |
-| Estado | Dentro do planner (passagem mantida, cooldown, rota) | O estilo mora em `Layers.army`. Ele é escolhido, trocado no runner e anunciado em `BotBandido.on_start` ([main.py:196-201](../bot/main.py#L196-L201)) |
+| Forma | Uma classe por planner, guardada em `Layers`, com `plan()` | Funções de módulo: `economy.plan`, `investment.plan` e `composition.mix` ([planner.py:22](../../bot/ego/planners/economy/planner.py#L22)) |
+| Entrada | `attention`, `awareness` e `strategy` inteiros, mais o feedback | `plan(attention, strategy, army, awareness.seen_enemy_types)`: um pedaço da Awareness e o estilo passado por fora ([main.py:118](../../bot/main.py#L118)) |
+| Estado | Dentro do planner (passagem mantida, cooldown, rota) | O estilo mora em `Layers.army`. Ele é escolhido, trocado no runner e anunciado em `BotBandido.on_start` ([main.py:196-201](../../bot/main.py#L196-L201)) |
 | Config | `OffenseConfig`, `MapControlConfig`, `DetectionConfig` e `StructureConfig`: frozen, validadas, em `Layers.configs()` e no fingerprint. Defense e Intel ainda usam constantes de módulo | Só constantes de módulo, fora do fingerprint: `MAX_WORKERS`, `GAS_WORKER_SHARE`, `PRODUCTION_PER_BASE`, `OPENING_STALL_BANK`, `PRIOR_POWER` e `COUNTERS`. O architecture.md avisa que dois benches com o mesmo fingerprint podem ter economias diferentes |
-| Strategy | Onde a Strategy restringe um domínio, ela publica uma política: `strategy.offense` (`PURSUE`/`WITHDRAW`, com razão). O planner decide o que fazer com ela | Lê `strategy.objective is STABILIZE` e refaz a emergência com `OPENING_ABORT_DANGER = 0.6`, uma cópia de `StrategyConfig.emergency_danger` ([investment.py:105-106](../bot/ego/planners/economy/investment.py#L105-L106)) |
-| Preferência contínua | Defense: `priority = threat·(0,5 + 0,5·defense)` | Usa `strategy.economy ≥ 0,5` como portão da expansão ([investment.py:99](../bot/ego/planners/economy/investment.py#L99)) e nunca lê `strategy.army` (A4 de novas_propostas) |
+| Strategy | Onde a Strategy restringe um domínio, ela publica uma política: `strategy.offense` (`PURSUE`/`WITHDRAW`, com razão). O planner decide o que fazer com ela | Lê `strategy.objective is STABILIZE` e refaz a emergência com `OPENING_ABORT_DANGER = 0.6`, uma cópia de `StrategyConfig.emergency_danger` ([investment.py:105-106](../../bot/ego/planners/economy/investment.py#L105-L106)) |
+| Preferência contínua | Defense: `priority = threat·(0,5 + 0,5·defense)` | Usa `strategy.economy ≥ 0,5` como portão da expansão ([investment.py:99](../../bot/ego/planners/economy/investment.py#L99)) e nunca lê `strategy.army` (A4 de novas_propostas) |
 | Plano | Um por planner, com `reason` e `inputs` que explicam a decisão | Um `EconomyPlan` de 18 campos para cinco perguntas: investimento, abertura, modo de gasto, composição e add-ons/upgrades. O único `reason` é o do investimento. Da composição, só `enemy_seen_power` é registrado, então ela não diz por que mudou |
 | Um módulo por pergunta | `planner.py` decide e `missions/` executa | `planner.py` só junta as partes. `Investment` repete 10 campos de `EconomyPlan`, copiados um a um (`stabilizing` vira `freeflow`) |
-| Prioridade | Explícita na proposta; o Engine arbitra | Implícita na ordem de registro no Body: o `MacroPlan` ([economy.py:188-217](../bot/body/behaviors/economy.py#L188-L217)), com a detecção e os add-ons registrados antes dele. O Ares para no primeiro que age |
+| Prioridade | Explícita na proposta; o Engine arbitra | Implícita na ordem de registro no Body: o `MacroPlan` ([economy.py:188-217](../../bot/body/behaviors/economy.py#L188-L217)), com a detecção e os add-ons registrados antes dele. O Ares para no primeiro que age |
 | Documentação | Catálogo de eventos em dia | O catálogo de `planner.economy_planned` lista `reactors`, `reactor_on` e `techlab_reserve`, que não existem mais (o código tem `addons`, `addons_on` e `reactor_share`). A descrição do Body ainda fala em `AddReactors` e "reserva de Tech Lab" |
 
 No log, o investimento mostra mais dois problemas:
@@ -86,7 +86,7 @@ tem um defeito próprio.
 
 O `SpawnController` e o `ProductionController` do Ares medem proporção como contagem do tipo
 dividida pela contagem total
-([spawn_controller.py:184-185](../ares-sc2/src/ares/behaviors/macro/spawn_controller.py#L184-L185)).
+([spawn_controller.py:184-185](../../ares-sc2/src/ares/behaviors/macro/spawn_controller.py#L184-L185)).
 Nenhum dos dois olha custo, gás ou supply. Convertidos pelos custos do `UNIT_DATA` do Ares, os
 priors dos estilos ficam assim:
 
@@ -126,10 +126,10 @@ estilo. A matriz dá 1,5 contra 1,6. Na prática, o prior é um bônus de prefer
 
 `COUNTERS` é indexada pelo tipo base (`SIEGETANK`, `LURKERMP`, `LIBERATOR`, `VIKINGFIGHTER`). Já
 a Awareness guarda o tipo no modo em que a unidade foi vista
-([model.py:363](../bot/awareness/model.py#L363)): `SIEGETANKSIEGED`, `LIBERATORAG`,
+([model.py:363](../../bot/awareness/model.py#L363)): `SIEGETANKSIEGED`, `LIBERATORAG`,
 `VIKINGASSAULT`, `LURKERMPBURROWED`, `ROACHBURROWED`, `BANELINGBURROWED`, `WIDOWMINEBURROWED` e
 `THORAP`. Nenhum desses é chave da matriz, e todos caem no padrão 1,0
-([composition.py:204](../bot/ego/planners/economy/composition.py#L204)). O modelo de poder da
+([composition.py:204](../../bot/ego/planners/economy/composition.py#L204)). O modelo de poder da
 Attention usa justamente os modos: `SPLASH_TARGETS` tem `SIEGETANKSIEGED`, `LURKERMPBURROWED` e
 `LIBERATORAG`. O bot tem, portanto, dois modelos de combate com convenções de chave diferentes.
 
@@ -159,7 +159,7 @@ dinheiro em Siege Tanks**, que não atiram na metade aérea, e 48 % em unidades 
 cima.
 
 O suporte tem o defeito ao contrário. O Medivac não atira e fica com `value = 1` fixo
-([composition.py:200-201](../bot/ego/planners/economy/composition.py#L200-L201)). Por isso a
+([composition.py:200-201](../../bot/ego/planners/economy/composition.py#L200-L201)). Por isso a
 parcela dele **cresce quando o resto do exército é ruim**: 8,5 % das cabeças contra 100 de Roach e
 13,3 % contra 100 de Ultralisk. Um Medivac vale o que ele cura, e isso é proporcional à bio que ele
 acompanha.
@@ -168,7 +168,7 @@ acompanha.
 
 O `SpawnController` percorre a composição em ordem de prioridade e testa **se pode pagar antes de
 testar se a cota já foi cumprida**
-([spawn_controller.py:168-194](../ares-sc2/src/ares/behaviors/macro/spawn_controller.py#L168-L194)).
+([spawn_controller.py:168-194](../../ares-sc2/src/ares/behaviors/macro/spawn_controller.py#L168-L194)).
 Se a unidade da vez tem uma estrutura ociosa e não cabe no banco, o laço para. Nada de prioridade
 menor é treinado naquele frame, mesmo que a cota da unidade que travou já esteja cumprida.
 
@@ -202,7 +202,7 @@ minuto. Continuou subindo quando as lutas liberavam supply (158/200 aos 659 s, 1
 com os minerais entre 30 e 865. O bot chegou a 24 Barracks, mas não passou de 2 Factories e 1
 Starport. O `ProductionController` não acrescenta produção para um tipo cuja `contagem·1,2` já
 passa do alvo
-([production_controller.py:207](../ares-sc2/src/ares/behaviors/macro/production_controller.py#L207)).
+([production_controller.py:207](../../ares-sc2/src/ares/behaviors/macro/production_controller.py#L207)).
 Com 11–13 tanques em 68–69 unidades, a cota de 15 % estava cumprida, e nenhuma Factory veio.
 
 No começo do jogo faltava gás (seção 2.5) e no fim sobrava, mas o mix foi o mesmo nos dois casos.
@@ -282,7 +282,7 @@ gameplay.
 
   Para isso, `spawn_mode` repete o laço do `SpawnController` com a mesma chamada
   `bot.get_build_structures` e o mesmo `can_afford`. É o que ele já faz com o teste de proporção
-  ([economy.py:247](../bot/body/behaviors/economy.py#L247)).
+  ([economy.py:247](../../bot/body/behaviors/economy.py#L247)).
 - `behavior.spawn_executed` registra os dois campos. Um extrator do JSONL calcula a fração do tempo
   pós-opening com `blocked_by` e supply livre, e os minerais parados nesse tempo. O N1 já pedia
   métricas intermediárias no `summary.json`.

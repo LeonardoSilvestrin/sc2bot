@@ -3,7 +3,7 @@
 > Revisão feita em 18 de setembro de 2026 sobre o commit `f910e1a` (`botbandido`).
 > Foram lidos o fluxo de frame, Attention, Awareness, Strategy, todos os planners,
 > o Engine, todos os behaviors, o harness, a abertura e as medições registradas em
-> [architecture.md](architecture.md). Nenhuma partida foi jogada para escrever isto.
+> [architecture.md](../architecture.md). Nenhuma partida foi jogada para escrever isto.
 >
 > Este documento complementa [propostas.md](propostas.md) e não o substitui. Quando
 > uma lacuna já está lá, ela aparece aqui só se a revisão trouxe um fato novo ou um
@@ -40,20 +40,20 @@ Fatos lidos no código, sem interpretação:
 
 | # | Onde | Achado |
 | --- | --- | --- |
-| A1 | [terran_builds.yml](../terran_builds.yml#L7) | `BuildSelection: Cycle` com um único build (`BioThreeOneOne`) para Protoss, Terran, Zerg e Random. |
-| A2 | [economy.py:56](../bot/ego/planners/economy.py#L56) | `COMPOSITION` é constante: 55 % Marine, 20 % Marauder, 15 % Siege Tank, 10 % Medivac. Não há unidade antiaérea além do Marine, nem Viking, Liberator, Widow Mine, Ghost ou Thor. |
-| A3 | [economy.py:65](../bot/ego/planners/economy.py#L65) | `UPGRADES` é uma lista única e sequencial. Com uma Engineering Bay, weapons e armor saem em série. |
-| A4 | [strategy.py:95-105](../bot/ego/strategy.py#L95-L105) | `strategy.army` e `strategy.risk` não são lidos por nenhum planner (`risk` só vai para os `inputs` do CoreArmy). `strategy.economy` só é lido em `economy >= 0.5`, que é sempre verdadeiro com `danger = 0`. Na prática, as preferências contínuas da Strategy não decidem nada. |
-| A5 | [model.py:295](../bot/awareness/model.py#L295) | O `InfluenceField` é recalculado todo frame, e só logs, overlay e SVG o leem. A topologia só é consumida pela rota do scout ([intel.py:103](../bot/ego/planners/intel.py#L103)). |
-| A6 | [economy.py:114](../bot/ego/planners/economy.py#L114) | A terceira base em diante só é pedida **depois** que as linhas de mineral saturam. Um CC leva cerca de 71 s, e nesse intervalo os workers excedentes rendem pouco. |
-| A7 | [offense.py:304](../bot/ego/planners/offense.py#L304) | Só há dois gatilhos de ataque: vantagem estimada (`army_share ≥ 0,5`) ou supply 190. Não existe o conceito de janela de timing, como upgrade concluído ou tech do inimigo ainda ausente. |
-| A8 | [offense.py](../bot/ego/planners/offense.py) + [engine.py](../bot/body/engine.py) | A proposta ofensiva pede "todas as livres". Uma unidade recém-produzida no meio do ataque é concedida ao squad e atravessa o mapa sozinha (já anotado em propostas; o mecanismo está aqui). |
-| A9 | [retreat.py:37](../bot/body/behaviors/retreat.py#L37) | O recuo usa `PathUnitToTarget(..., sense_danger=False)` e não atira no caminho. Um recuo sob fogo tende a atravessar a ameaça em vez de contorná-la. |
-| A10 | [attack.py:58](../bot/body/behaviors/attack.py#L58) | Todo `ATTACK` é `AMove` + Stim + Medivac seguindo o centro do grupo. O Ares já traz `ShootTargetInRange`, `StutterUnitBack`, `KeepUnitSafe`, `MedivacHeal`, `PickUpCargo`, `StutterGroupBack` e `KeepGroupSafe`, e nenhum deles é usado. |
-| A11 | [intel.py:31](../bot/ego/planners/intel.py#L31) | O scout é um SCV, uma vez, antes de 240 s. Depois disso o bot só vê o que o exército encontra. |
-| A12 | [model.py:64-66](../bot/awareness/model.py#L64-L66) | `expected_enemy_power` é uma reta de 0,1 Marine/s a partir de 120 s, com teto 100. Nenhum número foi calibrado contra um exército real. |
-| A13 | [frame.py:39](../bot/attention/frame.py#L39) | O poder, `sqrt(dps · alvos · hp)`, ignora o bônus de dano por atributo (armored, light, bio), armadura e alcance. Um Marauder "vale" o mesmo contra Zergling e contra Stalker. |
-| A14 | [bench.py](../bench.py) | O harness só joga contra a IA embutida, e toda medição até hoje foi VeryHard Macro num único mapa. O `bench.py` já aceita `--difficulties` e `--ai-builds`; eles só nunca foram usados. |
+| A1 | [terran_builds.yml](../../terran_builds.yml#L7) | `BuildSelection: Cycle` com um único build (`BioThreeOneOne`) para Protoss, Terran, Zerg e Random. |
+| A2 | [economy.py:56](../../bot/ego/planners/economy.py#L56) | `COMPOSITION` é constante: 55 % Marine, 20 % Marauder, 15 % Siege Tank, 10 % Medivac. Não há unidade antiaérea além do Marine, nem Viking, Liberator, Widow Mine, Ghost ou Thor. |
+| A3 | [economy.py:65](../../bot/ego/planners/economy.py#L65) | `UPGRADES` é uma lista única e sequencial. Com uma Engineering Bay, weapons e armor saem em série. |
+| A4 | [strategy.py:95-105](../../bot/ego/strategy.py#L95-L105) | `strategy.army` e `strategy.risk` não são lidos por nenhum planner (`risk` só vai para os `inputs` do CoreArmy). `strategy.economy` só é lido em `economy >= 0.5`, que é sempre verdadeiro com `danger = 0`. Na prática, as preferências contínuas da Strategy não decidem nada. |
+| A5 | [model.py:295](../../bot/awareness/model.py#L295) | O `InfluenceField` é recalculado todo frame, e só logs, overlay e SVG o leem. A topologia só é consumida pela rota do scout ([intel.py:103](../../bot/ego/planners/intel.py#L103)). |
+| A6 | [economy.py:114](../../bot/ego/planners/economy.py#L114) | A terceira base em diante só é pedida **depois** que as linhas de mineral saturam. Um CC leva cerca de 71 s, e nesse intervalo os workers excedentes rendem pouco. |
+| A7 | [offense.py:304](../../bot/ego/planners/offense.py#L304) | Só há dois gatilhos de ataque: vantagem estimada (`army_share ≥ 0,5`) ou supply 190. Não existe o conceito de janela de timing, como upgrade concluído ou tech do inimigo ainda ausente. |
+| A8 | [offense.py](../../bot/ego/planners/offense.py) + [engine.py](../../bot/body/engine.py) | A proposta ofensiva pede "todas as livres". Uma unidade recém-produzida no meio do ataque é concedida ao squad e atravessa o mapa sozinha (já anotado em propostas; o mecanismo está aqui). |
+| A9 | [retreat.py:37](../../bot/body/behaviors/retreat.py#L37) | O recuo usa `PathUnitToTarget(..., sense_danger=False)` e não atira no caminho. Um recuo sob fogo tende a atravessar a ameaça em vez de contorná-la. |
+| A10 | [attack.py:58](../../bot/body/behaviors/attack.py#L58) | Todo `ATTACK` é `AMove` + Stim + Medivac seguindo o centro do grupo. O Ares já traz `ShootTargetInRange`, `StutterUnitBack`, `KeepUnitSafe`, `MedivacHeal`, `PickUpCargo`, `StutterGroupBack` e `KeepGroupSafe`, e nenhum deles é usado. |
+| A11 | [intel.py:31](../../bot/ego/planners/intel.py#L31) | O scout é um SCV, uma vez, antes de 240 s. Depois disso o bot só vê o que o exército encontra. |
+| A12 | [model.py:64-66](../../bot/awareness/model.py#L64-L66) | `expected_enemy_power` é uma reta de 0,1 Marine/s a partir de 120 s, com teto 100. Nenhum número foi calibrado contra um exército real. |
+| A13 | [frame.py:39](../../bot/attention/frame.py#L39) | O poder, `sqrt(dps · alvos · hp)`, ignora o bônus de dano por atributo (armored, light, bio), armadura e alcance. Um Marauder "vale" o mesmo contra Zergling e contra Stalker. |
+| A14 | [bench.py](../../bench.py) | O harness só joga contra a IA embutida, e toda medição até hoje foi VeryHard Macro num único mapa. O `bench.py` já aceita `--difficulties` e `--ai-builds`; eles só nunca foram usados. |
 | A15 | Ares | `BuildOrderRunner.switch_opening(nome)` existe (`build_order_runner.py:189`). O bot só usa `set_build_completed()`. |
 
 ## Propostas

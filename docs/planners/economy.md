@@ -206,7 +206,7 @@ nesta ordem. A ordem importa porque o `MacroPlan` para no primeiro behavior que 
 - **O gás é uma fração fixa (0,4)**, independente do mix. Na mesma partida, com 64 a 87 % de Marines, ficaram
   1.100 de gás parados enquanto os minerais estavam entre 15 e 75.
 - **A composição reproduz a doutrina:** em 2.690 frames medidos, nenhum tipo fora do estilo entrou e a
-  distância à doutrina ficou entre 0,02 e 0,05 ([debate](../agent_discussion/README.md)). Com Lurker, Roach e
+  distância à doutrina ficou entre 0,02 e 0,05 ([debate](../dev/agent_discussion/README.md)). Com Lurker, Roach e
   Hydra, o Marine subiu de 0,56 para 0,73. A composição não conhece upgrades, alcance, feitiços nem cura, e
   conta custo em recursos, não em supply nem em capacidade de produção.
 - **Casters e Battlecruisers valem poder 0** no modelo que a Awareness usa, então não pesam no mix. Um Siege
@@ -214,7 +214,7 @@ nesta ordem. A ordem importa porque o `MacroPlan` para no primeiro behavior que 
 - **O sorteio do estilo nunca foi medido:** no ladder ele trava cada adversário num estilo sem dado.
 - **Expansão sem fim:** a partir de 5 bases o bot está sempre "saturado" e termina jogos com 8 a 10 bases e 13
   a 16 mil minerais no banco.
-- **Base em construção conta como base** (I4 no [gaps.md](../gaps.md)): `saturated_at` e o teto de produção
+- **Base em construção conta como base** (I4 no [gaps.md](../dev/gaps.md)): `saturated_at` e o teto de produção
   sobem no frame em que o SCV põe o CC.
 - **O resto do `MacroPlan` do Ares passa na frente do exército:** como ele para no primeiro behavior que age,
   supply, workers, gás e expansão ainda vêm antes do `SpawnController`.

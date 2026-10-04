@@ -21,7 +21,7 @@
 > interrupção do opening e CI. P1 e P2 continuam abertos. A análise abaixo é a
 > de 14/09 e descreve o bot de `483722e`; cada lacuna e cada item do roadmap
 > tem uma nota **Hoje** com o que mudou. Como o bot funciona agora está em
-> [architecture.md](architecture.md), com as medições e os experimentos
+> [architecture.md](../architecture.md), com as medições e os experimentos
 > revertidos; os modelos do branch `matematização` que servem ao P1 estão em
 > [migration-map.md](migration-map.md).
 
@@ -166,7 +166,7 @@ bot como referência de simplesmente cloná-lo.
 
 ### 1. A cadeia causal é curta e legível
 
-[`play_frame`](../bot/main.py#L60) mostra a ordem completa sem esconder a
+[`play_frame`](../../bot/main.py#L60) mostra a ordem completa sem esconder a
 política em callbacks dispersos:
 
 ```text
@@ -179,7 +179,7 @@ tocam o objeto mutável do bot; o miolo trabalha com estados congelados.
 
 ### 2. Determinismo e posse são tratados como invariantes
 
-O [`Engine`](../bot/body/engine.py#L45) possui ordem total, uma única posse por
+O [`Engine`](../../bot/body/engine.py#L45) possui ordem total, uma única posse por
 tag, preferência por manter o dono anterior e liberação explícita. Isso é mais
 fácil de testar e explicar que vários controllers emitindo ordens concorrentes.
 O teste de replay da mesma sequência de frames reforça a intenção de
@@ -187,7 +187,7 @@ reprodutibilidade.
 
 ### 3. Awareness distingue observação de crença
 
-[`AwarenessModel`](../bot/awareness/model.py#L124) não apenas guarda a última
+[`AwarenessModel`](../../bot/awareness/model.py#L124) não apenas guarda a última
 posição: aplica decaimento de confiança, incerteza crescente, morte confirmada,
 carência de visão e memória distinta para estruturas. A separação entre ameaça
 possível alargada pela incerteza e presença inimiga crível é uma boa ideia e
@@ -229,8 +229,8 @@ própria; mecanismo operacional do Ares**.
 
 ### Não existe uma missão para vencer a partida
 
-[`Objective`](../bot/ego/strategy.py#L22) contém somente `STABILIZE` e
-`BUILD_ADVANTAGE`; [`CoreArmy`](../bot/ego/planners/core_army.py#L18) sempre
+[`Objective`](../../bot/ego/strategy.py#L22) contém somente `STABILIZE` e
+`BUILD_ADVANTAGE`; [`CoreArmy`](../../bot/ego/planners/core_army.py#L18) sempre
 produz `HOLD`. Defense só ataca uma ameaça próxima às próprias bases. Logo, não
 há ataque proativo, retirada, regroup, pressão, destruição de bases inimigas ou
 caça às últimas estruturas.
@@ -244,7 +244,7 @@ voando. Os objetivos da Strategy continuam dois.
 
 ### Defense confunde presença, perigo e déficit de resposta
 
-[`defense.plan`](../bot/ego/planners/defense.py#L26) cria uma proposta para toda
+[`defense.plan`](../../bot/ego/planners/defense.py#L26) cria uma proposta para toda
 base com qualquer pressão positiva. O tamanho depende de `pressure / mean_power`
 e ignora `cover`; o mesmo contato pode influenciar várias bases e criar várias
 missões para o mesmo alvo.
@@ -352,7 +352,7 @@ duas autoridades independentes.
 
 ### Operação e avaliação ainda são pouco reproduzíveis
 
-[`run.py`](../run.py#L137) sorteia mapa e raça e inicia uma partida. Não há CLI
+[`run.py`](../../run.py#L137) sorteia mapa e raça e inicia uma partida. Não há CLI
 para uma matriz fixa, agregador de resultados, baseline/challenger ou salvamento
 sistemático de replay. Os workflows atuais empacotam o bot, mas não executam os
 testes próprios nem o Ruff antes do artefato/upload. O README e o nome do bot

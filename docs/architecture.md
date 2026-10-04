@@ -276,7 +276,7 @@ Não é necessário criar classe base, registry ou Mission por feature.
 
 Um tipo de missão novo entra como um módulo em `missions/` do planner que o governa, e um comando novo
 como um behavior com o nome dele. O próximo previsto é `harass/` (N7.3 em
-[novas_propostas.md](novas_propostas.md)): `harass/planner.py` com `missions/drop.py` e
+[novas_propostas.md](dev/novas_propostas.md)): `harass/planner.py` com `missions/drop.py` e
 `missions/banshee_raid.py`, e os behaviors `move.py`, `load.py` e `unload.py` para os comandos que o drop
 pedir. Nenhum deles existe ainda: entram com o gameplay, gatilho e teste próprios.
 
@@ -461,8 +461,8 @@ python tools\replay_truth.py bench\<rótulo>
 ## Ainda não implementado
 
 Cada item entra quando um problema de gameplay medido pedir. Os modelos já escritos no branch
-`matematização` que servem a vários deles estão em [migration-map.md](migration-map.md). O que já está em
-andamento, ou decidido como o próximo, está em [staging/](staging/README.md).
+`matematização` que servem a vários deles estão em [migration-map.md](dev/migration-map.md). O que já está em
+andamento, ou decidido como o próximo, está em [staging/](dev/staging/README.md).
 
 - **Informação:** a Strategy ainda não consome a `OpeningBelief` (Attention, Awareness e Intel já a
   produzem e a registram); nenhum limiar ou peso da leitura da opening foi medido em partida real;

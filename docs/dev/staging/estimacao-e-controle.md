@@ -2,7 +2,7 @@
 
 Registro de uma virada de direção, decidida em 2026-10-03 no branch `observador` (tag de rollback
 `pre-observador`, em `9457a4a`). O que já está no HEAD está descrito em
-[architecture.md](../architecture.md#matemática); aqui fica o porquê, o que vem depois e como medir.
+[architecture.md](../../architecture.md#matemática); aqui fica o porquê, o que vem depois e como medir.
 
 ## A virada
 
@@ -43,7 +43,7 @@ rollback é a tag.
 O motivo medido (`bench/t0`, verdade dos replays): nas duas vitórias o inimigo ficou com 0–16 de poder por
 5–10 min enquanto o bot acreditava em 78–100; o bot esteve realmente à frente 49–64 % do tempo e se achou à
 frente 0–1 % (com a margem que usava). Tabela completa em
-[architecture.md](../architecture.md#medições), "Observador do exército inimigo".
+[architecture.md](../../architecture.md#medições), "Observador do exército inimigo".
 
 ### Como medir
 
@@ -88,7 +88,7 @@ cega à tech que falta (contra Colossus sem Starport ia de Siege Tank, e nada pe
 tipo independente de quão melhor ele é, poder inimigo em Marines somado direto como supply nosso, e a entrada era o
 visto vivo, não o observador. Algumas linhas eram ruins (`IMMORTAL: [MARINE, MARAUDER…]`).
 
-O que entrou no lugar (o mecanismo completo está em [architecture.md](../architecture.md)):
+O que entrou no lugar (o mecanismo completo está em [architecture.md](../../architecture.md)):
 
 - **Modelo de combate** (`economy/knowledge/combat.yml`): dps de qualquer tipo contra qualquer tipo, com bônus,
   armadura, splash e overkill; os dados de tipo do cliente substituem a tabela no `on_start`, então o 4.10 do AI

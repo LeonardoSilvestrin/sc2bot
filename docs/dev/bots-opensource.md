@@ -28,14 +28,14 @@ Esta lista evita propor como novidade o que avançou desde as pesquisas de setem
 
 | Capacidade | Evidência local | O que ainda falta para esta pesquisa |
 | --- | --- | --- |
-| Ataque, assemble, engage, retreat, regroup e busca de estruturas | [MainAttackMission](../bot/ego/planners/offense/missions/main_attack.py) | Melhor execução de combate e entrada coordenada de reforços |
-| BIO e MECH, composição adaptada ao inimigo e produção de emergência | [styles](../bot/ego/planners/economy/knowledge/styles.py), [composition](../bot/ego/planners/economy/policies/composition.py) | Aberturas específicas por matchup e reação que compre bunker/reparo |
-| Memória e estimativa adaptativa do exército desconhecido | [Awareness](../bot/awareness/model.py), [enemy_army](../bot/awareness/enemy_army.py) | Observações recorrentes para corrigir a estimativa durante a partida |
-| Leitura de abertura e suspeita/busca de proxy | [OpeningBelief](../bot/awareness/opening/belief.py), [IntelPlanner](../bot/ego/planners/intel/planner.py) | Converter diagnóstico em resposta militar/econômica específica |
-| Campo, topologia e staging consumindo influência | [staging](../bot/ego/planners/map_control/policies/staging.py), [topology](../bot/attention/topology.py) | Usar distância por rotas e valor regional em mais decisões |
-| Scan, reserva de energia, turrets e sensor towers | [detection](../bot/ego/planners/intel/policies/detection.py), [sensor_towers](../bot/ego/planners/intel/policies/sensor_towers.py) | Detecção móvel acompanhando o exército |
-| Stim, decisão de siege e Medivac seguindo o grupo | [combat](../bot/body/behaviors/combat.py), [attack](../bot/body/behaviors/attack.py) | Kite, foco local, esquiva de efeitos e proteção aérea do suporte |
-| Harness, logs e preparação para adversário externo | [harness](../harness/), [guia local](../tools/aiarena_local/README.md) | Medir as mudanças em cenários e contra bots; preparação não comprova partida executada |
+| Ataque, assemble, engage, retreat, regroup e busca de estruturas | [MainAttackMission](../../bot/ego/planners/offense/missions/main_attack.py) | Melhor execução de combate e entrada coordenada de reforços |
+| BIO e MECH, composição adaptada ao inimigo e produção de emergência | [styles](../../bot/ego/planners/economy/knowledge/styles.py), [composition](../../bot/ego/planners/economy/policies/composition.py) | Aberturas específicas por matchup e reação que compre bunker/reparo |
+| Memória e estimativa adaptativa do exército desconhecido | [Awareness](../../bot/awareness/model.py), [enemy_army](../../bot/awareness/enemy_army.py) | Observações recorrentes para corrigir a estimativa durante a partida |
+| Leitura de abertura e suspeita/busca de proxy | [OpeningBelief](../../bot/awareness/opening/belief.py), [IntelPlanner](../../bot/ego/planners/intel/planner.py) | Converter diagnóstico em resposta militar/econômica específica |
+| Campo, topologia e staging consumindo influência | [staging](../../bot/ego/planners/map_control/policies/staging.py), [topology](../../bot/attention/topology.py) | Usar distância por rotas e valor regional em mais decisões |
+| Scan, reserva de energia, turrets e sensor towers | [detection](../../bot/ego/planners/intel/policies/detection.py), [sensor_towers](../../bot/ego/planners/intel/policies/sensor_towers.py) | Detecção móvel acompanhando o exército |
+| Stim, decisão de siege e Medivac seguindo o grupo | [combat](../../bot/body/behaviors/combat.py), [attack](../../bot/body/behaviors/attack.py) | Kite, foco local, esquiva de efeitos e proteção aérea do suporte |
+| Harness, logs e preparação para adversário externo | [harness](../../harness/), [guia local](../../tools/aiarena_local/README.md) | Medir as mudanças em cenários e contra bots; preparação não comprova partida executada |
 
 ## Projetos e implementações consultados
 
@@ -51,7 +51,7 @@ mas suas builds não são aberturas Terran.
 | [Sajuuk](https://github.com/Guillaume-Docquier/Sajuuk-SC2/tree/390bb8b77d05ded0385971055f377e5efacc8f15) | Bot C# | [Ameaça regional](https://github.com/Guillaume-Docquier/Sajuuk-SC2/blob/390bb8b77d05ded0385971055f377e5efacc8f15/Sajuuk/GameSense/RegionsEvaluationsTracking/RegionsEvaluations/RegionsThreatEvaluator.cs), [manutenção de visão](https://github.com/Guillaume-Docquier/Sajuuk-SC2/blob/390bb8b77d05ded0385971055f377e5efacc8f15/Sajuuk/Managers/ScoutManagement/ScoutingTasks/MaintainVisibilityScoutingTask.cs) | Transformar topologia e memória em prioridades de cobertura e reação |
 | [Sharpy](https://github.com/DrInfy/sharpy-sc2/tree/d9577a00ee47634b56ff7ee0740c6ed3043659a2) | Framework Python | [Step](https://github.com/DrInfy/sharpy-sc2/blob/d9577a00ee47634b56ff7ee0740c6ed3043659a2/sharpy/plans/build_step.py) com requisito/skip/skip_until e [micro de Medivac](https://github.com/DrInfy/sharpy-sc2/blob/d9577a00ee47634b56ff7ee0740c6ed3043659a2/sharpy/combat/terran/micro_medivacs.py) | Etapas condicionais e suporte procurando posição de baixa influência aérea |
 | [Sharky](https://github.com/sharknice/Sharky/tree/e4c818ef81cf8dbf79ac716ea00ec4d3dbb850e7) | Framework C# com exemplos | [MicroManager](https://github.com/sharknice/Sharky/blob/e4c818ef81cf8dbf79ac716ea00ec4d3dbb850e7/Sharky/Managers/MicroManager.cs) ordena tarefas, reclama unidades e filtra comandos; [README](https://github.com/sharknice/Sharky/blob/e4c818ef81cf8dbf79ac716ea00ec4d3dbb850e7/README.md) descreve transições de builds | Referência para operações concorrentes e reação de build; nosso Engine já resolve ownership |
-| [Ares `8730865`](https://github.com/AresSC2/ares-sc2/tree/87308658b0dfe1e59486c2b157ef552e9af0c7fd) | Framework já usado | [Behaviors individuais](../ares-sc2/src/ares/behaviors/combat/individual/), [CombatSimManager](../ares-sc2/src/ares/managers/combat_sim_manager.py), [PathManager](../ares-sc2/src/ares/managers/path_manager.py) | Reutilização direta no Body; avaliação/simulação deve entrar como dado, mantendo planners sem efeitos |
+| [Ares `8730865`](https://github.com/AresSC2/ares-sc2/tree/87308658b0dfe1e59486c2b157ef552e9af0c7fd) | Framework já usado | [Behaviors individuais](../../ares-sc2/src/ares/behaviors/combat/individual/), [CombatSimManager](../../ares-sc2/src/ares/managers/combat_sim_manager.py), [PathManager](../../ares-sc2/src/ares/managers/path_manager.py) | Reutilização direta no Body; avaliação/simulação deve entrar como dado, mantendo planners sem efeitos |
 
 ## Propostas aproveitáveis
 
@@ -66,7 +66,7 @@ relativo: baixo, médio ou alto; não é estimativa de prazo.
 alcance, ameaça e valor do tipo. Esses behaviors também estão no nosso Ares.
 
 **Aplicação:** começar por Marine/Marauder no
-[combat.py](../bot/body/behaviors/combat.py), compartilhado por ataque e defesa.
+[combat.py](../../bot/body/behaviors/combat.py), compartilhado por ataque e defesa.
 Filtrar alvos visíveis, detectados e atingíveis; atirar quando pronto, reposicionar
 durante cooldown e manter o destino concedido pelo planner. Usar grid de efeitos
 para esquiva: colocar `KeepUnitSafe` sobre toda influência de combate antes de
@@ -84,9 +84,9 @@ partida sem melhorar a troca não basta.
 quando o Medivac não pode curar ou não tem alvo útil. Ares já oferece
 `MedivacHeal`, `KeepUnitSafe` e pathing em grids separados.
 
-**Aplicação:** em [attack.py](../bot/body/behaviors/attack.py), curar aliados
+**Aplicação:** em [attack.py](../../bot/body/behaviors/attack.py), curar aliados
 e manter suporte fora da ameaça antiaérea. Em
-[retreat.py](../bot/body/behaviors/retreat.py), preservar a saída como prioridade,
+[retreat.py](../../bot/body/behaviors/retreat.py), preservar a saída como prioridade,
 com esquiva e, se medido como útil, tiros oportunistas que não atrasem a retirada.
 Tanques continuam precisando de unsiege; não aplicar kite genérico a todos os tipos.
 
@@ -107,7 +107,7 @@ Medivacs. Esta correção atualiza a interpretação do achado A9 em
 bônus de composição e flag de ativação. Sajuuk possui tarefa de manter visão
 de uma área, distribuindo cobertura entre scouts.
 
-**Aplicação:** estender [IntelPlanner](../bot/ego/planners/intel/planner.py) além
+**Aplicação:** estender [IntelPlanner](../../bot/ego/planners/intel/planner.py) além
 da única missão de abertura. Manter cobertura como desired state; criar episódios
 finitos para verificar tech, expansão ou última região do exército. Um score
 inicial pode combinar idade da observação, impacto esperado na próxima decisão,
@@ -152,7 +152,7 @@ com teto de SCVs e gasto que não bloqueie produção. Planner define necessidad
 e alvo; Engine arbitra SCVs; Body executa reparo e libera trabalhadores para
 Mining ao terminar. A manutenção pode ser desired state; só criar Mission para
 um resgate com começo/fim identificáveis, conforme
-[architecture.md](architecture.md). Reparo exige novos contratos e dados sobre
+[architecture.md](../architecture.md). Reparo exige novos contratos e dados sobre
 alvos, não apenas uma chamada de ability isolada.
 
 **Medir:** valor de unidades salvas, gasto de reparo, renda perdida por SCVs
@@ -168,9 +168,9 @@ reforço proposto aqui é nosso desenho, não uma feature verificada nessa leitu
 **Aplicação:** a ofensiva hoje pede todas as unidades elegíveis livres e novas
 unidades podem seguir o alvo distante. Reunir reforços em staging e liberá-los
 por lote/condição de encontro. Exige permitir elegibilidade por conjunto de tags
-ou região em [Proposal](../bot/ego/planners/contracts.py), ou desenhar operação
+ou região em [Proposal](../../bot/ego/planners/contracts.py), ou desenhar operação
 finita própria com prioridade explícita. O
-[Engine](../bot/body/engine.py) já é dono único; não duplicar claiming no Ares.
+[Engine](../../bot/body/engine.py) já é dono único; não duplicar claiming no Ares.
 
 **Medir:** mortes de unidades isoladas no caminho, tempo do reforço até a luta e
 fração do poder chegando junta. Timeout evita esperar indefinidamente por um
@@ -199,7 +199,7 @@ de suporte que o preserve.
 o README de Sharky descreve `Transition`/`CounterTransition` de builds.
 
 **Aplicação:** começar com poucas variantes em
-[terran_builds.yml](../terran_builds.yml), uma abertura normal por matchup e
+[terran_builds.yml](../../terran_builds.yml), uma abertura normal por matchup e
 respostas específicas observáveis. Preservar o Build Runner do Ares e o
 handoff para Economy. Styles hoje escolhem BIO/MECH; isso não é seleção completa
 por plano adversário. Registrar motivo, pré-condições, etapa abandonada e
@@ -216,8 +216,8 @@ normalizado dividido por distância de caminho + 1, ignorando regiões inalcanç
 Esse é o cálculo consultado em `RegionsThreatEvaluator`, não uma fórmula
 universal de combate.
 
-**Aplicação:** aproveitar [topology](../bot/attention/topology.py) e
-[passages](../bot/attention/passages.py) para diferenciar inimigo próximo por rota
+**Aplicação:** aproveitar [topology](../../bot/attention/topology.py) e
+[passages](../../bot/attention/passages.py) para diferenciar inimigo próximo por rota
 de inimigo próximo em linha reta. MapControl já usa influência e choke: o ganho
 a testar é rota/valor em defesa antecipada, expansão e escolha de objetivo.
 Awareness publica uma avaliação regional reutilizável; cada planner interpreta
@@ -259,8 +259,8 @@ mas não garantem determinismo de um bot externo. Guardar commit, SHA do Ares,
 feature ativada, replay, resultado e métricas do mecanismo. Registrar crash,
 timeout e partida não jogada separadamente de derrota.
 
-O [harness atual](../harness/matrix.yml) e o
-[bootstrap local](../tools/aiarena_local/README.md) já existem. Fixar mapa e
+O [harness atual](../../harness/matrix.yml) e o
+[bootstrap local](../../tools/aiarena_local/README.md) já existem. Fixar mapa e
 estilo nas comparações e repetir células; não inferir ganho de uma vitória.
 Preparar métricas ausentes antes de usar esse critério como evidência. A
 documentação local registra uma pendência de virtualização; o host não foi

@@ -1,7 +1,7 @@
 # Planners
 
 Um documento por planner do Ego: o que ele decide, como decide e o que ainda falta. Todos descrevem o
-código do HEAD. O que está em andamento fica em [staging/](../staging/README.md), e as regras gerais
+código do HEAD. O que está em andamento fica em [staging/](../dev/staging/README.md), e as regras gerais
 (papéis, contratos, missões, eventos) ficam em [architecture.md](../architecture.md).
 
 | Documento | Pergunta que responde | Pede unidades ao Engine? |

@@ -12,12 +12,12 @@ Caminhos abaixo são do branch: `git show matematização:<caminho>`.
 
 | Modelo | Lá | Aqui |
 | --- | --- | --- |
-| Kernel gaussiano e saturação `S(x) = 1 − exp(−x)` | `bot/world/awareness/spatial/kernel.py` | [bot/awareness/field.py](../bot/awareness/field.py) |
-| Memória de contato com confiança `exp(−idade/τ)`, esquecimento por morte confirmada e posição vista vazia | `bot/world/awareness/enemy/memory.py`, `knowledge.py` | [bot/awareness/model.py](../bot/awareness/model.py) |
-| Identidade de grupo pelo pareamento de tags compartilhadas, desempate por id | `bot/world/awareness/enemy/forces/tracking.py` | `ThreatIncident` em [bot/awareness/model.py](../bot/awareness/model.py) |
-| Objetivo por scores com margem, permanência mínima e desempate conservador | `bot/strategy/scoring.py`, `hysteresis.py` | [bot/ego/strategy.py](../bot/ego/strategy.py) (dois objetivos em vez de cinco) |
-| Posse exclusiva, ordem total, preferência pelo dono anterior | `bot/engine/missions/allocator.py` | [bot/body/engine.py](../bot/body/engine.py) (sem preempção) |
-| JSONL estrito, `ChangeGate`, identidade da execução | `bot/app/telemetry/`, `bot/app/run_identity.py` | [bot/logs/](../bot/logs/) |
+| Kernel gaussiano e saturação `S(x) = 1 − exp(−x)` | `bot/world/awareness/spatial/kernel.py` | [bot/awareness/field.py](../../bot/awareness/field.py) |
+| Memória de contato com confiança `exp(−idade/τ)`, esquecimento por morte confirmada e posição vista vazia | `bot/world/awareness/enemy/memory.py`, `knowledge.py` | [bot/awareness/model.py](../../bot/awareness/model.py) |
+| Identidade de grupo pelo pareamento de tags compartilhadas, desempate por id | `bot/world/awareness/enemy/forces/tracking.py` | `ThreatIncident` em [bot/awareness/model.py](../../bot/awareness/model.py) |
+| Objetivo por scores com margem, permanência mínima e desempate conservador | `bot/strategy/scoring.py`, `hysteresis.py` | [bot/ego/strategy.py](../../bot/ego/strategy.py) (dois objetivos em vez de cinco) |
+| Posse exclusiva, ordem total, preferência pelo dono anterior | `bot/engine/missions/allocator.py` | [bot/body/engine.py](../../bot/body/engine.py) (sem preempção) |
+| JSONL estrito, `ChangeGate`, identidade da execução | `bot/app/telemetry/`, `bot/app/run_identity.py` | [bot/logs/](../../bot/logs/) |
 
 O que foi deliberadamente simplificado ao trazer: a estimativa do inimigo
 aqui é `max(conhecido, visto vivo, esperado)` com incerteza aditiva, não a
@@ -32,7 +32,7 @@ partida que mostre o problema e outra que meça a mudança.
 ### Demanda de exército e capacidade de produção
 
 **Ataca:** o banco de 4–21 mil minerais com supply livre, a causa em aberto
-mais antiga do bot (ver "Medições" em [architecture.md](architecture.md)).
+mais antiga do bot (ver "Medições" em [architecture.md](../architecture.md)).
 
 - `bot/macro/production/army_demand.py`: a meta de army supply é a âncora; a
   composição só diz *em que* pagar a dívida, nunca *se* ela existe.
@@ -101,7 +101,7 @@ sem trocar o modelo.
 ### Território e frente
 
 **Ataca:** a topologia (1.008 linhas em
-[topology.py](../bot/attention/topology.py)) e o campo não decidem nada hoje.
+[topology.py](../../bot/attention/topology.py)) e o campo não decidem nada hoje.
 
 - `bot/world/awareness/territory/influence.py`: por ponto, influência
   militar e de estruturas de cada lado somadas cruas e saturadas uma vez;

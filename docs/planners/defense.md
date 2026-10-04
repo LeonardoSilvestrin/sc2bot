@@ -106,12 +106,12 @@ As missões abertas, por id de incidente, e o contador que as numera.
 ## Limitações conhecidas
 
 - **O feedback não é lido.** Uma defesa que recebeu metade do orçamento (`PARTIAL`) segue igual: não escala,
-  não chama reforço e não avisa a Strategy (C6 no [gaps.md](../gaps.md)).
+  não chama reforço e não avisa a Strategy (C6 no [gaps.md](../dev/gaps.md)).
 - **A cobertura não entra.** A Awareness calcula quanto exército nosso já está na base (`cover`) e a razão
   pressão/cobertura (`balance`), e nada os lê. É o mesmo defeito que faz o DEFEND disparar com 3 Marines de
   pressão diante de 49 de cobertura ([strategy.md](strategy.md#limitações-conhecidas)).
 - **Quem conta como atacante:** um worker de scout ou uma estrutura estática abre incidente e pode segurar um
-  DEFEND (I2 e I3 no [gaps.md](../gaps.md)). Não se distingue scout, worker rush e ataque.
+  DEFEND (I2 e I3 no [gaps.md](../dev/gaps.md)). Não se distingue scout, worker rush e ataque.
 - **Alcance pela distância reta**, não pelo pathing: um inimigo do outro lado de um penhasco conta.
 - O ramo de cancelamento da missão é código morto: o planner nunca pede.
 - Ainda faltam: histerese de admissão e liberação, eventos explícitos de linhagem de incidentes (divisão e

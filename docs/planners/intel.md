@@ -147,7 +147,7 @@ Motivos no log: `no_cloak_seen`, `no_hidden_enemy`, `hidden_enemy_scanned`, `no_
 - **Os blips das nossas Sensor Towers derrubam o bot contra Terran.** O Ares não filtra blips de radar, e um
   blip de unidade camuflada ou enterrada vira um inimigo de tipo 0 que levanta `KeyError: 0` no
   `GridManager`. Os 2 crashes do `bench/t0` foram assim. Nenhuma decisão lê os blips, então as torres hoje
-  só custam gás e risco (item 1 do [debate](../agent_discussion/README.md)).
+  só custam gás e risco (item 1 do [debate](../dev/agent_discussion/README.md)).
 - **Nada depois da abertura:** o SCV sai uma vez, antes de 240 s, e a ronda acaba com a janela da abertura.
   Não há scan de informação, Raven nem scout no meio do jogo. O observador do exército inimigo fica sem
   medição nova das bases inimigas.
