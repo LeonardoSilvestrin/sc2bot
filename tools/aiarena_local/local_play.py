@@ -278,7 +278,7 @@ def snapshot_project():
         )
     ]
     files += list(ROOT.glob("*_builds.y*ml"))
-    for folder in ("bot", "ares-sc2"):
+    for folder in ("bot", "ares-sc2", "harness"):
         for path in (ROOT / folder).rglob("*"):
             if not path.is_file():
                 continue

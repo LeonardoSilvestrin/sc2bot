@@ -1,9 +1,11 @@
-"""Local benchmark: a matrix of games against the built-in AI.
+"""Local benchmark: games against the built-in AI or registered ladder bots.
 
     bench.py run --out bench/<label> [--matrix-file FILE] [--seed S]
                  [--time-limit S] [--spatial-view] [--spatial-snapshot]
     bench.py run --out bench/<label> --matrix base|wide [--maps ...]
                  [--races ...] [--armies ...] [--games N]
+    bench.py run --out bench/<label> --opponent PhantomBot [--maps ...]
+                 [--armies ...] [--games N] [--time-limit S]
     bench.py summarize bench/<label>
     bench.py compare bench/<baseline> bench/<challenger>
 
@@ -43,6 +45,7 @@ from harness import (  # noqa: E402
     MATRICES,
     MATRIX_FILE,
     MATRIX_PATH,
+    Game,
     GameSpec,
     MatrixFileError,
     build_record,
@@ -83,6 +86,7 @@ def main(argv: list[str] | None = None) -> int:
             args.directory,
             spatial_view=args.spatial_view,
             spatial_snapshot=args.spatial_snapshot,
+            wall_timeout=args.wall_timeout,
         )
     if args.command == "summarize":
         print(json.dumps(summarize(load_records(args.directory)), indent=2))
@@ -100,6 +104,11 @@ def parser() -> argparse.ArgumentParser:
 
     run = commands.add_parser("run", help="play the matrix")
     run.add_argument("--out", type=Path, required=True)
+    run.add_argument(
+        "--opponent",
+        default="builtin",
+        help="builtin: IA do jogo; ou bot cadastrado da ladder (ex.: PhantomBot).",
+    )
     run.add_argument(
         "--matrix",
         choices=[MATRIX_FILE, *sorted(MATRICES)],
@@ -142,6 +151,7 @@ def parser() -> argparse.ArgumentParser:
     play = commands.add_parser("play", help="(internal) play one game")
     play.add_argument("--spec", type=Path, required=True)
     play.add_argument("--directory", type=Path, required=True)
+    play.add_argument("--wall-timeout", type=float, default=3600.0)
     _add_debug_arguments(play)
 
     summary = commands.add_parser("summarize", help="summarize a run")
@@ -186,6 +196,37 @@ def _specs(args) -> tuple[GameSpec, ...]:
     """The games to play: what the file lists, or one of the built-in tables
     with whatever column was named by hand."""
 
+    if args.opponent != "builtin":
+        from dataclasses import replace
+
+        from tools.aiarena_local.live_play import RACES, opponent_info
+
+        if any(value is not None for value in (args.races, args.difficulties, args.ai_builds)):
+            raise SystemExit(
+                "--opponent da ladder define raça e build; "
+                "retire --races/--difficulties/--ai-builds."
+            )
+        info = opponent_info(args.opponent)
+        specs = matrix(
+            tuple(
+                Game(name, RACES[info["race"]], args.opponent)
+                for name in (args.maps or ("PersephoneAIE_v4",))
+            ),
+            difficulties=("Ladder",),
+            armies=args.armies or (None,),
+            repeats=1 if args.games is None else args.games,
+            seed=DEFAULT_SEED if args.seed is None else args.seed,
+            game_time_limit=DEFAULT_TIME_LIMIT if args.time_limit is None else args.time_limit,
+        )
+        return tuple(
+            replace(
+                spec,
+                opponent=args.opponent,
+                opponent_version=info.get("version"),
+                opponent_sha256=info["source_sha256"],
+            )
+            for spec in specs
+        )
     if args.matrix == MATRIX_FILE:
         named = [
             "--" + flag.replace("_", "-") for flag in TABLE_FLAGS if getattr(args, flag) is not None
@@ -229,9 +270,25 @@ def _run(args) -> int:
     out.mkdir(parents=True, exist_ok=True)
     label = out.name
     played_on = ", ".join(dict.fromkeys(spec.map_name for spec in specs))
-    source = args.matrix_file.name if args.matrix == MATRIX_FILE else args.matrix
+    source = (
+        args.opponent
+        if args.opponent != "builtin"
+        else (args.matrix_file.name if args.matrix == MATRIX_FILE else args.matrix)
+    )
     print(f"{label}: {len(specs)} games ({source} on {played_on})")
     build = identity()
+    previous_matrix = _read_json(out / "matrix.json")
+    if (
+        previous_matrix
+        and (
+            args.opponent != "builtin"
+            or any(spec.get("opponent") for spec in previous_matrix.get("games", []))
+        )
+        and previous_matrix.get("games") != [spec.to_json() for spec in specs]
+    ):
+        raise SystemExit(
+            "Esse bench já contém outra seleção/versão de adversário. Use outro --out."
+        )
     (out / "matrix.json").write_text(
         json.dumps({"build": build, "games": [spec.to_json() for spec in specs]}, indent=2),
         encoding="utf-8",
@@ -264,13 +321,16 @@ def _run(args) -> int:
                         str(spec_path),
                         "--directory",
                         str(directory),
+                        "--wall-timeout",
+                        str(args.wall_timeout),
                         *(["--spatial-view"] if args.spatial_view else []),
                         *(["--spatial-snapshot"] if args.spatial_snapshot else []),
                     ],
                     stdout=output,
                     stderr=subprocess.STDOUT,
                     cwd=ROOT,
-                    timeout=args.wall_timeout,
+                    # Native ladder games enforce their own deadline and need time to clean up.
+                    timeout=args.wall_timeout + (90 if spec.opponent is not None else 0),
                     check=False,
                 ).returncode
             except subprocess.TimeoutExpired:
@@ -283,7 +343,7 @@ def _run(args) -> int:
             result=child.get("result"),
             game_time=child.get("game_time"),
             exit_code=exit_code,
-            wall_timed_out=timed_out,
+            wall_timed_out=timed_out or bool(child.get("wall_timed_out")),
             wall_seconds=time.monotonic() - started,
             replay=directory / REPLAY,
             log=directory / LOG_DIRECTORY / "game.jsonl",
@@ -297,7 +357,14 @@ def _run(args) -> int:
     return 0
 
 
-def _play(spec_path: Path, directory: Path, *, spatial_view: bool, spatial_snapshot: bool) -> int:
+def _play(
+    spec_path: Path,
+    directory: Path,
+    *,
+    spatial_view: bool,
+    spatial_snapshot: bool,
+    wall_timeout: float = 3600,
+) -> int:
     from sc2 import maps
     from sc2.data import AIBuild, Difficulty, Race
     from sc2.main import run_game
@@ -307,7 +374,7 @@ def _play(spec_path: Path, directory: Path, *, spatial_view: bool, spatial_snaps
     from bot.main import BotBandido
 
     spec = GameSpec.from_json(_read_json(spec_path))
-    child: dict = {"result": None, "game_time": None, "error": None}
+    child: dict = {"result": None, "game_time": None, "error": None, "wall_timed_out": False}
     logger = JsonlLogger(directory, session_name=LOG_DIRECTORY)
     logs = Logs(
         logger,
@@ -318,24 +385,40 @@ def _play(spec_path: Path, directory: Path, *, spatial_view: bool, spatial_snaps
     bot = BotBandido(logs=logs, army=spec.army, style_seed=spec.seed)
     exit_code = 0
     try:
-        result = run_game(
-            maps.get(spec.map_name),
-            [
+        if spec.opponent is not None:
+            from tools.aiarena_local.live_play import play_match
+
+            result = play_match(
                 Bot(Race.Terran, bot, "BotBandido"),
-                Computer(
-                    Race[spec.enemy_race],
-                    Difficulty[spec.difficulty],
-                    ai_build=AIBuild[spec.ai_build],
-                ),
-            ],
-            realtime=False,
-            save_replay_as=str(directory / REPLAY),
-            game_time_limit=spec.game_time_limit,
-            random_seed=spec.seed,
-        )
+                maps.get(spec.map_name),
+                spec.opponent,
+                directory=directory,
+                replay=directory / REPLAY,
+                time_limit=spec.game_time_limit,
+                seed=spec.seed,
+                expected_sha256=spec.opponent_sha256,
+                wall_timeout=wall_timeout,
+            )
+        else:
+            result = run_game(
+                maps.get(spec.map_name),
+                [
+                    Bot(Race.Terran, bot, "BotBandido"),
+                    Computer(
+                        Race[spec.enemy_race],
+                        Difficulty[spec.difficulty],
+                        ai_build=AIBuild[spec.ai_build],
+                    ),
+                ],
+                realtime=False,
+                save_replay_as=str(directory / REPLAY),
+                game_time_limit=spec.game_time_limit,
+                random_seed=spec.seed,
+            )
         child["result"] = None if result is None else str(result)
-    except Exception:  # the record must say why, whatever it was
+    except Exception as exc:  # the record must say why, whatever it was
         child["error"] = traceback.format_exc()
+        child["wall_timed_out"] = isinstance(exc, TimeoutError)
         exit_code = 1
     try:
         child["game_time"] = float(bot.time)
@@ -381,4 +464,3 @@ def _read_json(path: Path):
 
 if __name__ == "__main__":
     sys.exit(main())
-  

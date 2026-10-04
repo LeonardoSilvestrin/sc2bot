@@ -73,6 +73,12 @@ def _positive_int(value: str) -> int:
 def parse_local_args(args=None):
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument(
+        "--opponent",
+        default="builtin",
+        help="builtin: IA do jogo; ou nome de um bot cadastrado da ladder (ex.: PhantomBot).",
+    )
+    parser.add_argument("--map", dest="map_name", default=None, help="Mapa da partida local.")
+    parser.add_argument(
         "--bot-log",
         choices=("off", "events"),
         default="off",
@@ -203,7 +209,7 @@ def local_games(local_args, map_list: list[str]) -> list[GameSpec]:
     if local_args.matrix == WIDE_MATRIX:
         games = _installed(WIDE, map_list)
     else:
-        map_name = random.choice(map_list)
+        map_name = local_args.map_name or random.choice(map_list)
         race = local_args.enemy_race or random.choice(list(RACES))
         builds = AI_BUILDS if local_args.matrix == BUILDS else (local_args.ai_build,)
         games = [Game(map_name, race, ai_build) for ai_build in builds]
@@ -272,6 +278,16 @@ def main():
         print("Starting ladder game...")
         result, opponentid = run_ladder_game(our_bot())
         print(result, " against opponent ", opponentid)
+    elif local_args.opponent != "builtin":
+        from tools.aiarena_local.live_play import play_match
+
+        result = play_match(
+            our_bot(local_args.army),
+            maps.get(local_args.map_name or "PersephoneAIE_v4"),
+            local_args.opponent,
+            time_limit=local_args.time_limit,
+        )
+        print(result, " against opponent ", local_args.opponent)
     else:
         # Local game
         map_list: list[str] = [

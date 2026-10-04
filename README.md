@@ -113,7 +113,7 @@ StarCraft II via Lutris, defina `SC2PF=WineLinux`, `SC2PATH` (pasta do jogo) e
 
 ## Uso
 
-Partida local contra a IA VeryHard Macro, num mapa instalado e numa raça
+Partida local contra a IA do jogo, num mapa instalado e numa raça
 sorteados (`run.py`; nome e raça do bot em `config.yml`):
 
 ```text
@@ -127,6 +127,17 @@ sorteados (`run.py`; nome e raça do bot em `config.yml`):
   grava SVGs do campo.
 - `.venv\Scripts\python.exe logs\open_viewer.py` abre o viewer do log
   (linha do tempo das decisões e inspetor por camada).
+
+No VS Code, os perfis **play** e **play full debug** perguntam o adversário
+(`PhantomBot` ou `IA do jogo`) e o mapa. Para jogar contra a ladder com janela:
+
+```powershell
+.venv\Scripts\python.exe run.py --opponent PhantomBot --map PersephoneAIE_v4 --bot-log events --spatial-view --spatial-snapshot
+```
+
+O BotBandido roda no Python do depurador e o PhantomBot no Docker; abrem duas
+janelas SC2 nativas do Windows. Docker Desktop precisa estar funcionando.
+Veja [o guia dos modos locais](tools/aiarena_local/README.md).
 
 Testes e lint (o CI roda os dois antes de gerar qualquer artefato):
 
@@ -145,6 +156,17 @@ ficam em `bench/` (fora do git). Uma partida que o bot nunca chegou a jogar —
 o cliente falha no `on_start`, o python-sc2 resigna e o jogo reporta derrota
 com o relógio em zero — é `not_played`: fica fora da taxa de vitória e é
 jogada de novo na execução seguinte.
+
+Para bots da ladder, use **bench: bot da ladder (full debug)** no VS Code,
+ou passe `--opponent`:
+
+```powershell
+.venv\Scripts\python.exe bench.py run --out bench\phantom-local --opponent PhantomBot --maps PersephoneAIE_v4 --armies bio --games 3 --time-limit 1200 --spatial-view --spatial-snapshot
+```
+
+Esse modo também tem janela, replay, JSONL, snapshots e resumo por rodada.
+Os resultados incluem versão e hash do adversário; use o mesmo pacote,
+mapas, seeds e estilos nas duas execuções que pretende comparar.
 
 ```text
 .venv\Scripts\python.exe bench.py run --out bench\<rótulo> --maps PersephoneAIE_v4 --races Zerg Terran Protoss --time-limit 1200

@@ -147,17 +147,27 @@ class GameSpec:
     game_time_limit: float | None
     # The bot's army style, by name; None lets the bot draw one.
     army: str | None = None
+    opponent: str | None = None
+    opponent_version: str | None = None
+    opponent_sha256: str | None = None
 
     @property
     def game_id(self) -> str:
         suffix = "" if self.army is None else f"-{self.army}"
+        if self.opponent is not None:
+            return f"{self.index:03d}-{self.map_name}-vs-{self.opponent}-{self.seed}{suffix}"
         return (
             f"{self.index:03d}-{self.map_name}-{self.enemy_race}-"
             f"{self.difficulty}-{self.ai_build}-{self.seed}{suffix}"
         )
 
     def to_json(self) -> dict[str, Any]:
-        return asdict(self)
+        data = asdict(self)
+        # Preserve the existing built-in-AI record shape and comparison keys.
+        for name in ("opponent", "opponent_version", "opponent_sha256"):
+            if data[name] is None:
+                del data[name]
+        return data
 
     @classmethod
     def from_json(cls, data: Mapping[str, Any]) -> GameSpec:

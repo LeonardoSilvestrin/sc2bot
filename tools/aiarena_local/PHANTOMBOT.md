@@ -8,14 +8,14 @@ na competição aberta `Sc2 AI Arena 2026 Pre-Season 2`.
 O pacote e os dados de aprendizado estão liberados publicamente pelo autor.
 O cadastro local inclui o código da ladder e seu `data/params.json`.
 
-## O que falta nesta máquina
+## Estado desta máquina — 03/10/2026
 
-O diagnóstico confirmou `VirtualizationFirmwareEnabled = False` e
-`HypervisorPresent = False`. Docker Desktop está instalado, mas seu engine
-Linux não está disponível. A placa-mãe é **ASUS TUF GAMING B550M-PLUS**, com
-Ryzen 7 5700X.
+A virtualização foi habilitada na **ASUS TUF GAMING B550M-PLUS**, com Ryzen 7
+5700X. O diagnóstico confirmou `VirtualizationFirmwareEnabled = True` e
+`HypervisorPresent = True`; o engine Linux/amd64 do Docker está funcionando.
+Os dois bots passaram na validação de imports dentro dos contêineres.
 
-Depois de terminar os testes em andamento:
+Caso a virtualização esteja desativada em outra instalação:
 
 1. Reinicie e pressione **Del** para entrar na BIOS.
 2. Entre em **Advanced Mode**, usando **F7** se necessário.
@@ -25,7 +25,23 @@ Depois de terminar os testes em andamento:
 
 Caminho conforme a [documentação da ASUS](https://www.asus.com/global/support/faq/1045141/).
 
-## Executar a partida
+## Executar com janela e debug
+
+No VS Code, use **play** ou **play full debug** e selecione **PhantomBot**.
+Para repetir partidas, use **bench: bot da ladder (full debug)**.
+
+```powershell
+.venv\Scripts\python.exe run.py --opponent PhantomBot --map PersephoneAIE_v4 --bot-log events --spatial-view --spatial-snapshot
+.venv\Scripts\python.exe bench.py run --out bench\phantom-local --opponent PhantomBot --maps PersephoneAIE_v4 --armies bio --games 3 --time-limit 1200 --spatial-view --spatial-snapshot
+```
+
+O SC2 abre duas janelas nativas no build 75689: nosso ponto de vista e o do
+PhantomBot. Nosso bot roda no depurador e o adversário no Docker. O bench
+grava os mesmos resultados, replays, eventos e snapshots dos testes contra a
+IA do jogo, com versão e hash do adversário para comparação. Docker Desktop
+deve estar funcionando. Veja [detalhes dos modos e artefatos](README.md).
+
+## Executar inteiramente no Docker
 
 No PowerShell, na raiz do projeto:
 
@@ -53,15 +69,48 @@ não é ativada por ele.
 
 ## Estado da validação
 
-Validados o ZIP, o cadastro, a cópia dos parâmetros públicos, o mapa e a geração
-dos arquivos da partida usando `--prepare-only`. A imagem oficial do adversário
-usa CPython 3.12.12/Linux amd64, compatível com o formato das extensões do pacote.
+Validados o ZIP, o cadastro, a cópia dos parâmetros públicos, o mapa, Docker
+Compose, SC2 build 75689, o build Linux do BotBandido e os imports de ambos os
+bots. A imagem oficial do adversário usa CPython 3.12.12/Linux amd64.
 
-**Nenhuma partida contra o PhantomBot foi jogada.** O build do BotBandido, os
-imports do PhantomBot no contêiner e a execução do jogo ainda dependem do engine
-Docker. A preparação existente tem estado `prepared` e resultado vazio:
+O snapshot inclui `harness/`, importado pela entrada atual do BotBandido. A
+instalação de dependências no Docker usa quatro workers, timeout de 120 segundos
+e até três retomadas de download para evitar os timeouts encontrados no primeiro
+build. Os 11 testes do runner e o lint passaram.
 
-`runs/20261004T011259516509Z-BotBandido-vs-PhantomBot/`
+**Partida completa validada** em `PersephoneAIE_v4`: vitória do PhantomBot
+(`Player2Win`) aos **10min50s** de jogo, com 14575 game loops. Ambos os logs e
+o replay de 704927 bytes foram gravados; o manifest terminou em `completed` e
+os contêineres foram encerrados sem erros. Tempo médio por step: BotBandido
+7,12 ms; PhantomBot 19,08 ms.
+
+Artefatos:
+
+`runs/20261004T023811744624Z-BotBandido-vs-PhantomBot/`
+
+Replay: `replays/1_BotBandido_vs_PhantomBot.SC2Replay` dentro dessa pasta.
+O snapshot do BotBandido usado na partida tem SHA256
+`aa0578f05fb99db5e9ad466eb9ad76e651b25ba92c23b2fdc976dacb5ca3e3a7`.
+
+## Validação do launcher com janela — 04/10/2026
+
+- `play full debug`: partida completa em Persephone AIE, bio, **vitória do
+  PhantomBot aos 10min21s**. Manifest `completed`, replay de 689334 bytes,
+  5326 eventos JSONL e 28 snapshots SVG. Ao terminar, nenhum contêiner do
+  launcher ou processo SC2 permaneceu aberto.
+- Artefatos da partida: `runs/20261004T032327572075Z-live-vs-PhantomBot/`.
+  O manifest aponta para `logs/game-20261004T032327451475Z/game.jsonl` na
+  raiz do projeto.
+- Bench curto: `bench/launcher-phantom-smoke3-20261004`, limite de 120 s,
+  corretamente classificado como `timeout`, com replay, 155 eventos e 4 SVGs.
+- Timeout real de 2 s: classificado como `crash`, com
+  `wall_timed_out = true`; os clientes iniciados foram encerrados.
+- 623 testes verificados e lint do bot, harness e launcher aprovados.
+  O teste do viewer em navegador precisou rodar fora do sandbox para acessar
+  a GPU do Windows.
+- Leitura da partida completa validada com `sc2reader` em ambiente isolado:
+  NEES 0,81 e 94% das amostras dentro de 2σ. Esses valores descrevem esta
+  partida; a validação do launcher não calibrou o estimador.
 
 ## Origem e arquivos locais
 

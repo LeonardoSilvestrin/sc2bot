@@ -1,41 +1,94 @@
 # Partidas locais AI Arena
 
 Adversário competitivo disponível nesta máquina: **PhantomBot 3.48.1**.
-Veja [o guia para jogar contra ele](PHANTOMBOT.md), incluindo a pendência de SVM na BIOS.
+Veja [o guia para jogar contra ele](PHANTOMBOT.md), com comandos e artefatos da validação local.
 
-Infraestrutura separada de `bench.py`, `harness/`, `run.py` e do ambiente `.venv`.
-O wrapper usa o Compose e os controllers oficiais de
+Há dois modos: com janela (`run.py` e `bench.py`) e totalmente no Docker
+(`run_local_opponent.py`, independente do ambiente `.venv` do bot).
+O wrapper sem janela usa o Compose e os controllers oficiais de
 [aiarena/local-play-bootstrap](https://github.com/aiarena/local-play-bootstrap),
 fixados no commit `6de4228a79d61bb045a0f179573c07984355f53f`.
 As três imagens `v0.8.0` também estão fixadas por digest em `local_play.py`.
 `RUN_TYPE = "local"`, URL da ladder vazia, uma partida por execução: não há
 cadastro, upload, token nem participação na ladder oficial.
 
-## Situação desta máquina — 19/09/2026
+## Launcher e bench com janela
 
-**Configuração preparada; smoke test de jogo ainda bloqueado pelo host.**
+No VS Code, abra **Run and Debug** e escolha:
+
+- **play**: escolha `PhantomBot` ou `IA do jogo`, depois o mapa.
+- **play full debug**: a mesma escolha, com eventos, overlay e snapshots SVG.
+- **bench: bot da ladder (full debug)**: escolha adversário, mapa, estilo,
+  quantidade de partidas, tempo máximo de jogo e rótulo de saída.
+
+O seletor da ladder contém somente PhantomBot por enquanto. Os perfis de
+matriz/cenário contra a IA do jogo, resumo e comparação continuam disponíveis.
+
+```powershell
+.venv\Scripts\python.exe run.py --opponent PhantomBot --map PersephoneAIE_v4 --bot-log events --spatial-view --spatial-snapshot
+.venv\Scripts\python.exe bench.py run --out bench\phantom-local --opponent PhantomBot --maps PersephoneAIE_v4 --armies bio --games 3 --time-limit 1200 --spatial-view --spatial-snapshot
+.venv\Scripts\python.exe bench.py summarize bench\phantom-local
+```
+
+Nesse modo, **dois clientes SC2 4.10 / Base75689 nativos do Windows** abrem
+com janela: nosso ponto de vista à esquerda, o adversário à direita. O
+BotBandido roda no Python do depurador; o PhantomBot continua no Docker Linux.
+A ponte WebSocket escuta apenas em `127.0.0.1` e é acessada pelo Docker via
+`host.docker.internal`. Não é preciso construir a imagem Linux do BotBandido.
+O jogo avança por steps, como o launcher anterior; pode rodar mais rápido que
+o relógio. Pausas longas em breakpoints podem exceder o timeout interno do
+PhantomBot (120 segundos).
+
+`play full debug` grava o log em `logs/game-*/` e replay/manifest/log do
+adversário em `tools/aiarena_local/runs/*-live-vs-PhantomBot/`. O bench grava
+`result.json`, `replay.SC2Replay`, `log/game.jsonl`, `log/spatial/`,
+`opponent.txt` e `live-manifest.json` por partida. `summary.json`, comparação
+e `tools/replay_truth.py` usam o mesmo formato do bench existente.
+
+Para medir a crença contra a verdade do replay, a ferramenta precisa de
+`sc2reader`. Há um ambiente isolado preparado nesta máquina, sem alterar as
+dependências do bot:
+
+```powershell
+tools\aiarena_local\runtime\replay-tools\Scripts\python.exe tools\replay_truth.py bench\phantom-local
+```
+
+Em outra máquina, prepare esse ambiente com:
+
+```powershell
+.venv\Scripts\python.exe -m venv tools\aiarena_local\runtime\replay-tools
+tools\aiarena_local\runtime\replay-tools\Scripts\python.exe -m pip install sc2reader==1.9.0
+```
+
+O registro guarda a versão e o SHA256 do pacote **e dos dados** do adversário.
+Cada partida recebe uma cópia isolada dos dados de aprendizado. Se mudar o
+pacote, mapa, quantidade ou seed, use outro rótulo de bench. Para cadastrar
+outros bots Python, use `--register` abaixo e acrescente seus nomes aos inputs
+`localOpponent` e `ladderOpponent` em `.vscode/launch.json`.
+
+## Situação desta máquina — 03/10/2026
+
+**Docker operacional; partida completa contra PhantomBot validada, com replay e logs.**
 
 - Windows 11 Pro x64, Ryzen 7 5700X.
 - Instalados Docker Desktop **4.91.0**, CLI **29.8.0**, Compose **5.5.1**,
   Microsoft WSL **2.7.13.0**, kernel **6.18.33.2-2**.
 - O script administrativo verificou/habilitou `VirtualMachinePlatform` sem
   reiniciar o Windows. Log: `runtime/windows-prerequisites.log`.
-- `VirtualizationFirmwareEnabled = False`, `HypervisorPresent = False`;
-  `wsl --status` informa que WSL2 não pode iniciar sem virtualização.
-- Habilitar **SVM/AMD-V** na BIOS/UEFI e reiniciar o computador é o próximo
-  passo necessário. Não houve reinicialização automática.
+- SVM/AMD-V habilitado pelo usuário na BIOS/UEFI:
+  `VirtualizationFirmwareEnabled = True`, `HypervisorPresent = True`.
+- Engine Docker Linux/amd64 operacional, com 16 CPUs e aproximadamente 16 GiB RAM.
 - SC2 nativo encontrado em `C:\Program Files (x86)\StarCraft II`, com
   `Base75689` e `Base97563`. Essa instalação foi preservada.
 - O bootstrap executará **SC2 4.10 / Base75689 Linux**, incluído na imagem
   oficial. O executável Windows não é montado no contêiner.
-- Os bots oficiais `basic_bot` e `loser_bot` já estão disponíveis. **Não falta
-  um ZIP de adversário.** Faltam o engine operacional e a validação real do jogo.
+- Disponíveis os bots oficiais `basic_bot` e `loser_bot`, além do adversário
+  competitivo `PhantomBot` 3.48.1 com seus parâmetros públicos de aprendizado.
 
-Após habilitar SVM e reiniciar, abra Docker Desktop, aguarde o engine Linux e
-execute os comandos abaixo na raiz do projeto (Python 3.11/3.12; wrapper só
-usa a biblioteca padrão). Se houver falha de build/import ou partida, os logs
-indicarão o ponto: a imagem derivada do BotBandido ainda não pôde ser construída
-nem executada nesta máquina.
+Abra Docker Desktop, aguarde o engine Linux e execute os comandos abaixo na raiz
+do projeto (Python 3.11/3.12; wrapper só usa a biblioteca padrão). A imagem
+derivada do BotBandido foi construída e os imports de ambos os bots passaram.
+Se houver falha de build/import ou partida, os logs indicam o ponto.
 
 ## Preparação e partida
 
@@ -156,7 +209,7 @@ Cada partida usa seu próprio projeto Compose, sem publicar portas do host.
 O encerramento remove apenas os contêineres/rede daquele projeto, preservando
 artefatos e imagens em cache.
 
-## Validação realizada e pendência
+## Validação realizada
 
 Validados: `docker compose config` com os quatro serviços e caminhos Windows
 com espaços; três imagens oficiais existentes no registry, Linux/amd64;
@@ -169,13 +222,19 @@ arquivos, registro de ZIP e detecção de falhas/artefatos ausentes.
 .venv\Scripts\python.exe -m ruff check run_local_opponent.py tools/aiarena_local/local_play.py tools/aiarena_local/test_local_play.py
 ```
 
-Tentativa real do comando em
+Tentativa anterior do comando em
 `runs/20260920T015118743465Z-BotBandido-vs-loser_bot/manifest.json`:
-`failed`, `docker info` expirou aguardando o engine. **Nenhuma partida foi
-jogada, nenhum replay foi gerado e o build Linux ainda não foi executado.**
-`results.json` permanece com lista vazia; não há resultado de jogo inventado.
-Após habilitar SVM e reiniciar, o smoke test acima ainda precisa passar para
-considerar a tarefa concluída. Consulte também `host-report.json`.
+`failed`, `docker info` expirou aguardando o engine; aquela tentativa não jogou.
+
+Em 03/10/2026, SVM habilitado, Docker iniciado, imagens baixadas, SC2 build 75689
+verificado e build/imports Linux validados. O snapshot agora inclui `harness/`;
+o Dockerfile limita a instalação a quatro workers, com timeout de 120 segundos
+e até três retomadas de download. Os 11 testes do runner e o lint passaram.
+Partida contra PhantomBot concluída em
+`runs/20261004T023811744624Z-BotBandido-vs-PhantomBot/`: `completed`, vitória do
+PhantomBot (`Player2Win`) aos 10min50s, com 14575 game loops, replay de 704927 bytes
+e logs dos dois bots. Os contêineres foram encerrados sem erros.
+Consulte também `host-report.json`.
 
 Referências adicionais: [instalação Docker no Windows](https://docs.docker.com/desktop/setup/install/windows-install/),
 [instalação WSL](https://learn.microsoft.com/en-us/windows/wsl/install),

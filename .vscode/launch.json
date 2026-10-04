@@ -8,7 +8,14 @@
       "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
       "program": "${workspaceFolder}\\run.py",
       "cwd": "${workspaceFolder}",
-      "args": ["--bot-log", "off"],
+      "args": [
+        "--bot-log",
+        "off",
+        "--opponent",
+        "${input:localOpponent}",
+        "--map",
+        "${input:benchMap}"
+      ],
       "console": "integratedTerminal",
       "justMyCode": false
     },
@@ -19,7 +26,16 @@
       "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
       "program": "${workspaceFolder}\\run.py",
       "cwd": "${workspaceFolder}",
-      "args": ["--bot-log", "events", "--spatial-view", "--spatial-snapshot"],
+      "args": [
+        "--bot-log",
+        "events",
+        "--spatial-view",
+        "--spatial-snapshot",
+        "--opponent",
+        "${input:localOpponent}",
+        "--map",
+        "${input:benchMap}"
+      ],
       "console": "integratedTerminal",
       "justMyCode": false
     },
@@ -84,6 +100,34 @@
       "justMyCode": false
     },
     {
+      "name": "bench: bot da ladder (full debug)",
+      "type": "debugpy",
+      "request": "launch",
+      "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "program": "${workspaceFolder}\\bench.py",
+      "cwd": "${workspaceFolder}",
+      "args": [
+        "run",
+        "--out",
+        "${workspaceFolder}\\bench\\${input:benchLabel}",
+        "--opponent",
+        "${input:ladderOpponent}",
+        "--maps",
+        "${input:benchMap}",
+        "--armies",
+        "${input:benchArmy}",
+        "--games",
+        "${input:benchGames}",
+        "--time-limit",
+        "${input:benchTimeLimit}",
+        "--spatial-view",
+        "--spatial-snapshot"
+      ],
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "subProcess": true
+    },
+    {
       "name": "bench: resumir",
       "type": "debugpy",
       "request": "launch",
@@ -115,6 +159,31 @@
   ],
   "inputs": [
     {
+      "id": "localOpponent",
+      "type": "pickString",
+      "description": "Adversário da partida local",
+      "options": [
+        {
+          "label": "PhantomBot (ladder, Zerg)",
+          "value": "PhantomBot"
+        },
+        {
+          "label": "IA do jogo",
+          "value": "builtin"
+        }
+      ],
+      "default": "PhantomBot"
+    },
+    {
+      "id": "ladderOpponent",
+      "type": "pickString",
+      "description": "Bot da ladder",
+      "options": [
+        "PhantomBot"
+      ],
+      "default": "PhantomBot"
+    },
+    {
       "id": "benchLabel",
       "type": "promptString",
       "description": "Nome da execução dentro de bench/",
@@ -139,7 +208,11 @@
       "id": "benchRace",
       "type": "pickString",
       "description": "Raça da IA",
-      "options": ["Zerg", "Terran", "Protoss"],
+      "options": [
+        "Zerg",
+        "Terran",
+        "Protoss"
+      ],
       "default": "Zerg"
     },
     {
@@ -164,14 +237,24 @@
       "id": "benchAiBuild",
       "type": "pickString",
       "description": "Build da IA",
-      "options": ["RandomBuild", "Rush", "Timing", "Power", "Macro", "Air"],
+      "options": [
+        "RandomBuild",
+        "Rush",
+        "Timing",
+        "Power",
+        "Macro",
+        "Air"
+      ],
       "default": "Macro"
     },
     {
       "id": "benchArmy",
       "type": "pickString",
       "description": "Estilo do exército do bot",
-      "options": ["bio", "mech"],
+      "options": [
+        "bio",
+        "mech"
+      ],
       "default": "bio"
     },
     {

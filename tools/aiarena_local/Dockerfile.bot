@@ -9,6 +9,10 @@ RUN apt-get update \
 RUN python -m venv /opt/sc2bot-build-tools \
     && /opt/sc2bot-build-tools/bin/pip install --no-cache-dir poetry==2.4.3 \
     && python -m venv /opt/sc2bot-venv
+ENV POETRY_REQUESTS_TIMEOUT=120 \
+    POETRY_INSTALLER_MAX_WORKERS=4 \
+    POETRY_REQUESTS_MAX_RETRIES=3 \
+    PIP_DEFAULT_TIMEOUT=120
 COPY . /opt/sc2bot-source
 RUN cd /opt/sc2bot-source \
     && VIRTUAL_ENV=/opt/sc2bot-venv PATH="/opt/sc2bot-venv/bin:$PATH" \
