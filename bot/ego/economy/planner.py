@@ -10,13 +10,14 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
+from sc2.data import Race
 from sc2.ids.unit_typeid import UnitTypeId
 
 from bot.attention import AttentionState
 from bot.awareness import AwarenessState
 from bot.ego.strategy import StrategicIntent
 
-from .contracts import EconomyPlan
+from .contracts import EconomyPlan, UnitRequest
 from .knowledge.styles import BIO, ArmyStyle
 from .policies import composition, investment
 from .policies.composition import CompositionPolicy
@@ -32,6 +33,7 @@ def plan(
     composition_policy: CompositionPolicy | None = None,
     investment_config: InvestmentConfig | None = None,
     awareness: AwarenessState | None = None,
+    unit_requests: Iterable[UnitRequest] = (),
 ) -> EconomyPlan:
     """`enemy` is the enemy army believed in, as power by unit type."""
 
@@ -87,4 +89,10 @@ def plan(
         reactor_share=composition.reactor_share(mix, army.addons_on),
         army=army.name,
         composition_plan=composition_plan,
+        unit_requests=tuple(unit_requests),
     )
+
+
+def opening_for(army: ArmyStyle, enemy_race: Race) -> str:
+    """The Zerg opening buys the mission's detector before air support."""
+    return f"{army.opening}Raven" if enemy_race is Race.Zerg else army.opening

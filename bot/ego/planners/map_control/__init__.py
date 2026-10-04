@@ -1,7 +1,10 @@
-"""MapControl: every army unit no one else needs, held at the anchor it
-chooses. No operation of its own, so no missions: `planner.MapControlPlanner`
-proposes directly; `policies.staging` scores where the free army reacts from."""
+"""MapControl holds the free army and governs noncombat map operations.
 
+`policies.staging` chooses its anchor; `missions.remove_creep` coordinates
+an early detector and a small escort against Zerg.
+"""
+
+from .missions.remove_creep import RemoveCreepConfig
 from .planner import (
     MAP_CONTROL_PRIORITY,
     OWNER,
@@ -17,6 +20,7 @@ __all__ = [
     "MapControlConfig",
     "MapControlPlan",
     "MapControlPlanner",
+    "RemoveCreepConfig",
     "StagingPlan",
     "StagingPoint",
 ]

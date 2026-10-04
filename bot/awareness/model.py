@@ -41,6 +41,7 @@ from bot.attention import AttentionState, BaseView, UnitView, is_army
 from .enemy_army import EnemyArmyBelief, EnemyArmyConfig, EnemyArmyFilter
 from .field import InfluenceField, Source, build_field
 from .opening import OpeningBelief, OpeningBeliefConfig, read_opening
+from .regions import RegionControl, rank_regions
 
 # A townhall in the air holds no base.
 TOWNHALLS = TOWNHALL_TYPES - {UnitTypeId.COMMANDCENTERFLYING, UnitTypeId.ORBITALCOMMANDFLYING}
@@ -239,6 +240,8 @@ class AwarenessState:
     # How much of the early game is left, in [0, 1]: 1 at the start, 0 once it
     # is over, and it never rises. Only an early attack is a rush.
     early_game: float = 1.0
+    # Creep fronts ranked by regional exposure and control, best first.
+    regions: tuple[RegionControl, ...] = ()
 
     @property
     def estimated_enemy_power(self) -> float:
@@ -344,6 +347,7 @@ class AwarenessModel:
             unit for unit in attention.own_units if not unit.is_worker and unit.power > 0.0
         )
         bases = tuple(self._base_threat(base, contacts, army) for base in attention.bases)
+        influence = self._field(attention, contacts, army)
         return AwarenessState(
             time=attention.time,
             contacts=contacts,
@@ -355,7 +359,7 @@ class AwarenessModel:
                 for contact in contacts
                 if contact.tag in self._army
             ),
-            influence=self._field(attention, contacts, army),
+            influence=influence,
             incidents=self._incidents(attention.bases, contacts),
             seen_enemy_power=seen_enemy,
             enemy_army=enemy_army,
@@ -364,6 +368,7 @@ class AwarenessModel:
             produced_enemy_types=produced_types,
             opening=read_opening(attention.enemy_opening, attention.time, self.config.opening),
             early_game=self._remember_early_game(attention),
+            regions=rank_regions(attention, influence),
         )
 
     def _remember_early_game(self, attention: AttentionState) -> float:

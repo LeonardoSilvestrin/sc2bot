@@ -2,8 +2,8 @@
 
 Always proposed, always last -- below Defense and the offense: it asks for
 every free army unit and holds them at its anchor. It is no strategic
-reserve: it gets whatever the planners above left. No operation of its own,
-so no missions.
+reserve: it gets whatever the planners above left. Against Zerg a separate
+remove-creep mission coordinates a Raven and a small noncombat escort.
 
 The anchor is where the uncommitted army reacts from and stages for the next
 operation: the frame hands it to the `OffensePlanner` as the rally, where the
@@ -33,16 +33,23 @@ the logs, the viewer and every bench so far know it by that name.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
+from sc2.data import Race
 from sc2.position import Point2
 
 from bot.attention import AttentionState
 from bot.awareness import AwarenessState
-from bot.ego.planners import Command, Proposal
+from bot.ego.economy.contracts import UnitRequest
+from bot.ego.planners import CancelMode, Command, MissionFeedback, MissionView, Proposal
 from bot.ego.strategy import StrategicIntent, StrategicPosture
 
+from .missions.remove_creep import RemoveCreepConfig, RemoveCreepMission
 from .policies.staging import StagingPlan, StagingPolicy
+
+if TYPE_CHECKING:
+    from bot.body.engine import EngineResult
 
 OWNER = "core_army"
 MAP_CONTROL_PRIORITY = -1.0
@@ -75,6 +82,7 @@ class MapControlConfig:
     width_scale: float = 6.0
     # How far on our side of a passage the army stands to hold it.
     setback: float = 4.0
+    remove_creep: RemoveCreepConfig = field(default_factory=RemoveCreepConfig)
 
     def __post_init__(self) -> None:
         if not 0.0 <= self.advance <= self.pressure_advance <= 1.0:
@@ -112,6 +120,7 @@ class MapControlPlan:
     # None without candidates.
     staging: StagingPlan | None
     proposals: tuple[Proposal, ...]
+    unit_requests: tuple[UnitRequest, ...] = ()
 
     @property
     def held_passage(self) -> str | None:
@@ -134,9 +143,23 @@ class MapControlPlanner:
     def __init__(self, config: MapControlConfig | None = None) -> None:
         self.config = config or MapControlConfig()
         self._staging = StagingPolicy(self.config)
+        self._mission: RemoveCreepMission | None = None
+        self._views: tuple[MissionView, ...] = ()
+        self._opened = 0
+
+    @property
+    def mission(self) -> RemoveCreepMission | None:
+        return self._mission
+
+    def views(self) -> tuple[MissionView, ...]:
+        return self._views
 
     def plan(
-        self, attention: AttentionState, awareness: AwarenessState, intent: StrategicIntent
+        self,
+        attention: AttentionState,
+        awareness: AwarenessState,
+        intent: StrategicIntent,
+        feedback: EngineResult | None = None,
     ) -> MapControlPlan:
         posture = intent.posture
         advance = self.advance(posture)
@@ -163,6 +186,29 @@ class MapControlPlanner:
                 ("exposure", point.exposure),
                 ("score", point.score),
             )
+        self._views = ()
+        if attention.enemy_race is Race.Zerg and self._mission is None:
+            self._opened += 1
+            self._mission = RemoveCreepMission(
+                f"remove_creep:{self._opened}", attention.time, self.config.remove_creep
+            )
+        mission_proposals: tuple[Proposal, ...] = ()
+        unit_requests: tuple[UnitRequest, ...] = ()
+        if self._mission is not None:
+            mission = self._mission
+            if attention.enemy_race is not Race.Zerg:
+                mission.lifecycle.request_cancel(CancelMode.IMMEDIATE, "not_zerg", attention.time)
+            mission_proposals = mission.step(
+                attention,
+                awareness,
+                intent,
+                anchor,
+                MissionFeedback.of(feedback, mission.mission_id),
+            )
+            unit_requests = mission.unit_requests
+            self._views = (mission.view(),)
+            if not mission.lifecycle.active:
+                self._mission = None
         return MapControlPlan(
             anchor=anchor,
             source=source,
@@ -171,6 +217,7 @@ class MapControlPlanner:
             reason=reason,
             fallback=fallback,
             staging=staging,
+            unit_requests=unit_requests,
             proposals=(
                 Proposal(
                     proposal_id=OWNER,
@@ -181,7 +228,8 @@ class MapControlPlanner:
                     reason=reason,
                     inputs=inputs,
                 ),
-            ),
+            )
+            + mission_proposals,
         )
 
     def advance(self, posture: StrategicPosture) -> float:

@@ -97,6 +97,15 @@ class AttentionState:
     # Current free 2x2 construction spots. None means placement data was not
     # supplied; an empty tuple means no sites are available this frame.
     available_tower_sites: tuple[tuple[Point2, tuple[Point2, ...]], ...] | None = None
+    # Observed creep, indexed [y, x], like visibility.
+    creep: np.ndarray | None = field(default=None, compare=False, repr=False)
+
+    def has_creep(self, point: Point2) -> bool:
+        grid = self.creep
+        if grid is None:
+            return False
+        x, y = int(point.x), int(point.y)
+        return bool(0 <= y < grid.shape[0] and 0 <= x < grid.shape[1] and grid[y, x])
 
     def is_visible(self, point: Point2) -> bool:
         grid = self.visibility
@@ -142,6 +151,7 @@ def observe(
         radar_blips=_radar_blips(bot),
         enemy_race=_enemy_race(bot),
         available_tower_sites=_available_tower_sites(bot, map_view),
+        creep=getattr(getattr(state, "creep", None), "data_numpy", None),
     )
     if opening is None:
         return perceived

@@ -139,3 +139,6 @@ bot.zip
 
 # Local benchmark runs (bench.py)
 /bench/
+
+# Local isolated checkouts are not project submodules.
+/.worktrees/

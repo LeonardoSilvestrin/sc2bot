@@ -18,6 +18,7 @@ from bot.ego.planners import (
     Command,
     FortificationPlan,
     IntelPlan,
+    Proposal,
     StructurePlan,
 )
 
@@ -29,6 +30,7 @@ from . import (
     garrison,
     hold,
     intel,
+    remove_creep,
     repair,
     retreat,
     scout,
@@ -46,6 +48,7 @@ BY_COMMAND: dict[Command, Callable[..., attack.MicroReport | None]] = {
     Command.RETREAT: retreat.execute,
     Command.GARRISON: garrison.execute,
     Command.REPAIR: repair.execute,
+    Command.REMOVE_CREEP: remove_creep.execute,
 }
 
 
@@ -100,10 +103,20 @@ def command_units(bot, result: EngineResult) -> attack.MicroReport:
 
     units = bot.unit_tag_dict
     report = attack.MicroReport()
+    creep_squads: dict[str, tuple[Proposal, list]] = {}
     for grant in result.grants:
         granted = [units[tag] for tag in grant.tags if tag in units]
+        if grant.proposal.command is Command.REMOVE_CREEP:
+            key = grant.proposal.mission_id or grant.proposal.proposal_id
+            if key not in creep_squads:
+                creep_squads[key] = (grant.proposal, [])
+            creep_squads[key][1].extend(granted)
+            continue
         if granted:
             reacted = BY_COMMAND[grant.proposal.command](bot, granted, grant.proposal)
             if reacted is not None:
                 report = report.merge(reacted)
+    for proposal, squad in creep_squads.values():
+        if squad:
+            remove_creep.execute(bot, squad, proposal)
     return report
