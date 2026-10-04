@@ -27,6 +27,8 @@ class Command(str, Enum):
     SCOUT = "SCOUT"
     # Walk back to the target without stopping to fight.
     RETREAT = "RETREAT"
+    # Move as a detector/escort squad, shoot only creep tumors, flee combat.
+    REMOVE_CREEP = "REMOVE_CREEP"
 
 
 class Domain(str, Enum):
@@ -63,6 +65,8 @@ class Proposal:
     # missions. A mission may make several proposals, and keeps a proposal's
     # id across its phases so the Engine keeps the same units.
     mission_id: str | None = None
+    # Safe assembly/withdrawal point for operations that avoid combat.
+    fallback: Point2 | None = None
 
 
 @dataclass(frozen=True, slots=True)

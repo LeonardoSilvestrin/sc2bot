@@ -41,6 +41,7 @@ from bot.attention import AttentionState, BaseView, UnitView, is_army
 from .enemy_army import EnemyArmyBelief, EnemyArmyConfig, EnemyArmyFilter
 from .field import InfluenceField, Source, build_field
 from .opening import OpeningBelief, OpeningBeliefConfig, read_opening
+from .regions import RegionControl, rank_regions
 
 # A townhall in the air holds no base.
 TOWNHALLS = TOWNHALL_TYPES - {UnitTypeId.COMMANDCENTERFLYING, UnitTypeId.ORBITALCOMMANDFLYING}
@@ -226,6 +227,8 @@ class AwarenessState:
     produced_enemy_types: tuple[tuple[UnitTypeId, float], ...] = ()
     # What the enemy's opening looks like, from what the early game showed.
     opening: OpeningBelief = OpeningBelief()
+    # Creep fronts ranked by regional exposure and control, best first.
+    regions: tuple[RegionControl, ...] = ()
 
     @property
     def estimated_enemy_power(self) -> float:
@@ -330,6 +333,7 @@ class AwarenessModel:
             unit for unit in attention.own_units if not unit.is_worker and unit.power > 0.0
         )
         bases = tuple(self._base_threat(base, contacts, army) for base in attention.bases)
+        influence = self._field(attention, contacts, army)
         return AwarenessState(
             time=attention.time,
             contacts=contacts,
@@ -341,7 +345,7 @@ class AwarenessModel:
                 for contact in contacts
                 if contact.tag in self._army
             ),
-            influence=self._field(attention, contacts, army),
+            influence=influence,
             incidents=self._incidents(attention.bases, contacts),
             seen_enemy_power=seen_enemy,
             enemy_army=enemy_army,
@@ -349,6 +353,7 @@ class AwarenessModel:
             seen_enemy_types=seen_types,
             produced_enemy_types=produced_types,
             opening=read_opening(attention.enemy_opening, attention.time, self.config.opening),
+            regions=rank_regions(attention, influence),
         )
 
     def _remember(self, attention: AttentionState) -> tuple[Contact, ...]:

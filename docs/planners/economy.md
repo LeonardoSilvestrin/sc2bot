@@ -239,3 +239,17 @@ nesta ordem. A ordem importa porque o `MacroPlan` para no primeiro behavior que 
 - [bot/ego/economy/knowledge/combat.py](../../bot/ego/economy/knowledge/combat.py) e
   `combat.yml`: o modelo de combate.
 - Execução no Body: [economy.py](../../bot/body/behaviors/economy.py).
+
+## Pedidos de unidades por missão
+
+`plan(..., unit_requests=...)` recebe pedidos `UnitRequest(type_id, count, owner, reason)` e os
+repassa em `EconomyPlan.unit_requests`, inclusive enquanto a abertura está rodando. São totais
+fixos separados da composição: manter 1 Raven não acrescenta uma proporção crescente de Ravens
+ao exército. `RequestedUnits` junta pedidos do mesmo tipo pelo maior total e considera o count
+do Ares, que inclui produção em andamento.
+
+MapControl pede o Raven da missão `remove_creep` desde o início contra Zerg. `opening_for` escolhe
+as variantes com Raven cedo. Quando o script é interrompido, termina ou o pedido vem de um Zerg
+revelado depois, o executor constrói Starport/Tech Lab e treina o que falta. Uma linha só com
+Reactors ganha outro Starport para o Tech Lab. As estruturas reservadas não recebem treino da
+composição no mesmo frame. Em DEFEND, pode treinar com tecnologia pronta, mas não abre nova tecnologia.

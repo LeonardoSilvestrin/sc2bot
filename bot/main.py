@@ -145,14 +145,19 @@ def play_frame(bot, iteration: int, layers: Layers) -> Frame:
     intent = layers.strategy.decide(attention, awareness)
     laps.mark("strategy")
     proposals = layers.defense.plan(attention, awareness, intent, layers.feedback)
-    map_control = layers.map_control.plan(attention, awareness, intent)
+    map_control = layers.map_control.plan(attention, awareness, intent, layers.feedback)
     proposals += map_control.proposals
     # The offense assembles and falls back where MapControl holds the army.
     offense = layers.offense.plan(attention, awareness, intent, map_control.anchor, layers.feedback)
     proposals += offense.proposals
     intel = layers.intel.plan(attention, awareness, intent, layers.feedback)
     proposals += intel.proposals
-    missions = layers.defense.views() + layers.offense.views() + layers.intel.views()
+    missions = (
+        layers.defense.views()
+        + layers.offense.views()
+        + layers.intel.views()
+        + layers.map_control.views()
+    )
     economy_plan = economy.plan(
         attention,
         intent,
@@ -160,6 +165,7 @@ def play_frame(bot, iteration: int, layers: Layers) -> Frame:
         composition_policy=layers.composition,
         investment_config=layers.investment,
         awareness=awareness,
+        unit_requests=map_control.unit_requests,
     )
     structures = layers.structure_control.plan(attention)
     laps.mark("planners")
@@ -256,7 +262,9 @@ class BotBandido(AresBot):
             seed = int.from_bytes(sha256(opponent.encode("utf-8")).digest()[:8], "big")
         army = styles.choose(self.enemy_race, Random(seed), forced=self.army)
         # Nothing of the opening has been played yet.
-        self.build_order_runner.switch_opening(army.opening, remove_completed=False)
+        self.build_order_runner.switch_opening(
+            economy.opening_for(army, self.enemy_race), remove_completed=False
+        )
         combat, changed = default_model().with_client(self.game_data)
         self.layers = Layers(map_view=map_view, logs=self.bot_logs, army=army, combat=combat)
         self.bot_logs.game_started(self, map_view, self.layers.configs())

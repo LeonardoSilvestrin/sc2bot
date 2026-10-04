@@ -12,9 +12,8 @@
   - é o **rally** da Offense: onde o ataque se reúne e para onde recua.
 - O anchor é escolhido por um score contínuo (`staging`): o ponto que responde mais rápido a todas as
   nossas bases, um pouco à frente delas, de preferência num choke, longe da influência inimiga.
-- Não tem missão: o anchor é um desired state, mantido com histerese.
-- Apesar do nome, ele ainda não faz "controle de mapa" no sentido do SC2 (visão, presença, negar
-  expansões). Ele escolhe um ponto de espera.
+- O anchor é um desired state, mantido com histerese; contra Zerg, governa também a missão `remove_creep`.
+- Além do ponto de espera, remove creep em regiões seguras usando um Raven com escolta.
 
 ## Entradas e saídas
 
@@ -191,3 +190,39 @@ Medidas nos logs de `comp-eficacia` e na partida contra o PhantomBot (`logs/game
   `Ground` (distâncias por terra), `evaluate` (candidatos), `StagingPolicy` (score e histerese).
 - [bot/attention/topology.py](../../bot/attention/topology.py) e
   [bot/awareness/field.py](../../bot/awareness/field.py): a topologia e o campo que ele lê.
+
+## Missão `remove_creep`
+
+Abre somente com `attention.enemy_race == Zerg`, inclusive quando um Random revela sua raça.
+A missão pede à Economy um total de **1 Raven**, desde a abertura, independente das proporções
+BIO/MECH. Unidades em produção contam nesse total; a perda do detector reabre a demanda.
+As aberturas `BioThreeOneOneRaven` e `MechHellionTankRaven` treinam o Raven no primeiro Starport
+com Tech Lab. BIO compra o detector antes dos Medivacs. Se o oponente começou como Random,
+`RequestedUnits` atende o pedido durante a abertura a partir da Factory; depois da abertura,
+o mesmo executor repõe o Raven e constrói a tecnologia necessária. Em DEFEND, não abre tecnologia.
+
+O squad pede **2 Hellions**, quando disponíveis, ou **4 Marines + 1 Medivac**. Pelo menos 2 escoltas
+são necessárias para sair. O Engine continua sendo o único dono das unidades; a missão lê os grants
+anteriores para planejar e o Body confere o squad efetivamente concedido no frame atual. A escolta
+tem prioridade −0,5: Defense e Offense podem retomá-la. O Raven tem prioridade 0,05 e permanece
+com a missão, que o recolhe ao anchor quando fica sem escolta.
+
+Fases: `ASSEMBLE`, `CLEAR`, `RETREAT`, `WAIT`. Awareness fornece `regions`, ordenadas por
+`creep + control − 2 · threat`, com os pontos observados de creep. A missão escolhe apenas regiões
+com ameaça ≤ 0,25 e caminho aberto sem região perigosa; exclui a região do start inimigo.
+Começa pela borda próxima de casa, mantém uma região segura enquanto procura seus pontos,
+e revisita pontos já vasculhados após 30 segundos. Sem creep seguro, libera a escolta e espera.
+
+`REMOVE_CREEP` é executado para o squad completo, reunindo as partes concedidas ao mesmo
+`mission_id`. Só ataca tumores visíveis e detectados; o Raven acompanha a escolta e o Medivac
+cura Marines feridos. Movimento usa os grids de perigo do Ares. Inimigos a 15 células de qualquer
+membro fazem todos fugir, mesmo que um tumor esteja ao alcance. A missão também considera contatos
+lembrados pela Awareness, recua em DEFEND/RECOVER e espera 8 segundos antes de tentar sair outra vez.
+Não solicita scans para revelar tumores. Se Offense toma a escolta no mesmo frame, o Raven volta
+para o anchor, sem avançar sozinho.
+
+O lifecycle e as fases aparecem em `mission.updated`; a demanda por Raven aparece em
+`planner.economy_planned.unit_requests`. Os targets e grants usam os eventos normais do Engine.
+
+Código: `missions/remove_creep.py`, `bot/awareness/regions.py` e
+`bot/body/behaviors/remove_creep.py`. Os parâmetros ficam em `MapControlConfig.remove_creep`.

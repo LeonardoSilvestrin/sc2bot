@@ -453,7 +453,7 @@ def test_a_cancelled_attack_commands_nothing_in_the_frame_its_units_move_on() ->
     granted = {tag for grant in cancelled.result.grants for tag in grant.tags}
     assert set(commanded) <= granted
     # The raid opened a defense mission in the same frame the attack was cancelled.
-    assert {view.owner for view in cancelled.missions} == {"defense", OWNER}
+    assert {view.owner for view in cancelled.missions} == {"defense", OWNER, "map_control"}
     (view,) = [view for view in cancelled.missions if view.owner == OWNER]
     assert (view.mission_id, view.status, view.reason) == (
         "offense:main_attack:1",

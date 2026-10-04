@@ -44,6 +44,7 @@ from dataclasses import dataclass
 
 from ares.behaviors.macro import (
     AutoSupply,
+    BuildStructure,
     BuildWorkers,
     ExpansionController,
     GasBuildingController,
@@ -51,12 +52,14 @@ from ares.behaviors.macro import (
     Mining,
     ProductionController,
     SpawnController,
+    TechUp,
     UpgradeCCs,
     UpgradeController,
 )
 from ares.behaviors.macro.macro_behavior import MacroBehavior
 from ares.consts import UnitRole
 from sc2.dicts.unit_research_abilities import RESEARCH_INFO
+from sc2.dicts.unit_trained_from import UNIT_TRAINED_FROM
 from sc2.dicts.upgrade_researched_from import UPGRADE_RESEARCHED_FROM
 from sc2.ids.ability_id import AbilityId
 from sc2.ids.unit_typeid import UnitTypeId
@@ -65,6 +68,7 @@ from sc2.ids.upgrade_id import UpgradeId
 from bot.attention import AttentionState
 from bot.body.engine import EngineResult
 from bot.ego.economy import EconomyPlan
+from bot.ego.economy.contracts import UnitRequest
 
 # SpawnController's guard against an empty army in its share test.
 _EMPTY_ARMY = 1e-16
@@ -105,9 +109,11 @@ def add_add_on(
     ]
     if not free:
         return None
-    wanted = reactor if len(structures[reactor]) + 1 <= reactor_share * len(
-        structures[structure]
-    ) else techlab
+    wanted = (
+        reactor
+        if len(structures[reactor]) + 1 <= reactor_share * len(structures[structure])
+        else techlab
+    )
     if not bot.can_afford(wanted):
         return None
     building = min(free, key=lambda item: item.tag)
@@ -145,6 +151,95 @@ class ExactResearch(MacroBehavior):
                 min(idle, key=lambda structure: structure.tag)(ability)
                 return True
         return False
+
+
+@dataclass
+class RequestedUnits(MacroBehavior):
+    """Buy fixed mission totals, including queued units, outside the army mix.
+
+    A Raven needs an attached Starport Tech Lab. A reactor-only air production
+    line gets one additional Starport, rather than replacing its reactors.
+    """
+
+    requests: tuple[UnitRequest, ...]
+    ignored: frozenset[int] = frozenset()
+    allow_tech: bool = True
+    preserve_opening: bool = False
+
+    def execute(self, ai, config, mediator) -> bool:
+        totals: dict[UnitTypeId, int] = {}
+        for request in self.requests:
+            totals[request.type_id] = max(totals.get(request.type_id, 0), request.count)
+        for kind, total in totals.items():
+            missing = total - mediator.get_own_unit_count(unit_type_id=kind)
+            if missing <= 0:
+                continue
+            if kind is UnitTypeId.RAVEN and self.allow_tech:
+                all_ports = mediator.get_own_structures_dict[UnitTypeId.STARPORT]
+                # A Random opening may still be about to put a Reactor on its
+                # first Starport. Let that step finish before adding Raven tech.
+                if self.preserve_opening and (
+                    not all_ports or not min(all_ports, key=lambda p: p.tag).has_add_on
+                ):
+                    continue
+                ports = [p for p in all_ports if p.tag not in self.ignored]
+                if all_ports and not ports:
+                    continue
+                lab_ports = [p for p in ports if getattr(p, "has_techlab", False)]
+                if not lab_ports:
+                    bare = [p for p in ports if p.is_ready and p.is_idle and not p.has_add_on]
+                    if bare:
+                        if ai.can_afford(UnitTypeId.STARPORTTECHLAB):
+                            min(bare, key=lambda p: p.tag).build(UnitTypeId.STARPORTTECHLAB)
+                        return True
+                    if ports and all(p.has_add_on for p in ports):
+                        if not ai.structure_pending(UnitTypeId.STARPORT):
+                            if ai.can_afford(UnitTypeId.STARPORT):
+                                return BuildStructure(
+                                    ai.start_location, UnitTypeId.STARPORT, to_count=len(ports) + 1
+                                ).execute(ai, config, mediator)
+                            return True
+                        continue
+                    if ports:
+                        # Wait for a bare port to finish construction/training.
+                        # TechUp does not know the lifting exclusions.
+                        continue
+            if ai.tech_ready_for_unit(kind):
+                sources = ai.get_build_structures(
+                    UNIT_TRAINED_FROM[kind], kind, {}, set(self.ignored)
+                )
+                if not sources:
+                    continue
+                if not ai.can_afford(kind) or ai.supply_left < ai.calculate_supply_cost(kind):
+                    return True
+                return SpawnController(
+                    {kind: {"proportion": 1.0, "priority": 0}},
+                    freeflow_mode=True,
+                    maximum=missing,
+                    ignored_build_from_tags=set(self.ignored),
+                ).execute(ai, config, mediator)
+            if kind is UnitTypeId.RAVEN and mediator.get_own_structures_dict[UnitTypeId.STARPORT]:
+                continue
+            if self.allow_tech and TechUp(kind, base_location=ai.start_location).execute(
+                ai, config, mediator
+            ):
+                return True
+        return False
+
+
+def requested_producers(bot, requests: tuple[UnitRequest, ...]) -> frozenset[int]:
+    """Keep a requested type's producers out of ordinary spawning this frame."""
+    reserved = set()
+    for request in requests:
+        if bot.mediator.get_own_unit_count(unit_type_id=request.type_id) >= request.count:
+            continue
+        for source in UNIT_TRAINED_FROM[request.type_id]:
+            for structure in bot.mediator.get_own_structures_dict[source]:
+                if request.type_id is not UnitTypeId.RAVEN or (
+                    not structure.has_add_on or getattr(structure, "has_techlab", False)
+                ):
+                    reserved.add(structure.tag)
+    return frozenset(reserved)
 
 
 @dataclass(frozen=True, slots=True)
@@ -186,13 +281,30 @@ def execute(
             runner.set_build_completed()
     bot.register_behavior(Mining())
     if not plan.active:
+        runner = getattr(bot, "build_order_runner", None)
+        # Known Zerg openings already order their early Raven. For a Random
+        # opponent revealed as Zerg, start the request once Factory tech exists.
+        scripted = str(getattr(runner, "chosen_opening", "")).endswith("Raven")
+        if (
+            plan.unit_requests
+            and not scripted
+            and (bot.mediator.get_own_structures_dict[UnitTypeId.FACTORY])
+        ):
+            bot.register_behavior(
+                RequestedUnits(plan.unit_requests, ignored=lifting, preserve_opening=True)
+            )
         return SpawnMode(freeflow=False, reason="plan_inactive")
     spawn = spawn_mode(bot, plan)
     composition = {
         unit_type: {"proportion": proportion, "priority": priority}
         for unit_type, proportion, priority in plan.composition
     }
-    add_on = add_add_on(bot, plan.addons_on, plan.reactor_share, lifting) if plan.addons else None
+    reserved = requested_producers(bot, plan.unit_requests)
+    add_on = (
+        add_add_on(bot, plan.addons_on, plan.reactor_share, lifting | reserved)
+        if plan.addons
+        else None
+    )
     # Ares' MacroPlan stops at the first behavior that acts, and the
     # SpawnController acts whenever production is idle: whatever should not
     # wait for the army to stop growing goes before it.
@@ -205,6 +317,8 @@ def execute(
     macro.add(GasBuildingController(to_count=plan.gas))
     if plan.expand:
         macro.add(ExpansionController(to_count=plan.bases))
+    if plan.unit_requests:
+        macro.add(RequestedUnits(plan.unit_requests, ignored=lifting, allow_tech=not plan.freeflow))
     if plan.upgrades:
         macro.add(ExactResearch(plan.upgrades))
         macro.add(UpgradeController(list(plan.upgrades), base_location=bot.start_location))
@@ -212,7 +326,8 @@ def execute(
         SpawnController(
             composition,
             freeflow_mode=spawn.freeflow,
-            ignored_build_from_tags=set(lifting) | (set() if add_on is None else {add_on}),
+            ignored_build_from_tags=set(lifting | reserved)
+            | (set() if add_on is None else {add_on}),
         )
     )
     # Only in a frame the SpawnController did not act: on its own it would add

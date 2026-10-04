@@ -883,6 +883,7 @@ class Telemetry:
             economy.addons_on,
             round(economy.reactor_share, 2),
             economy.army,
+            economy.unit_requests,
             # The mix slides every frame the belief decays: a change of a
             # whole percent is news.
             tuple(
@@ -910,6 +911,11 @@ class Telemetry:
             now,
             {
                 "active": economy.active,
+                "unit_requests": [
+                    {"type": request.type_id.name, "count": request.count,
+                     "owner": request.owner, "reason": request.reason}
+                    for request in economy.unit_requests
+                ],
                 "workers": economy.workers,
                 "gas": economy.gas,
                 "bases": economy.bases,

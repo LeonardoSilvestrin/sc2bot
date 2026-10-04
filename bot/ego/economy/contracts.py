@@ -14,6 +14,20 @@ from sc2.ids.upgrade_id import UpgradeId
 
 
 @dataclass(frozen=True, slots=True)
+class UnitRequest:
+    """A mission's desired total, including production; independent of army mix."""
+
+    type_id: UnitTypeId
+    count: int
+    owner: str
+    reason: str
+
+    def __post_init__(self) -> None:
+        if self.count < 1:
+            raise ValueError("a unit request must ask for at least one unit")
+
+
+@dataclass(frozen=True, slots=True)
 class EnemyShare:
     """One enemy unit type as the composition policy believes in it."""
 
@@ -100,3 +114,4 @@ class EconomyPlan:
     army: str = "bio"
     # Explanation of how the final composition was obtained.
     composition_plan: CompositionPlan | None = None
+    unit_requests: tuple[UnitRequest, ...] = ()

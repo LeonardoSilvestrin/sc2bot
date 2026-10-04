@@ -19,10 +19,10 @@ only for what Ares' macro behaviors should buy.
   race's army is believed to be made of before any of it is seen.
 """
 
-from .contracts import CompositionPlan, EconomyPlan, EnemyShare, SurvivalComposition
+from .contracts import CompositionPlan, EconomyPlan, EnemyShare, SurvivalComposition, UnitRequest
 from .knowledge.combat import CombatModel
 from .knowledge.styles import ArmyStyle
-from .planner import plan
+from .planner import opening_for, plan
 from .policies.composition import CompositionConfig, CompositionPolicy
 from .policies.investment import InvestmentConfig
 
@@ -36,5 +36,7 @@ __all__ = [
     "EnemyShare",
     "InvestmentConfig",
     "SurvivalComposition",
+    "UnitRequest",
     "plan",
+    "opening_for",
 ]

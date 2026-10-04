@@ -15,6 +15,7 @@ from .opening import (
     expectations_for,
     read_opening,
 )
+from .regions import RegionControl
 
 __all__ = [
     "AwarenessConfig",
@@ -26,6 +27,7 @@ __all__ = [
     "EnemyArmyConfig",
     "EnemyArmyFilter",
     "InfluenceField",
+    "RegionControl",
     "OpeningBelief",
     "OpeningBeliefConfig",
     "OpeningExpectations",
