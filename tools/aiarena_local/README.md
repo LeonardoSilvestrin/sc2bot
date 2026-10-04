@@ -1,5 +1,8 @@
 # Partidas locais AI Arena
 
+Adversário competitivo disponível nesta máquina: **PhantomBot 3.48.1**.
+Veja [o guia para jogar contra ele](PHANTOMBOT.md), incluindo a pendência de SVM na BIOS.
+
 Infraestrutura separada de `bench.py`, `harness/`, `run.py` e do ambiente `.venv`.
 O wrapper usa o Compose e os controllers oficiais de
 [aiarena/local-play-bootstrap](https://github.com/aiarena/local-play-bootstrap),

@@ -1,5 +1,10 @@
 # Propostas para evoluir o bot
 
+> **Revisão atual de bots open source (03/10/2026):** veja
+> [bots-opensource.md](bots-opensource.md), com fontes em commits fixos,
+> comparação com o código atual e propostas OS1–OS10. A análise histórica
+> abaixo permanece como registro; várias das lacunas originais já foram resolvidas.
+
 > Análise realizada em 14 de setembro de 2026 sobre o commit `483722e`
 > (`botbandido`) e o submódulo Ares `v3.13.1`, commit `8730865` de 5 de
 > setembro de 2026.

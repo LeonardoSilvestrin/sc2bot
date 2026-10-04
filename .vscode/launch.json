@@ -61,6 +61,8 @@
         "run",
         "--out",
         "${workspaceFolder}\\bench\\${input:benchLabel}",
+        "--matrix",
+        "base",
         "--maps",
         "${input:benchMap}",
         "--races",
@@ -127,6 +129,7 @@
         "TorchesAIE_v4",
         "IncorporealAIE_v4",
         "PylonAIE_v4",
+        "LeyLinesAIE_v3",
         "MagannathaAIE_v2",
         "UltraloveAIE_v2"
       ],

@@ -80,6 +80,7 @@ sem o jogo. Fórmulas, eventos de log e parâmetros estão em
 | [docs/architecture.md](docs/architecture.md) | Camadas, matemática, eventos, comandos, o que falta e as medições |
 | [docs/staging/](docs/staging/README.md) | Trabalho em andamento, medições pendentes e histórico dos designs |
 | [docs/propostas.md](docs/propostas.md) | O que aprender de outros bots (Ares, PiG, Sajuuk, Sharky, MicroMachine, Sharpy) e o roadmap P0–P2 |
+| [docs/bots-opensource.md](docs/bots-opensource.md) | Pesquisa de 03/10: implementações verificadas em bots open source, aplicação no código atual e prioridades OS1–OS10 |
 | [docs/novas_propostas.md](docs/novas_propostas.md) | Revisão de 18/09: benchmark, builds, Strategy, informação, micro, ofensiva (N1–N8) |
 | [docs/melhorias_propostas_eco.md](docs/melhorias_propostas_eco.md) | Revisão de 18/09 da economia e da composição (E1–E9) |
 | [docs/gaps.md](docs/gaps.md) | Achados de revisão do código: calculado sem uso, fallbacks, legado, inconsistências |

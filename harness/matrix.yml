@@ -43,8 +43,8 @@ defaults:
 
 matrix:
   - {race: Zerg,    strategy: Rush,        map: TorchesAIE_v4}
-  - {race: Zerg,    strategy: Macro,       map: random}
-  - {race: Zerg,    strategy: RandomBuild, map: random}
+  - {race: Zerg,    strategy: Macro,       map: TorchesAIE_v4}
+  - {race: Zerg,    strategy: RandomBuild, map: TorchesAIE_v4}
   - {race: Terran,  strategy: Rush,        map: TorchesAIE_v4}
   - {race: Terran,  strategy: Macro,       map: random}
   - {race: Terran,  strategy: RandomBuild, map: random}
