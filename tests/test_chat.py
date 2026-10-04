@@ -28,13 +28,16 @@ def layers(
     emergency=False,
     opening=None,
     cloak=None,
+    early_game=1.0,
 ):
     state = frame(time)
     awareness = AWARENESS.infer(state)
+    # Set, not inferred: the model is shared, and the early game never returns.
     awareness = replace(
         awareness,
         opening=opening or OpeningBelief(),
         cloak_seen_at=cloak,
+        early_game=early_game,
     )
     intent = replace(STRATEGY.decide(state, awareness), posture=posture, emergency=emergency)
     return state, awareness, intent
@@ -53,6 +56,17 @@ def test_the_bot_says_it_is_being_rushed_when_it_turns_to_defend() -> None:
     assert chat.drain() == (("rushed", LINES["rushed"][0]),)
     # And what was drained is gone.
     assert chat.drain() == ()
+
+
+def test_a_defense_after_the_early_game_is_an_attack_not_a_rush() -> None:
+    # Seen in games: "I'm getting rushed!" at ten minutes, on six bases.
+    chat = Chat(ChatConfig(gap=0.0, topic_cooldown=0.0))
+    observe(chat, 10.0)
+
+    assert observe(chat, 300.0, posture=StrategicPosture.DEFEND, early_game=0.4) == ["rushed"]
+    observe(chat, 310.0, early_game=0.3)
+    assert observe(chat, 600.0, posture=StrategicPosture.DEFEND, early_game=0.0) == ["attacked"]
+    assert [line for _, line in chat.drain()][-1] == LINES["attacked"][0]
 
 
 def test_every_posture_has_something_to_say_and_repeats_itself_differently() -> None:

@@ -111,7 +111,7 @@ class Game:
         plan = self.offense.plan(frame, awareness, strategy, held.anchor, self.feedback)
         self.feedback = self.engine.allocate(
             frame,
-            self.defense.plan(frame, awareness, strategy, self.feedback)
+            self.defense.plan(frame, awareness, strategy, self.feedback).proposals
             + held.proposals
             + plan.proposals,
         )
@@ -316,7 +316,7 @@ def test_defense_takes_what_an_incident_needs_and_the_offense_the_rest() -> None
         701.0, army=army, enemies=zerglings(1), supply=MAXED
     )
     proposals = (
-        DefensePlanner().plan(frame, awareness, strategy)
+        DefensePlanner().plan(frame, awareness, strategy).proposals
         + map_control.MapControlPlanner().plan(frame, awareness, strategy).proposals
         + plan.proposals
     )

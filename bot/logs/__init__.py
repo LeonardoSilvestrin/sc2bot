@@ -19,10 +19,12 @@ from bot.awareness import AwarenessState
 from bot.body.behaviors.attack import MicroReport
 from bot.body.behaviors.detection import DetectionReport
 from bot.body.behaviors.economy import SpawnMode
+from bot.body.behaviors.fortify import FortifyReport
 from bot.body.behaviors.sensor_towers import SensorTowerReport
 from bot.body.engine import EngineResult
 from bot.ego.economy import EconomyPlan
 from bot.ego.planners import (
+    FortificationPlan,
     IntelPlan,
     MissionView,
     Proposal,
@@ -141,6 +143,8 @@ class Logs:
         tower_building: SensorTowerReport | None = None,
         infrastructure: tuple[str, ...] = (),
         missions: Sequence[MissionView] = (),
+        fortification: FortificationPlan | None = None,
+        fortified: FortifyReport | None = None,
     ) -> None:
         started = perf_counter()
         self.logger.begin_frame(attention.iteration)
@@ -163,6 +167,8 @@ class Logs:
                 tower_building=tower_building,
                 infrastructure=infrastructure,
                 missions=missions,
+                fortification=fortification,
+                fortified=fortified,
             )
             self.snapshots.capture(attention, awareness, intent, map_control, result)
             self.overlay.render(bot, attention, awareness, intent, map_control, result)

@@ -2,9 +2,10 @@
 
 A fourth observer of the frame, beside the event log, the snapshots and the
 overlay: it reads the layers and says, in one line, what the bot is thinking --
-that it is being rushed, that the opening it scouted looks like an all-in, that
-it saw something cloaked. Like every observer here, it may not change a
-decision and may not drop a match.
+that it is being rushed (only while Awareness says the early game is not
+over: later the same posture is an attack, not a rush), that the opening it
+scouted looks like an all-in, that it saw something cloaked. Like every
+observer here, it may not change a decision and may not drop a match.
 
 It is deliberately quiet: one line at a time, `gap` seconds apart, a topic
 never repeated before `topic_cooldown`, and at most `max_lines` in a game. The
@@ -48,6 +49,7 @@ class ChatConfig:
 # repeated topic sounds different without anything random.
 LINES: dict[str, tuple[str, ...]] = {
     "rushed": ("I'm getting rushed!", "Company at my place again."),
+    "attacked": ("Under attack at home.", "Company at my place."),
     "emergency": ("Emergency at home!",),
     "pressure": ("Time to lean on them a bit.", "Taking a stroll on your half."),
     "commit": ("I'm going in with everything.", "Here we go."),
@@ -102,6 +104,8 @@ class Chat:
         if intent.posture is not self._posture:
             previous, self._posture = self._posture, intent.posture
             topic = _BY_POSTURE.get(intent.posture)
+            if topic == "rushed" and awareness.early_game <= 0.0:
+                topic = "attacked"
             # Nothing to announce about the posture the game opens in.
             if topic is not None and previous is not None:
                 said.append(self.say(topic, now))

@@ -2,7 +2,8 @@
 
 Unit commands use only granted actors. Direct plans may select equivalent
 structures and builders locally. Execution preserves the received intent.
-Scans precede MULEs; their actual actor tags prevent conflicting orders.
+Scans precede MULEs; their actual actor tags prevent conflicting orders. The
+defense's Bunker is asked for before the economy spends the frame's minerals.
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from bot.body.engine import EngineResult
 from bot.ego.economy import EconomyPlan
 from bot.ego.planners import (
     Command,
+    FortificationPlan,
     IntelPlan,
     StructurePlan,
 )
@@ -23,8 +25,11 @@ from . import (
     attack,
     detection,
     economy,
+    fortify,
+    garrison,
     hold,
     intel,
+    repair,
     retreat,
     scout,
     sensor_towers,
@@ -39,6 +44,8 @@ BY_COMMAND: dict[Command, Callable[..., attack.MicroReport | None]] = {
     Command.HOLD: hold.execute,
     Command.SCOUT: scout.execute,
     Command.RETREAT: retreat.execute,
+    Command.GARRISON: garrison.execute,
+    Command.REPAIR: repair.execute,
 }
 
 
@@ -49,6 +56,7 @@ class BodyReport:
     detection: detection.DetectionReport = detection.DetectionReport()
     sensor_towers: sensor_towers.SensorTowerReport = sensor_towers.SensorTowerReport()
     infrastructure: tuple[str, ...] = ()
+    fortified: fortify.FortifyReport = fortify.FortifyReport()
 
 
 def execute(
@@ -58,9 +66,13 @@ def execute(
     economy_plan: EconomyPlan,
     structures: StructurePlan,
     intel_plan: IntelPlan | None = None,
+    fortification: FortificationPlan | None = None,
 ) -> BodyReport:
     economy.release_workers(bot, attention, result)
     micro = command_units(bot, result)
+    fortified = fortify.FortifyReport()
+    if fortification is not None:
+        fortified = fortify.execute(bot, fortification)
     detected = detection.DetectionReport()
     reserve = 0.0
     if intel_plan is not None:
@@ -80,7 +92,7 @@ def execute(
         lifting=frozenset(structures.lift),
     )
     structure_control.execute(bot, structures)
-    return BodyReport(spawn, micro, detected, towers, infrastructure)
+    return BodyReport(spawn, micro, detected, towers, infrastructure, fortified)
 
 
 def command_units(bot, result: EngineResult) -> attack.MicroReport:

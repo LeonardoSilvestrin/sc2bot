@@ -45,7 +45,7 @@ def frame_layers(time: float = 0.0):
     awareness = AwarenessModel().infer(frame)
     strategy = StrategyModel().decide(frame, awareness)
     held = map_control.MapControlPlanner().plan(frame, awareness, strategy)
-    proposals = DefensePlanner().plan(frame, awareness, strategy) + held.proposals
+    proposals = DefensePlanner().plan(frame, awareness, strategy).proposals + held.proposals
     return frame, awareness, strategy, held, Engine().allocate(frame, proposals)
 
 

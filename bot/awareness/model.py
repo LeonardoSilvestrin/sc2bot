@@ -83,6 +83,12 @@ class AwarenessConfig:
     structure_presence: float = 0.5
     # How the enemy's opening is read; see bot/awareness/opening.
     opening: OpeningBeliefConfig = field(default_factory=OpeningBeliefConfig)
+    # The early game is whole until `early_game_until`, falls linearly and is
+    # over at `early_game_over` -- or at once when we stand on
+    # `early_game_bases` bases, whichever comes first. It never comes back.
+    early_game_until: float = 240.0
+    early_game_over: float = 420.0
+    early_game_bases: int = 3
 
     def __post_init__(self) -> None:
         for name in (
@@ -106,6 +112,10 @@ class AwarenessConfig:
         # What was produced includes what is alive.
         if self.production_memory < self.army_memory:
             raise ValueError("production_memory must not be shorter than army_memory")
+        if self.early_game_over <= self.early_game_until:
+            raise ValueError("early_game_over must come after early_game_until")
+        if self.early_game_bases < 1:
+            raise ValueError("early_game_bases must be at least 1")
 
 
 @dataclass(frozen=True, slots=True)
@@ -226,6 +236,9 @@ class AwarenessState:
     produced_enemy_types: tuple[tuple[UnitTypeId, float], ...] = ()
     # What the enemy's opening looks like, from what the early game showed.
     opening: OpeningBelief = OpeningBelief()
+    # How much of the early game is left, in [0, 1]: 1 at the start, 0 once it
+    # is over, and it never rises. Only an early attack is a rush.
+    early_game: float = 1.0
 
     @property
     def estimated_enemy_power(self) -> float:
@@ -290,6 +303,7 @@ class AwarenessModel:
         # seen, by tag, dead or alive.
         self._produced: dict[int, tuple[float, float, UnitTypeId]] = {}
         self._cloak_seen_at: float | None = None
+        self._early_game = 1.0
         self._enemy_army = EnemyArmyFilter(self.config.enemy_army)
         # Last frame's incidents: (id, member tags, lowest member tag).
         self._incident_members: tuple[tuple[str, frozenset[int], int], ...] = ()
@@ -349,7 +363,21 @@ class AwarenessModel:
             seen_enemy_types=seen_types,
             produced_enemy_types=produced_types,
             opening=read_opening(attention.enemy_opening, attention.time, self.config.opening),
+            early_game=self._remember_early_game(attention),
         )
+
+    def _remember_early_game(self, attention: AttentionState) -> float:
+        """The game only moves forward: an early game that is over stays
+        over, whatever bases are lost and however the clock is read."""
+
+        config = self.config
+        left = (config.early_game_over - attention.time) / (
+            config.early_game_over - config.early_game_until
+        )
+        if len(attention.bases) >= config.early_game_bases:
+            left = 0.0
+        self._early_game = min(self._early_game, max(0.0, min(1.0, left)))
+        return self._early_game
 
     def _remember(self, attention: AttentionState) -> tuple[Contact, ...]:
         config = self.config

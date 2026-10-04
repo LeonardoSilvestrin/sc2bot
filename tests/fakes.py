@@ -226,6 +226,10 @@ class FakeUnit:
         burrowed: bool = False,
         revealed: bool = False,
         memory: bool = False,
+        cargo_used: int = 0,
+        cargo_max: int = 0,
+        mechanical: bool | None = None,
+        orders=(),
     ) -> None:
         # An older frame's object: Ares lists the enemies it remembers out of
         # sight among the enemy units, as the snapshot it took.
@@ -256,6 +260,18 @@ class FakeUnit:
         self.can_attack_air = dps > 0.0 and not structure
         self.is_structure = structure
         self.is_visible = visible
+        # A Bunker's slots, as python-sc2 counts them.
+        self.cargo_used = cargo_used
+        self.cargo_max = cargo_max
+        # What an SCV can repair: our structures, and mechanical units.
+        self.is_mechanical = structure if mechanical is None else mechanical
+        # What the unit is doing, as python-sc2's `UnitOrder`s: `.target` is a
+        # tag or a point.
+        self.orders = list(orders)
+
+    @property
+    def cargo_left(self) -> int:
+        return self.cargo_max - self.cargo_used
 
     @property
     def health_percentage(self) -> float:

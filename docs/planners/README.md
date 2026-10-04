@@ -7,7 +7,7 @@ ele decide, como decide e o que ainda falta. Todos descrevem o código do HEAD. 
 | Documento | Pergunta que responde | Pede unidades ao Engine? |
 | --- | --- | --- |
 | [Strategy](strategy.md) | Como está a partida, e o que o bot quer agora? (não é planner: é o contexto que todos leem) | Não |
-| [Defense](defense.md) | Quem está atacando uma base nossa, e quanto exército mandar? | Sim, prioridade > 0 |
+| [Defense](defense.md) | Quem está atacando uma base nossa, e quanto exército mandar? E onde segurar um rush? | Sim, prioridade > 0; o Bunker por plano direto |
 | [Offense](offense.md) | Atacar agora? E, durante o ataque, avançar, lutar ou recuar? | Sim, prioridade 0 |
 | [MapControl](map-control.md) | Onde espera o exército que ninguém está usando? | Sim, prioridade −1 |
 | [Intel](intel.md) | O que precisamos ver, e com o quê (scout, scan, torre)? | Só um SCV |
@@ -42,7 +42,7 @@ Attention ──▶ Awareness ──▶ Strategy ──▶ StrategicIntent (post
   próximas. Devolve um **Grant** por proposta, com `status` `FULL`, `PARTIAL` ou `REJECTED`.
 - **Feedback**: os grants de um frame são lidos pelos planners no frame seguinte. Não há laço dentro do
   frame.
-- **Plano direto**: Economy, StructureControl e a parte de detecção do Intel não pedem unidades. Eles
+- **Plano direto**: Economy, StructureControl, a parte de detecção do Intel e o Bunker da Defense não pedem unidades. Eles
   entregam um plano que os behaviors executam (pelo Ares, na maior parte).
 
 ## Quem pede o quê
@@ -50,6 +50,7 @@ Attention ──▶ Awareness ──▶ Strategy ──▶ StrategicIntent (post
 | Quem | Pede | Prioridade | Comando |
 | --- | --- | --- | --- |
 | Defense | poder suficiente para cada incidente, separado em ar e terra | `ameaça · (0,5 + 0,5·defense)`, entre 0 e 1 | `ATTACK` |
+| Defense (rush) | Marines para as vagas do Bunker; SCVs para repará-lo | 1,0 | `GARRISON`, `REPAIR` |
 | Offense | todas as unidades livres | 0 | `ATTACK` ou `RETREAT` |
 | MapControl | todas as unidades livres (o que sobrou) | −1 | `HOLD` |
 | Intel | 1 SCV (só workers; não disputa exército) | 0,5 a 1,0, pela fase do scout | `SCOUT` |

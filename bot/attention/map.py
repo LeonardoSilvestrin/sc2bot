@@ -58,6 +58,9 @@ class MapView:
     tower_sites: tuple[tuple[Point2, tuple[Point2, ...]], ...] = ()
     # Per expansion, the same for a 3x3 structure and its add-on.
     base_production_sites: tuple[tuple[Point2, tuple[Point2, ...]], ...] = ()
+    # The 3x3 centres Ares solved for a Bunker, as its own keys: one in front
+    # of our natural.
+    bunker_sites: tuple[Point2, ...] = ()
     # The expansions as each side would take them, natural first: Ares' ground
     # path distance from that start. Empty falls back to straight distance.
     own_expansion_order: tuple[Point2, ...] = ()
@@ -160,6 +163,7 @@ def read_map(bot, *, lattice_spacing: int = 4) -> MapView:
         production_sites=_production_sites(bot),
         tower_sites=_tower_sites(bot),
         base_production_sites=_base_production_sites(bot),
+        bunker_sites=_bunker_sites(bot),
         own_expansion_order=_expansion_order(bot, "get_own_expansions"),
         enemy_expansion_order=_expansion_order(bot, "get_enemy_expansions"),
     )
@@ -389,6 +393,20 @@ def _base_production_sites(bot) -> tuple[tuple[Point2, tuple[Point2, ...]], ...]
                 for base, sizes in _placements(bot).items()
             ),
             key=lambda item: (item[0].x, item[0].y),
+        )
+    )
+
+
+def _bunker_sites(bot) -> tuple[Point2, ...]:
+    return tuple(
+        sorted(
+            (
+                site
+                for sizes in _placements(bot).values()
+                for site, info in sizes.get(BuildingSize.THREE_BY_THREE, {}).items()
+                if info.get("bunker", False)
+            ),
+            key=lambda point: (point.x, point.y),
         )
     )
 

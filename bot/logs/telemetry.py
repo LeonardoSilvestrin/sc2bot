@@ -21,12 +21,14 @@ from bot.awareness import AwarenessState, EnemyArmyBelief
 from bot.body.behaviors.attack import MicroReport
 from bot.body.behaviors.detection import DetectionReport
 from bot.body.behaviors.economy import SpawnMode
+from bot.body.behaviors.fortify import FortifyReport
 from bot.body.behaviors.sensor_towers import SensorTowerReport
 from bot.body.engine import EngineResult, rank
 from bot.ego.economy import EconomyPlan
 from bot.ego.planners import (
     DetectionPlan,
     EarlyScoutReport,
+    FortificationPlan,
     IntelPlan,
     MissionView,
     Proposal,
@@ -66,6 +68,7 @@ class Telemetry:
         self._escorts = ChangeGate()
         self._structures = ChangeGate()
         self._detection = ChangeGate()
+        self._fortification = ChangeGate()
         self._sensor_towers = ChangeGate()
         self._opening = ChangeGate(heartbeat=heartbeat)
         self._scout = ChangeGate()
@@ -216,6 +219,8 @@ class Telemetry:
         tower_building: SensorTowerReport | None = None,
         infrastructure: tuple[str, ...] = (),
         missions: Sequence[MissionView] = (),
+        fortification: FortificationPlan | None = None,
+        fortified: FortifyReport | None = None,
     ) -> None:
         self._record_attention(attention)
         self._record_opening_facts(attention)
@@ -230,6 +235,10 @@ class Telemetry:
         self._record_spawn(attention.time, spawn)
         self._record_micro(attention.time, micro)
         self._record_structures(attention.time, structures)
+        if fortification is not None:
+            self._record_fortification(
+                attention.time, fortification, fortified or FortifyReport()
+            )
         if intel is not None:
             if intel.scout is not None:
                 self._record_scout(attention.time, intel.scout)
@@ -433,6 +442,32 @@ class Telemetry:
             },
         )
 
+    def _record_fortification(
+        self, now: float, plan: FortificationPlan, fortified: FortifyReport
+    ) -> None:
+        # A Bunker Ares has not started is asked again every frame: it is
+        # written when what is asked changes. An unload is a decision.
+        signature = (plan.bunkers, plan.reason, fortified.building)
+        changed = self._fortification.admit(signature, now=now)
+        if not changed and not fortified.unloaded:
+            return
+        self._event(
+            "planner.fortification_planned",
+            "planners",
+            now,
+            {
+                "bunkers": [
+                    {"site_id": site.site_id, "base": _xy(site.base), "near": _xy(site.near)}
+                    for site in plan.bunkers
+                ],
+                "unload": list(plan.unload),
+                "building": list(fortified.building),
+                "unloaded": list(fortified.unloaded),
+                "reason": plan.reason,
+                "inputs": dict(plan.inputs),
+            },
+        )
+
     def _record_sensor_towers(self, now: float, plan: SensorTowerPlan) -> None:
         signature = (plan.sites, plan.engineering_bay, plan.reason)
         if not self._sensor_towers.admit(signature, now=now):
@@ -568,6 +603,8 @@ class Telemetry:
             ),
             tuple(contact.tag for contact in awareness.hidden_contacts),
             awareness.cloak_seen_at,
+            # Only its end is a fact worth writing at once.
+            awareness.early_game > 0.0,
         )
         if not self._awareness.admit(signature, now=now):
             return
@@ -594,6 +631,7 @@ class Telemetry:
                 "danger": awareness.danger,
                 "danger_now": awareness.danger_now,
                 "cloak_seen_at": awareness.cloak_seen_at,
+                "early_game": awareness.early_game,
                 "hidden_contacts": [
                     contact.tag for contact in awareness.hidden_contacts
                 ],

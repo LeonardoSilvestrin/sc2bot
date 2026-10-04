@@ -594,7 +594,7 @@ def test_each_incident_is_one_defense_mission_until_it_is_over() -> None:
         )
         awareness = awareness_model.infer(frame_)
         strategy = strategy_model.decide(frame_, awareness)
-        return planner.plan(frame_, awareness, strategy), planner.views()
+        return planner.plan(frame_, awareness, strategy).proposals, planner.views()
 
     x, y = MAIN.position
     first = (_zergling(90, x, y), _zergling(91, x + 1, y))

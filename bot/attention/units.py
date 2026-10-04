@@ -91,6 +91,10 @@ class UnitView:
     moving_to: Point2 | None = None
     # A Barracks, Factory or Starport with a Reactor or Tech Lab attached.
     has_add_on: bool = False
+    # Cargo slots taken and offered: a Bunker, or a transport. The units inside
+    # are listed nowhere else.
+    cargo_used: int = 0
+    cargo_max: int = 0
 
 
 def unit_power(dps: float, hit_points: float, targets: float = 1.0) -> float:
@@ -141,6 +145,8 @@ def unit_view(
         is_hidden=cloaked and not bool(getattr(unit, "is_revealed", False)),
         moving_to=_moving_to(unit),
         has_add_on=bool(getattr(unit, "has_add_on", False)),
+        cargo_used=int(getattr(unit, "cargo_used", 0) or 0),
+        cargo_max=int(getattr(unit, "cargo_max", 0) or 0),
     )
 
 

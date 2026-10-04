@@ -2,6 +2,8 @@
 
 - `Proposal`, with its `Command` and `Domain`: what a domain planner asks
   the Engine for.
+- `DefensePlan`: the defense's proposals and what it fortifies
+  (`FortificationPlan`, `BunkerSite`).
 - `StructurePlan`: which existing structure acts, and how (`RelocationEvent`).
 - `IntelPlan`: scouting proposals, detection and information infrastructure,
   with `EarlyScoutReport` telling where the early scout stands.
@@ -27,6 +29,10 @@ class Command(str, Enum):
     SCOUT = "SCOUT"
     # Walk back to the target without stopping to fight.
     RETREAT = "RETREAT"
+    # Get into the Bunker at the target.
+    GARRISON = "GARRISON"
+    # Repair what is damaged at the target; a worker stops mining for it.
+    REPAIR = "REPAIR"
 
 
 class Domain(str, Enum):
@@ -63,6 +69,41 @@ class Proposal:
     # missions. A mission may make several proposals, and keeps a proposal's
     # id across its phases so the Engine keeps the same units.
     mission_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class BunkerSite:
+    """A Bunker wanted at one of our bases, which has none there yet.
+
+    ``base`` is the expansion keying Ares' placement set the Bunker goes in;
+    ``near`` is the point it is placed closest to: the spot Ares solved for a
+    Bunker at the natural, or the top of the main ramp.
+    """
+
+    site_id: str
+    base: Point2
+    near: Point2
+
+
+@dataclass(frozen=True, slots=True)
+class FortificationPlan:
+    """What the defense builds and empties this frame."""
+
+    # Bunkers wanted that do not stand yet (one being built stands).
+    bunkers: tuple[BunkerSite, ...] = ()
+    # Bunkers whose garrison walks out, by tag.
+    unload: tuple[int, ...] = ()
+    reason: str = "no_rush"
+    inputs: tuple[tuple[str, float], ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class DefensePlan:
+    """Everything the defense asks this frame: units from the Engine, and
+    structures built and emptied directly."""
+
+    proposals: tuple[Proposal, ...]
+    fortification: FortificationPlan = FortificationPlan()
 
 
 @dataclass(frozen=True, slots=True)

@@ -11,10 +11,13 @@ hand the Body and what a mission is. What we buy is not a planner's: it is
 """
 
 from .common.contracts import (
+    BunkerSite,
     Command,
+    DefensePlan,
     DetectionPlan,
     Domain,
     EarlyScoutReport,
+    FortificationPlan,
     IntelPlan,
     Proposal,
     RelocationEvent,
@@ -32,12 +35,15 @@ from .common.mission import (
 )
 
 __all__ = [
+    "BunkerSite",
     "CancelMode",
     "CancelRequest",
     "Command",
+    "DefensePlan",
     "DetectionPlan",
     "Domain",
     "EarlyScoutReport",
+    "FortificationPlan",
     "IntelPlan",
     "Lifecycle",
     "MissionFeedback",

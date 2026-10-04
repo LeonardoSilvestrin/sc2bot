@@ -35,6 +35,7 @@ from bot.body import behaviors
 from bot.body.behaviors.attack import MicroReport
 from bot.body.behaviors.detection import DetectionReport
 from bot.body.behaviors.economy import SpawnMode
+from bot.body.behaviors.fortify import FortifyReport
 from bot.body.behaviors.sensor_towers import SensorTowerReport
 from bot.body.engine import Engine, EngineResult
 from bot.ego import economy
@@ -42,7 +43,13 @@ from bot.ego.economy import CombatModel, CompositionPolicy, EconomyPlan, Investm
 from bot.ego.economy.knowledge import styles
 from bot.ego.economy.knowledge.combat import default_model
 from bot.ego.economy.knowledge.styles import BIO, ArmyStyle
-from bot.ego.planners import IntelPlan, MissionView, Proposal, StructurePlan
+from bot.ego.planners import (
+    FortificationPlan,
+    IntelPlan,
+    MissionView,
+    Proposal,
+    StructurePlan,
+)
 from bot.ego.planners.defense import DefensePlanner
 from bot.ego.planners.intel import IntelPlanner
 from bot.ego.planners.map_control import MapControlPlan, MapControlPlanner
@@ -91,6 +98,7 @@ class Layers:
             "assessment": self.strategy.assessment.config,
             "map_control": self.map_control.config,
             "offense": self.offense.config,
+            "rush": self.defense.rush_config,
             "structure_control": self.structure_control.config,
             "detection": self.intel.detection.config,
             "army": self.army,
@@ -117,6 +125,9 @@ class Frame:
     tower_building: SensorTowerReport
     # Every mission a planner governed this frame, as it left the frame.
     missions: tuple[MissionView, ...] = ()
+    # What the defense built and emptied, and what the Body did of it.
+    fortification: FortificationPlan = FortificationPlan()
+    fortified: FortifyReport = FortifyReport()
 
     @property
     def detection(self):
@@ -144,7 +155,8 @@ def play_frame(bot, iteration: int, layers: Layers) -> Frame:
     # Every planner reads the same intent and serves it in its own domain.
     intent = layers.strategy.decide(attention, awareness)
     laps.mark("strategy")
-    proposals = layers.defense.plan(attention, awareness, intent, layers.feedback)
+    defense = layers.defense.plan(attention, awareness, intent, layers.feedback)
+    proposals = defense.proposals
     map_control = layers.map_control.plan(attention, awareness, intent)
     proposals += map_control.proposals
     # The offense assembles and falls back where MapControl holds the army.
@@ -173,6 +185,7 @@ def play_frame(bot, iteration: int, layers: Layers) -> Frame:
         economy_plan,
         structures,
         intel,
+        defense.fortification,
     )
     laps.mark("behaviors")
     layers.logs.record(
@@ -194,6 +207,8 @@ def play_frame(bot, iteration: int, layers: Layers) -> Frame:
         tower_building=body.sensor_towers,
         infrastructure=body.infrastructure,
         missions=missions,
+        fortification=defense.fortification,
+        fortified=body.fortified,
     )
     return Frame(
         attention,
@@ -211,6 +226,8 @@ def play_frame(bot, iteration: int, layers: Layers) -> Frame:
         body.detection,
         body.sensor_towers,
         missions,
+        defense.fortification,
+        body.fortified,
     )
 
 

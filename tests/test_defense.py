@@ -41,7 +41,7 @@ def plan(frame, *, strategy_model=None, awareness_model=None, defense_planner=No
     return (
         awareness,
         strategy,
-        (defense_planner or DefensePlanner()).plan(frame, awareness, strategy)
+        (defense_planner or DefensePlanner()).plan(frame, awareness, strategy).proposals
         + map_control.MapControlPlanner().plan(frame, awareness, strategy).proposals,
     )
 
