@@ -21,8 +21,8 @@ from bot.body.behaviors.detection import DetectionReport
 from bot.body.behaviors.economy import SpawnMode
 from bot.body.behaviors.sensor_towers import SensorTowerReport
 from bot.body.engine import EngineResult
+from bot.ego.economy import EconomyPlan
 from bot.ego.planners import (
-    EconomyPlan,
     IntelPlan,
     MissionView,
     Proposal,

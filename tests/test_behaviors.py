@@ -23,8 +23,9 @@ from bot.body import behaviors
 from bot.body.behaviors import attack
 from bot.body.behaviors import economy as economy_behavior
 from bot.body.engine import Engine
-from bot.ego.planners import Command, EconomyPlan
-from bot.ego.planners.economy.knowledge import styles
+from bot.ego.economy import EconomyPlan
+from bot.ego.economy.knowledge import styles
+from bot.ego.planners import Command
 
 from .fakes import FakeBot, FakeUnit, attention, proposal, unit
 

@@ -15,7 +15,7 @@ proposals += offense.proposals
 intel     = intel.plan(attention, awareness, intent, feedback)  EGO / IntelPlan
 proposals += intel.proposals
 missions  = defense.views() + offense.views() + intel.views()
-economy   = economy.plan(attention, intent, army, awareness=awareness, ...)
+economy   = economy.plan(attention, intent, army, awareness=awareness, ...)  EGO / economy
 structures = structure_control.plan(attention)
 result    = engine.allocate(attention, proposals)               BODY / engine
 feedback  = result                                              (lido no próximo frame)
@@ -32,7 +32,8 @@ Esta seção é a definição normativa dos papéis. Docstrings e exemplos aplic
 | Papel | Responsabilidade | Fronteira verificável |
 | --- | --- | --- |
 | Strategy | Responde "como está a partida?" (`GameAssessment`) e "o que o bot quer agora?" (`StrategicIntent`: postura, motivo, preferências contínuas e emergência), o contexto comum de todos os planners. | Não governa operações individuais, não escolhe lugar, alvo, composição, construção nem micro; cada planner traduz a postura para o seu domínio. |
-| Planner | Dono e coordenador de um domínio: decide a intenção dele a partir do estado conhecido, da postura e do feedback relevante, e junta o que suas Missions e Policies decidem. | Um único por domínio, em `planner.py`. Produz planos/propostas; não causa efeitos no jogo. Pode ser função, objeto stateless ou stateful. |
+| Planner | Dono e coordenador de um domínio: decide a intenção dele a partir do estado conhecido, da postura e do feedback relevante, e junta o que suas Missions e Policies decidem. | Um único por domínio, em `planner.py`. Decide o uso do que já existe (unidades, estruturas, energia); o que comprar é da Economy, com exceção, por enquanto, da infraestrutura do Intel. Produz planos/propostas; não causa efeitos no jogo. Pode ser função, objeto stateless ou stateful. |
+| Economy | Decide o que passa a existir: workers, bases, gás, produção, composição do exército e upgrades, num `EconomyPlan` de setpoints. | Não é um Planner: fica ao lado de `strategy/` e `planners/`, lê a postura, não pede unidades ao Engine e nenhum planner a importa. Por dentro tem a mesma forma (`planner.py`, `policies/`, `knowledge/`), sem missões. |
 | Desired state | Condição contínua que um Planner tenta manter. | Se deixar de estar satisfeita, volta a ser pedida, sem criar uma operação numerada. |
 | Mission | Conduz uma operação persistente com identidade, lifecycle próprio e término, normalmente com unidades cuja posse o Engine arbitra. | É opcional e interna ao Planner que a abre, em `missions/`; não é uma etapa obrigatória da arquitetura. |
 | Policy | Implementa uma regra de decisão interna que o Planner usa. | Pode ter estado; não tem `mission_id`, lifecycle nem `MissionView` e não pede unidades ao Engine. Fica em `policies/`. |
@@ -43,7 +44,8 @@ Esta seção é a definição normativa dos papéis. Docstrings e exemplos aplic
 **Planner owns the domain. Mission owns an operation. Policy implements a decision rule. Knowledge
 contains static domain facts.**
 
-Cada domínio em `planners/` segue, quando se aplica, a mesma forma; nem todo domínio tem todas as pastas:
+Cada domínio em `planners/`, e a `economy/`, segue, quando se aplica, a mesma forma; nem todo domínio tem
+todas as pastas:
 
 ```text
 <domínio>/
@@ -72,7 +74,7 @@ Ataque principal, scout e defesa de um incidente são episódios. Estado persist
 justifica Mission: hysteresis do anchor e cobertura já desbloqueada pertencem aos planners e às suas policies.
 
 ```text
-Attention → Awareness → GameAssessment → Strategy → StrategicIntent → Planners (um por domínio)
+Attention → Awareness → GameAssessment → Strategy → StrategicIntent → Planners (um por domínio) e Economy
                                     ├─ desired state contínuo
                                     ├─ Missions opcionais (episódios)
                                     └─ Policies (regras internas), sobre Knowledge (fatos estáticos)
@@ -116,7 +118,8 @@ MULE no mesmo frame; a reserva de energia é intenção do Intel, não política
 | AWARENESS | [bot/awareness/](../bot/awareness/) | `AwarenessState` | Pinta o mapa ao longo da partida. Memória de contatos com confiança `exp(-idade/τ)` e incerteza `min(cap, v·idade)`; esquece por morte confirmada, posição vista vazia (após carência) ou confiança < piso. Pressão por base com a ameaça lembrada (`recent_threat`, τ = `threat_memory`), incidentes de ameaça (`ThreatIncident`), o exército inimigo conhecido e visto vivo e o **observador** dele (`enemy_army.py`, `EnemyArmyBelief`: filtro de Kalman do exército e da produção por worker, com a economia acreditada — bases e workers — como entrada, as mortes vistas como entrada conhecida e o visto vivo como medição censurada; média, σ, cobertura), contatos escondidos (camuflados sem detecção, à vista) e quando um exército camuflado foi visto pela primeira vez, e campo de influência. `opening/`: lê os fatos da Attention como `OpeningBelief` — `aggression`, `greed`, `tech` e `proxy` contínuos e independentes, com a `confidence` que cobertura, checagens e atualidade lhe dão; as expectativas por raça ficam em `opening/knowledge.py`. Descreve; não escolhe margem nem prioridade. |
 | EGO / strategy | [bot/ego/strategy/](../bot/ego/strategy/) | `GameAssessment`, `StrategicIntent`, `StrategicPosture` | `assessment.py` transforma a Awareness numa avaliação contínua (ameaça, posição militar, revés, power spike, confiança); `strategy.py` escolhe a postura (`RECOVER`, `DEFEND`, `DEVELOP`, `PRESSURE`, `COMMIT`) com histerese e publica o `StrategicIntent`. Não conhece missão nenhuma nem escolhe lugar no mapa. Detalhes: [planners/strategy.md](planners/strategy.md). |
 | EGO / planners / common | [bot/ego/planners/common/](../bot/ego/planners/common/) | `Proposal`, os planos, `MissionStatus`, `CancelMode`, `Lifecycle`, `MissionFeedback`, `MissionView` | O que todo planner compartilha: `contracts` (o que entrega ao Body) e `mission` (o que é uma missão: status terminal, pedido de cancelamento e modos, o feedback que ela lê e o resumo que reporta). Nenhuma missão concreta mora aqui; tudo é reexportado por `bot.ego.planners`. |
-| EGO / planners | [bot/ego/planners/](../bot/ego/planners/) | `Proposal`, `Command`, `IntelPlan`, `EconomyPlan`, `StructurePlan` | Decidem o que deve ser feito (tarefa, alvo, prioridade, requisitos) sem nomear unidades, um pacote por domínio: `defense/`, `offense/` e `map_control/` pedem exército ao Engine; `intel/` obtém informação por um SCV, scans e estruturas; `economy/` diz o que comprar; `structure_control/` opera estruturas existentes. Um documento por planner em [planners/](planners/README.md). |
+| EGO / planners | [bot/ego/planners/](../bot/ego/planners/) | `Proposal`, `Command`, `IntelPlan`, `StructurePlan` | Decidem o que fazer com o que já existe (tarefa, alvo, prioridade, requisitos) sem nomear unidades, um pacote por domínio: `defense/`, `offense/` e `map_control/` pedem exército ao Engine; `intel/` obtém informação por um SCV, scans e estruturas; `structure_control/` opera estruturas existentes. Um documento por planner em [planners/](planners/README.md). |
+| EGO / economy | [bot/ego/economy/](../bot/ego/economy/) | `EconomyPlan`, `CompositionPlan` | Decide o que comprar: `policies/investment.py` (quanto: workers, bases, gás, teto de produção, fim da abertura) e `policies/composition.py` (que exército, pelo modelo de combate e pelo estilo), num `EconomyPlan` que o behavior `economy` executa pelo `MacroPlan` do Ares. Irmã de `strategy/` e `planners/`, não um planner. Detalhes: [planners/economy.md](planners/economy.md). |
 | BODY / engine | [bot/body/engine.py](../bot/body/engine.py) | `EngineResult` | Só alocação. Ordena por `(-priority, owner, proposal_id)` e concede cada unidade de exército a no máximo uma proposta. Restrições duras vêm antes de qualquer ordem: `unit_types`, `must_attack` (`GROUND`/`AIR`) e, num pedido de poder, `power > 0`. Entre as elegíveis livres, as que já eram da proposta primeiro, depois as mais próximas. Pede-se `minimum_power` (unidades até atingir o poder), `count` ou todas as livres; cada `Grant` traz `power`, `status` (`FULL`/`PARTIAL`/`REJECTED`) e `reason`. Um pedido de todas as livres que não recebe nenhuma fica `REJECTED` (`eligible_units_taken`/`no_eligible_units`). Workers só são elegíveis para propostas que pedem um tipo de worker, só saindo da mineração (role `GATHERING`) ou já sendo da proposta. `released` lista quem perdeu o dono. O `EngineResult` é o feedback que as missões leem no frame seguinte, sem nomear unidades; o Engine é o único registro de posse e nunca lê nem muda o lifecycle de uma missão. Não comanda nada. |
 | BODY / behaviors | [bot/body/behaviors/](../bot/body/behaviors/) | — | Executam os grants, despachados por `Command`. `attack` (`ATTACK`, de Defense ou da ofensiva): `AMove`, Siege Tank decide o siege sem ficar preso ao ponto; Marine/Marauder usam Stim com inimigo a ≤ 10 e ≥ 50 % de vida; Medivac vai ao centro do próprio grupo. `retreat` (`RETREAT`): path ao ponto sem lutar, Siege Tank sai do siege. `hold` (`HOLD`): `PathUnitToTarget` até o ponto, `AMove` com inimigo a ≤ 10 (bio usa Stim pela mesma regra do `attack`), Siege Tank fica sieged perto do ponto. `scout` (`SCOUT`): tira o worker da mineral, role `SCOUTING`, path sem evitar perigo. `economy`: para o build runner do Ares quando o plano interrompe o opening; workers liberados voltam a `GATHERING`, `Mining`, um add-on por frame antes do `MacroPlan` (Reactor ou Tech Lab na estrutura `addons_on`, pelo `reactor_share`), `MacroPlan` (Orbital antes de `BuildWorkers`, pesquisa — `ExactResearch` e `UpgradeController` — antes do `SpawnController`, depois `ProductionController`, nesta ordem, com o teto de produção do plano) e MULEs, sem gastar a reserva de scan nem usar o Orbital que escaneou; devolve o `SpawnMode` (com a composição inteira exatamente na proporção, o `SpawnController` roda em `freeflow` naquele frame). `detection`: scan com o Orbital pronto de mais energia; uma Missile Turret por vez após o pré-requisito consolidado pelo Intel, pelo `BuildStructure` do Ares na expansão mais próxima da base. `execute` devolve `BodyReport` (`spawn`, `micro`, `detection`, `sensor_towers`, `infrastructure`). `structure_control`: abaixa e levanta os depots do plano; levanta as estruturas da relocation (cancela o que treinam antes, um item por frame: ocupada, não levanta; já levantando, não repete a ordem), e o `economy` não treina nem põe add-on nelas enquanto isso; as pousa pelo `move_structure` do Ares; no `on_start`, `keep_clear` marca como ocupados no placement do Ares os sites do corredor da rampa, e o macro do Ares não constrói neles. `combat` guarda o que `attack` e `hold` compartilham: decisão de siege, `AMove` e a regra do Stim. O Siege Tank decide o siege também contra os inimigos que o Ares lembra fora de visão; o Stim e a saída do path no HOLD só contam inimigos à vista neste frame. |
 | LOGS | [bot/logs/](../bot/logs/) | — | Log JSONL, snapshots SVG do campo, overlay in-game e o chat, onde o bot diz em voz alta o que está pensando (`chat.py`: postura nova, emergência, camuflado visto e a leitura da opening; uma linha por vez, `gap` de 12 s, um assunto não se repete antes de `topic_cooldown`, teto de `max_lines` por partida, escolha determinística, e `gg` no fim). Falar é async e o frame não é: `observe` só enfileira, e `BotBandido._speak` manda — engolindo qualquer erro. Nenhum deles muda decisão nem derruba partida. |
@@ -210,15 +213,17 @@ MULE no mesmo frame; a reserva de energia é intenção do Intel, não política
 - O que cada planner faz com tudo isso (fórmulas, fases, parâmetros e limitações) está num documento por
   planner, em [planners/](planners/README.md): [Defense](planners/defense.md), [Offense](planners/offense.md),
   [MapControl](planners/map-control.md), [Intel](planners/intel.md) (scout, detecção e Sensor Towers),
-  [Economy](planners/economy.md) (investment, estilo, modelo de combate, composição, SURVIVE e a execução pelo
-  `MacroPlan` do Ares) e [StructureControl](planners/structure-control.md) (depots e relocation).
+  [StructureControl](planners/structure-control.md) (depots e relocation), e a [Economy](planners/economy.md),
+  que não é planner (investment, estilo, modelo de combate, composição, SURVIVE e a execução pelo `MacroPlan`
+  do Ares).
 
 ## Missões
 
 As missões aplicam os [papéis arquiteturais](#papéis-arquiteturais) acima.
 
-**Onde fica cada coisa.** O Ego separa a coordenação global, a infraestrutura comum das missões e os
-planners, um pacote por domínio:
+**Onde fica cada coisa.** O Ego separa três coisas lado a lado: a coordenação global (`strategy/`), os
+planners, um pacote por domínio do que já existe, com a infraestrutura comum das missões, e a economia, o
+que passa a existir:
 
 ```text
 bot/ego/
@@ -226,7 +231,15 @@ bot/ego/
     model.py                        GameAssessment, StrategicIntent, StrategicPosture, PostureGate
     assessment.py                   AssessmentModel: Awareness -> GameAssessment
     strategy.py                     StrategyModel: GameAssessment -> StrategicIntent (gates, persistência)
-  planners/
+  economy/                          o que comprar; não é planner; sem missões
+    contracts.py                    contratos com o Body: EconomyPlan, CompositionPlan
+    planner.py                      plan -> EconomyPlan
+    policies/investment.py          quanto investir: workers, bases, gás, teto de produção, opening
+    policies/composition.py         CompositionPolicy: o que construir agora
+    knowledge/styles.py             ArmyStyle, BIO, MECH, o sorteio e o anúncio
+    knowledge/combat.py             CombatModel: dps de um tipo contra outro, poder, prior por raça
+    knowledge/combat.yml            hp, armadura, atributos, armas; prior de composição por raça
+  planners/                         o uso do que já existe
     __init__.py                     reexporta common/: o que os planners e o resto do bot importam
     common/                         o que todo planner compartilha
       contracts.py                  contratos com o Body: Proposal, Command, Domain, os planos
@@ -248,13 +261,6 @@ bot/ego/
       policies/detection.py         Detection: scans, reserva, Missile Turrets
       policies/proxy.py             onde procurar um proxy, na nossa metade do mapa
       policies/sensor_towers.py     cálculo contínuo da barreira de radar
-    economy/                        o que comprar; sem missões
-      planner.py                    plan -> EconomyPlan
-      policies/investment.py        quanto investir: workers, bases, gás, teto de produção, opening
-      policies/composition.py       CompositionPolicy: o que construir agora
-      knowledge/styles.py           ArmyStyle, BIO, MECH, o sorteio e o anúncio
-      knowledge/combat.py           CombatModel: dps de um tipo contra outro, poder, prior por raça
-      knowledge/combat.yml          hp, armadura, atributos, armas; prior de composição por raça
     structure_control/              estado desejado de estruturas existentes; sem missões
       planner.py                    StructureControlPlanner: depots, e junta a relocation
       policies/relocation.py        Relocator: Siege Tank preso, levantar o bloqueador e pousá-lo fora
@@ -272,6 +278,9 @@ bot/body/behaviors/
 em `missions/` dentro do domínio que as possui, regras de decisão em `policies/` e fatos estáticos em
 `knowledge/`. Todos os domínios são irmãos em `planners/`, sem agrupamento intermediário, e nenhum
 importa outro: o que um planner passa a outro (o anchor do MapControl para a Offense) vai pelo frame.
+A `economy/` fica fora de `planners/` porque decide sobre outro recurso (minerais, gás, supply, tempo de
+produção) e entrega outro contrato (setpoints, não propostas); nenhum planner a importa. A Engineering
+Bay, as Missile Turrets e as Sensor Towers do Intel ainda são compradas pelo Intel, fora dela.
 Não é necessário criar classe base, registry ou Mission por feature.
 
 Um tipo de missão novo entra como um módulo em `missions/` do planner que o governa, e um comando novo

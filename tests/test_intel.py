@@ -17,7 +17,8 @@ from bot.body import behaviors
 from bot.body.behaviors import intel as intel_behavior
 from bot.body.behaviors import sensor_towers as sensor_tower_behavior
 from bot.body.engine import Engine
-from bot.ego.planners import Command, EconomyPlan, Proposal, StructurePlan, intel
+from bot.ego.economy import EconomyPlan
+from bot.ego.planners import Command, Proposal, StructurePlan, intel
 from bot.ego.planners.intel import (
     DetectionConfig,
     IntelPlanner,

@@ -7,8 +7,8 @@ from sc2.data import Race
 from sc2.ids.unit_typeid import UnitTypeId
 
 from bot.awareness import AwarenessModel, EnemyArmyBelief
-from bot.ego.planners.economy.knowledge import styles
-from bot.ego.planners.economy.policies import composition
+from bot.ego.economy.knowledge import styles
+from bot.ego.economy.policies import composition
 from bot.ego.strategy import StrategyModel
 
 from .fakes import attention, unit

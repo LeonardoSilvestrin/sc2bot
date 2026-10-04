@@ -7,7 +7,7 @@ import pytest
 from sc2.data import Race
 from sc2.ids.unit_typeid import UnitTypeId
 
-from bot.ego.planners.economy.knowledge.combat import CombatModel, default_model
+from bot.ego.economy.knowledge.combat import CombatModel, default_model
 
 
 def test_the_table_loads_and_its_digest_is_stable() -> None:

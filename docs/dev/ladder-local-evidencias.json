@@ -1,0 +1,345 @@
+{
+  "date": "2026-10-04",
+  "method": "Static ASCII strings from local ELF files; no import, execution or decompilation. Qualified routine names establish presence only, not formulas, activation or performance.",
+  "phantom_build": {
+    "dependencies": {
+      "cython-extensions-sc2": "0.16.0",
+      "leitwerk": "0.9.0",
+      "msgpack": "1.1.1",
+      "msgspec": "0.21.1",
+      "pyastar2d": "1.1.4",
+      "pys2clientprotocol": "1.0.2",
+      "zstandard": "0.25.0"
+    },
+    "image": "python:3.12-slim-bookworm@sha256:72d3d75f2639ab82b34b29390ad3d6e0827c775befee94edda8e9976818f488d",
+    "source": {
+      "commit": "8dfd757c3c5a7d246243872d6fc9922ebe661745",
+      "commit_short": "8dfd757c3c5a",
+      "ref": "main",
+      "repository": "https://github.com/phantomsc2/phantom-sc2"
+    },
+    "target": {
+      "image": "aiarena/arenaclient-bot-base:v0.9.0@sha256:e06dc81bbdc52126e5ce9eaeb9e5fdae1a1d254903d4c5dd1a8d122c6556faca",
+      "platform": "linux/amd64",
+      "python": "CPython 3.12"
+    },
+    "timestamp": "2026-08-26T01:10:47Z",
+    "version": "3.48.1"
+  },
+  "phantom_modules": [
+    {
+      "file": "tools/aiarena_local/runtime/bots/PhantomBot/phantom/agent/macro/strategy.cpython-312-x86_64-linux-gnu.so",
+      "sha256": "bf6efdff1672ac4336b42858d54450bcbcb55e14df4f3598cfef9896889fa3cb",
+      "qualified_names": [
+        "phantom.agent.macro.strategy",
+        "phantom.agent.macro.strategy.Strategy._allows_upgrade",
+        "phantom.agent.macro.strategy.Strategy._allows_upgrade.researched_or_pending",
+        "phantom.agent.macro.strategy.Strategy._can_build",
+        "phantom.agent.macro.strategy.Strategy._need_vipers",
+        "phantom.agent.macro.strategy.Strategy.allowed_upgrades",
+        "phantom.agent.macro.strategy.Strategy.army_composition",
+        "phantom.agent.macro.strategy.Strategy.banking_resources",
+        "phantom.agent.macro.strategy.Strategy.composition",
+        "phantom.agent.macro.strategy.Strategy.composition_deficit",
+        "phantom.agent.macro.strategy.Strategy.composition_target",
+        "phantom.agent.macro.strategy.Strategy.counter_composition",
+        "phantom.agent.macro.strategy.Strategy.counter_composition.total_cost",
+        "phantom.agent.macro.strategy.Strategy.enemy_composition",
+        "phantom.agent.macro.strategy.Strategy.enemy_composition_predicted",
+        "phantom.agent.macro.strategy.Strategy.income",
+        "phantom.agent.macro.strategy.Strategy.macro_composition",
+        "phantom.agent.macro.strategy.Strategy.require_more_overlords",
+        "phantom.agent.macro.strategy.Strategy.rush_defense_composition",
+        "phantom.agent.macro.strategy.Strategy.static_defense_composition",
+        "phantom.agent.macro.strategy.Strategy.tech_composition",
+        "phantom.agent.macro.strategy.Strategy.tech_target",
+        "phantom.agent.macro.strategy.Strategy.upgrade_weights",
+        "phantom.agent.macro.strategy.add_compositions",
+        "phantom.agent.macro.strategy.composition_of",
+        "phantom.agent.macro.strategy.max_compositions",
+        "phantom.agent.macro.strategy.scale_composition",
+        "phantom.agent.macro.strategy.sub_compositions"
+      ]
+    },
+    {
+      "file": "tools/aiarena_local/runtime/bots/PhantomBot/phantom/agent/macro/builder.cpython-312-x86_64-linux-gnu.so",
+      "sha256": "158a0f13825eff8e201117403b6de7ed45e97c9eeb1b7d7d0a70e5dfc6210a2f",
+      "qualified_names": [
+        "phantom.agent.macro.builder",
+        "phantom.agent.macro.builder.BuilderParameters.build_order_vs",
+        "phantom.agent.macro.builder.BuilderState.count_planned",
+        "phantom.agent.macro.builder.BuilderStep.actions",
+        "phantom.agent.macro.builder.BuilderStep.expansion_target",
+        "phantom.agent.macro.builder.BuilderStep.structure_by_position",
+        "phantom.agent.macro.builder.BuilderStep.target",
+        "phantom.agent.macro.builder._composition_priorities",
+        "phantom.agent.macro.builder._count_for_priority",
+        "phantom.agent.macro.builder._debug_plan_requests",
+        "phantom.agent.macro.builder._expansion_target",
+        "phantom.agent.macro.builder._expansion_target.is_desirable",
+        "phantom.agent.macro.builder._get_eta",
+        "phantom.agent.macro.builder._planned_count",
+        "phantom.agent.macro.builder._premove",
+        "phantom.agent.macro.builder._resolve_target",
+        "phantom.agent.macro.builder._static_defense_target",
+        "phantom.agent.macro.builder._structure_target",
+        "phantom.agent.macro.builder._target_position",
+        "phantom.agent.macro.builder._trainer_can_execute",
+        "phantom.agent.macro.builder._upgrade_priorities",
+        "phantom.agent.macro.builder.step_builder"
+      ]
+    },
+    {
+      "file": "tools/aiarena_local/runtime/bots/PhantomBot/phantom/agent/combat/combat.cpython-312-x86_64-linux-gnu.so",
+      "sha256": "2e2e9acfec4d86034f1728cf5b5099e80e17feef9e6ddb99ceff26b1832cf9f5",
+      "qualified_names": [
+        "phantom.agent.combat.combat",
+        "phantom.agent.combat.combat.CombatStep._caustic_spray",
+        "phantom.agent.combat.combat.CombatStep._shoot_target_in_range",
+        "phantom.agent.combat.combat.CombatStep._shoot_target_in_range.is_ready",
+        "phantom.agent.combat.combat.CombatStep.attacking_local",
+        "phantom.agent.combat.combat.CombatStep.combatants",
+        "phantom.agent.combat.combat.CombatStep.enemy_force_by_tag",
+        "phantom.agent.combat.combat.CombatStep.fight_with",
+        "phantom.agent.combat.combat.CombatStep.flyby",
+        "phantom.agent.combat.combat.CombatStep.is_unit_safe",
+        "phantom.agent.combat.combat.CombatStep.keep_unit_safe",
+        "phantom.agent.combat.combat.CombatStep.move_to_safe_spot",
+        "phantom.agent.combat.combat.CombatStep.retreat_air_map",
+        "phantom.agent.combat.combat.CombatStep.retreat_ground_map",
+        "phantom.agent.combat.combat.CombatStep.retreat_to_creep",
+        "phantom.agent.combat.combat.CombatStep.retreat_to_creep_map",
+        "phantom.agent.combat.combat.CombatStep.retreat_with",
+        "phantom.agent.combat.combat.CombatStep.runby",
+        "phantom.agent.combat.combat.CombatStep.runby_target",
+        "phantom.agent.combat.combat.CombatStep.target_by_unit",
+        "phantom.agent.combat.combat.CombatStep.target_sets",
+        "phantom.agent.combat.combat.CombatStep.targets",
+        "phantom.agent.combat.combat.CombatTargets._retreat_candidates",
+        "phantom.agent.combat.combat.CombatTargets._runby_candidates",
+        "phantom.agent.combat.combat.CombatTargets._safe_targets",
+        "phantom.agent.combat.combat.CombatTargets.air_retreat",
+        "phantom.agent.combat.combat.CombatTargets.creep",
+        "phantom.agent.combat.combat.CombatTargets.flyby",
+        "phantom.agent.combat.combat.CombatTargets.ground_retreat",
+        "phantom.agent.combat.combat.CombatTargets.retreat",
+        "phantom.agent.combat.combat.CombatTargets.runby",
+        "phantom.agent.combat.combat.CombatTargets.spine",
+        "phantom.agent.combat.combat.CombatTargets.spore",
+        "phantom.agent.combat.combat.select_combatants",
+        "phantom.agent.combat.combat.select_tactical_units",
+        "phantom.agent.combat.combat.step_combat"
+      ]
+    },
+    {
+      "file": "tools/aiarena_local/runtime/bots/PhantomBot/phantom/agent/combat/assignment.cpython-312-x86_64-linux-gnu.so",
+      "sha256": "cb58d1a6a04e7b16a6543b256e3d374f4de0b35cc0d6887843febcdc0a66f906",
+      "qualified_names": [
+        "phantom.agent.combat.assignment",
+        "phantom.agent.combat.assignment._death_time_sorted",
+        "phantom.agent.combat.assignment._death_time_with_extra",
+        "phantom.agent.combat.assignment._discounted_survival",
+        "phantom.agent.combat.assignment._optimize_target_assignment",
+        "phantom.agent.combat.assignment._optimize_unit_target",
+        "phantom.agent.combat.assignment.assign_targets"
+      ]
+    },
+    {
+      "file": "tools/aiarena_local/runtime/bots/PhantomBot/phantom/agent/combat/simulation.cpython-312-x86_64-linux-gnu.so",
+      "sha256": "1106fd8dfedfde10077adec61123043acc0f5024c575ec55effda5a9c41e1f66",
+      "qualified_names": [
+        "phantom.agent.combat.simulation",
+        "phantom.agent.combat.simulation.CombatObservation._detected",
+        "phantom.agent.combat.simulation.CombatObservation._detected.detected",
+        "phantom.agent.combat.simulation.CombatObservation._weapon_matrices",
+        "phantom.agent.combat.simulation.CombatObservation.angle_matrix",
+        "phantom.agent.combat.simulation.CombatObservation.attack_ready",
+        "phantom.agent.combat.simulation.CombatObservation.can_move",
+        "phantom.agent.combat.simulation.CombatObservation.can_reach",
+        "phantom.agent.combat.simulation.CombatObservation.cooldown_matrix",
+        "phantom.agent.combat.simulation.CombatObservation.distance_matrix",
+        "phantom.agent.combat.simulation.CombatObservation.dps_matrix",
+        "phantom.agent.combat.simulation.CombatObservation.enemy_detector_effects",
+        "phantom.agent.combat.simulation.CombatObservation.enemy_detectors",
+        "phantom.agent.combat.simulation.CombatObservation.facing_vector",
+        "phantom.agent.combat.simulation.CombatObservation.forces",
+        "phantom.agent.combat.simulation.CombatObservation.gap_matrix",
+        "phantom.agent.combat.simulation.CombatObservation.index_by_tag",
+        "phantom.agent.combat.simulation.CombatObservation.is_attackable",
+        "phantom.agent.combat.simulation.CombatObservation.is_detected",
+        "phantom.agent.combat.simulation.CombatObservation.move_time_matrix",
+        "phantom.agent.combat.simulation.CombatObservation.movement_speed_vector",
+        "phantom.agent.combat.simulation.CombatObservation.own_detector_effects",
+        "phantom.agent.combat.simulation.CombatObservation.own_detectors",
+        "phantom.agent.combat.simulation.CombatObservation.position_matrix",
+        "phantom.agent.combat.simulation.CombatObservation.radius_vector",
+        "phantom.agent.combat.simulation.CombatObservation.range_matrix",
+        "phantom.agent.combat.simulation.CombatObservation.simulate",
+        "phantom.agent.combat.simulation.CombatObservation.simulate.estimate_hp",
+        "phantom.agent.combat.simulation.CombatObservation.targets_in_range",
+        "phantom.agent.combat.simulation.CombatObservation.turn_speed_vector",
+        "phantom.agent.combat.simulation.CombatObservation.turn_time_matrix",
+        "phantom.agent.combat.simulation.CombatObservation.uses_air_weapon_matrix",
+        "phantom.agent.combat.simulation.CombatObservation.weapon_cooldown_vector",
+        "phantom.agent.combat.simulation.SimulationParameters.time_samples",
+        "phantom.agent.combat.simulation._detectors",
+        "phantom.agent.combat.simulation._unique_inverse"
+      ]
+    },
+    {
+      "file": "tools/aiarena_local/runtime/bots/PhantomBot/phantom/agent/intel.cpython-312-x86_64-linux-gnu.so",
+      "sha256": "5d0062a930b8b4827bcffdbabfe7c84c458ad1f94481e761368f1e24b602fbe0",
+      "qualified_names": [
+        "phantom.agent.intel.BaseRecord.observe",
+        "phantom.agent.intel.BaseRecord.probability_of_being_taken",
+        "phantom.agent.intel.IntelState.create",
+        "phantom.agent.intel.IntelStep.expected_enemy_base_count",
+        "phantom.agent.intel.IntelStep.observed_enemy_base_count",
+        "phantom.agent.intel.IntelStep.proxy_detected",
+        "phantom.agent.intel.IntelStep.suggest_scout_target",
+        "phantom.agent.intel._did_enemy_rush",
+        "phantom.agent.intel._expected_enemy_base_count",
+        "phantom.agent.intel._expected_enemy_expansion_target",
+        "phantom.agent.intel._scout_eta_and_candidates",
+        "phantom.agent.intel.step_intel"
+      ]
+    },
+    {
+      "file": "tools/aiarena_local/runtime/bots/PhantomBot/phantom/agent/expansion.cpython-312-x86_64-linux-gnu.so",
+      "sha256": "86a5b68857dc6792f478f92f770692c00798813f7dee2f205c36fc001f67f609",
+      "qualified_names": [
+        "phantom.agent.expansion.is_expansion_possible",
+        "phantom.agent.expansion.select_expansion"
+      ]
+    },
+    {
+      "file": "tools/aiarena_local/runtime/bots/PhantomBot/phantom/agent/micro/behavior/viper.cpython-312-x86_64-linux-gnu.so",
+      "sha256": "2c6b6559d6dc082a52b9b8290b159b0e57015467e6301ce570e7ecaf56e2ddc7",
+      "qualified_names": [
+        "phantom.agent.micro.behavior.viper",
+        "phantom.agent.micro.behavior.viper.Viper.__call__",
+        "phantom.agent.micro.behavior.viper.Viper.abduct_targets",
+        "phantom.agent.micro.behavior.viper.Viper.gather_target"
+      ]
+    },
+    {
+      "file": "tools/aiarena_local/runtime/bots/PhantomBot/phantom/agent/micro/behavior/lurker.cpython-312-x86_64-linux-gnu.so",
+      "sha256": "0bd32a21518a160e21134707399e63db7f25eb255b9cb8749121893b46faf832",
+      "qualified_names": [
+        "phantom.agent.micro.behavior.lurker",
+        "phantom.agent.micro.behavior.lurker.Lurker.__call__",
+        "phantom.agent.micro.behavior.lurker.Lurker.has_targets"
+      ]
+    },
+    {
+      "file": "tools/aiarena_local/runtime/bots/PhantomBot/phantom/agent/micro/behavior/overseer.cpython-312-x86_64-linux-gnu.so",
+      "sha256": "ca70c5105f3c1fa8d22d2f3ef8cb07d63c7d47258f18c412d673b231a31aa3b2",
+      "qualified_names": [
+        "phantom.agent.micro.behavior.overseer",
+        "phantom.agent.micro.behavior.overseer.Overseer.__call__",
+        "phantom.agent.micro.behavior.overseer.Overseer.detection_assignment",
+        "phantom.agent.micro.behavior.overseer.Overseer.tracking_assignment",
+        "phantom.agent.micro.behavior.overseer.Overseer.tracking_assignment.target_cost"
+      ]
+    },
+    {
+      "file": "tools/aiarena_local/runtime/bots/PhantomBot/phantom/agent/micro/behavior/search.cpython-312-x86_64-linux-gnu.so",
+      "sha256": "e6bc08b359826df28f8beb4fa5832e63537dd44d550e426ae4c118ffdb41cdac",
+      "qualified_names": [
+        "phantom.agent.micro.behavior.search",
+        "phantom.agent.micro.behavior.search.Search.__call__"
+      ]
+    },
+    {
+      "file": "tools/aiarena_local/runtime/bots/PhantomBot/phantom/agent/micro/behavior/dodge.cpython-312-x86_64-linux-gnu.so",
+      "sha256": "70f6757b53f08db0476bb3442e1b671b5e9845793097fd129672b9b6bdf2c77f",
+      "qualified_names": [
+        "phantom.agent.micro.behavior.dodge",
+        "phantom.agent.micro.behavior.dodge.Dodge.__call__",
+        "phantom.agent.micro.behavior.dodge.Dodge.threats",
+        "phantom.agent.micro.behavior.dodge.DodgeThreat.dodge",
+        "phantom.agent.micro.behavior.dodge.DodgeThreat.eta"
+      ]
+    },
+    {
+      "file": "tools/aiarena_local/runtime/bots/PhantomBot/phantom/agent/memory/enemy.cpython-312-x86_64-linux-gnu.so",
+      "sha256": "58a3f5ca626d02d7f2e9c55dd2a3b80359b90a0e3dbc61164ab601bf1c7cb9c3",
+      "qualified_names": [
+        "phantom.agent.memory.enemy",
+        "phantom.agent.memory.enemy.EnemyMemoryStep.all",
+        "phantom.agent.memory.enemy.observe_enemy_memory",
+        "phantom.agent.memory.enemy.step_enemy_memory"
+      ]
+    }
+  ],
+  "source_files": [
+    {
+      "file": "tools/aiarena_local/runtime/bots/PhantomBot/build.json",
+      "sha256": "7b83d08ca85ef93a9170d4238ec061759ea46e98c110393f204e57a3f0028e96"
+    },
+    {
+      "file": "tools/aiarena_local/runtime/bots/PhantomBot/phantom-3.48.1.dist-info/METADATA",
+      "sha256": "002d6ffb688825d719aa41e12dfb870aa1b1c7251e5929f6da152fb8889705d1"
+    },
+    {
+      "file": "tools/aiarena_local/runtime/bots/PhantomBot/data/params.json",
+      "sha256": "8c89f0a6d2eede9f7ce3d85a849a736f51c9119f8af406e0944b71ca371fc970"
+    },
+    {
+      "file": "tools/aiarena_local/runtime/bots/RustyMarines/dummy/dummy.py",
+      "sha256": "08864d707cd57d4d1f5f8fd757f8723bdd32b33adc393575c87b11ac051514ac"
+    },
+    {
+      "file": "tools/aiarena_local/runtime/bots/SharpKnives/dummy/dummy.py",
+      "sha256": "b57a45ba2691dfcc8458a06f7d4f0f062308ee8f7f6a5f98adaaaf998626071c"
+    },
+    {
+      "file": "tools/aiarena_local/runtime/bots/SharpCannon/dummy/dummy.py",
+      "sha256": "f77a7b9b6123fe43497c64184f169926603d7711e8ccdb7cd1121efc52db49ba"
+    },
+    {
+      "file": "tools/aiarena_local/runtime/bots/RoachRush/Main.py",
+      "sha256": "c2551c742ada0558a972f23d4f85ef69c9b374b13dfb185fa6cf4224310f0aa0"
+    },
+    {
+      "file": "tools/aiarena_local/runtime/bots/RustyMarines/sharpy/combat/default_micro_methods.py",
+      "sha256": "2175c45ca4731869cf0c1ec0561314f96f99d9d45c40f407bddd6bb24ba67f54"
+    },
+    {
+      "file": "tools/aiarena_local/runtime/bots/RustyMarines/sharpy/combat/group_combat_manager.py",
+      "sha256": "f95ad2889e1ff9d0da35aff1501630f737a1c0dae455fb7bf4666e67b064210d"
+    },
+    {
+      "file": "tools/aiarena_local/runtime/bots/RustyMarines/sharpy/combat/generic_micro.py",
+      "sha256": "f528bd63e647f1c9a21abddf9ef1a409b1a7f011a8be0169312995fe3b68c8af"
+    },
+    {
+      "file": "tools/aiarena_local/runtime/bots/RustyMarines/sharpy/combat/micro_rules.py",
+      "sha256": "b600ba2b0edf901ab9f4b3a393567ab232375fe30144a128bb0a486f2b803c76"
+    },
+    {
+      "file": "tools/aiarena_local/runtime/bots/RustyMarines/sharpy/combat/terran/micro_medivacs.py",
+      "sha256": "c41556cec70dcf577a1de27e82f9e217790e21ee92db34167ee2ce4d1f1f7731"
+    },
+    {
+      "file": "tools/aiarena_local/runtime/bots/RustyMarines/sharpy/plans/tactics/zone_attack.py",
+      "sha256": "31f360e00dd75ab15dde6a20c4c0d195fbd8c4fd50d8c0fa9b8162c874163e45"
+    },
+    {
+      "file": "tools/aiarena_local/runtime/bots/RustyMarines/sharpy/plans/tactics/attack_expansions.py",
+      "sha256": "d6c7e9a0ab4c22461bdbe0d968addf8fc98980d205d29281970e8e1c073b840a"
+    },
+    {
+      "file": "tools/aiarena_local/runtime/bots/RustyMarines/sharpy/plans/tactics/terran/repair.py",
+      "sha256": "1078de4f007155e4215b1fb030a862bd5b25e15109d74d19a60caf7af20e3c48"
+    },
+    {
+      "file": "tools/aiarena_local/runtime/bots/RustyMarines/sharpy/plans/tactics/terran/man_the_bunkers.py",
+      "sha256": "bd62b3dfd20c6dda17e51d38a9b3bcff1f728d357cc9fda9bb787304bdae02a2"
+    },
+    {
+      "file": "tools/aiarena_local/runtime/bots/RustyMarines/sharpy/plans/sequential_list.py",
+      "sha256": "02f27c77f46d88944430cbad76f69f961c1ac548be16f6d4bf6a100bcce23e09"
+    }
+  ]
+}

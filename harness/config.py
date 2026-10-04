@@ -116,7 +116,7 @@ def _known() -> Mapping[str, tuple[Any, ...]]:
 
     from sc2.data import AIBuild, Difficulty, Race
 
-    from bot.ego.planners.economy.knowledge.styles import STYLES
+    from bot.ego.economy.knowledge.styles import STYLES
 
     return {
         "race": tuple(name for name in Race.__members__ if name != "NoRace"),

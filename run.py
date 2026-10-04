@@ -17,7 +17,7 @@ sys.path.append("ares-sc2")
 
 import yaml
 
-from bot.ego.planners.economy.knowledge.styles import STYLES
+from bot.ego.economy.knowledge.styles import STYLES
 from bot.logs import ChatConfig, JsonlLogger, Logs, OverlayConfig, SnapshotConfig
 from bot.main import BotBandido
 from harness import (

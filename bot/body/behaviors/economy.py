@@ -64,7 +64,7 @@ from sc2.ids.upgrade_id import UpgradeId
 
 from bot.attention import AttentionState
 from bot.body.engine import EngineResult
-from bot.ego.planners import EconomyPlan
+from bot.ego.economy import EconomyPlan
 
 # SpawnController's guard against an empty army in its share test.
 _EMPTY_ARMY = 1e-16

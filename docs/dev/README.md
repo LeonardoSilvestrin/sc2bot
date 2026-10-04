@@ -8,6 +8,7 @@ Tudo aqui é sobre **fazer** o bot, não sobre como ele funciona. O funcionament
 | [staging/](staging/README.md) | O que está em andamento: objetivo, o que já foi decidido, o que está em aberto, as fatias e como medir | Um item começa, muda de estado ou entra no HEAD |
 | [agent_discussion/](agent_discussion/README.md) | Debate de 04/10 entre dois agentes (defensor e crítico) sobre o HEAD `c7c336d`: fatos aceitos, divergências e um plano unificado | Não muda: é o registro do debate |
 | [bots-opensource.md](bots-opensource.md) | Pesquisa de 03/10: implementações verificadas em bots open source e o que aproveitar (OS1–OS10) | Só com uma nota de estado |
+| [ladder-local.md](ladder-local.md) | Pesquisa de 04/10 dos cinco bots locais, com foco no Phantom e late game: evidências, comparação com o backlog e adaptações (LL1–LL12) | Com nova evidência ou uma nota de estado; hashes e símbolos em [ladder-local-evidencias.json](ladder-local-evidencias.json) |
 | [propostas.md](propostas.md) | O que aprender de outros bots (Ares, PiG, Sajuuk, Sharky, MicroMachine, Sharpy) e o roadmap P0–P2 | Só com uma nota de estado |
 | [novas_propostas.md](novas_propostas.md) | Revisão de 18/09: benchmark, builds, Strategy, informação, micro, ofensiva (N1–N8) | Só com uma nota de estado |
 | [melhorias_propostas_eco.md](melhorias_propostas_eco.md) | Revisão de 18/09 da economia e da composição (E1–E9) | Só com uma nota de estado |

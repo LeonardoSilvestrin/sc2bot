@@ -12,9 +12,9 @@ from dataclasses import dataclass
 
 from bot.attention import AttentionState
 from bot.body.engine import EngineResult
+from bot.ego.economy import EconomyPlan
 from bot.ego.planners import (
     Command,
-    EconomyPlan,
     IntelPlan,
     StructurePlan,
 )

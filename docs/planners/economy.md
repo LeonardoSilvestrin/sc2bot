@@ -12,7 +12,9 @@
   | **Estilo** (knowledge) | Qual exército: BIO ou MECH, com abertura, doutrina, upgrades e add-ons | `knowledge/styles.py` |
   | **Composition** (policy) | O que treinar agora: o mix que melhor enfrenta o exército inimigo acreditado | `policies/composition.py` |
 
-- A Economy **não pede unidades ao Engine**: o plano vai direto para o Body.
+- A Economy **não é um planner**: os planners decidem o que fazer com o que já existe, e ela decide o que
+  passa a existir. Fica em `bot/ego/economy/`, ao lado de `strategy/` e `planners/`.
+- Ela **não pede unidades ao Engine**: o plano vai direto para o Body.
 - Ela tem **dois regimes**:
   - **Abertura:** o build runner do Ares toca um script fixo, e o plano fica inativo (`active = false`);
   - **Macro:** depois da abertura, o plano manda.
@@ -106,7 +108,7 @@ T_i  = hp_i / Σ_e (w_e / power_e) · dps(e, i)        (quanto i dura sob o fogo
 a_i  = exp(−atraso da tech / 60 s)                   (desconto de quem ainda precisa de tech)
 ```
 
-`dps(i, e)` vem do **modelo de combate** ([combat.py](../../bot/ego/planners/economy/knowledge/combat.py) e
+`dps(i, e)` vem do **modelo de combate** ([combat.py](../../bot/ego/economy/knowledge/combat.py) e
 `combat.yml`):
 
 - a tabela tem vida, escudo, armadura, atributos e armas (dano, ataques, cooldown, bônus por atributo,
@@ -225,13 +227,15 @@ nesta ordem. A ordem importa porque o `MacroPlan` para no primeiro behavior que 
 
 ## Código
 
-- [bot/ego/planners/economy/planner.py](../../bot/ego/planners/economy/planner.py): `plan`, que junta tudo.
-- [bot/ego/planners/economy/policies/investment.py](../../bot/ego/planners/economy/policies/investment.py):
+- [bot/ego/economy/contracts.py](../../bot/ego/economy/contracts.py): `EconomyPlan`, `CompositionPlan`,
+  `EnemyShare`, `SurvivalComposition`.
+- [bot/ego/economy/planner.py](../../bot/ego/economy/planner.py): `plan`, que junta tudo.
+- [bot/ego/economy/policies/investment.py](../../bot/ego/economy/policies/investment.py):
   `InvestmentConfig`, `plan`.
-- [bot/ego/planners/economy/policies/composition.py](../../bot/ego/planners/economy/policies/composition.py):
+- [bot/ego/economy/policies/composition.py](../../bot/ego/economy/policies/composition.py):
   `CompositionPolicy`, `CompositionConfig`, `reactor_share`.
-- [bot/ego/planners/economy/knowledge/styles.py](../../bot/ego/planners/economy/knowledge/styles.py):
+- [bot/ego/economy/knowledge/styles.py](../../bot/ego/economy/knowledge/styles.py):
   `ArmyStyle`, `BIO`, `MECH`, `choose`, `announcement`.
-- [bot/ego/planners/economy/knowledge/combat.py](../../bot/ego/planners/economy/knowledge/combat.py) e
+- [bot/ego/economy/knowledge/combat.py](../../bot/ego/economy/knowledge/combat.py) e
   `combat.yml`: o modelo de combate.
 - Execução no Body: [economy.py](../../bot/body/behaviors/economy.py).

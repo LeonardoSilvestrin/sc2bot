@@ -31,9 +31,9 @@ from bot.attention import BaseView
 from bot.attention.map import MapView
 from bot.awareness import AwarenessModel
 from bot.body.behaviors import economy as economy_behavior
-from bot.ego.planners import economy
-from bot.ego.planners.economy.knowledge import styles
-from bot.ego.planners.economy.policies import investment
+from bot.ego import economy
+from bot.ego.economy.knowledge import styles
+from bot.ego.economy.policies import investment
 from bot.ego.strategy import StrategicPosture, StrategyConfig, StrategyModel
 
 from .fakes import MAIN, MAP, FakeBot, FakeUnit, attention

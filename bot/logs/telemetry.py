@@ -23,10 +23,10 @@ from bot.body.behaviors.detection import DetectionReport
 from bot.body.behaviors.economy import SpawnMode
 from bot.body.behaviors.sensor_towers import SensorTowerReport
 from bot.body.engine import EngineResult, rank
+from bot.ego.economy import EconomyPlan
 from bot.ego.planners import (
     DetectionPlan,
     EarlyScoutReport,
-    EconomyPlan,
     IntelPlan,
     MissionView,
     Proposal,

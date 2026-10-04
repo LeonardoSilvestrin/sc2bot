@@ -14,9 +14,9 @@ from sc2.ids.unit_typeid import UnitTypeId
 
 from bot.attention import AttentionState
 from bot.awareness import AwarenessState
-from bot.ego.planners import EconomyPlan
 from bot.ego.strategy import StrategicIntent
 
+from .contracts import EconomyPlan
 from .knowledge.styles import BIO, ArmyStyle
 from .policies import composition, investment
 from .policies.composition import CompositionPolicy

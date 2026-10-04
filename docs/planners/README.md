@@ -1,7 +1,7 @@
 # Planners
 
-Um documento por planner do Ego: o que ele decide, como decide e o que ainda falta. Todos descrevem o
-código do HEAD. O que está em andamento fica em [staging/](../dev/staging/README.md), e as regras gerais
+Um documento por planner do Ego, e um para cada vizinho deles que não é planner (Strategy e Economy): o que
+ele decide, como decide e o que ainda falta. Todos descrevem o código do HEAD. O que está em andamento fica em [staging/](../dev/staging/README.md), e as regras gerais
 (papéis, contratos, missões, eventos) ficam em [architecture.md](../architecture.md).
 
 | Documento | Pergunta que responde | Pede unidades ao Engine? |
@@ -11,7 +11,7 @@ código do HEAD. O que está em andamento fica em [staging/](../dev/staging/READ
 | [Offense](offense.md) | Atacar agora? E, durante o ataque, avançar, lutar ou recuar? | Sim, prioridade 0 |
 | [MapControl](map-control.md) | Onde espera o exército que ninguém está usando? | Sim, prioridade −1 |
 | [Intel](intel.md) | O que precisamos ver, e com o quê (scout, scan, torre)? | Só um SCV |
-| [Economy](economy.md) | O que comprar: workers, bases, gás, produção e qual exército? | Não (plano direto) |
+| [Economy](economy.md) | O que comprar: workers, bases, gás, produção e qual exército? (não é planner: decide o que passa a existir, em `bot/ego/economy/`) | Não (plano direto) |
 | [StructureControl](structure-control.md) | O que nossas estruturas fazem sozinhas (depots, tirar estrutura do caminho)? | Não (plano direto) |
 
 Cada documento tem as mesmas seções: **Resumo**, **Entradas e saídas**, **Como decide**, **Estado entre

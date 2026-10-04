@@ -84,9 +84,9 @@ from sc2.ids.unit_typeid import UnitTypeId
 
 from bot.attention import TERRAN_PRODUCTION, AttentionState
 from bot.awareness import Contact, EnemyArmyBelief, ThreatIncident
-from bot.ego.planners import CompositionPlan, EnemyShare, SurvivalComposition
 from bot.ego.strategy import StrategicIntent
 
+from ..contracts import CompositionPlan, EnemyShare, SurvivalComposition
 from ..knowledge.combat import CombatModel, canonical_unit, default_model
 from ..knowledge.styles import ArmyStyle
 

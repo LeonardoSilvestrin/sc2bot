@@ -37,12 +37,13 @@ from bot.body.behaviors.detection import DetectionReport
 from bot.body.behaviors.economy import SpawnMode
 from bot.body.behaviors.sensor_towers import SensorTowerReport
 from bot.body.engine import Engine, EngineResult
-from bot.ego.planners import EconomyPlan, IntelPlan, MissionView, Proposal, StructurePlan, economy
+from bot.ego import economy
+from bot.ego.economy import CombatModel, CompositionPolicy, EconomyPlan, InvestmentConfig
+from bot.ego.economy.knowledge import styles
+from bot.ego.economy.knowledge.combat import default_model
+from bot.ego.economy.knowledge.styles import BIO, ArmyStyle
+from bot.ego.planners import IntelPlan, MissionView, Proposal, StructurePlan
 from bot.ego.planners.defense import DefensePlanner
-from bot.ego.planners.economy import CombatModel, CompositionPolicy, InvestmentConfig
-from bot.ego.planners.economy.knowledge import styles
-from bot.ego.planners.economy.knowledge.combat import default_model
-from bot.ego.planners.economy.knowledge.styles import BIO, ArmyStyle
 from bot.ego.planners.intel import IntelPlanner
 from bot.ego.planners.map_control import MapControlPlan, MapControlPlanner
 from bot.ego.planners.offense import OffensePlan, OffensePlanner
