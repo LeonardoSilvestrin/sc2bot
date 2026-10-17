@@ -111,7 +111,7 @@ anchor antes de seguir o squad, em vez de atravessar o mapa sozinho. Aceite: `as
 banco < 5 mil no supply máximo.
 
 **Micro pelo Ares** [D6, N6, A9, A10, P1.3] — ATTACK é attack-move, RETREAT e HOLD andam sem desviar de perigo
-(ver [Attack](../behaviors/attack.md)). O Ares já tem `ShootTargetInRange`, `StutterUnitBack`, `KeepUnitSafe`,
+(ver [Attack](../body/behaviors/attack.md)). O Ares já tem `ShootTargetInRange`, `StutterUnitBack`, `KeepUnitSafe`,
 `MedivacHeal` e `PickUpCargo`. Os 6 ataques perdidos no debate entraram com parcela local de 0,85 a 0,90: o problema
 foi a luta, não a reunião. Fatias: bio (alvo e stutter), recuo com `sense_danger`, Medivac, posição do Tank,
 evasão de efeitos. Aceite: razão de troca ≥ 1 em ENGAGE; passar dos 10:50 contra o PhantomBot.

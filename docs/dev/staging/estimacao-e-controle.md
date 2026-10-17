@@ -4,7 +4,7 @@
 
 Registro de uma virada de direção, decidida em 2026-10-03 no branch `observador` (tag de rollback
 `pre-observador`, em `9457a4a`). O que já está no HEAD está descrito em
-[architecture.md](../../architecture.md#matemática); aqui fica o porquê, o que vem depois e como medir.
+[enemy-army.md](../../awareness/enemy-army.md); aqui fica o porquê, o que vem depois e como medir.
 
 ## A virada
 

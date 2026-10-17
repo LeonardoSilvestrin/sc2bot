@@ -72,16 +72,18 @@ Body       → Engine (quem recebe cada tarefa) e behaviors (como executar, via 
 A Strategy decide **o que é permitido**, o Planner **quais operações** existem,
 a Mission **como a operação avança**, o Engine **quem** recebe as unidades e o
 Behavior **como** executar. Só `observe`, os behaviors e os logs tocam o bot; o resto é testável
-sem o jogo. Fórmulas, eventos de log e parâmetros estão em
-[docs/architecture.md](docs/architecture.md) e, para cada planner, em [docs/planners/](docs/planners/README_PLANNERS.md).
+sem o jogo. Cada camada tem uma pasta em `docs/` com um documento por módulo (fórmulas, parâmetros, log e
+limitações); o que atravessa as camadas está em [docs/architecture.md](docs/architecture.md).
 
 Como o bot funciona:
 
 | Documento | Conteúdo |
 | --- | --- |
-| [docs/architecture.md](docs/architecture.md) | Camadas, matemática da percepção, missões, eventos, comandos, o que falta e as medições |
-| [docs/planners/](docs/planners/README_PLANNERS.md) | Um documento por planner (Strategy, Defense, Offense, MapControl, Intel, Economy, StructureControl): como decide, parâmetros, log e limitações |
-| [docs/passages.md](docs/passages.md) | Passagens dinâmicas: mineral walls e rocks que abrem durante a partida |
+| [docs/architecture.md](docs/architecture.md) | O que atravessa as camadas: ordem do frame, papéis, eventos, comandos, o que falta e as medições |
+| [docs/attention/](docs/attention/README_ATTENTION.md) | Percepção: mapa, topologia, passagens, frame, unidades, registro da opening |
+| [docs/awareness/](docs/awareness/README_AWARENESS.md) | Crença: contatos, ameaça, incidentes, observador do exército inimigo, campo, regiões, leitura da opening |
+| [docs/ego/](docs/ego/README_EGO.md) | Decisão: Strategy, Economy e um documento por planner (Defense, Offense, MapControl, Intel, StructureControl), mais contratos e missões |
+| [docs/body/](docs/body/README_BODY.md) | Execução: o Engine e um documento por behavior |
 | [docs/frame.canvas](docs/frame.canvas) | Para abrir no Obsidian: um frame inteiro num quadro, da percepção aos behaviors, com os docs embutidos |
 
 O desenvolvimento (trabalho em andamento, pesquisa, backlog, revisões de código e debates) fica em
