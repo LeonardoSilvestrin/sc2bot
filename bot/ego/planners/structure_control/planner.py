@@ -5,7 +5,8 @@ Siege Tank in flies out of its way (`policies.relocation`). A finished depot
 goes up the frame a ground enemy comes within `raise_reach` of it, and down
 again once no ground enemy has been that close for `lower_after` seconds, so an
 enemy pacing at the edge of reach cannot toggle it faster than that. Flying
-enemies do not count: a depot does not stop them.
+enemies do not count: a depot does not stop them. Nor do Changelings: they
+come to look, and one standing by the wall would keep it shut for good.
 
 Raising a depot pushes our own units on top of it to its nearest edge, and an
 enemy on top keeps it from rising until it steps off (the Body simply orders
@@ -20,6 +21,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field, replace
 
+from ares.consts import CHANGELING_TYPES
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
@@ -78,7 +80,11 @@ class StructureControlPlanner:
             for structure in attention.own_structures
             if structure.type_id in DEPOT_TYPES and structure.is_ready
         )
-        ground = tuple(enemy.position for enemy in attention.enemy_units if not enemy.is_flying)
+        ground = tuple(
+            enemy.position
+            for enemy in attention.enemy_units
+            if not enemy.is_flying and enemy.type_id not in CHANGELING_TYPES
+        )
         tags = {depot.tag for depot in depots}
         threatened_at = {tag: at for tag, at in self._threatened_at.items() if tag in tags}
         lower: list[int] = []

@@ -180,7 +180,10 @@ class ContainerSC2:
         self.docker = docker
         self.name = name
         self.map_file = map_file
-        self.game_map = ContainerMap(map_file.stem, PurePosixPath("/maps", map_file.name))
+        # SC2 stores this path in the replay. Resolve it from Maps on both Linux
+        # and Windows instead of recording an absolute container-only path.
+        self.game_map = ContainerMap(map_file.stem, PurePosixPath(map_file.name))
+        self.map_target = PurePosixPath("/root/StarCraftII/Maps", map_file.name)
         self.output = output
         self._process = None
         self._session = None
@@ -204,7 +207,7 @@ class ContainerSC2:
             "linux/amd64",
             *(arg for port in self.API_PORTS for arg in ("--publish", f"127.0.0.1::{port}")),
             "--mount",
-            f"type=bind,source={self.map_file},target={self.game_map.relative_path},readonly",
+            f"type=bind,source={self.map_file},target={self.map_target},readonly",
             "--entrypoint",
             "/bin/sh",
             local.SC2_IMAGE,

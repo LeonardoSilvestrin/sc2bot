@@ -1,5 +1,7 @@
 # Intel
 
+↑ [Planners](README_PLANNERS.md) · [Arquitetura](../architecture.md)
+
 > O que precisamos ver, e com o quê: scout, scan ou torre?
 
 ## Resumo
@@ -147,7 +149,7 @@ Motivos no log: `no_cloak_seen`, `no_hidden_enemy`, `hidden_enemy_scanned`, `no_
 - **Os blips das nossas Sensor Towers derrubam o bot contra Terran.** O Ares não filtra blips de radar, e um
   blip de unidade camuflada ou enterrada vira um inimigo de tipo 0 que levanta `KeyError: 0` no
   `GridManager`. Os 2 crashes do `bench/t0` foram assim. Nenhuma decisão lê os blips, então as torres hoje
-  só custam gás e risco (item 1 do [debate](../dev/agent_discussion/README.md)).
+  só custam gás e risco (D1 no backlog).
 - **Nada depois da abertura:** o SCV sai uma vez, antes de 240 s, e a ronda acaba com a janela da abertura.
   Não há scan de informação, Raven nem scout no meio do jogo. O observador do exército inimigo fica sem
   medição nova das bases inimigas.
@@ -164,6 +166,5 @@ Motivos no log: `no_cloak_seen`, `no_hidden_enemy`, `hidden_enemy_scanned`, `no_
 - [bot/ego/planners/intel/policies/detection.py](../../bot/ego/planners/intel/policies/detection.py),
   [proxy.py](../../bot/ego/planners/intel/policies/proxy.py),
   [sensor_towers.py](../../bot/ego/planners/intel/policies/sensor_towers.py).
-- Execução no Body: [scout.py](../../bot/body/behaviors/scout.py),
-  [detection.py](../../bot/body/behaviors/detection.py),
-  [sensor_towers.py](../../bot/body/behaviors/sensor_towers.py), [intel.py](../../bot/body/behaviors/intel.py).
+- Execução no Body: [Scout](../behaviors/scout.md), [Detection](../behaviors/detection.md),
+  [Sensor Towers](../behaviors/sensor-towers.md) e [Intel infra](../behaviors/intel-infra.md).

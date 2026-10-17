@@ -12,6 +12,7 @@ import math
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
+from ares.consts import CHANGELING_TYPES
 from sc2.ids.ability_id import AbilityId
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
@@ -29,9 +30,9 @@ _NOT_ARMY = frozenset(
         UnitTypeId.BROODLING,
         UnitTypeId.OVERLORD,
         UnitTypeId.OVERSEER,
-        UnitTypeId.CHANGELING,
         UnitTypeId.OBSERVER,
         UnitTypeId.ADEPTPHASESHIFT,
+        *CHANGELING_TYPES,
     }
 )
 # sqrt(dps * hit points) of a Marine: `UnitView.power` is counted in Marines.
@@ -127,7 +128,11 @@ def unit_view(
         type_id=unit.type_id,
         position=as_point(unit.position),
         health=hit_points / max_hit_points if max_hit_points > 0.0 else 0.0,
-        power=unit_power(
+        # A Changeling disguised as a Marine or a Zergling reports the weapon
+        # of what it looks like, and has none.
+        power=0.0
+        if unit.type_id in CHANGELING_TYPES
+        else unit_power(
             max(float(unit.ground_dps), float(unit.air_dps)),
             hit_points,
             SPLASH_TARGETS.get(unit.type_id, 1.0),

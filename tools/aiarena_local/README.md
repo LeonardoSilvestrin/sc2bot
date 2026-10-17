@@ -1,5 +1,7 @@
 # Partidas locais AI Arena
 
+↑ [README](../../README.md)
+
 Adversários disponíveis nesta máquina: **PhantomBot 3.48.1**, **SharpKnives**
 (proxy zealots), **SharpCannon** (cannon rush), **RustyMarines** (marine all-in)
 e **RoachRush** (rush de roaches).
@@ -52,6 +54,12 @@ seu contêiner, falando com a mesma ponte. Só as portas de API dos dois SC2 sã
 publicadas, em `127.0.0.1`; o mapa é montado somente leitura. A saída dos SC2
 fica em `sc2.txt` e `live-manifest.json` registra `"headless": true`.
 Vale apenas contra bots da ladder; contra a IA do jogo a flag é recusada.
+
+O mapa é montado em `/root/StarCraftII/Maps/` e a partida usa apenas o nome
+relativo do arquivo, que também fica gravado no replay. Assim o SC2 do Windows
+encontra o mesmo mapa em sua pasta `Maps/` ao abrir o replay. O caminho absoluto
+`/maps/<nome>.SC2Map` usado anteriormente só existia dentro do contêiner e
+causava “map not found” na reprodução fora dele.
 
 ```powershell
 .venv\Scripts\python.exe run.py --opponent PhantomBot --map PersephoneAIE_v4 --headless --bot-log events

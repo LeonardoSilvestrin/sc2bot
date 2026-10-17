@@ -1,0 +1,205 @@
+{
+  "collapse-filter": false,
+  "search": "-path:\"__pycache__\" -file:.pyc -path:\"ares-sc2\" -path:\"tools/aiarena_local/runtime\" -path:\"tools/aiarena_local/bootstrap\" -path:\"tools/aiarena_local/reference-controller\" -path:\"tools/aiarena_local/reference-docker\"",
+  "showTags": false,
+  "showAttachments": true,
+  "hideUnresolved": true,
+  "showOrphans": true,
+  "collapse-color-groups": true,
+  "colorGroups": [
+    {
+      "query": "path:\"docs/dev\"",
+      "color": {
+        "a": 1,
+        "rgb": 9079434
+      }
+    },
+    {
+      "query": "path:\"docs/behaviors/attack.\" OR path:\"bot/body/behaviors/attack.\"",
+      "color": {
+        "a": 1,
+        "rgb": 16625818
+      }
+    },
+    {
+      "query": "path:\"docs/behaviors/combat.\" OR path:\"bot/body/behaviors/combat.\"",
+      "color": {
+        "a": 1,
+        "rgb": 13611670
+      }
+    },
+    {
+      "query": "path:\"docs/behaviors/garrison.\" OR path:\"bot/body/behaviors/garrison.\"",
+      "color": {
+        "a": 1,
+        "rgb": 16755827
+      }
+    },
+    {
+      "query": "path:\"docs/behaviors/repair.\" OR path:\"bot/body/behaviors/repair.\"",
+      "color": {
+        "a": 1,
+        "rgb": 16755827
+      }
+    },
+    {
+      "query": "path:\"docs/behaviors/fortify.\" OR path:\"bot/body/behaviors/fortify.\"",
+      "color": {
+        "a": 1,
+        "rgb": 16755827
+      }
+    },
+    {
+      "query": "path:\"docs/behaviors/retreat.\" OR path:\"bot/body/behaviors/retreat.\"",
+      "color": {
+        "a": 1,
+        "rgb": 16430273
+      }
+    },
+    {
+      "query": "path:\"docs/behaviors/hold.\" OR path:\"bot/body/behaviors/hold.\"",
+      "color": {
+        "a": 1,
+        "rgb": 7583887
+      }
+    },
+    {
+      "query": "path:\"docs/behaviors/remove-creep.\" OR path:\"bot/body/behaviors/remove_creep.\"",
+      "color": {
+        "a": 1,
+        "rgb": 7583887
+      }
+    },
+    {
+      "query": "path:\"docs/behaviors/scout.\" OR path:\"bot/body/behaviors/scout.\"",
+      "color": {
+        "a": 1,
+        "rgb": 7578584
+      }
+    },
+    {
+      "query": "path:\"docs/behaviors/detection.\" OR path:\"bot/body/behaviors/detection.\"",
+      "color": {
+        "a": 1,
+        "rgb": 7578584
+      }
+    },
+    {
+      "query": "path:\"docs/behaviors/sensor-towers.\" OR path:\"bot/body/behaviors/sensor_towers.\"",
+      "color": {
+        "a": 1,
+        "rgb": 7578584
+      }
+    },
+    {
+      "query": "path:\"docs/behaviors/intel-infra.\" OR path:\"bot/body/behaviors/intel.\"",
+      "color": {
+        "a": 1,
+        "rgb": 7578584
+      }
+    },
+    {
+      "query": "path:\"docs/behaviors/macro.\" OR path:\"bot/body/behaviors/economy.\"",
+      "color": {
+        "a": 1,
+        "rgb": 16766323
+      }
+    },
+    {
+      "query": "path:\"docs/behaviors/structures.\" OR path:\"bot/body/behaviors/structure_control.\"",
+      "color": {
+        "a": 1,
+        "rgb": 12559498
+      }
+    },
+    {
+      "query": "path:\"docs/planners/defense.\" OR path:\"bot/ego/planners/defense/\"",
+      "color": {
+        "a": 1,
+        "rgb": 16738304
+      }
+    },
+    {
+      "query": "path:\"docs/planners/offense.\" OR path:\"bot/ego/planners/offense/\"",
+      "color": {
+        "a": 1,
+        "rgb": 16152206
+      }
+    },
+    {
+      "query": "path:\"docs/planners/map-control.\" OR path:\"bot/ego/planners/map_control/\"",
+      "color": {
+        "a": 1,
+        "rgb": 32052
+      }
+    },
+    {
+      "query": "path:\"docs/planners/intel.\" OR path:\"bot/ego/planners/intel/\"",
+      "color": {
+        "a": 1,
+        "rgb": 22456
+      }
+    },
+    {
+      "query": "path:\"docs/planners/economy.\" OR path:\"bot/ego/economy/\"",
+      "color": {
+        "a": 1,
+        "rgb": 16757504
+      }
+    },
+    {
+      "query": "path:\"docs/planners/structure-control.\" OR path:\"bot/ego/planners/structure_control/\"",
+      "color": {
+        "a": 1,
+        "rgb": 9132587
+      }
+    },
+    {
+      "query": "path:\"docs/planners/strategy.\" OR path:\"bot/ego/strategy/\"",
+      "color": {
+        "a": 1,
+        "rgb": 8404597
+      }
+    },
+    {
+      "query": "file:architecture OR file:passages OR path:\"bot/attention/\"",
+      "color": {
+        "a": 1,
+        "rgb": 14096668
+      }
+    },
+    {
+      "query": "path:\"bot/awareness/\"",
+      "color": {
+        "a": 1,
+        "rgb": 9677312
+      }
+    },
+    {
+      "query": "path:\"docs/planners/\" OR path:\"bot/\"",
+      "color": {
+        "a": 1,
+        "rgb": 8366041
+      }
+    },
+    {
+      "query": "path:\"tools/\" OR path:\"harness/\" OR path:\"tests/\" OR file:bench OR file:run",
+      "color": {
+        "a": 1,
+        "rgb": 5030510
+      }
+    }
+  ],
+  "collapse-display": true,
+  "showArrow": false,
+  "textFadeMultiplier": 0,
+  "nodeSizeMultiplier": 1,
+  "lineSizeMultiplier": 1,
+  "collapse-forces": false,
+  "centerStrength": 0,
+  "repelStrength": 1.01853658536585,
+  "linkStrength": 1,
+  "linkDistance": 250,
+  "scale": 0.7132754626224244,
+  "close": false
+}

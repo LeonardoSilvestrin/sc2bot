@@ -142,3 +142,9 @@ bot.zip
 
 # Local isolated checkouts are not project submodules.
 /.worktrees/
+
+# Obsidian: the vault config (exclusions, graph colors) is versioned; per-machine state is not.
+/.obsidian/workspace*.json
+/.obsidian/cache
+/.obsidian/plugins/
+/.obsidian/themes/

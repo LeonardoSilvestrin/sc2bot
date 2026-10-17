@@ -8,6 +8,7 @@ import pytest
 from ares.behaviors.combat import CombatManeuver
 from ares.behaviors.combat.individual import (
     AMove,
+    AttackTarget,
     PathUnitToTarget,
     SiegeTankDecision,
     UseAbility,
@@ -406,3 +407,39 @@ def test_holding_bio_stims_when_the_fight_reaches_the_rally() -> None:
     report = behaviors.BY_COMMAND[Command.HOLD](bot, [marine], hold)
     assert [type(micro) for micro in maneuvers(bot)[1]] == [PathUnitToTarget]
     assert report.stimmed == ()
+
+
+@pytest.mark.parametrize("command", [Command.ATTACK, Command.HOLD])
+def test_a_unit_with_nothing_else_to_fight_shoots_the_changeling_it_sees(command) -> None:
+    marine = bio(1)
+    near = FakeUnit(90, UnitTypeId.CHANGELINGMARINE, 34, 30, dps=0.0, hit_points=5.0)
+    far = FakeUnit(91, UnitTypeId.CHANGELINGMARINE, 36, 30, dps=0.0, hit_points=5.0)
+    order = proposal("defense:changeling:90", -0.5, command=command, target=Point2((34, 30)))
+
+    bot = FakeBot()
+    bot.enemy_units = [far, near]
+    report = behaviors.BY_COMMAND[command](bot, [marine], order)
+
+    micros = maneuvers(bot)[1]
+    assert type(micros[0]) is AttackTarget and micros[0].target is near
+    # A Changeling is no fight to stim for.
+    assert report.stimmed == ()
+
+    # A real enemy near comes first; the Changeling waits.
+    bot = FakeBot()
+    bot.enemy_units = [near, FakeUnit(92, UnitTypeId.ZERGLING, 30 + attack.STIM_RANGE, 30)]
+    behaviors.BY_COMMAND[command](bot, [marine], order)
+    assert AttackTarget not in [type(micro) for micro in maneuvers(bot)[1]]
+
+    # Out of sight, it is walked to, not shot.
+    bot = FakeBot()
+    bot.enemy_units = [FakeUnit(90, UnitTypeId.CHANGELINGMARINE, 40, 30, dps=0.0)]
+    behaviors.BY_COMMAND[command](bot, [marine], order)
+    assert AttackTarget not in [type(micro) for micro in maneuvers(bot)[1]]
+
+    # A unit that cannot shoot ground leaves it alone.
+    bot = FakeBot()
+    bot.enemy_units = [near]
+    medivac = FakeUnit(3, UnitTypeId.MEDIVAC, 33, 30, dps=0.0, flying=True)
+    behaviors.BY_COMMAND[command](bot, [medivac], order)
+    assert AttackTarget not in [type(micro) for micro in maneuvers(bot)[3]]

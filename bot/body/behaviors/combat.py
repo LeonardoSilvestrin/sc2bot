@@ -1,9 +1,11 @@
 """What the fighting behaviors share: a Siege Tank decides its own siege, a
-unit that fights attack-moves, and bio with an enemy near stims.
+unit that fights attack-moves, bio with an enemy near stims, and a unit with
+nothing else to fight shoots the Changeling it sees.
 
 Ares lists the enemies it remembers out of sight among `enemy_units`. A Siege
 Tank sieges against those too; a fight -- a stim, or a holding unit leaving
-its path -- starts only with an enemy in sight now."""
+its path -- starts only with an enemy in sight now, and a Changeling is not
+one: no unit acquires it by itself, so it is shot only on a direct order."""
 
 from __future__ import annotations
 
@@ -11,6 +13,7 @@ from collections.abc import Sequence
 
 from ares.behaviors.combat import CombatManeuver
 from ares.behaviors.combat.individual import AMove, SiegeTankDecision
+from ares.consts import CHANGELING_TYPES
 from sc2.ids.ability_id import AbilityId
 from sc2.ids.buff_id import BuffId
 from sc2.ids.unit_typeid import UnitTypeId
@@ -31,12 +34,40 @@ STIMS: dict[UnitTypeId, tuple[AbilityId, BuffId]] = {
 STIM_RANGE = 10.0
 # ... and at least this share of its health: stimming costs health.
 STIM_MIN_HEALTH = 0.5
+# A unit with an enemy this close fights it; with none, it shoots the nearest
+# Changeling in its sight.
+ENGAGE_RADIUS = 10.0
 
 
 def present(enemies: Sequence) -> list:
     """The enemies this frame shows, without Ares' remembered snapshots."""
 
     return [enemy for enemy in enemies if not getattr(enemy, "is_memory", False)]
+
+
+def fighting(enemies: Sequence) -> list:
+    """The enemies a fight is about: everything but the Changelings."""
+
+    return [enemy for enemy in enemies if enemy.type_id not in CHANGELING_TYPES]
+
+
+def changeling_for(unit, seen: Sequence):
+    """The Changeling the unit should shoot now, or None.
+
+    `seen`: the enemies in sight now. Only a unit that shoots ground and has no
+    other enemy within `ENGAGE_RADIUS` spends its shots on one.
+    """
+
+    if not unit.can_attack_ground:
+        return None
+    if any(enemy.distance_to(unit) <= ENGAGE_RADIUS for enemy in fighting(seen)):
+        return None
+    changelings = [
+        enemy
+        for enemy in seen
+        if enemy.type_id in CHANGELING_TYPES and enemy.distance_to(unit) <= unit.sight_range
+    ]
+    return min(changelings, key=lambda enemy: enemy.distance_to(unit), default=None)
 
 
 def maneuver(unit, target: Point2, enemies: Sequence, *, stay_sieged: bool) -> CombatManeuver:

@@ -1,5 +1,7 @@
 # StructureControl
 
+↑ [Planners](README_PLANNERS.md) · [Arquitetura](../architecture.md)
+
 > O que nossas estruturas fazem sozinhas: depots e tirar uma estrutura do caminho de um Siege Tank.
 
 ## Resumo
@@ -24,7 +26,8 @@
 ## Depots
 
 1. Um depot pronto **sobe** no frame em que um inimigo terrestre visível está a até 8 células
-   (`raise_reach`). Voadores não contam, porque o depot não os para.
+   (`raise_reach`). Voadores não contam, porque o depot não os para. Changelings também não: vêm só olhar,
+   e um parado junto da muralha a deixaria fechada para sempre.
 2. Ele **desce** quando nenhum inimigo terrestre esteve a essa distância por 3 s (`lower_after`). Um
    inimigo andando na borda do alcance não consegue fazer o depot subir e descer mais rápido que isso.
 3. Subir empurra as nossas unidades de cima para a borda (o plano conta quantas, em
@@ -106,7 +109,7 @@ tank_stuck ─▶ blocker_selected ─▶ lifting ─▶ tank_moving / tank_gone
 ## Limitações conhecidas
 
 - **A relocation resolve pouco:** nos benches houve 127 `tank_stuck`, só 11 com `blocker_selected` (9 %) e 64
-  `no_blocker` ([debate](../dev/agent_discussion/README.md)). A causa é o placement do Ares, que empacota a
+  `no_blocker` (debate). A causa é o placement do Ares, que empacota a
   produção Terran sem corredores e faz Tanks nascerem cercados. A relocation é um remendo; o caminho seria
   atacar o placement ou retirá-la.
 - O wall ainda não antecipa o fechamento por contato lembrado ou pela rota, não usa a velocidade do inimigo,
@@ -118,4 +121,4 @@ tank_stuck ─▶ blocker_selected ─▶ lifting ─▶ tank_moving / tank_gone
   `StructureControlPlanner`, `StructureConfig`, os depots.
 - [bot/ego/planners/structure_control/policies/relocation.py](../../bot/ego/planners/structure_control/policies/relocation.py):
   `Relocator`, `RelocationConfig`.
-- Execução no Body: [structure_control.py](../../bot/body/behaviors/structure_control.py).
+- Execução no Body: [Structures](../behaviors/structures.md).

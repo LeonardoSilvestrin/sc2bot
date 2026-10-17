@@ -468,8 +468,10 @@ def _compare(baseline: Path, challenger: Path) -> int:
 
 def _read_json(path: Path):
     try:
+
         return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
+        
         return None
 
 

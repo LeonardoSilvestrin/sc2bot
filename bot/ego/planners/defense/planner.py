@@ -1,5 +1,5 @@
-"""DefensePlanner: one DefendAreaMission per threat incident, and one
-RushDefenseMission while a rush is on.
+"""DefensePlanner: one DefendAreaMission per threat incident, one
+RushDefenseMission while a rush is on, and a unit for every Changeling at home.
 
 Awareness groups the attackers in reach of our bases into incidents and keeps
 an incident's id while its attackers come and go. The planner opens a mission
@@ -19,6 +19,11 @@ bases now are, if the rush still reads.
 The planner keeps the open missions, by incident, the rush defense, and the
 counts that number them: an incident id Awareness reuses later is a new
 mission.
+
+A Changeling is no incident -- it has no weapon -- but no unit shoots it by
+itself either: `policies/changelings.py` sends one unit after each that is in
+reach of a base. That needs no mission: the proposal lasts while the
+Changeling is in sight.
 """
 
 from __future__ import annotations
@@ -40,6 +45,7 @@ from bot.ego.strategy import StrategicIntent
 from .missions import rush_defense
 from .missions.defend_area import KIND, OWNER, DefendAreaMission
 from .missions.rush_defense import RushDefenseMission, RushStep
+from .policies.changelings import changeling_proposals
 from .policies.rush import RushConfig, RushReading, bunker_site, read_rush
 
 if TYPE_CHECKING:
@@ -102,6 +108,7 @@ class DefensePlanner:
             granted = MissionFeedback.of(feedback, mission.mission_id)
             views.append(mission.view(granted, mission.step(None, intent, granted)))
         self._missions = stepped
+        proposals.extend(changeling_proposals(attention))
         fortification = self._plan_rush(attention, awareness, feedback, proposals, views)
         self._views = tuple(views)
         return DefensePlan(proposals=tuple(proposals), fortification=fortification)

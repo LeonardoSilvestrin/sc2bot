@@ -217,3 +217,33 @@ def test_the_units_defending_stay_on_the_attack_when_its_lowest_tag_dies() -> No
     held = {tag for tag, owner in second.owners if owner == answer.proposal_id}
     assert len(held) == 2 and held <= defenders
     assert second.owner_of(4) == map_control.OWNER
+
+
+def changeling(tag: int, x: float, y: float):
+    return unit(tag, UnitTypeId.CHANGELINGMARINE, x, y, power=0.0)
+
+
+def test_a_changeling_at_home_draws_one_ground_unit_and_no_incident() -> None:
+    # bench/testando normal, 2026-10-04: Changelings by the wall drew a defense
+    # incident each, whose attack-move never shot them, for two minutes.
+    frame = attention(
+        own_units=ARMY,
+        enemy_units=(changeling(90, 14, 12), changeling(91, 55, 55)),
+    )
+
+    awareness, _, proposals = plan(frame)
+    result = Engine().allocate(frame, proposals)
+
+    assert awareness.incidents == ()
+    (hunt,) = defenses(proposals)
+    assert (hunt.proposal_id, hunt.command, hunt.count) == (
+        "defense:changeling:90",
+        Command.ATTACK,
+        1,
+    )
+    assert hunt.must_attack is Domain.GROUND
+    assert hunt.target == Point2((14, 12))
+    # The nearest unit goes; the rest stay with MapControl.
+    (grant,) = [grant for grant in result.grants if grant.proposal is hunt]
+    assert grant.tags == (3,)
+    assert result.owner_of(1) == map_control.OWNER

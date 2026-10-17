@@ -1,5 +1,7 @@
 # Planners
 
+↑ [README](../../README.md) · [Arquitetura](../architecture.md)
+
 Um documento por planner do Ego, e um para cada vizinho deles que não é planner (Strategy e Economy): o que
 ele decide, como decide e o que ainda falta. Todos descrevem o código do HEAD. O que está em andamento fica em [staging/](../dev/staging/README.md), e as regras gerais
 (papéis, contratos, missões, eventos) ficam em [architecture.md](../architecture.md).

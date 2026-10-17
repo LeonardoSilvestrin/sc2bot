@@ -1,5 +1,7 @@
 # Estimação e controle
 
+↑ [Staging](README.md) · [Desenvolvimento](../README_DEV.md)
+
 Registro de uma virada de direção, decidida em 2026-10-03 no branch `observador` (tag de rollback
 `pre-observador`, em `9457a4a`). O que já está no HEAD está descrito em
 [architecture.md](../../architecture.md#matemática); aqui fica o porquê, o que vem depois e como medir.
@@ -124,7 +126,7 @@ divergiu do cliente).
 1. **DEFEND em cascata.** Hoje o DEFEND dispara com 3–4 Marines de pressão mesmo com 10–53 de cobertura na
    base (`bench/t0`: 42–45 % do tempo em DEFEND nas derrotas, 7 de 12 ataques cancelados no ASSEMBLE). A malha
    externa passa a ler o déficit da Defense — poder pedido menos concedido, o `GrantStatus` que nenhuma missão
-   lê (C6 do [gaps.md](../gaps.md#c6)) — ou a ameaça líquida da cobertura (`balance`, C2). DEFEND passa a
+   lê (C6 do `gaps.md`) — ou a ameaça líquida da cobertura (`balance`, C2). DEFEND passa a
    significar "a malha interna saturou".
 2. **Lei de gasto contínua.** `alvo = μ̂(t+τ) + kσ̂(t+τ)`, `erro = alvo − (exército + exército na fila)` (o
    termo da fila é um preditor de Smith: sem ele um controlador de alvo dá overshoot pelo tempo de produção),

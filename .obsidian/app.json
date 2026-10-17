@@ -1,0 +1,14 @@
+{
+  "userIgnoreFilters": [
+    "ares-sc2/",
+    "bench/",
+    "logs/",
+    "tools/aiarena_local/runtime/",
+    "tools/aiarena_local/bootstrap/",
+    "tools/aiarena_local/reference-controller/",
+    "tools/aiarena_local/reference-docker/"
+  ],
+  "useMarkdownLinks": true,
+  "newLinkFormat": "relative",
+  "alwaysUpdateLinks": true
+}

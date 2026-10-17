@@ -73,18 +73,19 @@ A Strategy decide **o que é permitido**, o Planner **quais operações** existe
 a Mission **como a operação avança**, o Engine **quem** recebe as unidades e o
 Behavior **como** executar. Só `observe`, os behaviors e os logs tocam o bot; o resto é testável
 sem o jogo. Fórmulas, eventos de log e parâmetros estão em
-[docs/architecture.md](docs/architecture.md) e, para cada planner, em [docs/planners/](docs/planners/README.md).
+[docs/architecture.md](docs/architecture.md) e, para cada planner, em [docs/planners/](docs/planners/README_PLANNERS.md).
 
 Como o bot funciona:
 
 | Documento | Conteúdo |
 | --- | --- |
 | [docs/architecture.md](docs/architecture.md) | Camadas, matemática da percepção, missões, eventos, comandos, o que falta e as medições |
-| [docs/planners/](docs/planners/README.md) | Um documento por planner (Strategy, Defense, Offense, MapControl, Intel, Economy, StructureControl): como decide, parâmetros, log e limitações |
+| [docs/planners/](docs/planners/README_PLANNERS.md) | Um documento por planner (Strategy, Defense, Offense, MapControl, Intel, Economy, StructureControl): como decide, parâmetros, log e limitações |
 | [docs/passages.md](docs/passages.md) | Passagens dinâmicas: mineral walls e rocks que abrem durante a partida |
+| [docs/frame.canvas](docs/frame.canvas) | Para abrir no Obsidian: um frame inteiro num quadro, da percepção aos behaviors, com os docs embutidos |
 
 O desenvolvimento (trabalho em andamento, pesquisa, backlog, revisões de código e debates) fica em
-[docs/dev/](docs/dev/README.md).
+[docs/dev/](docs/dev/README_DEV.md).
 
 ## Instalação
 

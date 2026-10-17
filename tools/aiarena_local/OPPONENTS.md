@@ -1,5 +1,7 @@
 # Adversários de rush
 
+↑ [Partidas locais](README.md)
+
 Pacotes públicos da AI Arena baixados e cadastrados nesta máquina em **04/10/2026**.
 Além do PhantomBot, os seletores **play**, **play full debug** e
 **bench: bot da ladder (full debug)** incluem:

@@ -230,6 +230,7 @@ class FakeUnit:
         cargo_max: int = 0,
         mechanical: bool | None = None,
         orders=(),
+        sight: float = 9.0,
     ) -> None:
         # An older frame's object: Ares lists the enemies it remembers out of
         # sight among the enemy units, as the snapshot it took.
@@ -256,6 +257,7 @@ class FakeUnit:
         self.ground_dps = dps
         self.air_dps = 0.0 if structure else dps
         self.is_flying = flying
+        self.sight_range = sight
         self.can_attack_ground = dps > 0.0
         self.can_attack_air = dps > 0.0 and not structure
         self.is_structure = structure

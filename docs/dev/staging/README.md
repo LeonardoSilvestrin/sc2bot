@@ -1,7 +1,9 @@
 # Em andamento (staging)
 
+↑ [Desenvolvimento](../README_DEV.md)
+
 O que está sendo feito agora, ou foi decidido e é o próximo. O papel de cada um dos outros documentos, e o
-ciclo de um item (daqui para o HEAD), estão no [índice do desenvolvimento](../README.md).
+ciclo de um item (daqui para o HEAD), estão no [índice do desenvolvimento](../README_DEV.md).
 
 Um item entra aqui quando se decide fazê-lo, com um arquivo próprio se não couber numa linha. Um
 experimento medido e revertido também sai daqui e fica registrado em "Medido e revertido".
@@ -23,12 +25,5 @@ Engineering Bay estão descritos em [architecture.md](../../architecture.md#pap�
 
 ## Depois
 
-Não decidido. É o que os documentos de backlog já apontam como o próximo limite, para não se perder:
-
-- **Fechar o jogo.** Contra Zerg CheatInsane todo jogo sobrevivido é timeout: o grupo não se junta
-  (`assembled_share` 0–0,22) e `home_threatened` (DEFEND) o chama de volta. É o [I1](../gaps.md#i1) (compromisso medido no
-  exército inteiro, severidade alta) e o N7.1 (reforços agrupados).
-- **Quem conta como atacante** ([I2](../gaps.md#i2), [I3](../gaps.md#i3)): um worker de scout ou uma estrutura
-  estática abre incidente e pode segurar um DEFEND. A política SURVIVE já lê a mesma ameaça.
-- **Limpeza que não muda decisão**, de uma vez: C13, L1–L7, I6, I7, I8 (a ordem sugerida do gaps.md). O I6, o I7
-  e o I8 entram no refactor de economia.
+Não decidido. O que vem depois está no [backlog](../backlog.md), do mais urgente ao menos: não perder por
+crash, medir, o que conta como ameaça (I2, I3) e fechar o jogo (I1, N7.1).

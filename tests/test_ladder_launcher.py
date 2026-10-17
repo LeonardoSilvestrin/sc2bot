@@ -78,9 +78,9 @@ def test_headless_sc2_mounts_only_the_map_and_publishes_only_the_api_on_loopback
     server = live_play.ContainerSC2("docker.exe", "fixture-sc2", map_file, Path("sc2.txt"))
     command = server.command()
     assert server.game_map.name == "PersephoneAIE_v4"
-    assert str(server.game_map.relative_path) == "/maps/PersephoneAIE_v4.SC2Map"
+    assert str(server.game_map.relative_path) == "PersephoneAIE_v4.SC2Map"
     assert command[command.index("--mount") + 1] == (
-        f"type=bind,source={map_file},target=/maps/PersephoneAIE_v4.SC2Map,readonly"
+        f"type=bind,source={map_file},target=/root/StarCraftII/Maps/PersephoneAIE_v4.SC2Map,readonly"
     )
     published = [command[i + 1] for i, arg in enumerate(command) if arg == "--publish"]
     assert published == ["127.0.0.1::5001", "127.0.0.1::5002"]

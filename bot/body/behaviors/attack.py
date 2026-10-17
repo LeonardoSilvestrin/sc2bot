@@ -10,6 +10,9 @@ bio alive in the fight, and the report says who took them:
 - a Medivac attack-moves -- which heals on the way -- to the centre of the
   other granted units instead of the target, so it does not fly ahead of
   them; with no other unit granted it goes to the target.
+
+A unit with no other enemy near shoots the Changeling it sees
+(`combat.changeling_for`): an attack-move walks past it.
 """
 
 from __future__ import annotations
@@ -17,7 +20,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from ares.behaviors.combat.individual import UseAbility
+from ares.behaviors.combat.individual import AttackTarget, UseAbility
 from sc2.ids.unit_typeid import UnitTypeId
 from sc2.position import Point2
 
@@ -29,6 +32,8 @@ from .combat import (
     STIM_RANGE,
     STIMS,
     attack_move,
+    changeling_for,
+    fighting,
     maneuver,
     present,
     stim_for,
@@ -57,7 +62,8 @@ class MicroReport:
 
 def execute(bot, units: Sequence, proposal: Proposal) -> MicroReport:
     enemies = list(bot.enemy_units)
-    fighters = [enemy for enemy in present(enemies) if enemy.type_id not in WORKER_TYPES]
+    seen = present(enemies)
+    fighters = [enemy for enemy in fighting(seen) if enemy.type_id not in WORKER_TYPES]
     group = group_center(units)
     stimmed: list[int] = []
     escorts: list[int] = []
@@ -67,6 +73,9 @@ def execute(bot, units: Sequence, proposal: Proposal) -> MicroReport:
         if stim is not None:
             fight.add(UseAbility(stim, unit))
             stimmed.append(unit.tag)
+        changeling = changeling_for(unit, seen)
+        if changeling is not None:
+            fight.add(AttackTarget(unit, changeling))
         target = proposal.target
         if unit.type_id in ESCORTS and group is not None:
             target = group

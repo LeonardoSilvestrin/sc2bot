@@ -1,5 +1,7 @@
 # Defense
 
+↑ [Planners](README_PLANNERS.md) · [Arquitetura](../architecture.md)
+
 > Quem está atacando uma base nossa agora, e quanto exército mandar? E, se for um rush, onde segurá-lo?
 
 ## Resumo
@@ -16,13 +18,17 @@
   uma `RushDefenseMission`: um Bunker na base que o rush vai atingir, cheio de Marines e reparado por SCVs.
   Uma por vez, aberta pela leitura de rush (`policies/rush.py`), que junta o que a abertura inimiga prometeu
   e a ameaça que uma base sofre agora, e só enquanto a Awareness diz que o early game não acabou.
+- Um **Changeling** ao alcance de uma base (30 células) ganha uma proposta de uma unidade que atira no chão
+  (`defense:changeling:<tag>`, `ATTACK` onde ele está, prioridade −0,5). Ele não é incidente: a Attention
+  o lê com poder 0 e fora do exército, porque a arma que o tipo reporta é a do que ele imita. E nenhuma
+  unidade o adquire sozinha: quem atira nele é o reflexo do Body (abaixo).
 
 ## Entradas e saídas
 
 | | |
 | --- | --- |
 | Lê | `awareness.incidents` (os incidentes do frame), `awareness.bases` (`recent_threat`, `pressure`), `awareness.opening` (`aggression`, `proxy`, `confidence`), `intent.posture` e `intent.defense`; da Attention, as bases, os nossos Bunkers (`cargo_used`/`cargo_max`) e o spot de Bunker que o Ares resolveu na natural (`map.bunker_sites`) |
-| Entrega | Um `DefensePlan`: até duas `Proposal` por incidente (`defense:<incidente>:air` e `…:ground`), com `ATTACK` no centro do incidente; num rush, `GARRISON` (Marines para o Bunker) e `REPAIR` (SCVs) no Bunker; e o `FortificationPlan`, plano direto do Bunker a construir e dos Bunkers a esvaziar |
+| Entrega | Um `DefensePlan`: até duas `Proposal` por incidente (`defense:<incidente>:air` e `…:ground`), com `ATTACK` no centro do incidente; uma `defense:changeling:<tag>` por Changeling em casa; num rush, `GARRISON` (Marines para o Bunker) e `REPAIR` (SCVs) no Bunker; e o `FortificationPlan`, plano direto do Bunker a construir e dos Bunkers a esvaziar |
 | Recebe de volta | O `EngineResult` do frame anterior (passado à missão, mas **não lido**: ver Limitações) |
 
 ## De onde vêm os incidentes
@@ -75,7 +81,8 @@ rush      = early · (1 − (1 − esperado) · (1 − presente))
 ```
 
 As duas evidências são independentes: qualquer uma basta. A promessa da abertura enfraquece sozinha, com a
-`confidence` dela; a ameaça, com o `threat_memory`. A fase do jogo não é um relógio da Defense: é crença da
+`confidence` dela (que uma estrutura vista na nossa metade do mapa já põe perto de 1: o SCV que passa por um
+proxy a caminho da main abre a defesa ali, sem esperar a main nem a natural); a ameaça, com o `threat_memory`. A fase do jogo não é um relógio da Defense: é crença da
 Awareness, e só desce (1 até 240 s, linear até 0 aos 420 s, ou 0 na hora em que temos 3 bases). Com o early
 game acabado, um ataque é timing e quem responde é o exército: nenhuma defesa de rush abre, e a aberta termina.
 
@@ -111,6 +118,19 @@ e manda um construtor por vez. Roda antes da economia no frame. `garrison` dá a
 vez só; sem Bunker com vaga, o Marine luta no ponto. `repair` tira o SCV da mineração (role `REPAIRING`), repara
 o mais danificado entre estruturas e unidades mecânicas a até 6 do ponto (nunca outro worker) e, sem nada para
 reparar, espera junto do Bunker. Quando nenhuma proposta o segura mais, o Engine o libera e ele volta a minerar.
+
+## Changelings
+
+`policies/changelings.py`, sem missão: a proposta existe enquanto o Changeling está visível a até
+`CHANGELING_REACH` de uma base nossa, com id que segue a tag, então o Engine mantém a mesma unidade atrás
+dele. A prioridade −0,5 fica abaixo da Offense (um ataque em curso não larga ninguém por um Changeling) e
+acima do MapControl (quem só segura terreno vai).
+
+No Body, `combat.changeling_for`, usado por `ATTACK` e `HOLD`: uma unidade que atira no chão, sem nenhum
+outro inimigo visível a até 10 células (`ENGAGE_RADIUS`), dá ordem direta de ataque no Changeling mais perto
+dentro do seu alcance de visão. Isso vale para qualquer unidade em `ATTACK`/`HOLD`, não só a mandada pela
+Defense: o Changeling que anda junto do exército também morre. Ele não conta para o stim nem tira uma unidade
+em `HOLD` do caminho.
 
 ## A missão
 
@@ -150,6 +170,9 @@ Bunker que segura o ponto), o contador dela e a última leitura de rush.
 | `REPAIRERS_PER_POWER` | 0,5 | rush_defense.py | SCVs reparando por Marine de poder atacando o Bunker |
 | `MAX_REPAIRERS` | 5 | rush_defense.py | Teto de SCVs reparando |
 | `GARRISON_PRIORITY` / `REPAIR_PRIORITY` | 1,0 | rush_defense.py | Acima de qualquer incidente |
+| `CHANGELING_REACH` | 30 | policies/changelings.py | Até onde de uma base um Changeling é caçado |
+| `CHANGELING_PRIORITY` | −0,5 | policies/changelings.py | Entre a Offense (0) e o MapControl (−1) |
+| `ENGAGE_RADIUS` | 10 | behaviors/combat.py | Com outro inimigo a essa distância, a unidade luta com ele e ignora o Changeling |
 | `REPAIR_REACH` | 6 | behaviors/repair.py | O que está a essa distância do ponto é reparado |
 | `base_reach` | 30 | Awareness | Até onde um contato pressiona uma base |
 | `base_sigma` | 14 | Awareness | Espalhamento da pressão em torno da base |
@@ -163,6 +186,7 @@ Bunker que segura o ponto), o contador dela e a última leitura de rush.
   base) e `bases[]` (`pressure`, `cover`, `balance`, `threat`, `recent_threat`).
 - `planner.proposed` → as propostas `defense:<incidente>:air`/`ground` com `inputs` (`threat`, `budget`,
   `cover_margin`, `part_power`…).
+- `planner.proposed` → `defense:changeling:<tag>` (`reason` `changeling_at_home`, `inputs.base_distance`).
 - `engine.granted` → o que cada parte recebeu (`granted_power`, `status` `FULL`/`PARTIAL`/`REJECTED`).
 - `mission.updated` → abertura e fim de cada `defense:defend_area:N`, e as fases de cada
   `defense:rush_defense:N`.
@@ -174,12 +198,12 @@ Bunker que segura o ponto), o contador dela e a última leitura de rush.
 ## Limitações conhecidas
 
 - **O feedback não é lido.** Uma defesa que recebeu metade do orçamento (`PARTIAL`) segue igual: não escala,
-  não chama reforço e não avisa a Strategy (C6 no [gaps.md](../dev/gaps.md)).
+  não chama reforço e não avisa a Strategy (C6 no backlog).
 - **A cobertura não entra.** A Awareness calcula quanto exército nosso já está na base (`cover`) e a razão
   pressão/cobertura (`balance`), e nada os lê. É o mesmo defeito que faz o DEFEND disparar com 3 Marines de
   pressão diante de 49 de cobertura ([strategy.md](strategy.md#limitações-conhecidas)).
 - **Quem conta como atacante:** um worker de scout ou uma estrutura estática abre incidente e pode segurar um
-  DEFEND (I2 e I3 no [gaps.md](../dev/gaps.md)). Não se distingue scout, worker rush e ataque.
+  DEFEND (I2 e I3 no backlog). Não se distingue scout, worker rush e ataque.
 - **Alcance pela distância reta**, não pelo pathing: um inimigo do outro lado de um penhasco conta.
 - O ramo de cancelamento da missão é código morto: o planner nunca pede.
 - Ainda faltam: histerese de admissão e liberação, eventos explícitos de linhagem de incidentes (divisão e
@@ -206,7 +230,6 @@ Bunker que segura o ponto), o contador dela e a última leitura de rush.
   `RushDefenseMission`.
 - [bot/ego/planners/defense/policies/rush.py](../../bot/ego/planners/defense/policies/rush.py): `RushConfig`,
   `read_rush`, `bunker_site`.
-- [bot/body/behaviors/fortify.py](../../bot/body/behaviors/fortify.py),
-  [garrison.py](../../bot/body/behaviors/garrison.py) e [repair.py](../../bot/body/behaviors/repair.py): o Bunker,
-  a guarnição e o reparo.
+- Execução no Body: [Attack](../behaviors/attack.md) (incidentes e Changelings), [Fortify](../behaviors/fortify.md)
+  (o Bunker), [Garrison](../behaviors/garrison.md) (a guarnição) e [Repair](../behaviors/repair.md) (o reparo).
 - [bot/awareness/model.py](../../bot/awareness/model.py): `_pressure`, `_base_threat`, `_incidents`.

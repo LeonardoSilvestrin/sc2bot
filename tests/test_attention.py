@@ -7,7 +7,7 @@ import math
 import pytest
 from sc2.ids.unit_typeid import UnitTypeId
 
-from bot.attention import SPLASH_TARGETS, unit_power, unit_view
+from bot.attention import SPLASH_TARGETS, is_army, unit_power, unit_view
 
 from .fakes import FakeUnit
 
@@ -84,3 +84,13 @@ def test_a_unit_with_no_splash_keeps_its_price() -> None:
     )
 
     assert zergling.power == pytest.approx(unit_power(10.0, 35.0))
+
+
+def test_a_changeling_has_no_power_and_is_no_army() -> None:
+    # bench/testando normal, 2026-10-04: a disguised Changeling reports the
+    # Marine's weapon, and four of them by the wall read as a Marine each.
+    for type_id in (UnitTypeId.CHANGELINGMARINE, UnitTypeId.CHANGELINGZERGLING):
+        changeling = unit_view(FakeUnit(700, type_id, 50.0, 50.0, dps=9.8), supply)
+
+        assert changeling.power == 0.0
+        assert not is_army(changeling)

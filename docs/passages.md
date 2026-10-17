@@ -1,5 +1,7 @@
 # Passagens dinâmicas
 
+↑ [Arquitetura](architecture.md)
+
 `MapPassage` (também exportada como `Passage`) guarda identidade, geometria,
 regiões, `blocker_type`, `blocker_tags` e `state`. Os valores de estado são
 `OPEN`, `CLOSED` e `UNKNOWN`, serializados em minúsculas. A geometria de

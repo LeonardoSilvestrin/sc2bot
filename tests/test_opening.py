@@ -26,6 +26,7 @@ from bot.attention import (
 from bot.awareness import AwarenessModel, OpeningBelief, expectations_for, read_opening
 from bot.awareness.opening import OpeningBeliefConfig
 from bot.ego.planners import CancelMode, Command, MissionStatus
+from bot.ego.planners.defense import RushConfig
 from bot.ego.planners.intel import (
     PROXY_CONFIDENCE_AT,
     PROXY_SEARCH_AT,
@@ -349,6 +350,25 @@ def test_a_structure_on_our_half_is_the_strongest_proxy_evidence() -> None:
     caught = observations(proxy_structures_seen=1, seen={UnitTypeId.BARRACKS: (1, 90.0)})
 
     assert read_opening(caught, now=95.0).proxy > 0.8
+
+
+def test_a_proxy_passed_on_the_way_out_is_believed_before_the_main_is_seen() -> None:
+    # The bench game: two Gateways and a Pylon on our half at 1:07, with no
+    # main seen and no expansion checked yet.
+    passed = observations(
+        main_scout_coverage=0.0,
+        proxy_structures_seen=3,
+        seen={UnitTypeId.GATEWAY: (2, 67.0), UnitTypeId.PYLON: (1, 68.5)},
+        last_updated=68.5,
+    )
+    unseen = replace(passed, proxy_structures_seen=0)
+
+    belief = read_opening(passed, now=69.0)
+
+    assert belief.confidence > 0.95
+    assert belief.proxy * belief.confidence >= RushConfig().open_at
+    # Two Gateways in a main nobody saw are still the thin read they were.
+    assert read_opening(unseen, now=69.0).confidence < 0.1
 
 
 def test_confidence_follows_coverage_checks_and_how_fresh_the_record_is() -> None:

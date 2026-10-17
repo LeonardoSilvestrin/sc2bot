@@ -1,5 +1,5 @@
-"""Defense: every threat incident is answered, with one budget, and a rush is
-held behind a Bunker.
+"""Defense: every threat incident is answered, with one budget, a rush is
+held behind a Bunker, and a Changeling at home is shot.
 
 - `planner.DefensePlanner`: one mission per incident, open while the incident
   is, and one rush defense while the rush reading says so.
@@ -8,6 +8,7 @@ held behind a Bunker.
 - `missions.rush_defense.RushDefenseMission`: a Bunker at the base the rush
   hits, filled with Marines and repaired by SCVs.
 - `policies.rush`: the rush reading, and where the Bunker goes.
+- `policies.changelings`: one unit after each Changeling at home.
 """
 
 from .missions.defend_area import COVER_MARGIN, KIND, OWNER, DefendAreaMission

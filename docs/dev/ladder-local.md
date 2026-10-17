@@ -1,7 +1,9 @@
 # Bots locais da ladder: mecanismos para aproveitar
 
+↑ [Desenvolvimento](README_DEV.md)
+
 Pesquisa de **04/10/2026** sobre os cinco pacotes em
-[`tools/aiarena_local/runtime/bots`](../../tools/aiarena_local/runtime/bots), comparados com o código
+`tools/aiarena_local/runtime/bots`, comparados com o código
 do working tree e com `docs/dev`. É pesquisa e proposta; não altera o comportamento do bot e não
 representa trabalho adotado em staging. Nenhuma partida foi lançada nesta análise.
 
@@ -21,7 +23,7 @@ backlog; o ganho está em tornar os mecanismos executáveis e medir seu efeito.
 | SharpCannon | Fonte Python; mesma identificação de pacote | Cannon rush/contain/expand com continuação de macro e Stalkers |
 | RoachRush | Fonte Python | Rush de uma base; micro e busca para encerrar, sem transição econômica sofisticada |
 
-O [`build.json` do Phantom](../../tools/aiarena_local/runtime/bots/PhantomBot/build.json) identifica
+O `build.json` do Phantom identifica
 o fonte como `https://github.com/phantomsc2/phantom-sc2`. O download do commit retornou **HTTP 404**.
 Isso não permite concluir se o repositório é privado, foi removido ou mudou de endereço.
 Não foi possível verificar as fórmulas desse fonte.
@@ -30,7 +32,7 @@ Para o Phantom, distinguimos:
 
 - **Fonte disponível:** `run.py`, `build.json`, `METADATA`, `data/params.json` e o Leitwerk empacotado.
 - **Declaração do autor:** itens do changelog em
-  [`METADATA`](../../tools/aiarena_local/runtime/bots/PhantomBot/phantom-3.48.1.dist-info/METADATA).
+  `METADATA`.
   Descrevem evolução, sem provar ativação ou desempenho na versão atual.
 - **Símbolo no binário:** nomes de rotinas preservados pelo Cython, extraídos como texto, sem
   importar ou executar os módulos. Provam a presença do nome; não a fórmula, ordem de chamada ou eficácia.
@@ -55,7 +57,7 @@ dinâmicos. O módulo `agent/macro/strategy` preserva `composition_target`, `com
 Isso sugere responsabilidades separadas; não revela como combina ou dimensiona cada uma.
 
 **Comparação:** nossa
-[`CompositionPolicy`](../../bot/ego/economy/policies/composition.py) já diferencia crença,
+`CompositionPolicy` já diferencia crença,
 eficácia, custo, atraso de tech e SURVIVE. O produto normal continua sendo uma proporção, corrigida
 pelo SpawnController. Não há nessa política uma reserva explícita de recursos para uma transição
 nem um objetivo absoluto de reposição. E5, E9 e a demanda militar de
@@ -77,7 +79,7 @@ da taxa de mudança do alvo de gás. `Strategy.income` e `banking_resources` apa
 Não foi recuperada a lei de controle.
 
 **Comparação:** nosso
-[`investment.py`](../../bot/ego/economy/policies/investment.py) dimensiona Refineries por
+`investment.py` dimensiona Refineries por
 bases e parcela máxima de workers em gás. Usa banco mineral para detectar opening parado, mas
 o alvo de gás não lê banco de gás, demanda do mix ou fila de gasto. É uma referência adicional
 para E5/E9 e a lei de gasto proposta em
@@ -122,8 +124,8 @@ incluem `allowed_upgrades`, `_allows_upgrade`, `upgrade_weights`, `_upgrade_prio
 `_composition_priorities`.
 
 **Comparação:** nós já temos upgrades, add-ons e compra de pré-requisitos pelo Ares, incluindo
-correções de execução em [`economy.py`](../../bot/body/behaviors/economy.py). Entretanto,
-[`styles.py`](../../bot/ego/economy/knowledge/styles.py) mantém a lista de upgrades do
+correções de execução em `economy.py`. Entretanto,
+`styles.py` mantém a lista de upgrades do
 estilo, enquanto o mix pode mudar. E8/E9 já pedem essa ligação.
 
 **Aproveitar:** Economy escolhe pesquisas pelo exército atual e reposição planejada, e autoriza
@@ -194,15 +196,15 @@ Phantom sem fonte, especialmente enquanto discutimos o piso de bases do nosso ob
 
 ### LL8 — Foco com reserva de dano e avanço durante o cooldown
 
-O [`focus_fire`](../../tools/aiarena_local/runtime/bots/RustyMarines/sharpy/combat/default_micro_methods.py)
+O `focus_fire`
 filtra a categoria atingível, combina valor/vida/distância, favorece o último alvo e reduz o score
 quando o dano já reservado supera a vida. O dano escolhido é somado em `focus_fired`.
-[`GenericMicro`](../../tools/aiarena_local/runtime/bots/RustyMarines/sharpy/combat/generic_micro.py)
+`GenericMicro`
 distingue tiro, movimento e modalidades de recuo; no modo Push pode avançar durante cooldown.
 `MicroRules` liga Marines/Marauders a `MicroBio`, que herda essa lógica.
 
 **É OS1/N6 com um exemplo local concreto**, inclusive para a reserva de dano que a pesquisa
-anterior propôs como extensão. Nosso [`combat.py`](../../bot/body/behaviors/combat.py) ainda monta
+anterior propôs como extensão. Nosso `combat.py` ainda monta
 siege/stim e a-move. O RoachRush também faz tiro com arma pronta e movimento durante cooldown,
 mas usa heurísticas simples; não é necessário importar seu controlador.
 
@@ -214,9 +216,9 @@ e apenas tiros executáveis. Medir troca, overkill e progresso; kite sem avanço
 
 ### LL9 — Agrupar durante a marcha, além do ASSEMBLE inicial
 
-[`GroupCombatManager`](../../tools/aiarena_local/runtime/bots/RustyMarines/sharpy/combat/group_combat_manager.py)
+`GroupCombatManager`
 forma grupos espaciais e
-[`handle_groups`](../../tools/aiarena_local/runtime/bots/RustyMarines/sharpy/combat/default_micro_methods.py)
+`handle_groups`
 compara o grupo com o poder total recebido pelo manager. Grupos pequenos em risco podem se mover
 para outro grupo; um grupo dominante espalhado pode reagrupar antes do contato.
 As regras padrão habilitam regroup e usam parcela 0,75; os números não são recomendação para nós.
@@ -233,7 +235,7 @@ Medir mortes em trânsito, parcela de poder chegando junta e tempo até a luta.
 
 ### LL10 — Atacar a base menos cara de alcançar e vencer
 
-[`PlanZoneAttack._get_target`](../../tools/aiarena_local/runtime/bots/RustyMarines/sharpy/plans/tactics/zone_attack.py)
+`PlanZoneAttack._get_target`
 escolhe entre zonas inimigas por distância do grupo/gather point mais `5 × poder estático`.
 Também prioriza proxies perto da nossa main. É um score verificável e simples.
 
@@ -246,8 +248,8 @@ Medir bases/produção inimiga destruídas por perda própria, tempo de travessi
 ### LL11 — Reparo e bunker precisam estar operacionais
 
 RustyMarines ativa
-[`Repair`](../../tools/aiarena_local/runtime/bots/RustyMarines/sharpy/plans/tactics/terran/repair.py),
-[`ManTheBunkers`](../../tools/aiarena_local/runtime/bots/RustyMarines/sharpy/plans/tactics/terran/man_the_bunkers.py)
+`Repair`,
+`ManTheBunkers`
 e `ContinueBuilding` em seu plano. Reparo escolhe por tipo/vida e limita SCVs segundo ameaça;
 guarnição encaminha Marine para bunker pronto com vaga.
 
@@ -273,7 +275,7 @@ tática do plano; não foi medida numa partida. Ao adaptar uma transição, mant
 combate/defesa fora da etapa descartável. Isso também limita seu valor como referência de late.
 
 Os três incluem
-[`PlanFinishEnemy`](../../tools/aiarena_local/runtime/bots/RustyMarines/sharpy/plans/tactics/attack_expansions.py):
+`PlanFinishEnemy`:
 unidades ociosas atacam estruturas conhecidas ou uma expansão aleatória. No RustyMarines e no
 SharpCannon ele fica depois do ataque numa `SequentialList`, portanto espera esse ato liberar a
 sequência. O RoachRush percorre expansões em ciclo quando não encontra estruturas.
@@ -320,3 +322,10 @@ Não incorporar trechos sem conferir a licença do arquivo/projeto de origem: Ro
 os pacotes dos três bots Sharpy não trazem uma licença raiz para seu código de bot, e o Phantom
 não oferece fonte/licença verificável nesses artefatos. A licença de uma dependência não licencia
 automaticamente o bot que a usa. Esta revisão propõe mecanismos, sem incorporar código deles.
+
+## Ver também
+
+- [Partidas locais](../../tools/aiarena_local/README.md)
+- [PhantomBot](../../tools/aiarena_local/PHANTOMBOT.md)
+- [Adversários de rush](../../tools/aiarena_local/OPPONENTS.md)
+- [Bots open source](bots-opensource.md)

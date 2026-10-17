@@ -854,3 +854,16 @@ def test_the_log_says_which_sites_are_kept_clear() -> None:
 
     (event,) = logger.named("planner.production_kept_clear")
     assert event["data"] == {"production_sites": 5, "sites": [[14.5, 14.5]], "cleared": 1}
+
+
+def test_a_changeling_by_the_wall_does_not_keep_it_shut() -> None:
+    # bench/testando normal, 2026-10-04: four Changelings stood by the depots
+    # from 322 s on, and the wall never opened again.
+    frame = attention(
+        own_structures=(depot(1, 20, 20),),
+        enemy_units=(unit(90, UnitTypeId.CHANGELINGMARINE, 21, 20, power=0.0),),
+    )
+
+    plan = StructureControlPlanner().plan(frame)
+
+    assert (plan.lower, plan.raise_, plan.reason) == ((1,), (), "no_enemy_near")

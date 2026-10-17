@@ -1,5 +1,7 @@
 # BotBandido contra PhantomBot
 
+↑ [Partidas locais](README.md)
+
 Adversário baixado e registrado nesta máquina em 03/10/2026:
 [PhantomBot](https://aiarena.net/bots/510/), do autor Phantom, Zerg de macro,
 versão **3.48.1**. Na consulta à API pública da AI Arena, tinha **1963 de Elo**

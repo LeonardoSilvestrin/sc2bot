@@ -1,5 +1,7 @@
 # Offense
 
+↑ [Planners](README_PLANNERS.md) · [Arquitetura](../architecture.md)
+
 > Atacar agora? E, durante o ataque, avançar, lutar ou recuar?
 
 ## Resumo
@@ -134,16 +136,16 @@ Em qualquer fase, se o poder cair abaixo de 50 % do comprometido, a missão term
 
 ## Limitações conhecidas
 
-- **Reunião medida contra o exército inteiro** (I1 no [gaps.md](../dev/gaps.md), severidade alta): o
+- **Reunião medida contra o exército inteiro** (I1 no backlog, severidade alta): o
   `assembled_share` divide o poder perto do rally pelo poder total, inclusive unidades da Defense ou em
   produção longe. Nos benches ele fica entre 0 e 0,22, e o `ASSEMBLE` quase sempre acaba por timeout.
 - **Reforço pinga:** a proposta pede todas as unidades livres, então cada unidade nova vai sozinha até o
-  grupo. Pela lei quadrática de Lanchester, reforço que chega aos poucos custa caro (N7.1 em
-  [novas_propostas.md](../dev/novas_propostas.md), OS6 em [bots-opensource.md](../dev/bots-opensource.md)).
+  grupo. Pela lei quadrática de Lanchester, reforço que chega aos poucos custa caro (N7.1 no
+  backlog, OS6 em `bots-opensource.md`).
 - **DEFEND cancela na hora**, mesmo com a casa coberta: um DEFEND falso (ver [strategy.md](strategy.md))
   mata um ataque que estava ganhando.
 - **O modelo de luta não vê alcance nem feitiço:** nos 6 ataques que terminaram em `army_depleted`, o grupo
-  entrou na luta com parcela local de 0,85 a 0,90 e perdeu metade do exército ([debate](../dev/agent_discussion/README.md)).
+  entrou na luta com parcela local de 0,85 a 0,90 e perdeu metade do exército (debate).
   Casters e Battlecruisers valem poder 0.
 - **O micro é attack-move** (no Body): sem stutter, foco ou esquiva.
 - O bot não fecha o jogo: chega ao supply máximo entre 589 e 774 s e termina com 13 a 16 mil minerais no
@@ -154,5 +156,4 @@ Em qualquer fase, se o poder cair abaixo de 50 % do comprometido, a missão term
 - [bot/ego/planners/offense/planner.py](../../bot/ego/planners/offense/planner.py): `OffensePlanner`.
 - [bot/ego/planners/offense/missions/main_attack.py](../../bot/ego/planners/offense/missions/main_attack.py):
   `MainAttackMission`, `OffenseConfig`, a luta local, o alvo e a busca.
-- Execução no Body: [attack.py](../../bot/body/behaviors/attack.py), [retreat.py](../../bot/body/behaviors/retreat.py),
-  [combat.py](../../bot/body/behaviors/combat.py).
+- Execução no Body: [Attack](../behaviors/attack.md) e [Retreat](../behaviors/retreat.md).

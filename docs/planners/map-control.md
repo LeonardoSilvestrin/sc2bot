@@ -1,5 +1,7 @@
 # MapControl
 
+↑ [Planners](README_PLANNERS.md) · [Arquitetura](../architecture.md)
+
 > Onde espera o exército que ninguém está usando?
 
 ## Resumo
@@ -169,12 +171,12 @@ Medidas nos logs de `comp-eficacia` e na partida contra o PhantomBot (`logs/game
   natural e a rampa é 0,009, e a margem é 0,04. O exército ficou 60 s longe da natural, até a terceira base.
   Recuar pode estar certo quando estamos atrás, mas aqui quem decidiu foi `exposure` ≈ 0,01, e não a razão
   de forças.
-- **Em DEFEND, o exército espera no townhall**, não no choke nem na luta (I17 no [gaps.md](../dev/gaps.md)). No
+- **Em DEFEND, o exército espera no townhall**, não no choke nem na luta (I17 no backlog). No
   `comp-eficacia/004`, isso foi 32 % do tempo. O anchor também alterna entre bases com ameaça parecida, e
   entre a base ameaçada e o staging quando a postura entra e sai de DEFEND.
 - **Um ponto só** para o exército todo, sem dividir.
 - **Todas as bases pesam igual:** a main e a natural não valem mais que uma base nova.
-- **Base em construção conta como base** (I4 no [gaps.md](../dev/gaps.md)): os candidatos são recalculados no
+- **Base em construção conta como base** (I4 no backlog): os candidatos são recalculados no
   frame em que o SCV põe o CC.
 - **Distância reta dentro de uma região**, o que subestima regiões côncavas.
 - A exclusão das regiões vizinhas ao start inimigo é uma regra fixa.
@@ -190,6 +192,7 @@ Medidas nos logs de `comp-eficacia` e na partida contra o PhantomBot (`logs/game
   `Ground` (distâncias por terra), `evaluate` (candidatos), `StagingPolicy` (score e histerese).
 - [bot/attention/topology.py](../../bot/attention/topology.py) e
   [bot/awareness/field.py](../../bot/awareness/field.py): a topologia e o campo que ele lê.
+- Execução no Body: [Hold](../behaviors/hold.md).
 
 ## Missão `remove_creep`
 
@@ -224,5 +227,5 @@ para o anchor, sem avançar sozinho.
 O lifecycle e as fases aparecem em `mission.updated`; a demanda por Raven aparece em
 `planner.economy_planned.unit_requests`. Os targets e grants usam os eventos normais do Engine.
 
-Código: `missions/remove_creep.py`, `bot/awareness/regions.py` e
-`bot/body/behaviors/remove_creep.py`. Os parâmetros ficam em `MapControlConfig.remove_creep`.
+Código: `missions/remove_creep.py` e `bot/awareness/regions.py`; execução no Body em
+[Remove creep](../behaviors/remove-creep.md). Os parâmetros ficam em `MapControlConfig.remove_creep`.

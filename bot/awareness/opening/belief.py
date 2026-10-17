@@ -60,6 +60,9 @@ class OpeningBeliefConfig:
     checks_weight: float = 0.35
     evidence_weight: float = 0.20
     evidence_span: float = 6.0
+    # A structure seen on our half of the map is not inferred from what the
+    # main lacks: it is the opening seen directly, worth this much on its own.
+    proxy_sighting: float = 1.0
     # A record is current for `recency_grace` seconds, then fades with this tau.
     recency_grace: float = 30.0
     recency_tau: float = 120.0
@@ -80,6 +83,8 @@ class OpeningBeliefConfig:
                 raise ValueError(f"{name} must be positive")
         if not 0.0 <= self.unknown_race_confidence <= 1.0:
             raise ValueError("unknown_race_confidence must be between 0 and 1")
+        if not 0.0 <= self.proxy_sighting <= 1.0:
+            raise ValueError("proxy_sighting must be between 0 and 1")
 
 
 DEFAULT_CONFIG = OpeningBeliefConfig()
@@ -259,11 +264,15 @@ def _confidence(
         )
         / config.evidence_span
     )
-    quality = (
+    scouted = _clamp(
         config.coverage_weight * observations.main_scout_coverage
         + config.checks_weight * checks
         + config.evidence_weight * evidence
     )
+    # Independent sources: a proxy passed on the way out is worth as much
+    # before the main was ever seen as after.
+    sighted = config.proxy_sighting * terms["proxy_structures"]
+    quality = 1.0 - (1.0 - scouted) * (1.0 - sighted)
     race = 1.0 if observations.race_known else config.unknown_race_confidence
     return _clamp(quality * terms["recency"] * race)
 
