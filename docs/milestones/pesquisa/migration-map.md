@@ -1,6 +1,6 @@
 # Modelos do branch `matematização`
 
-↑ [Desenvolvimento](README_DEV.md)
+↑ [Marcos](../README_MILESTONES.md)
 
 O branch `matematização` é material de pesquisa: tem modelos matemáticos já
 escritos e testados lá, dentro de uma arquitetura que não é a daqui (assessor →
@@ -34,7 +34,7 @@ partida que mostre o problema e outra que meça a mudança.
 ### Demanda de exército e capacidade de produção
 
 **Ataca:** o banco de 4–21 mil minerais com supply livre, a causa em aberto
-mais antiga do bot (ver "Medições" em [architecture.md](../architecture.md)).
+mais antiga do bot (ver "Medições" em [architecture.md](../../architecture.md)).
 
 - `bot/macro/production/army_demand.py`: a meta de army supply é a âncora; a
   composição só diz *em que* pagar a dívida, nunca *se* ela existe.
@@ -167,4 +167,4 @@ cada modelo entra como função pura na camada que já é dona do dado.
 
 ## Ver também
 
-- [Estimação e controle](staging/estimacao-e-controle.md)
+- [Estimação e controle](../registros/estimacao-e-controle.md)

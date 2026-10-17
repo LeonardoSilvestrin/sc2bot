@@ -78,7 +78,7 @@ depende disso.
 | StructureControl | nenhuma: a relocation tem episódios, mas opera estruturas que o Engine não arbitra, então é Policy | [StructureControl](structure-control.md) |
 
 **Uma missão nova** entra como um módulo em `missions/` do planner que a governa, e um comando novo como um
-behavior com o nome dele. A próxima prevista é `harass/` (N7.3 no backlog): `harass/planner.py` com
+behavior com o nome dele. A próxima prevista é `harass/` (N7.3 no marco 5): `harass/planner.py` com
 `missions/drop.py` e `missions/banshee_raid.py`, e os behaviors `move`, `load` e `unload`. Nenhum deles existe
 ainda. Não é preciso criar classe base, registry ou Mission por feature.
 

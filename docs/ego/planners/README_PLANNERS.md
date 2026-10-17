@@ -5,7 +5,7 @@
 Um documento por planner, um pacote por domínio em `bot/ego/planners/`: o que ele decide, como decide e o que
 ainda falta. Todos descrevem o código do HEAD. A [Strategy](../strategy.md) e a [Economy](../economy.md) não
 são planners e ficam no [Ego](../README_EGO.md). O que está em andamento fica em
-[staging/](../../dev/staging/README.md), e os papéis e eventos em [architecture.md](../../architecture.md).
+[marcos](../../milestones/README_MILESTONES.md), e os papéis e eventos em [architecture.md](../../architecture.md).
 
 | Documento | Pergunta que responde | Pede unidades ao Engine? |
 | --- | --- | --- |

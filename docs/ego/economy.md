@@ -218,7 +218,7 @@ nesta ordem. A ordem importa porque o `MacroPlan` para no primeiro behavior que 
 - **O sorteio do estilo nunca foi medido:** no ladder ele trava cada adversário num estilo sem dado.
 - **Expansão sem fim:** a partir de 5 bases o bot está sempre "saturado" e termina jogos com 8 a 10 bases e 13
   a 16 mil minerais no banco.
-- **Base em construção conta como base** (I4 no backlog): `saturated_at` e o teto de produção
+- **Base em construção conta como base** (I4 no marco 3): `saturated_at` e o teto de produção
   sobem no frame em que o SCV põe o CC.
 - **O resto do `MacroPlan` do Ares passa na frente do exército:** como ele para no primeiro behavior que age,
   supply, workers, gás e expansão ainda vêm antes do `SpawnController`.

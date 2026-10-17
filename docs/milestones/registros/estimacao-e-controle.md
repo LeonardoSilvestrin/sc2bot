@@ -1,6 +1,6 @@
 # Estimação e controle
 
-↑ [Staging](README.md) · [Desenvolvimento](../README_DEV.md)
+↑ [Marcos](../README_MILESTONES.md)
 
 Registro de uma virada de direção, decidida em 2026-10-03 no branch `observador` (tag de rollback
 `pre-observador`, em `9457a4a`). O que já está no HEAD está descrito em
@@ -123,21 +123,17 @@ divergiu do cliente).
 
 ## Próximos passos (decididos como direção, não implementados)
 
-1. **DEFEND em cascata.** Hoje o DEFEND dispara com 3–4 Marines de pressão mesmo com 10–53 de cobertura na
-   base (`bench/t0`: 42–45 % do tempo em DEFEND nas derrotas, 7 de 12 ataques cancelados no ASSEMBLE). A malha
-   externa passa a ler o déficit da Defense — poder pedido menos concedido, o `GrantStatus` que nenhuma missão
-   lê (C6 do `gaps.md`) — ou a ameaça líquida da cobertura (`balance`, C2). DEFEND passa a
-   significar "a malha interna saturou".
-2. **Lei de gasto contínua.** `alvo = μ̂(t+τ) + kσ̂(t+τ)`, `erro = alvo − (exército + exército na fila)` (o
-   termo da fila é um preditor de Smith: sem ele um controlador de alvo dá overshoot pelo tempo de produção),
-   `u_army = PI(erro)` saturado com anti-windup (supply 200, teto de produção). Substitui o liga/desliga de
-   upgrades, add-ons e expansão por postura. O atuador é o Ares, que não aceita um `u` contínuo: a tradução
-   passa por reserva de minerais ou ordem de prioridade.
-3. **Observador mais rico.** Workers vistos como medição de renda (não só limite), cobertura pelo mapa e não só
-   pelas bases, composição por tipo no estado (hoje a `CompositionPolicy` lê o visto por tipo e só o poder escalar
-   do observador).
-4. **Adaptativo entre partidas.** Estilo de exército como bandit por oponente (Thompson sampling), com os
-   resultados guardados entre partidas no ladder.
+Decididos como direção em 03/10, não implementados. Cada um virou item do marco do seu assunto, onde está o texto
+completo e o estado:
+
+1. **DEFEND em cascata** — no [M3](../m3-ameaca-e-defesa.md): a malha externa lê o déficit da Defense, e DEFEND
+   passa a significar "a malha interna saturou".
+2. **Lei de gasto contínua** — no [M7](../m7-economia.md): PI saturado com anti-windup sobre
+   `μ̂ + kσ̂ − (exército + fila)`, com o termo da fila como preditor de Smith.
+3. **Observador mais rico** — no [M4](../m4-poder-e-estimativa.md): workers como medição de renda, cobertura pelo
+   mapa, composição por tipo no estado.
+4. **Adaptativo entre partidas** — depois dos marcos ([índice](../README_MILESTONES.md#os-marcos)): estilo de
+   exército como bandit por oponente.
 
 ## O que fica de fora da analogia
 

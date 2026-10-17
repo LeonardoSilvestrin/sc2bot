@@ -1,9 +1,9 @@
 # Refactor: economia (composição) e ordem de builds
 
-↑ [Staging](README.md) · [Desenvolvimento](../README_DEV.md)
+↑ [Marcos](../README_MILESTONES.md)
 
-> Os documentos de backlog citados aqui saíram da árvore em 17/10; o que deles continua aberto está no
-> [backlog](../backlog.md).
+> Os documentos de backlog citados aqui saíram da árvore em 17/10; o que deles continua aberto está nos
+> [marcos](../README_MILESTONES.md), sobretudo no [M7](../m7-economia.md).
 
 > Registro de design/revisão histórico. Composição por catálogo, SURVIVE e fronteiras de Planner,
 > Mission e Behavior já estão implementadas; o estado atual e os nomes de eventos são definidos em
@@ -267,7 +267,7 @@ Como se liga ao refactor de composição:
 - a abertura continua sendo parte do estilo;
 - o SURVIVE assume da abertura (uma saída de emergência só, a da Strategy);
 - depois dele, o refactor de ordem de builds propriamente dito é o E9 (a ordem do gasto sai do Body) e, com
-  scouting, o N2.3/N2.4. O que "ordem de builds" cobre está em [Em aberto](#em-aberto).
+  scouting, o N2.3/N2.4. O que dela continua aberto está no [M7](../m7-economia.md).
 
 ## Fatias
 

@@ -1,6 +1,6 @@
 # Bots open source: o que aproveitar no nosso
 
-↑ [Desenvolvimento](README_DEV.md)
+↑ [Marcos](../README_MILESTONES.md)
 
 > Pesquisa de 03/10/2026 sobre o código local em `e647f7d` e o Ares fixado em
 > `87308658b0dfe1e59486c2b157ef552e9af0c7fd`. Foram consultados repositórios,
@@ -37,7 +37,7 @@ Esta lista evita propor como novidade o que avançou desde as pesquisas de setem
 | Campo, topologia e staging consumindo influência | staging, topology | Usar distância por rotas e valor regional em mais decisões |
 | Scan, reserva de energia, turrets e sensor towers | detection, sensor_towers | Detecção móvel acompanhando o exército |
 | Stim, decisão de siege e Medivac seguindo o grupo | combat, attack | Kite, foco local, esquiva de efeitos e proteção aérea do suporte |
-| Harness, logs e preparação para adversário externo | harness, [guia local](../../tools/aiarena_local/README.md) | Medir as mudanças em cenários e contra bots; preparação não comprova partida executada |
+| Harness, logs e preparação para adversário externo | harness, [guia local](../../../tools/aiarena_local/README.md) | Medir as mudanças em cenários e contra bots; preparação não comprova partida executada |
 
 ## Projetos e implementações consultados
 
@@ -154,7 +154,7 @@ com teto de SCVs e gasto que não bloqueie produção. Planner define necessidad
 e alvo; Engine arbitra SCVs; Body executa reparo e libera trabalhadores para
 Mining ao terminar. A manutenção pode ser desired state; só criar Mission para
 um resgate com começo/fim identificáveis, conforme
-[architecture.md](../architecture.md). Reparo exige novos contratos e dados sobre
+[architecture.md](../../architecture.md). Reparo exige novos contratos e dados sobre
 alvos, não apenas uma chamada de ability isolada.
 
 **Medir:** valor de unidades salvas, gasto de reparo, renda perdida por SCVs
@@ -262,7 +262,7 @@ feature ativada, replay, resultado e métricas do mecanismo. Registrar crash,
 timeout e partida não jogada separadamente de derrota.
 
 O harness atual e o
-[bootstrap local](../../tools/aiarena_local/README.md) já existem. Fixar mapa e
+[bootstrap local](../../../tools/aiarena_local/README.md) já existem. Fixar mapa e
 estilo nas comparações e repetir células; não inferir ganho de uma vitória.
 Preparar métricas ausentes antes de usar esse critério como evidência. A
 documentação local registra uma pendência de virtualização; o host não foi

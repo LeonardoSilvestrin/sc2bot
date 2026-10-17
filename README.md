@@ -86,8 +86,8 @@ Como o bot funciona:
 | [docs/body/](docs/body/README_BODY.md) | Execução: o Engine e um documento por behavior |
 | [docs/frame.canvas](docs/frame.canvas) | Para abrir no Obsidian: um frame inteiro num quadro, da percepção aos behaviors, com os docs embutidos |
 
-O desenvolvimento (trabalho em andamento, pesquisa, backlog, revisões de código e debates) fica em
-[docs/dev/](docs/dev/README_DEV.md).
+O desenvolvimento (o que está em andamento e o que falta, em etapas de melhoria, mais as pesquisas) fica em
+[docs/milestones/](docs/milestones/README_MILESTONES.md).
 
 ## Instalação
 

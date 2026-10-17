@@ -1,6 +1,6 @@
 # Bots locais da ladder: mecanismos para aproveitar
 
-↑ [Desenvolvimento](README_DEV.md)
+↑ [Marcos](../README_MILESTONES.md)
 
 Pesquisa de **04/10/2026** sobre os cinco pacotes em
 `tools/aiarena_local/runtime/bots`, comparados com o código
@@ -83,7 +83,7 @@ Não foi recuperada a lei de controle.
 bases e parcela máxima de workers em gás. Usa banco mineral para detectar opening parado, mas
 o alvo de gás não lê banco de gás, demanda do mix ou fila de gasto. É uma referência adicional
 para E5/E9 e a lei de gasto proposta em
-[`estimacao-e-controle.md`](staging/estimacao-e-controle.md#próximos-passos-decididos-como-direção-não-implementados).
+[`estimacao-e-controle.md`](../registros/estimacao-e-controle.md#próximos-passos-decididos-como-direção-não-implementados).
 
 **Aproveitar:** calcular demanda mineral/gás de reposição, pesquisas e transição num horizonte;
 ajustar alocação de workers e investimento por essa demanda, com resposta gradual para evitar
@@ -325,7 +325,7 @@ automaticamente o bot que a usa. Esta revisão propõe mecanismos, sem incorpora
 
 ## Ver também
 
-- [Partidas locais](../../tools/aiarena_local/README.md)
-- [PhantomBot](../../tools/aiarena_local/PHANTOMBOT.md)
-- [Adversários de rush](../../tools/aiarena_local/OPPONENTS.md)
+- [Partidas locais](../../../tools/aiarena_local/README.md)
+- [PhantomBot](../../../tools/aiarena_local/PHANTOMBOT.md)
+- [Adversários de rush](../../../tools/aiarena_local/OPPONENTS.md)
 - [Bots open source](bots-opensource.md)

@@ -1,14 +1,14 @@
 {
   "collapse-filter": false,
-  "search": "-file:frame.canvas -path:docs/dev",
+  "search": "-file:frame.canvas -path:docs/milestones",
   "showTags": false,
   "showAttachments": false,
-  "hideUnresolved": false,
+  "hideUnresolved": true,
   "showOrphans": true,
   "collapse-color-groups": true,
   "colorGroups": [
     {
-      "query": "path:\"docs/dev\"",
+      "query": "path:\"docs/milestones\"",
       "color": {
         "a": 1,
         "rgb": 9079434
@@ -193,6 +193,6 @@
   "repelStrength": 10,
   "linkStrength": 1,
   "linkDistance": 250,
-  "scale": 0.631604676290743,
-  "close": true
+  "scale": 0.6316046762907469,
+  "close": false
 }

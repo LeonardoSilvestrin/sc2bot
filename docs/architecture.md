@@ -1,6 +1,6 @@
 # Arquitetura: camadas
 
-↑ [README](../README.md) · [Desenvolvimento](dev/README_DEV.md)
+↑ [README](../README.md) · [Marcos](milestones/README_MILESTONES.md)
 
 O bot é quatro camadas, cada uma num pacote de `bot/` e numa pasta de `docs/` com um índice:
 
@@ -237,7 +237,7 @@ python tools\replay_truth.py bench\<rótulo>
 
 Cada item entra quando um problema de gameplay medido pedir. Os modelos já escritos no branch
 `matematização` que servem a vários deles estão em `migration-map.md`. O que já está em
-andamento, ou decidido como o próximo, está em [staging/](dev/staging/README.md).
+andamento, e o que falta por etapa, está nos [marcos](milestones/README_MILESTONES.md).
 
 - **Informação:** a Strategy ainda não consome a `OpeningBelief` (Attention, Awareness e Intel já a
   produzem e a registram); nenhum limiar ou peso da leitura da opening foi medido em partida real;

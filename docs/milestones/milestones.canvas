@@ -1,0 +1,235 @@
+{
+	"nodes": [
+		{
+			"id": "g-registros",
+			"type": "group",
+			"label": "REGISTROS — o porquê das decisões; os passos seguintes estão nos marcos",
+			"x": -60,
+			"y": 1980,
+			"width": 1520,
+			"height": 960
+		},
+		{
+			"id": "g-pesquisa",
+			"type": "group",
+			"label": "PESQUISA — datada; os ids OS/LL viram itens dos marcos",
+			"x": -860,
+			"y": -80,
+			"width": 680,
+			"height": 2120
+		},
+		{
+			"id": "g-marcos",
+			"type": "group",
+			"label": "MARCOS — do mais urgente (vermelho) ao menos (cinza); cada um fecha pelo seu critério de saída",
+			"x": -60,
+			"y": -80,
+			"width": 3040,
+			"height": 1940
+		},
+		{
+			"id": "m1",
+			"type": "file",
+			"file": "docs/milestones/m1-estabilidade.md",
+			"x": 0,
+			"y": 0,
+			"width": 640,
+			"height": 820,
+			"color": "#D7191C"
+		},
+		{
+			"id": "m2",
+			"type": "file",
+			"file": "docs/milestones/m2-medicao.md",
+			"x": 760,
+			"y": 0,
+			"width": 640,
+			"height": 820,
+			"color": "#E4502A"
+		},
+		{
+			"id": "m3",
+			"type": "file",
+			"file": "docs/milestones/m3-ameaca-e-defesa.md",
+			"x": 1520,
+			"y": 0,
+			"width": 640,
+			"height": 820,
+			"color": "#EE7A30"
+		},
+		{
+			"id": "m4",
+			"type": "file",
+			"file": "docs/milestones/m4-poder-e-estimativa.md",
+			"x": 2280,
+			"y": 0,
+			"width": 640,
+			"height": 820,
+			"color": "#F29E3D"
+		},
+		{
+			"id": "m5",
+			"type": "file",
+			"file": "docs/milestones/m5-fechar-o-jogo.md",
+			"x": 2280,
+			"y": 980,
+			"width": 640,
+			"height": 820,
+			"color": "#F2BE52"
+		},
+		{
+			"id": "m6",
+			"type": "file",
+			"file": "docs/milestones/m6-intel.md",
+			"x": 1520,
+			"y": 980,
+			"width": 640,
+			"height": 820,
+			"color": "#BCC57A"
+		},
+		{
+			"id": "m7",
+			"type": "file",
+			"file": "docs/milestones/m7-economia.md",
+			"x": 760,
+			"y": 980,
+			"width": 640,
+			"height": 820,
+			"color": "#9CB98A"
+		},
+		{
+			"id": "m8",
+			"type": "file",
+			"file": "docs/milestones/m8-sinais-e-limpeza.md",
+			"x": 0,
+			"y": 980,
+			"width": 640,
+			"height": 820,
+			"color": "#999999"
+		},
+		{
+			"id": "index",
+			"type": "file",
+			"file": "docs/milestones/README_MILESTONES.md",
+			"x": 0,
+			"y": -1060,
+			"width": 2920,
+			"height": 900
+		},
+		{
+			"id": "p-bots-opensource",
+			"type": "file",
+			"file": "docs/milestones/pesquisa/bots-opensource.md",
+			"x": -800,
+			"y": 0,
+			"width": 560,
+			"height": 620
+		},
+		{
+			"id": "p-ladder-local",
+			"type": "file",
+			"file": "docs/milestones/pesquisa/ladder-local.md",
+			"x": -800,
+			"y": 680,
+			"width": 560,
+			"height": 620
+		},
+		{
+			"id": "p-migration-map",
+			"type": "file",
+			"file": "docs/milestones/pesquisa/migration-map.md",
+			"x": -800,
+			"y": 1360,
+			"width": 560,
+			"height": 620
+		},
+		{
+			"id": "r-estimacao-e-controle",
+			"type": "file",
+			"file": "docs/milestones/registros/estimacao-e-controle.md",
+			"x": 0,
+			"y": 2060,
+			"width": 640,
+			"height": 820,
+			"color": "6"
+		},
+		{
+			"id": "r-economia-e-builds",
+			"type": "file",
+			"file": "docs/milestones/registros/economia-e-builds.md",
+			"x": 760,
+			"y": 2060,
+			"width": 640,
+			"height": 820,
+			"color": "6"
+		},
+		{
+			"id": "head",
+			"type": "text",
+			"text": "## HEAD\nO que já está no bot: `architecture.md` e as pastas `attention/`, `awareness/`, `ego/` e `body/`.\n\nUm item chega aqui medido num bench. O mecanismo vai para o documento da camada, a medição para \"Medições\" do `architecture.md`, e o item vai para \"Concluído\" no índice dos marcos.",
+			"x": 3180,
+			"y": 730,
+			"width": 460,
+			"height": 320,
+			"color": "5"
+		}
+	],
+	"edges": [
+		{
+			"id": "g-pesquisa->g-marcos",
+			"fromNode": "g-pesquisa",
+			"fromSide": "right",
+			"toNode": "g-marcos",
+			"toSide": "left",
+			"label": "OS/LL viram itens"
+		},
+		{
+			"id": "g-marcos->head",
+			"fromNode": "g-marcos",
+			"fromSide": "right",
+			"toNode": "head",
+			"toSide": "left",
+			"label": "critério de saída medido"
+		},
+		{
+			"id": "m1->m2",
+			"fromNode": "m1",
+			"fromSide": "right",
+			"toNode": "m2",
+			"toSide": "left",
+			"label": "bench sem crash"
+		},
+		{
+			"id": "m2->m3",
+			"fromNode": "m2",
+			"fromSide": "right",
+			"toNode": "m3",
+			"toSide": "left",
+			"label": "bench de comparação"
+		},
+		{
+			"id": "m4->m5",
+			"fromNode": "m4",
+			"fromSide": "bottom",
+			"toNode": "m5",
+			"toSide": "top",
+			"label": "poder no ENGAGE"
+		},
+		{
+			"id": "m3->m5",
+			"fromNode": "m3",
+			"fromSide": "bottom",
+			"toNode": "m5",
+			"toSide": "top",
+			"label": "Defense só larga o ENGAGE com PARTIAL/REJECTED"
+		},
+		{
+			"id": "m6->m7",
+			"fromNode": "m6",
+			"fromSide": "left",
+			"toNode": "m7",
+			"toSide": "right",
+			"label": "troca de abertura depende da informação"
+		}
+	]
+}
